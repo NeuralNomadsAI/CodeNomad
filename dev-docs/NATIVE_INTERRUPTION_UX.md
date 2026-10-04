@@ -23,24 +23,27 @@ instead of clipping controls; field scrolling can chain into that outer scroller
 
 - Native pending queues remain authoritative. No transcript scan decides whether
   a request can be answered. Requests without a tool source use the same panel.
-- The visible queue includes only the open conversation and its recursive
-  descendants. Parents, siblings and unrelated roots do not appear. Request
-  arrival never navigates away from the active conversation. Off-scope editors
-  remain hidden and inert while pending, preserving drafts when navigating back.
-- Global Forms have no owning conversation. They remain explicitly reachable
-  through the project badge on the no-session surface, rather than appearing
-  inside unrelated conversations.
-- The instance badge opens an in-scope request or explicitly navigates to a pending
-  request's owning conversation when none is in scope. Global Forms take priority
-  on this project-wide badge because they have no session row of their own.
-  Session-row selection with pending requests
+- The open conversation and its recursive descendants are the local context.
+  Requests from elsewhere remain answerable in place, but first appear as compact
+  previews labeled “Other conversation” with their source conversation prominently
+  named. Explicit expansion reveals the editor without navigating away. An arrival
+  never replaces the request being edited, and settlement does not automatically
+  expand another external request. Hidden/inert keyed editors preserve drafts.
+- Provenance remains visible when expanded: external conversation, subagent with
+  parent conversation, or sessionless project request. The label and strong title
+  carry the distinction independently of color. A “View conversation” action
+  explicitly navigates to a session-owned request's actual source.
+- Global Forms have no owning conversation. Their compact preview uses a distinct
+  project-request label, supports in-place expansion and never invents a source link.
+- The instance badge opens the dock in place. Session-row selection with pending requests
   targets that session's request through the `interruptionFocus` UI intent.
 - The panel shows the request kind and source session. Previous/next controls and
   the position/count appear only when multiple requests are pending. Navigation is
   bounded: the first/last request disables the corresponding arrow without wrapping.
 - Selection stays pinned to the current request kind/id through queue refreshes and
   newly arriving requests, including a permission inserted ahead of a question.
-  Position, navigation and temporary composer compaction use the visible scope.
+  Compact external previews leave the composer height untouched; only an expanded
+  editor temporarily compacts it.
   Explicit navigation or settlement can change the selection. Editors stay keyed
   by request kind/id, preserving partial answers and rejection reasons through native
   object replacement, queue navigation and session navigation.
@@ -126,6 +129,6 @@ Android touch emulation, session navigation, saved maximum composer height,
 portrait/landscape/short layouts, simulated keyboard resize/pan, global/background
 Forms and permission actions. Width-only component captures do not replace this
 shell-level geometry regression.
-It also covers conversation scope and recursive descendants, excluding parents,
-siblings and unrelated conversations, retaining hidden drafts, explicit project
-badge navigation, global Forms and late-arriving ancestry on desktop and mobile.
+It also covers local and recursive-subagent provenance, compact external previews,
+explicit in-place expansion, retained hidden drafts, explicit source navigation,
+global Forms and late-arriving ancestry on desktop and mobile.

@@ -13,6 +13,7 @@
 }
 .interruption-dock:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
 .interruption-dock .window-header {
+  flex-wrap: wrap;
   gap: var(--space-sm);
   background: color-mix(in srgb, var(--accent-primary) 9%, var(--surface-chrome));
 }
@@ -24,10 +25,22 @@
 .session-view:has(> .interruption-dock:not(.is-collapsed):not([hidden])) :is(.form-request-fields, .interruption-permission-content) {
   overscroll-behavior-y: auto;
 }
-.interruption-heading { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.interruption-heading { display: flex; flex: 1; align-items: center; gap: var(--space-sm); min-width: 0; }
 .interruption-heading > svg { flex-shrink: 0; color: var(--accent-primary); }
 .interruption-heading-copy { min-width: 0; }
 .interruption-dock .window-title { font-weight: var(--font-weight-semibold); }
+.interruption-dock.has-origin .window-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
+.interruption-dock.has-origin.is-collapsed .window-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.interruption-origin-kind { display: block; font-size: var(--font-size-sm); }
+.interruption-origin-title { display: block; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); }
+.interruption-origin-actions { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; }
+.interruption-parent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.interruption-origin-actions .window-action { margin-inline-start: auto; flex-shrink: 0; }
+.interruption-external-preview { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-base); text-align: start; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.interruption-external-preview > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.interruption-external-preview > svg { flex-shrink: 0; }
+.interruption-external-preview:hover { background: var(--surface-interactive-hover); }
+.interruption-external-preview:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .interruption-session { display: block; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .interruption-dock .window-actions { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-sm); margin-inline-start: auto; }
 .interruption-navigation { display: flex; align-items: center; gap: var(--space-xs); }

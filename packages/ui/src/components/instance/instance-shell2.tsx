@@ -27,7 +27,6 @@ import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import { InterruptionDock } from "../interruption-dock"
 import { focusInterruption } from "../../stores/interruption-navigation"
-import { getInterruptionQueue, getInterruptionScope } from "../../stores/interruption-scope"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -170,7 +169,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
   const interruptionViewport = useInterruptionViewport(() => sessionCenterEl() ?? undefined, interruptionExpanded)
   const interruptionPanel = <InterruptionDock instanceId={props.instance.id}
-    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} onExpandedChange={setInterruptionExpanded} />
+    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} onExpandedChange={setInterruptionExpanded}
+    onViewConversation={handleSessionSelect} />
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
@@ -1041,19 +1041,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   function handleProjectInterruptionClick() {
-    const pending = getInterruptionQueue(props.instance.id)
-    // Global Forms have no row of their own: the project badge is their explicit entry point.
-    const global = pending.find(item => item.kind === "form" && item.payload.sessionID === "global")
-    const scope = getInterruptionScope(allInstanceSessions(), activeSessionIdForInstance())
-    if (!global && pending.some(item => scope.has(item.payload.sessionID))) {
-      focusInterruption(props.instance.id)
-      return
-    }
-    const target = global ?? pending.find(item => allInstanceSessions().has(item.payload.sessionID))
-    if (!target) return
-    if (target.payload.sessionID === "global") clearActiveParentSession(props.instance.id)
-    else handleSessionSelect(target.payload.sessionID)
-    focusInterruption(props.instance.id, target.payload.sessionID, target.payload.id, target.kind)
+    // Info has no dock mount. Restore the ordinary conversation surface first,
+    // without treating the pending request's owner as a navigation destination.
+    if (showingInfoView()) handleBackToConversation()
+    focusInterruption(props.instance.id)
   }
   const sessionLayout = (
     <div

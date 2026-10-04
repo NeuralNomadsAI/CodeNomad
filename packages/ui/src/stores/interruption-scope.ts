@@ -10,8 +10,9 @@ export function getInterruptionQueue(instanceId: string) {
   ]
 }
 
-// A missing/unknown conversation is not authority for the rest of the project.
-// Only the explicit no-session surface owns genuinely sessionless Forms.
+// Conversation affinity classifies provenance and automatic expansion only;
+// the native pending queue remains authoritative for all answerable requests.
+// Sessionless Forms are always explicitly expanded by the dock.
 export function getInterruptionScope(instanceSessions: Map<string, Session> | undefined, sessionId: string | null | undefined) {
   if (sessionId === null) return new Set(["global"])
   if (!sessionId || sessionId === "info" || !instanceSessions?.has(sessionId)) return new Set<string>()
