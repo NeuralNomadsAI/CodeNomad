@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "続行",
   "settings.opencode.setup.diagnostics": "バージョンの詳細",
   "settings.opencode.setup.troubleshooting": "トラブルシューティング",
+  "settings.opencode.setup.restartTroubleshooting": "OpenCode サービスを再起動",
+  "settings.opencode.setup.restartDescription": "アップデートをインストールせずに OpenCode プロセスを再起動します。設定の再読み込みとは異なり、プロセスを置き換え、接続中のすべてのクライアントの作業を中断します。セッション履歴は保持されます。",
   "settings.opencode.setup.check": "状態と更新を確認",
   "settings.opencode.setup.checked": "状態と更新の確認が完了しました。",
   "settings.opencode.setup.reloaded": "OpenCode の設定を再読み込みしました。",

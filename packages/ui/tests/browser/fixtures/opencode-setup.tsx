@@ -1,7 +1,7 @@
 import { render } from "solid-js/web"
 import OpenCodeSetup from "../../../src/components/opencode-setup"
 import { OpenCodeSettingsSection } from "../../../src/components/settings/opencode-settings-section"
-import { ConfigProvider, serverSettings, setThemePreference, updatePreferences } from "../../../src/stores/preferences"
+import { ConfigProvider, serverSettings, setThemePreference, updatePreferences, updateLastUsedBinary } from "../../../src/stores/preferences"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
@@ -23,15 +23,17 @@ render(() => <ConfigProvider><ThemeProvider><I18nProvider>
   {info && <main style={{ padding: "24px", "max-width": "600px" }}><InstanceInfo showReloadButton instance={{
     id: "fixture-instance", folder: "C:/fixture/project", status: "ready", port: 49374, pid: 123,
     client: {}, metadata: { mcpStatus: { data: [] }, plugins: [] },
-  } as any} /><AlertDialog /></main>}
-  <OpenCodeSetup automatic={!settings && !info} />
+   } as any} /></main>}
+   <OpenCodeSetup automatic={!settings && !info} />
+   <AlertDialog />
 </I18nProvider></ThemeProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: params.get("locale") === "fr" ? "fr" : "en" })
 await setThemePreference(params.get("theme") === "dark" ? "dark" : "light")
 ;(window as any).fixture = {
   open: () => openOpenCodeSetup(async () => { resumed++ }), resumed: () => resumed,
   reopen: () => openOpenCodeSetup(),
-  selectedBinary: () => serverSettings().opencodeBinary,
+   selectedBinary: () => serverSettings().opencodeBinary,
+   selectBinary: updateLastUsedBinary,
   refresh: refreshOpenCodeSetup,
   invalidate: invalidateOpenCodeSetup,
   notifications: getToastHistory,
