@@ -29,8 +29,17 @@ export type AlertDialogState = {
 
 const [alertDialogState, setAlertDialogState] = createSignal<AlertDialogState | null>(null)
 
+function replaceAlertDialog(next: AlertDialogState) {
+  const previous = alertDialogState()
+  setAlertDialogState(next)
+  // Replacing the singleton is not consent. Release pending callers without
+  // invoking action callbacks or leaving their local controls locked forever.
+  if (previous?.type === "confirm") previous.resolve?.(false)
+  if (previous?.type === "prompt") previous.resolvePrompt?.(null)
+}
+
 export function showAlertDialog(message: string, options?: Omit<AlertDialogState, "message">) {
-  setAlertDialogState({
+  replaceAlertDialog({
     type: "alert",
     message,
     ...options,
@@ -42,7 +51,7 @@ export function showConfirmDialog(message: string, options?: Omit<AlertDialogSta
   activeElement?.blur()
 
   return new Promise<boolean>((resolve) => {
-    setAlertDialogState({
+    replaceAlertDialog({
       type: "confirm",
       message,
       ...options,
@@ -59,7 +68,7 @@ export function showPromptDialog(
   activeElement?.blur()
 
   return new Promise<string | null>((resolvePrompt) => {
-    setAlertDialogState({
+    replaceAlertDialog({
       type: "prompt",
       message,
       ...options,

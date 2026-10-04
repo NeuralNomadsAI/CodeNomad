@@ -142,6 +142,19 @@ non-disruptive reconnect updates backend executable ownership so opening additio
 workspaces remains possible while restart is deferred. Executable selection and
 workspace execution-host eligibility are rechecked before service mutation.
 
+Troubleshooting also keeps **Restart OpenCode service** available without an
+installation or version change. The existing lifecycle may replace an authenticated
+same-version daemon, but an older selected CLI still cannot replace a newer daemon
+and unknown versions remain fail-closed. The control remains visible but disabled
+when restart authority is unavailable or a fresh status check fails. It shares the
+host/WSL service path and serialization with update activation; opening settings,
+checking status, reconnecting and reloading configuration never restart implicitly.
+The troubleshooting action confirms the all-client interruption, fences a changed
+executable or unmounted view, and does not resume a pending workspace-open callback.
+The inline post-update activation shortcut remains separate. Session history is not
+deleted by either action; configuration reload preserves the daemon process and
+must not be presented as a process restart or a guarantee of memory reclamation.
+
 Mounted Windows discovery directories and Linux aliases are canonicalized through
 the selected distro, then translated for host filesystem access. Native import
 URLs and lease paths stay Linux-native; canonical outside-root storage is retained.

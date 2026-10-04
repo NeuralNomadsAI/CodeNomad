@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "जारी राख्नुहोस्",
   "settings.opencode.setup.diagnostics": "संस्करणका विवरण",
   "settings.opencode.setup.troubleshooting": "समस्या समाधान",
+  "settings.opencode.setup.restartTroubleshooting": "OpenCode सेवा पुनः सुरु गर्नुहोस्",
+  "settings.opencode.setup.restartDescription": "अद्यावधिक स्थापना नगरी OpenCode प्रक्रिया पुनः सुरु गर्नुहोस्। कन्फिगरेसन पुनः लोड गर्ने कार्यभन्दा फरक, यसले प्रक्रिया प्रतिस्थापन गर्छ र सबै जडित क्लाइन्टको सक्रिय काम रोक्छ। सत्रको इतिहास सुरक्षित रहन्छ।",
   "settings.opencode.setup.check": "स्थिति र अपडेट जाँच गर्नुहोस्",
   "settings.opencode.setup.checked": "स्थिति र अपडेट जाँच पूरा भयो।",
   "settings.opencode.setup.reloaded": "OpenCode कन्फिगरेसन पुनः लोड भयो।",

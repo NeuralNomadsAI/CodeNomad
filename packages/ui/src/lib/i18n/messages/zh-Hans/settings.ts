@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "继续",
   "settings.opencode.setup.diagnostics": "版本详情",
   "settings.opencode.setup.troubleshooting": "故障排查",
+  "settings.opencode.setup.restartTroubleshooting": "重启 OpenCode 服务",
+  "settings.opencode.setup.restartDescription": "无需安装更新即可重启 OpenCode 进程。与重新加载配置不同，此操作会替换进程并中断所有已连接客户端的当前工作。会话历史将保留。",
   "settings.opencode.setup.check": "检查状态和更新",
   "settings.opencode.setup.checked": "状态和更新检查已完成。",
   "settings.opencode.setup.reloaded": "OpenCode 配置已重新加载。",

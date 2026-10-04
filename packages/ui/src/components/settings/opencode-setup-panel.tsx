@@ -1,5 +1,7 @@
-import { Show, type ParentProps } from "solid-js"
+import { createSignal, onCleanup, Show, type ParentProps } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { showConfirmDialog } from "../../stores/alerts"
+import { serverSettings } from "../../stores/preferences"
 import { OpenCodeSetupProgress } from "./opencode-setup-progress"
 import { openCodeSetupStatus as status, openCodeSetupBusy as busy, openCodeSetupError, openCodeSetupCheckError,
   openCodeSetupChecking as checking, openCodeSetupAction as action, openCodeSetupFeedback, openCodeInstallationError,
@@ -8,7 +10,26 @@ import { openCodeSetupStatus as status, openCodeSetupBusy as busy, openCodeSetup
 
 export function OpenCodeSetupPanel(props: ParentProps = {}) {
   const { t } = useI18n()
-  const disabled = () => busy() || checking()
+  const [restartPending, setRestartPending] = createSignal(false)
+  let disposed = false
+  onCleanup(() => { disposed = true })
+  const disabled = () => busy() || checking() || restartPending()
+  const restartForTroubleshooting = async () => {
+    if (disabled() || openCodeSetupCheckError() || !status()?.canRestart) return
+    const binary = serverSettings().opencodeBinary
+    setRestartPending(true)
+    try {
+      const confirmed = await showConfirmDialog(t("settings.opencode.setup.restartDescription"), {
+        title: t("settings.opencode.setup.restartTroubleshooting"), variant: "warning",
+        confirmLabel: t("settings.opencode.setup.restartTroubleshooting"), cancelLabel: t("alertDialog.actions.cancel"),
+      })
+      if (!confirmed || disposed || binary !== serverSettings().opencodeBinary || busy() || checking()
+        || openCodeSetupCheckError() || !status()?.canRestart) return
+      await runOpenCodeSetup("restart", { resumeWorkspace: false })
+    } finally {
+      if (!disposed) setRestartPending(false)
+    }
+  }
   const progress = () => checking() ? "settings.opencode.update.checking"
     : action() === "install" ? "settings.opencode.update.updating"
       : action() ? `settings.opencode.setup.progress.${action()}` : undefined
@@ -53,7 +74,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <Show when={isOpenCodeConnected() && canContinueOpenCodeSetup()}>
             <button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void continueOpenCodeSetup()}>{t("settings.opencode.setup.continue")}</button>
           </Show>
-          <Show when={data().canRestart}><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
+          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
         </div>
         <Show when={data().canUpgrade && (data().state === "missing" || data().needsSharedInstallation)}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.sharedInstallDescription")}</p>
@@ -80,13 +101,15 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
             <p role="alert">{t(`settings.opencode.setup.${data().incompatibilityReason}`)}</p>
           </Show>
         </details>
-        <Show when={data().canReload}>
-          <details class="opencode-setup-details">
-            <summary>{t("settings.opencode.setup.troubleshooting")}</summary>
+        <details class="opencode-setup-details">
+          <summary>{t("settings.opencode.setup.troubleshooting")}</summary>
+          <p class="settings-toggle-caption">{t("settings.opencode.setup.restartDescription")}</p>
+          <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
+          <Show when={data().canReload}>
             <p class="settings-toggle-caption">{t("settings.opencode.setup.reloadDescription")}</p>
             <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
-          </details>
-        </Show>
+          </Show>
+        </details>
       </>}
     </Show>
   </div></>

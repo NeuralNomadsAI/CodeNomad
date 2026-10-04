@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "Продолжить",
   "settings.opencode.setup.diagnostics": "Сведения о версиях",
   "settings.opencode.setup.troubleshooting": "Устранение неполадок",
+  "settings.opencode.setup.restartTroubleshooting": "Перезапустить службу OpenCode",
+  "settings.opencode.setup.restartDescription": "Перезапустите процесс OpenCode без установки обновления. В отличие от перезагрузки конфигурации, это заменяет процесс и прерывает активную работу всех подключённых клиентов. История сессий сохраняется.",
   "settings.opencode.setup.check": "Проверить состояние и обновления",
   "settings.opencode.setup.checked": "Проверка состояния и обновлений завершена.",
   "settings.opencode.setup.reloaded": "Конфигурация OpenCode перезагружена.",
