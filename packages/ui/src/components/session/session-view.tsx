@@ -40,6 +40,7 @@ function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text
 
 interface SessionViewProps {
   interruptionPanel?: JSXElement
+  interruptionExpanded?: boolean
   sessionId: string
   activeSessions: Map<string, Session>
   instanceId: string
@@ -676,6 +677,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         {props.interruptionPanel}
         <PromptInput
+          interruptionExpanded={props.interruptionExpanded}
           instanceId={props.instanceId}
           instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}

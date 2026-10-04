@@ -9,6 +9,9 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
+import { runtimeEnv } from "../../../src/lib/runtime-env"
+import { sseManager } from "../../../src/lib/sse-manager"
+import { getFormQueue } from "../../../src/stores/forms"
 import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
@@ -22,8 +25,19 @@ let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },
   projectID: "fixture", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   time: { created: 1, updated: 1 }, agent: "build", status: "idle", model: { providerId: "fixture", modelId: "fixture" } }
+const fixtureSessions = new Map([[sessionId, session]])
+const replies: any[] = []
+let eventTime = 100
+const emit = (type: string, data: unknown) => (sseManager as any).handleEvent(id, {
+  id: `fixture-event-${++eventTime}`, type, created: eventTime, location: { directory: "/repo" }, data,
+})
 const client: any = {
-  session: { list: async () => ({ data: [session], cursor: {} }), active: async () => ({}), get: async () => session, inbox: { list: async () => ({ data: [] }) }, interrupt: async () => { interrupts++ } },
+  session: { list: async () => ({ data: [...fixtureSessions.values()], cursor: {} }), active: async () => ({}),
+    get: async ({ sessionID }: any) => fixtureSessions.get(sessionID), inbox: { list: async () => ({ data: [] }) }, interrupt: async () => { interrupts++ },
+    form: { reply: async (input: any) => { replies.push(input); emit("form.replied", { sessionID: input.sessionID, id: input.formID, answer: input.answer }) } },
+  },
+  form: { list: async () => ({ data: getFormQueue(id) }) },
+  permission: { reply: async (input: any) => { replies.push(input) } },
   message: { list: async () => ({ data: [{ id: "hello", type: "user", text: "Fixture message", time: { created: 1 } }], cursor: {} }) },
   model: { default: async () => ({ data: { providerID: "fixture", id: "fixture" } }) },
   file: { status: async () => ({ data: [] }) },
@@ -47,6 +61,8 @@ let executions = 0
 const escapeStates: boolean[] = []
 const [menuInstance, setMenuInstance] = createSignal<string | undefined>(id)
 let viewAction: (action: string) => boolean
+const [immersive, setImmersive] = createSignal(false)
+const [active, setActive] = createSignal(true)
 function Fixture() {
   viewAction = useViewMenu(menuInstance)
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
@@ -61,11 +77,11 @@ function Fixture() {
   return (
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
-    <InstanceShell instance={instances().get(id)!} isActiveInstance={true} escapeInDebounce={escapeInDebounce()}
+    <InstanceShell instance={instances().get(id)!} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
-      mobileFullscreenMode={false} onEnterMobileFullscreen={() => {}} onExitMobileFullscreen={() => {}} />
+      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} />
   </div>
   )
 }
@@ -76,6 +92,20 @@ bootStage("preferences-before")
 await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
+  runtimeEnv, replies, setImmersive, setActive,
+  addSession: (sid: string) => {
+    fixtureSessions.set(sid, { ...session, id: sid, title: `Fixture ${sid}` })
+    setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
+    setSessionPage(id, [...fixtureSessions.keys()], false, true)
+  },
+  selectSession: (sid: string) => { setActiveParentSession(id, sid); setActiveSession(id, sid) },
+  nativeQuestion: (sid = sessionId, formId = `question-${sid}`, long = false) => emit("form.created", {
+    sessionID: sid, form: { id: formId, sessionID: sid, location: { directory: "/repo" }, title: "Questions", metadata: { kind: "question" },
+      fields: [{ key: "q0", type: "string", title: long ? "Choose the deployment approach for the mobile browser release" : "Approach",
+        description: long ? "Explain the deployment approach and the acceptance checks for the mobile browser release. ".repeat(25) : `Which approach for ${sid}?`, required: true }],
+      state: { status: "pending" } },
+  }),
+  pendingForms: () => getFormQueue(id).map(form => form.id),
   askQuestion: () => addPendingForm(id, {
     id: "dock-question", sessionID: sessionId, title: "Questions", metadata: { kind: "question" },
     fields: [{ key: "q0", type: "string", title: "Approach", description: "Which approach?", required: true }],
