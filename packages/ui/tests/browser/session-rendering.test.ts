@@ -54,7 +54,12 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
       if (window.fixtureScrollEvents.length > 80) window.fixtureScrollEvents.shift();
     }, { capture: true, passive: true });
   })()`)
-  await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
+  await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ receipts: [] }) })
+    }
+    return route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" })
+  })
   await runWithDiagnosticCleanup({
     run: async () => {
       await page.goto(`${baseUrl}/fixture?${name}`)
