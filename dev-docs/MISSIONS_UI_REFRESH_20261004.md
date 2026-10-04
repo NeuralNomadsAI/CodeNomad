@@ -128,6 +128,77 @@ Historical native/desktop evidence remains historical; do not relabel it as proo
 of this updated build. Existing offline-admission and dormant durable-host limits
 documented in `MISSIONS_NATIVE_PRODUCT_ACCEPTANCE.md` remain unchanged.
 
+## Second upstream refresh before compilation
+
+The user requested a second refresh because additional PRs merged while source
+qualification was running. Fetched `upstream/dev` at `5c523e3f` and incorporated
+#844 (explicit runtime restart recovery), #845 (mobile interruption geometry),
+and #846 (answer focus during session activation). Preserved the in-progress
+follow-up in local checkpoint `30b2cb8d`, with an external file backup at
+`C:/Users/Admin/AppData/Local/Temp/opencode/missions-before-second-upstream-20261004-194056`.
+Merge `8e1ebd32` is conflict-free; UI typecheck passed afterward. All new activation
+and mobile behavior is retained alongside Missions; this is not a runtime upgrade
+or shared-daemon restart. Earlier aggregate runs with source changes are not final
+qualification; the integrated seam checks and independent review are rerun before
+compilation/deployment.
+
+## Built and installed candidate
+
+The user explicitly requested compilation immediately, without waiting for more
+global exploratory checks, then confirmed that installation of the NSIS bundle
+must not be forgotten. Production source was frozen at merge `8e1ebd32`:
+
+- Independent Missions UI re-review: **P1/P2/P3 = 0**, including same-active-child
+  RTL request selection before owned drawer close and disappearance during cold
+  hydration. Independent latest-upstream seam review: **P1/P2/P3 = 0**.
+- Integrated family/drawer/dock/activation/mobile/setup browser run: **79/79**,
+  zero failures or skips. Native updater service units: **22/22**.
+- All UI units on the integrated candidate: **1,276/1,276**. The aggregate helper
+  flagged Tauri CLI's Cargo.toml byte rewrite during compilation; its Git-filtered
+  blob still equals HEAD (`ec13494194fa4916e752b915dee05199a96f4fd2`). This is not
+  a production UI change, but the raw byte-manifest check is not called a pass.
+- Missions server aggregate: **1,096/1,096** before the second upstream refresh.
+  No Missions server source changed in the second refresh; updater changes were
+  independently tested above. Earlier whole-checkout manifest changes retain
+  their honest failed aggregate exit status.
+- Exploratory full browser run: **630 tests, 623 passed, 6 failed, 1 skipped**,
+  with source changed during execution. Three auth cases were contaminated by
+  a shared-cache Vite EPERM; two session-rendering cases passed the exact current
+  isolated rerun (2/2); the mobile drawer-dismissal assertion now awaits the
+  transition and passed in the integrated family run. This is not a fully green
+  global browser qualification. No shared caches or dependencies were repaired.
+- UI, isolated server compilation, three native plugin builds, serialized locked
+  production dependency staging and packaged static/import/asset smoke checks
+  passed. Packaged Node is v24.20.0; native OpenCode remains 2.0.22.
+- Tauri `build --bundles nsis` completed its optimized release in 1m57s and
+  produced `packages/tauri-app/target/release/bundle/nsis/CodeNomad_0.20.1_x64-setup.exe`.
+  Existing dead-code warnings remain. The CLI also warned that the binary lacks
+  `__TAURI_BUNDLE_TYPE`; automatic updater recognition is not qualified by this
+  installation. The actual NSIS install completed successfully.
+
+Final SHA-256 identities:
+
+- Executable: `15e4abbbbbaf863108bf0946bf2cdaf04ab90aa21d63ef6c4ba446f6d35440ce`.
+- NSIS: `d3bd35a4d6fd462d5ff4b421387e30b2f77368f01ba240178c9e02018a86ed36`.
+- UI index: `5cd05c70ececd5d359884d31d207f8d0d1169dc6bb30c459566a001703b3b69b`.
+
+Backed up all **12,385** existing installation files and verified their copies at
+`C:/Users/Admin/AppData/Local/CodeNomad-backups/20261004-195130-nsis-refresh/previous`.
+Gracefully closed only the exact owned installed native host and backend; shared
+daemon PID **12896**, creation `2026-10-03T15:34:55.337994+02:00`, remained unchanged.
+Ran the actual installer with `/S /UPDATE /NS` and the exact existing destination;
+update mode does not uninstall user data. Exit **0**; verified the installed
+executable plus **12,288** candidate resource files. Old unreferenced assets may
+remain, following the ordinary NSIS update behavior; no broad cleanup was added.
+
+Relaunched the installed ordinary profile without trial flags: host PIDs
+**17344/27724**, backend **28712/33968**, visible native window title CodeNomad.
+Configuration and native state directories were not edited/deleted, and the running
+Android Mission was not mutated. Native automation still reports no visible target
+for this session, so actual reader/profile/Mission restoration is not claimed as
+visually inspected. Deployment receipt:
+`C:/Users/Admin/AppData/Local/Temp/opencode/missions-nsis-install-20261004.json`.
+
 ## File-size signals
 
 No threshold-only refactor is included. Manually touched source files above the
