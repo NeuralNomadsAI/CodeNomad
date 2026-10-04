@@ -15,6 +15,9 @@ the saved height or draft; collapse or settlement restores the preference. The d
 does not flex-shrink into an unusable header. The shell bounds the conversation to
 the visual viewport while a request is expanded, including Android keyboard resize
 and pan. Request fields scroll within the dock while its actions remain reachable.
+For keyboard heights too short to fit the whole stack, a measured minimum reserves
+the header, footer and one usable input. The session stack then scrolls as a whole
+instead of clipping controls; field scrolling can chain into that outer scroller.
 
 ## Ownership and navigation
 

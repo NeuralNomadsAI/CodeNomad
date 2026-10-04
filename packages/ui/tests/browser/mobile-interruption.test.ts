@@ -150,6 +150,129 @@ async function assertFooter(page: Page, selector = ".form-request-actions") {
   assert.deepEqual(metrics, { bounded: true, controls: true })
 }
 
+// Exercise native nested scrolling rather than scrollIntoView: the field scrolls
+// its long contents, and the outer stack exposes fixed actions when the keyboard
+// leaves less room than the dock's usable minimum plus the composer.
+async function revealByGesture(page: Page, control: Locator, touch: boolean) {
+  const cdp = touch ? await page.context().newCDPSession(page) : undefined
+  let stable = 0, previousTop: number | undefined
+  try {
+    for (let attempt = 0; attempt < 70; attempt++) {
+      const target = await control.evaluate(el => {
+        const r = el.getBoundingClientRect(), outer = el.closest(".session-view")!.getBoundingClientRect()
+        const top = Math.max(outer.top, visualViewport?.offsetTop ?? 0)
+        const bottom = Math.min(outer.bottom, (visualViewport?.offsetTop ?? 0) + (visualViewport?.height ?? innerHeight))
+        const fields = el.closest(".form-request-fields, .interruption-permission-content")?.getBoundingClientRect()
+        const withinFields = !fields || (r.top >= fields.top && r.bottom <= fields.bottom)
+        const ready = withinFields && r.top >= top && r.bottom <= bottom && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+        // First expose the inner scrollport, then scroll within it. Gestures on
+        // visible dock chrome reach the stack without grabbing a drawer resizer
+        // or continuing to edit/scroll the focused permission textarea.
+        const inner = fields && fields.top >= top && fields.bottom <= bottom && !withinFields
+        const wanted = inner ? r.y + r.height / 2 : fields && !withinFields ? fields.y + fields.height / 2 : r.y + r.height / 2
+        const chrome = [...el.closest(".interruption-dock")!.querySelectorAll(".window-header, .window-footer")]
+          .map(node => node.getBoundingClientRect()).map(r => ({ x: r.x, width: r.width, top: Math.max(top, r.top), bottom: Math.min(bottom, r.bottom) }))
+          .filter(r => r.bottom - r.top > 8).sort((a, b) => (b.bottom - b.top) - (a.bottom - a.top))[0]
+        const rect = inner ? fields : chrome ?? { x: outer.x, width: 24, top, bottom }
+        const delta = wanted - (inner ? (rect.top + rect.bottom) / 2 : (top + bottom) / 2)
+        return { ready, controlTop: r.top, x: rect.x + rect.width / 2,
+          y: inner ? (rect.top + rect.bottom) / 2 : delta > 0 ? rect.bottom - 3 : rect.top + 3,
+          delta, top: visualViewport?.offsetTop ?? 0, bottom }
+      })
+      if (target.ready) {
+        stable = previousTop === target.controlTop ? stable + 1 : 0
+        previousTop = target.controlTop
+        if (stable >= 5) return
+        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+        continue
+      }
+      stable = 0
+      if (cdp) {
+        const distance = Math.sign(target.delta) * Math.max(24, Math.min(80, Math.abs(target.delta)))
+        const endY = Math.max(target.top + 2, Math.min(target.bottom - 2, target.y - distance))
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: target.x, y: target.y }] })
+        for (let step = 1; step <= 5; step++) {
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: target.x, y: target.y + (endY - target.y) * step / 5 }] })
+          await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+        }
+        await page.waitForTimeout(100) // Release a held drag, rather than a kinetic fling that consumes the next tap.
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      } else {
+        await page.mouse.move(target.x, target.y)
+        await page.mouse.wheel(0, Math.sign(target.delta) * Math.min(180, Math.abs(target.delta)))
+      }
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    }
+    assert.fail(`control was not reachable through ${touch ? "touch" : "wheel"}: ${JSON.stringify(await control.evaluate(el => {
+      const r = el.getBoundingClientRect(), outer = el.closest(".session-view")!
+      return { rect: r.toJSON(), outer: outer.getBoundingClientRect().toJSON(), scrollTop: outer.scrollTop, scrollHeight: outer.scrollHeight,
+        hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.className }
+    }))}`)
+  } finally { await cdp?.detach() }
+}
+
+for (const landscape of [false, true]) for (const keyboardHeight of [260, 220, 180]) {
+  test(`Android ${landscape ? "landscape touch" : "portrait wheel"} keyboard ${keyboardHeight}px scrolls the request stack without clipping actions`, async () => {
+    const page = await browser.newPage({ ...devices["Pixel 5"], viewport: landscape ? { width: 851, height: 393 } : { width: 393, height: 851 } })
+    page.setDefaultTimeout(15000)
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.addInitScript(`(() => {
+      let height = innerHeight
+      Object.defineProperty(visualViewport, "height", { get: () => height })
+      window.keyboardViewport = next => { height = next; visualViewport.dispatchEvent(new Event("resize")) }
+    })()`)
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url, { timeout: 45000 })
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 45000 })
+      const composer = page.locator("textarea.prompt-input:visible")
+      await composer.fill("Saved maximum composer draft")
+      await page.locator(".prompt-resize-handle").focus()
+      await page.keyboard.press("End")
+      const height = await composer.evaluate(el => el.getBoundingClientRect().height)
+      const saved = await page.evaluate(() => (window as any).fixture.promptHeight())
+      await page.evaluate(keyboardHeight => {
+        ;(window as any).fixture.nativeQuestion("session", "short-keyboard-form", true)
+        ;(window as any).keyboardViewport(keyboardHeight)
+      }, keyboardHeight)
+      await page.waitForFunction(bottom => document.querySelector(".content-area")!.getBoundingClientRect().bottom <= bottom, keyboardHeight)
+      await page.waitForFunction(() => {
+        const el = document.querySelector(".session-view")!
+        return el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === "auto"
+      })
+      const answer = page.locator('.interruption-dock input[type="text"]:visible')
+      await revealByGesture(page, answer, landscape)
+      await answer.tap()
+      await answer.fill("Reachable with a short keyboard")
+      const submit = page.getByRole("button", { name: "Submit", exact: true })
+      await revealByGesture(page, submit, landscape)
+      await assertFooter(page)
+      if (process.env.CODENOMAD_MOBILE_CAPTURE) {
+        await mkdir(process.env.CODENOMAD_MOBILE_CAPTURE, { recursive: true })
+        await page.screenshot({ path: join(process.env.CODENOMAD_MOBILE_CAPTURE, `short-keyboard-${landscape ? "landscape" : "portrait"}-${keyboardHeight}.png`), scale: "css" })
+      }
+      await submit.tap()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies.length), 1, "the visible Submit receives the native tap")
+      await page.locator(".interruption-dock").waitFor({ state: "detached" })
+      await page.evaluate(() => (window as any).fixture.queuePermission())
+      const reason = page.locator(".interruption-dock textarea")
+      await revealByGesture(page, reason, landscape)
+      await reason.fill("Permission still reachable")
+      const deny = page.getByRole("button", { name: "Deny", exact: true })
+      await revealByGesture(page, deny, landscape)
+      await assertFooter(page, ".tool-call-permission-buttons")
+      await deny.tap()
+      await page.locator(".interruption-dock").waitFor({ state: "detached" })
+      await page.evaluate(() => (window as any).keyboardViewport(innerHeight))
+      await page.waitForFunction(height => document.querySelector("textarea.prompt-input")!.getBoundingClientRect().height === height, height)
+      assert.equal(await composer.inputValue(), "Saved maximum composer draft")
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.promptHeight()), saved)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
+
 for (const mode of ["desktop", "mobile", "immersive", "landscape"] as const) {
   test(`real shell pending question survives two-session navigation in ${mode}`, async (t) => {
     const mobile = mode !== "desktop"

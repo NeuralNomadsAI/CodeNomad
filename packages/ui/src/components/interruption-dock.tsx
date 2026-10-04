@@ -7,6 +7,7 @@ import { sessions } from "../stores/sessions"
 import { interruptionFocus } from "../stores/interruption-navigation"
 import FormRequest from "./form-request"
 import { InterruptionPermission } from "./interruption-permission"
+import { useInterruptionMinimumHeight } from "./interruption-dock-layout"
 
 export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
   const { t } = useI18n()
@@ -21,6 +22,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   createEffect(() => props.onExpandedChange?.(queue().length > 0 && !collapsed()))
   onCleanup(() => props.onExpandedChange?.(false))
   const current = createMemo(() => byKey().get(selected() ?? "") ?? queue().find(item => item.payload.sessionID === props.sessionId) ?? queue()[0])
+  const minimumHeight = useInterruptionMinimumHeight(() => root, () => collapsed() ? undefined : current()?.key)
   const index = () => queue().findIndex(item => item.key === current()?.key)
   const title = (sessionId: string) => sessions().get(props.instanceId)?.get(sessionId)?.title || sessionId
   const heading = () => t(current()?.kind === "permission" ? "interruption.permission" : "interruption.question")
@@ -51,7 +53,8 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   }
 
   return <Show when={queue().length > 0}>
-    <section ref={root} class="interruption-dock window-shell" classList={{ "is-collapsed": collapsed() }} tabIndex={-1} aria-label={t("permissionApproval.title")}>
+    <section ref={root} class="interruption-dock window-shell" classList={{ "is-collapsed": collapsed() }}
+      style={{ "min-height": !collapsed() && minimumHeight() !== undefined ? `${minimumHeight()}px` : undefined }} tabIndex={-1} aria-label={t("permissionApproval.title")}>
       <header class="window-header">
         <div class="interruption-heading">
           <Show when={current()?.kind === "permission"} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}><ShieldCheck size={18} aria-hidden="true" /></Show>
