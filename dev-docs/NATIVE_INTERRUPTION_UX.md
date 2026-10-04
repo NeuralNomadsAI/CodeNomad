@@ -35,6 +35,9 @@ instead of clipping controls; field scrolling can chain into that outer scroller
   by request kind/id, preserving partial answers and rejection reasons through native
   object replacement, queue navigation and session navigation.
 - Collapse only hides the panel body. It never cancels or refuses a request.
+- Deferred session-activation focus must recheck the current input and modal owner
+  when it runs, and expire when the pane deactivates or unmounts. An answer field
+  focused during navigation retains keyboard input instead of yielding to the composer.
 - Pending questions appear only in the dock. There are no “View in discussion” or
   “Answer in dock” links and no interruption-specific transcript reveal state.
 - Only the panel submits replies. Transcript tools no longer register document-wide

@@ -294,8 +294,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   createEffect(
     on(
-      () => props.isActive,
-      (isActive) => {
+      () => [props.isActive, props.sessionId] as const,
+      ([isActive]) => {
         if (!isActive) {
           if (props.focusConversationOnActivate) props.onConversationFocusHandled?.()
           clearConversationPlaybackForSession(props.instanceId, props.sessionId)
@@ -307,33 +307,42 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         // Don't steal focus from other inputs (command palette, dialogs, selectors, etc.)
         if (typeof document === "undefined") return
-        const activeEl = document.activeElement as HTMLElement | null
-        const activeIsInput =
-          activeEl?.tagName === "INPUT" ||
-          activeEl?.tagName === "TEXTAREA" ||
-          activeEl?.tagName === "SELECT" ||
-          Boolean(activeEl?.isContentEditable)
-        if (activeIsInput) return
-
-        const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
-        if (modalOpen) return
+        const activeEl = document.activeElement
+        const focusIsProtected = () => {
+          const current = document.activeElement as HTMLElement | null
+          return current?.matches("input, textarea, select") || current?.isContentEditable
+            || Boolean(current?.closest(".interruption-dock"))
+            || Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
+        }
+        if (focusIsProtected()) return
 
         // Defer until the session pane is visible and the textarea is mounted.
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (!props.isActive) return
+        // Cleanup also fences already-dispatched frames across rapid reactivation.
+        let cancelled = false
+        let frame: number
+        onCleanup(() => {
+          cancelled = true
+          cancelAnimationFrame(frame)
+        })
+        frame = requestAnimationFrame(function waitForActivatedSession() {
+          if (cancelled || !props.isActive) return
+          frame = requestAnimationFrame(function focusActivatedSession() {
+            if (cancelled || !props.isActive || !rootRef?.isConnected) return
+            const activeElement = document.activeElement
+            const focusIsUnclaimed =
+              !activeElement || activeElement === document.body || activeElement === document.documentElement
+            // Input/modal ownership can change while either frame is pending.
+            // Preserve a newly claimed control, including the dock's own chrome.
+            const focusIsBlocked = focusIsProtected() || (!focusIsUnclaimed && activeElement !== activeEl)
             if (props.focusConversationOnActivate) {
-              const activeElement = document.activeElement
-              const focusIsUnclaimed =
-                !activeElement || activeElement === document.body || activeElement === document.documentElement
-              const modalIsOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
-              if (focusIsUnclaimed && !modalIsOpen && focusConversationStream(rootRef)) {
+              if (focusIsUnclaimed && !focusIsBlocked && focusConversationStream(rootRef)) {
                 props.onConversationFocusHandled?.()
                 return
               }
               props.onConversationFocusHandled?.()
-              if (!focusIsUnclaimed || modalIsOpen) return
+              if (!focusIsUnclaimed) return
             }
+            if (focusIsBlocked) return
             if (promptInputApi) {
               promptInputApi.focus()
               return
