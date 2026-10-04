@@ -503,6 +503,48 @@ test("troubleshooting remains visible with restart disabled when lifecycle autho
   } finally { await page.close() }
 })
 
+test("superseding a restart confirmation cancels it and unlocks maintenance without a mutation", async () => {
+  for (const replacement of ["alert", "confirm", "prompt"]) {
+    const page = await browser.newPage()
+    let mutations = 0
+    await page.route("**/api/**", route => {
+      if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+      return route.fulfill({ json: { ...healthyStatus, canRestart: true, canReload: true } })
+    })
+    try {
+      await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+      const panel = page.locator(".opencode-setup-panel")
+      await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+      await panel.getByText("Troubleshooting", { exact: true }).click()
+      const restart = panel.getByRole("button", { name: "Restart OpenCode service", exact: true })
+      await restart.click()
+      await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).waitFor()
+      await page.evaluate(type => (window as any).fixture.replaceDialog(type), replacement)
+      const next = page.getByRole("dialog", { name: "Fixture replacement", exact: true })
+      await next.waitFor()
+      await next.getByRole("button", { name: replacement === "alert" ? "OK" : "Cancel", exact: true }).click()
+      await next.waitFor({ state: "hidden" })
+      await page.waitForFunction(() => [...document.querySelectorAll(".opencode-setup-panel button")]
+        .filter(button => /^(Restart OpenCode service|Reload OpenCode configuration|Check status and updates)$/.test(button.textContent ?? ""))
+        .every(button => !(button as HTMLButtonElement).disabled))
+      assert.equal(await restart.isEnabled(), true)
+      assert.equal(await panel.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).isEnabled(), true)
+      assert.equal(await panel.getByRole("button", { name: "Check status and updates", exact: true }).isEnabled(), true)
+      assert.equal(mutations, 0)
+      // Superseding a prompt must also settle its caller, without treating the
+      // replacement's dismissal as an affirmative answer to the old dialog.
+      await page.evaluate(() => (window as any).fixture.replaceDialog("prompt"))
+      await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).waitFor()
+      await page.evaluate(() => (window as any).fixture.replaceDialog("alert"))
+      await page.waitForFunction(() => (window as any).fixture.replacementResult() === null)
+      await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).getByRole("button", { name: "OK", exact: true }).click()
+      await restart.click()
+      await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click()
+      assert.equal(mutations, 0)
+    } finally { await page.close() }
+  }
+})
+
 test("a changed executable or lost restart capability fences a pending confirmation", async () => {
   for (const change of ["binary", "capability"]) {
     const page = await browser.newPage()
