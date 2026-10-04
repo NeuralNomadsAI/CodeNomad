@@ -48,6 +48,12 @@ let config = { settings: { locale: "en" } }
 serverApi.fetchConfigOwner = async () => config as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
+serverApi.fetchPermissionReceipts = async () => ({ receipts: [] })
+serverApi.listWorkspaceFiles = async () => []
+serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
+  entries: [{ id: "hello", seq: 0, type: "user", tools: 0, reasoning: 0 }],
+  checkpoints: [{ after: -1, through: 0, digest: "0".repeat(64), changed: true }], cursor: null,
+})
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))

@@ -46,7 +46,7 @@ test("a question retains its draft while a different conversation receives a per
     const answer = page.locator('.interruption-dock input[type="text"]:visible')
     await answer.fill("Draft before switching")
 
-    // The unrelated session cannot expose or focus the first conversation's editor.
+    // Navigation offers a compact preview, keeping the hidden editor inert.
     await page.evaluate(() => {
       const fixture = (window as any).fixture
       fixture.activationFrames.pause()
@@ -71,16 +71,16 @@ test("a question retains its draft while a different conversation receives a per
     assert.deepEqual(pending, [{ id: "permission-other", sessionID: "other" }])
     assert.equal(await answer.count(), 0)
     assert.equal(await page.locator(".prompt-input").inputValue(), "")
-    assert.equal(await page.locator(".interruption-session").innerText(), "Other session")
-    assert.equal(await page.locator(".interruption-position").count(), 0)
+    assert.equal(await page.locator(".interruption-heading .window-title").innerText(), "Other conversation · Main session")
+    assert.equal(await page.locator(".interruption-navigation .interruption-position").innerText(), "2 / 2")
     await page.evaluate(() => (window as any).fixture.switch("s"))
     assert.equal(await answer.inputValue(), "Draft before switching")
     await answer.fill("Continue the original answer")
     await page.evaluate(() => (window as any).fixture.activationFrames.flush())
     assert.equal(await answer.evaluate(element => element === document.activeElement), true)
     assert.equal(await page.locator(".interruption-session").innerText(), "Main session")
-    assert.equal(await page.locator(".interruption-position").count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).count(), 0)
+    assert.equal(await page.locator(".interruption-navigation .interruption-position").innerText(), "2 / 2")
+    assert.equal(await page.locator(".interruption-external-preview").innerText(), "Other conversation · Other session\n1")
     assert.deepEqual(errors, [])
   } finally {
     await page.close()
