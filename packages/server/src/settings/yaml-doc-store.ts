@@ -7,6 +7,12 @@ import { applyMergePatch, isPlainObject } from "./merge-patch"
 
 export type SettingsDoc = Record<string, unknown>
 
+export class SettingsReadError extends Error {
+  constructor() {
+    super("Settings document could not be read authoritatively")
+  }
+}
+
 function ensureTrailingNewline(content: string): string {
   if (!content) return "\n"
   return content.endsWith("\n") ? content : `${content}\n`
@@ -106,6 +112,43 @@ export class YamlDocStore {
     const doc = this.get()
     const value = (doc as any)?.[owner]
     return normalizeDoc(value)
+  }
+
+  /** Fresh, read-only authority; the forgiving display cache is not a CAS base. */
+  getAuthoritativeOwner(owner: string): SettingsDoc {
+    let content: string
+    try {
+      content = fs.readFileSync(this.filePath, "utf-8")
+    } catch (error: any) {
+      // Only an actually missing path is empty authority. A dangling symlink,
+      // permission failure or directory must not authorize a destructive repair.
+      if (error?.code === "ENOENT") {
+        try {
+          fs.lstatSync(this.filePath)
+        } catch (statError: any) {
+          if (statError?.code === "ENOENT") {
+            this.cache = {}
+            this.loaded = true
+            return {}
+          }
+        }
+      }
+      throw new SettingsReadError()
+    }
+
+    let doc: unknown
+    try {
+      doc = parseYaml(content)
+    } catch {
+      throw new SettingsReadError()
+    }
+    if (!isPlainObject(doc)) throw new SettingsReadError()
+    if (Object.prototype.hasOwnProperty.call(doc, owner) && !isPlainObject(doc[owner])) throw new SettingsReadError()
+    // Publish a refreshed cache only after a successful, valid document read.
+    // The following synchronous owner merge therefore retains external fields.
+    this.cache = doc
+    this.loaded = true
+    return doc[owner] as SettingsDoc ?? {}
   }
 
   replaceOwner(owner: string, value: unknown): SettingsDoc {

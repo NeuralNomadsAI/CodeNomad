@@ -338,6 +338,19 @@ test("exact focus intents honor the native session and never substitute another 
     assert.equal(await answer(page).inputValue(), "Scoped draft")
     await page.evaluate(() => (window as any).fixture.focusScoped("already-answered", "other"))
     assert.equal(await answer(page).inputValue(), "Scoped draft")
+    await page.getByRole("button", { name: "Collapse requests", exact: true }).click()
+    await page.evaluate(async modulePath => {
+      const { focusInterruption } = await import(/* @vite-ignore */ modulePath)
+      focusInterruption("interruptions", "missing-session")
+    }, "/src/stores/interruption-navigation.ts")
+    assert.equal(await answer(page).count(), 0, "a session-only intent cannot substitute another conversation")
+    await page.evaluate(async modulePath => {
+      const { focusInterruption } = await import(/* @vite-ignore */ modulePath)
+      focusInterruption("interruptions", undefined, undefined, "permission")
+    }, "/src/stores/interruption-navigation.ts")
+    assert.equal(await answer(page).count(), 0, "a kind-only intent cannot substitute a different request")
+    await page.evaluate(() => (window as any).fixture.focusScoped("question", undefined, "form"))
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.replies), [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }

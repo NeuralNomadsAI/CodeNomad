@@ -69,6 +69,11 @@ async function setup(value = mission()) {
 }
 const show = (page: Page, id = "task") => page.evaluate(id => (window as any).taskReader.show(id), id)
 const article = (page: Page, label: string) => page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: label, exact: true }) })
+const disclosure = (page: Page, label: string) => page.locator(".mission-task-reader > details").filter({ has: page.locator("summary").filter({ hasText: new RegExp(`^${label}$`) }) })
+async function expand(page: Page, label: string) {
+  const details = disclosure(page, label)
+  if (!(await details.evaluate(element => (element as HTMLDetailsElement).open))) await details.locator("summary").click()
+}
 async function tails(surface: Locator, proof: string) {
   const input = surface.getByRole("spinbutton")
   await input.waitFor()
@@ -90,12 +95,18 @@ test("compact Work rows have only one-line title/status/actions; eye reader owns
     assert.equal(await f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').count(), 1)
     assert.equal(await f.page.locator('.mission-graph path[data-from="work"][data-to="after"]').count(), 1)
     const reader = f.page.locator(".mission-reader")
+    assert.equal(await disclosure(f.page, "Task brief").evaluate(element => (element as HTMLDetailsElement).open), false)
+    assert.equal(await disclosure(f.page, "Technical details").evaluate(element => (element as HTMLDetailsElement).open), false)
+    assert.deepEqual(await reader.getByRole("heading", { level: 3 }).allTextContents(), ["Summary", "Recommended next moves", "Evidence"])
+    assert(!(await reader.innerText()).includes("requested-agent"), "requested execution is secondary to the result")
+    await expand(f.page, "Technical details")
     assert((await reader.innerText()).includes("implementer"))
     assert((await reader.innerText()).includes("requested-agent"))
     assert(!(await reader.innerText()).includes("mutable-session-agent"), "mutable settings are not native invocation evidence")
     assert((await reader.innerText()).includes("Call return not recorded"))
     assert((await reader.innerText()).includes("Coordinator business readout; no notification is sent."))
     assert.equal(await reader.locator("[data-notification]").count(), 0)
+    await expand(f.page, "Task brief")
     for (const [label, proof] of [["Task brief", "BRIEF_TAIL"], ["Summary", "SUMMARY_TAIL"], ["Evidence", "EVIDENCE_TAIL"],
       ["Recommended next moves", "NEXT_TAIL"], ["Structured report", "ARTIFACT_TAIL"]]) await tails(article(f.page, label), proof)
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
@@ -108,6 +119,8 @@ test("dependencies, dependents and replacements navigate reader identity without
     await f.page.locator("#draft").fill("Preserved draft")
     await f.page.locator("#transcript").evaluate(e => { e.scrollTop = 100 })
     await show(f.page)
+    await expand(f.page, "Task brief")
+    await expand(f.page, "Technical details")
     await article(f.page, "Task brief").getByRole("spinbutton").fill("2")
     await f.page.getByRole("button", { name: "Depends on Earlier task", exact: true }).click()
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Earlier task", exact: true }).waitFor()
@@ -124,7 +137,7 @@ test("dependencies, dependents and replacements navigate reader identity without
   } finally { await f.page.close() }
 })
 
-test("latest task result keeps late native-return and notification evidence distinct from running native work", async () => {
+test("current task result does not promote a late return, but retains its native notification evidence in technical detail", async () => {
   const current = mission(), late: MissionReport = { ...current.reports[0], id: "late", createdAt: 3, late: true,
     delivery: "native-return", notificationStatus: "pending", summary: "Latest result" }
   current.tasks[1].lateReports = [late]
@@ -132,14 +145,21 @@ test("latest task result keeps late native-return and notification evidence dist
   try {
     await show(f.page)
     await article(f.page, "Summary").locator(".markdown-body").waitFor()
-    await f.page.waitForFunction(() => document.querySelector(".mission-reader")?.textContent?.includes("Latest result"))
+    assert.match(await article(f.page, "Summary").innerText(), /SUMMARY/)
+    assert(!(await article(f.page, "Summary").innerText()).includes("Latest result"), "late history must not replace the authoritative current result")
+    const history = f.page.getByRole("region", { name: "Previous and late results", exact: true }).locator("details").filter({ has: f.page.locator("summary").filter({ hasText: "Latest result" }) })
+    assert.equal(await history.evaluate(element => (element as HTMLDetailsElement).open), false, "late evidence starts as a historical disclosure")
+    await history.locator(":scope > summary").click()
+    await history.locator(":scope > details > summary").click()
+    await expand(f.page, "Technical details")
     const text = await f.page.locator(".mission-reader").innerText()
+    assert(text.includes("Latest result"), "late native-return report remains readable as historical evidence, not the current result")
     assert(text.includes("Report uses native-parent return route; consumption unconfirmed."))
     assert(text.includes("Coordinator notification pending (not admitted); no coordinator send requested."))
     assert(text.includes("Reported after task retirement or Mission Stop"))
     assert(text.includes("Call outcomes do not prove session termination or task completion."))
     assert(text.includes("Call return not recorded"))
-    assert.deepEqual(f.errors, [])
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })
 
@@ -148,6 +168,7 @@ test("reader task navigation fences delayed copy feedback across ABA identities 
   try {
     const eye = f.page.locator('[data-task-key="work"]').getByRole("button", { name: "Read in chat area", exact: true })
     await eye.click()
+    await expand(f.page, "Task brief")
     await f.page.evaluate(() => { (navigator.clipboard as any).writeText = () => new Promise(resolve => { (window as any).releaseCopy = resolve }) })
     await article(f.page, "Task brief").getByRole("button", { name: "Copy", exact: true }).click()
     await f.page.getByRole("button", { name: "Depends on Earlier task", exact: true }).click()
@@ -168,6 +189,22 @@ test("task reader session link uses authorized catalog navigation and never writ
     await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
     await f.page.locator(".mission-reader").waitFor({ state: "detached" })
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "actor")
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.page.close() }
+})
+
+for (const actor of [undefined, "coordinator", "unowned-worker"] as const)
+test(`task reader never falls back to the coordinator for ${actor ?? "missing"} task identity`, async () => {
+  const value = mission(); value.tasks[1].actorSessionId = actor
+  const f = await setup(value)
+  try {
+    await show(f.page)
+    const reader = f.page.locator(".mission-reader")
+    assert.equal(await reader.locator(".mission-inline-session").count(), 0)
+    await expand(f.page, "Technical details")
+    assert.equal(await reader.getByRole("button", { name: /^Open / }).count(), 0)
+    assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "coordinator")
+    assert.deepEqual(f.requests.filter(request => request.includes("/session/")), [])
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })

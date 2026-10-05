@@ -54,7 +54,7 @@ export const MissionActors: Component<MissionActorsProps> = (props) => {
           text={<div class="mission-activity-copy"><strong>{title(node())}</strong><span title={context()}>{context()}</span></div>}
           statusKind={state()} status={<span data-state={state()}>{familyScoped()
             ? props.t("missions.control.conversations.familyState", { state: props.t(statusKey()) }) : props.t(statusKey())}</span>}
-          actions={[{ key: "open", label: props.t("missions.control.actor.open", { actor: title(node()) }),
+          actions={node().sessionId === props.mission.coordinatorSessionId ? [] : [{ key: "open", label: props.t("missions.control.actor.open", { actor: title(node()) }),
             icon: <ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" />, onSelect: () => props.onOpenActor(node().sessionId) }]} />
       </div>
       <Show when={node().children.length}><ul class="mission-conversation-children">

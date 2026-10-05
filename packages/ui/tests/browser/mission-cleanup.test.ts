@@ -5,6 +5,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 import { cleanupBackend } from "./fixtures/mission-cleanup-backend"
 import { clickMissionAction } from "./mission-actions"
 
@@ -12,16 +13,20 @@ let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   cache = await createFixtureCache()
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), { name: "mission-cleanup-fixture", configureServer(s) { s.middlewares.use("/cleanup-fixture", async (_req, res) => {
-      res.setHeader("Content-Type", "text/html")
-      res.end(await s.transformIndexHtml("/cleanup-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>'))
-    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/cleanup-fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  const shutdown = createFixtureShutdown(cache)
+  try {
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "mission-cleanup-fixture", configureServer(s) { s.middlewares.use("/cleanup-fixture", async (_req, res) => {
+        res.setHeader("Content-Type", "text/html")
+        res.end(await s.transformIndexHtml("/cleanup-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>'))
+      }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    shutdown.own(server)
+    await server.listen()
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/cleanup-fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 })
-after(async () => { try { await browser?.close(); await server?.close() } finally { await cache?.dispose() } })
+after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
 async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement = false) {
   const page = await browser.newPage({ locale: "en-US" })
@@ -45,6 +50,14 @@ async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement =
 }
 const submit = (page: Page) => page.locator("form.mission-editor").getByRole("button", { name: "Delete mission", exact: true }).click()
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+async function openCleanupHistory(page: Page) {
+  const history = page.getByRole("button", { name: "Conversation cleanup history", exact: true })
+  if (await history.getAttribute("aria-expanded") !== "true") await history.click()
+  assert.equal(await history.getAttribute("aria-expanded"), "true")
+  const cleanup = page.getByRole("button", { name: "Conversation cleanup", exact: true })
+  if (await cleanup.getAttribute("aria-expanded") !== "true") await cleanup.click()
+  assert.equal(await cleanup.getAttribute("aria-expanded"), "true")
+}
 
 test("committed partial cleanup survives cancel, remount and reconnect with the exact original request", async () => {
   const f = cleanupBackend(), mission = await f.create("remount", 2), actors = mission.actors.filter(actor => actor.kind === "specialist")
@@ -69,6 +82,7 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
     assert.equal((await f.control.snapshot()).missions.length, 0)
     f.failing.clear()
     await clickMissionAction(page.locator(".mission-cleanup .mission-list-item"), "Try again")
+    await openCleanupHistory(page)
     await page.locator(".mission-cleanup").getByText("2 removed · 0 kept · 0 pending", { exact: true }).waitFor()
     assert.equal(requests.length, 2); assert.deepEqual(requests[0].input, requests[1].input)
     assert.deepEqual(requests.map(item => item.status), [503, 200])
@@ -96,7 +110,10 @@ test("child-bearing specialists remain intact and expose the durable retention r
   const { page, requests } = await setup(f)
   try {
     await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
-    await page.getByRole("button", { name: "Conversation cleanup", exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "Conversation cleanup history", exact: true }).getAttribute("aria-expanded"), "false")
+    assert.equal(await page.getByRole("button", { name: "Conversation cleanup", exact: true }).count(), 0,
+      "finished cleanup details are initially hidden inside history")
+    await openCleanupHistory(page)
     await page.getByText("0 removed · 1 kept · 0 pending", { exact: true }).waitFor()
     await page.getByText("Kept because the conversation has child conversations.", { exact: true }).waitFor()
     assert.equal(requests[0].status, 200); assert.deepEqual(f.removed, []); assert.ok(f.native.has(actor.sessionId))

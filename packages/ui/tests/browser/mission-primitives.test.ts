@@ -96,7 +96,10 @@ test("long revision before/after and cumulative evidence remain reachable throug
     const text = await readPages(history)
     assert(text.includes("BEFORE_TAIL_PROOF") && text.includes("AFTER_TAIL_PROOF") && text.includes("After"), "revision reader must expose its AFTER section and both tails")
     await show(f.page, "task", "task")
-    assert((await readPages(f.page.locator(".mission-reader article").first())).includes("BRIEF_TAIL_PROOF"))
+    const brief = f.page.locator(".mission-task-reader > details > summary").filter({ hasText: /^Task brief$/ })
+    assert.equal(await brief.evaluate(summary => (summary.parentElement as HTMLDetailsElement).open), false)
+    await brief.click()
+    assert((await readPages(f.page.locator(".mission-reader article").filter({ has: f.page.getByRole("heading", { name: "Task brief", exact: true }) }))).includes("BRIEF_TAIL_PROOF"))
     await show(f.page, "report", "report")
     const evidence = f.page.locator(".mission-reader article").filter({ has: f.page.getByRole("heading", { name: "Evidence", exact: true }) })
     assert((await readPages(evidence)).includes("EVIDENCE6_TAIL_PROOF"))
@@ -137,6 +140,9 @@ test("raw reader pages preserve exact source and surrogate pairs without mountin
   const f = await setup(current)
   try {
     await show(f.page, "report", "raw")
+    const details = f.page.locator(".mission-report-technical")
+    assert.equal(await details.evaluate(element => (element as HTMLDetailsElement).open), false)
+    await details.locator("summary").filter({ hasText: /^Technical details$/ }).click()
     const article = f.page.locator(".mission-reader article").filter({ has: f.page.getByRole("heading", { name: "Structured report", exact: true }) })
     const selector = article.getByRole("spinbutton"), count = Number(await selector.getAttribute("max")), pieces: string[] = []
     for (let page = 1; page <= count; page++) {

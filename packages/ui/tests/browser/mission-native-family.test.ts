@@ -185,8 +185,12 @@ async function expand(page: Page, id: string) {
   if (await button.getAttribute("aria-expanded") !== "true") await button.click()
 }
 async function conversations(page: Page) {
+  const details = page.getByRole("button", { name: /^(Technical details|פרטים טכניים)$/ })
+  if (await details.getAttribute("aria-expanded") !== "true") await details.click()
+  assert.equal(await details.getAttribute("aria-expanded"), "true")
   const button = page.locator(".mission-disclosure-trigger").filter({ hasText: /Conversations|שיחות/ }).first()
   if (await button.getAttribute("aria-expanded") !== "true") await button.click()
+  assert.equal(await button.getAttribute("aria-expanded"), "true")
 }
 
 test("production SessionList/SessionView select recursive children, steer/queue only that child and preserve coordinator/sibling drafts", { timeout: 60000 }, async () => {

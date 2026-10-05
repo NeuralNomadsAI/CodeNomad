@@ -10,6 +10,7 @@ import { createMissionRecoveryAction } from "./mission-recovery-button"
 import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { missionTaskConversation } from "./mission-task-navigation"
 import type { MissionObservedFamily } from "./mission-attention-model"
+import { missionProgress } from "./mission-progress-model"
 
 export function MissionWork(props: {
   mission: MissionMap; instanceId: string; activeSessionId: string | null
@@ -22,9 +23,10 @@ export function MissionWork(props: {
   const { t } = useI18n()
   let list!: HTMLUListElement
   const ordered = createMemo(() => orderMissionTasks(props.mission.tasks))
+  const progress = createMemo(() => missionProgress(props.mission, props.activity))
   return <MissionDisclosure missionId={props.mission.id} name="route" label={t("missions.control.route.title")}
     title={<><GitBranch class="h-4 w-4" aria-hidden="true" /><span>{t("missions.control.route.title")}</span>
-      <small title={t("missions.control.metrics.tasks")}>{props.mission.tasks.filter(task => task.status === "completed").length}/{props.mission.tasks.length}</small></>}>
+      <small title={t("missions.control.metrics.tasks")}>{progress().completed}/{progress().tasks.length}</small></>}>
     <Show when={props.mission.tasks.length} fallback={<p class="mission-control-empty-line">{t("missions.control.route.empty")}</p>}>
       <div class="mission-flow">
         <ul ref={list} class="mission-route-list"><For each={ordered().map(task => task.id)}>{id => {
@@ -41,15 +43,22 @@ export function MissionWork(props: {
           const actions = (): ActionOverflowMenuItem[] => {
             const recover = props.onRecoveryAdmitted ? recovery.action() : undefined
             const sessionId = missionTaskConversation(props.mission, task(), props.family)
-            return [{ key: "actor", label: sessionId === props.mission.coordinatorSessionId ? t("missions.control.openCoordinator")
-              : t("missions.control.attention.openActor", { actor: props.mission.actors.find(actor => actor.sessionId === sessionId)?.title ?? sessionId }),
-              icon: <ArrowUpRight class="h-4 w-4" />, onSelect: () => props.onOpenActor(missionTaskConversation(props.mission, task(), props.family)) },
+            return [...(sessionId ? [{ key: "actor", label: t("missions.control.attention.openActor", { actor: props.mission.actors.find(actor => actor.sessionId === sessionId)?.title ?? sessionId }),
+              icon: <ArrowUpRight class="h-4 w-4" />, onSelect: () => {
+                const current = missionTaskConversation(props.mission, task(), props.family)
+                if (current) return props.onOpenActor(current)
+              } }] : []),
               { key: "read", label: t("missions.control.read"), icon: <Eye class="h-4 w-4" />,
               onSelect: () => props.onRead(task()) }, ...(recover ? [recover] : [])]
           }
-          return <li class="mission-route-task" data-task-key={task().key} data-status={task().status}>
+          return <li class="mission-route-task" data-task-key={task().key} data-status={task().status}
+            data-archived={task().status === "withdrawn" || Boolean(task().replacedByTaskKey) ? "true" : undefined}>
             <MissionListItem compact text={<h3 class="mission-task-title" title={task().title}>{task().title}</h3>}
-              title={task().title} status={t(missionTaskStatusKey(task()))} statusKind={task().status} actions={actions()}
+              onSelect={() => props.onRead(task())}
+              title={task().title} status={<span title={t(task().status === "needs-input" ? "missions.progress.obstacle" : missionTaskStatusKey(task()))}
+                aria-label={t(task().status === "needs-input" ? "missions.progress.obstacle" : missionTaskStatusKey(task()))}>
+                {t(task().status === "needs-input" ? "missions.control.report.outcome.blocked" : missionTaskStatusKey(task()))}
+              </span>} statusKind={task().status === "needs-input" ? "blocked" : task().status} actions={actions()}
               children={props.onRecoveryAdmitted && recovery.action()?.description ? recovery.feedback : undefined} />
           </li>
         }}</For></ul>

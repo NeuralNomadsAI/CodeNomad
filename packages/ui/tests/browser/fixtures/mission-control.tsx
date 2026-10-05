@@ -11,6 +11,7 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { activeSessionId, setSessions } from "../../../src/stores/session-state"
+import { missionStore } from "../../../src/stores/missions"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
 
@@ -18,12 +19,15 @@ await initializeClientState()
 function Fixture() {
   const { t } = useI18n()
   const [mounted, setMounted] = createSignal(true)
+  const [panelWidth, setPanelWidth] = createSignal("min(370px, 100vw)")
   applyColorScheme(normalizeColorScheme("classic"))
   ;(window as any).missionFixture = {
     flush: flushClientState,
     refresh: () => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "rpc.codenomad.missions.changed" } }]),
     mount: setMounted,
+    panelWidth: setPanelWidth,
     selectedSession: () => activeSessionId().get("fixture"),
+    snapshot: () => missionStore.state("fixture"),
     seedCoordinators: (ids: string[]) => setSessions(previous => new Map(previous).set("fixture", new Map(ids.map(id => [id, {
       id, instanceId: "fixture", parentId: null, title: id, status: "idle", runtimeStatusKnown: true,
       location: { directory: "fixture" }, time: { created: 1, updated: 1 },
@@ -40,7 +44,7 @@ function Fixture() {
     },
     event: (event: any) => (sseManager as any).handleEvent("fixture", { id: `ev_${Date.now()}`, created: Date.now(), location: { directory: "fixture" }, ...event }),
   }
-  return <div style={{ display: "grid", "grid-template-columns": "minmax(0, 1fr) min(370px, 100vw)", height: "100vh" }}>
+  return <div style={{ display: "grid", "grid-template-columns": `minmax(0, 1fr) ${panelWidth()}`, height: "100vh" }}>
     <main class="mission-transcript-surface" style={{ "min-width": 0, overflow: "hidden" }}><p>Chat fixture</p>
       <Show when={missionProjectView("fixture").reader}><MissionReader instanceId="fixture" scope="fixture" /></Show>
     </main>

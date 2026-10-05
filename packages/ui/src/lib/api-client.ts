@@ -1,5 +1,6 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
@@ -508,13 +509,18 @@ export const serverApi = {
       method: "PUT", body: JSON.stringify({ directory, enabled }),
     })
   },
-  fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
-    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)
+  fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, signal?: AbortSignal): Promise<T> {
+    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, { signal })
   },
   patchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
     return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, {
       method: "PATCH",
       body: JSON.stringify(patch ?? {}),
+    })
+  },
+  patchMissionPreferences<T extends Record<string, any> = Record<string, any>>(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<T> {
+    return request<T>("/api/storage/config/ui?conditional=missions-v1", {
+      method: "PATCH", body: JSON.stringify({ patch, expected }),
     })
   },
   fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {

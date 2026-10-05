@@ -15,6 +15,8 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { sessionPreviews } from "../stores/session-previews"
 import { missionIncludesSession } from "./mission-attention-model"
 import { missionTaskConversation } from "./mission-task-navigation"
+import { missionReports, missionReportIsPrevious } from "./mission-progress-model"
+import { missionMarkdownPage } from "../lib/mission-markdown-pages"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -33,12 +35,7 @@ export function MissionReaderSection(props: { text: string; raw?: boolean; ident
     previousIdentity = identity; previousText = text
     setPage(0); setCopyStatus("")
   })
-  const pageText = createMemo(() => {
-    // Keep surrogate pairs together without dropping source characters between pages.
-    const boundary = (offset: number) => offset > 0 && /[\uDC00-\uDFFF]/.test(props.text.charAt(offset))
-      && /[\uD800-\uDBFF]/.test(props.text.charAt(offset - 1)) ? offset - 1 : offset
-    return props.text.slice(boundary(page() * READER_PAGE_SIZE), boundary((page() + 1) * READER_PAGE_SIZE))
-  })
+  const content = createMemo(() => missionMarkdownPage(props.text, page(), READER_PAGE_SIZE))
   const copy = async () => {
     const current = captureCopy(), text = props.text
     const success = await copyToClipboard(text)
@@ -65,8 +62,9 @@ export function MissionReaderSection(props: { text: string; raw?: boolean; ident
         <span role="status">{copyStatus()}</span>
       </div>
     </Show>
-    <Show when={props.raw} fallback={<Markdown part={{ type: "text", text: pageText() }} escapeRawHtml instanceId={props.instanceId} />}>
-      <pre>{pageText()}</pre>
+    <Show when={props.raw || content().markdownText === null}
+      fallback={<Markdown part={{ type: "text", text: content().markdownText! }} escapeRawHtml instanceId={props.instanceId} />}>
+      <pre>{content().sourceText}</pre>
     </Show>
   </article>
 }
@@ -76,7 +74,12 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const target = () => missionProjectView(props.scope).reader
   const mission = () => missionStore.state(props.instanceId).missions.find(m => m.id === target()?.missionId)
   const task = () => mission()?.tasks.find(task => task.id === target()?.itemId)
-  const report = () => mission()?.reports.find(report => report.id === target()?.itemId)
+  const reports = createMemo(() => { const value = mission(); return value ? missionReports(value) : [] })
+  const report = () => reports().find(report => report.id === target()?.itemId)
+  const previousReport = () => {
+    const value = mission(), result = report()
+    return value && result && missionReportIsPrevious(value, result)
+  }
   const change = () => mission()?.history?.find(change => String(change.revision) === target()?.itemId)
   const title = () => target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
@@ -136,16 +139,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       const value = report()
       return value ? [
         { label: "missions.control.summary", text: value.summary },
-        { label: "missions.control.report.evidence", text: value.evidence.join("\n\n") },
         { label: "missions.control.report.next", text: value.next.join("\n\n") },
-        { label: "missions.control.artifact", text: value.artifact !== undefined ? JSON.stringify(value.artifact, null, 2) : "", raw: true },
+        { label: "missions.control.report.evidence", text: value.evidence.join("\n\n") },
       ] : []
     }
     const value = mission()
     return value ? [
+      { label: "missions.control.summary", text: value.summary ?? "" },
       { label: "missions.control.objective", text: value.objective },
       { label: "missions.control.notes", text: value.notes ?? "" },
-      { label: "missions.control.summary", text: value.summary ?? "" },
     ] : []
   })
   let body: HTMLDivElement | undefined
@@ -184,7 +186,12 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     <div class="window-body" ref={body}>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
       <Show when={target()?.kind === "report" && report()?.late}><p>{t("missions.control.report.late")}</p></Show>
-      <Show when={target()?.kind === "report" && report()}>{value => <MissionReportNotification report={value()} />}</Show>
+      <Show when={target()?.kind === "report" && previousReport() && !report()?.late}>
+        <p>{t("missions.progress.previousAttempt")}</p>
+      </Show>
+      <Show when={target()?.kind === "report" && report()}>{value =>
+        <p>{t(`missions.control.report.outcome.${value().outcome}`)}</p>
+      }</Show>
       <Show when={target()?.kind === "task" && task() && mission()} fallback={
         <Show when={sections().length} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading" ? "missions.control.loading" : "missions.control.reader.missing")}</p>}>
         <For each={sections().map(section => section.label)}>{label => {
@@ -199,6 +206,14 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           family={missionStore.state(props.instanceId).activity?.missions.find(item => item.missionId === mission()?.id)?.family}
           activity={missionStore.state(props.instanceId).activity?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state} />
       </Show>
+      <Show when={target()?.kind === "report" && report()}>{value =>
+        <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
+          <MissionReportNotification report={value()} />
+          <Show when={value().artifact !== undefined}><MissionReaderSection label="missions.control.artifact"
+            text={JSON.stringify(value().artifact, null, 2)} raw
+            identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} /></Show>
+        </details>
+      }</Show>
     </div>
   </section>
 }

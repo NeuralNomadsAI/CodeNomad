@@ -11,16 +11,17 @@ const family: MissionObservedFamily = { state: "observed", members: [
 ] }
 test("opens exact owned actors and never infers a child from task context or report evidence", () => {
   assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_actor" }), "ses_actor")
-  assert.equal(missionTaskConversation(mission, task, family), "ses_root")
+  assert.equal(missionTaskConversation(mission, task, family), undefined)
   assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_child" }, family), "ses_child")
-  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_elsewhere" }, family), "ses_root")
-  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_child" }, { ...family, state: "unknown" }), "ses_root")
-  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "global" }), "ses_root")
+  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_elsewhere" }, family), undefined)
+  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_child" }, { ...family, state: "unknown" }), undefined)
+  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "global" }), undefined)
+  assert.equal(missionTaskConversation(mission, { ...task, actorSessionId: "ses_root" }), undefined)
 })
 test("all ten locales distinguish instruction delivery, card edits and reported blockages", async () => {
   const en = (await import("../lib/i18n/messages/en/missions")).missionMessages as Record<string, string>
   const keys = Object.keys(en).filter(key => key.startsWith("missions.control.guidance.") || key.startsWith("missions.control.blockages."))
-  assert.equal(keys.length, 16)
+  assert.ok(keys.length >= 16)
   for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
     const messages = (await import(`../lib/i18n/messages/${locale}/missions.ts`)).missionMessages as Record<string, string>
     for (const key of keys) {

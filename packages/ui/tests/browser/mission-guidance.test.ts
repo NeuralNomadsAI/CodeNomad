@@ -11,6 +11,7 @@ import { clickMissionAction } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
+const screenshotPath = (name: string) => `C:/Users/Admin/AppData/Local/Temp/opencode/${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`
 before(async () => {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
@@ -59,25 +60,94 @@ async function setup() {
   await page.getByRole("button", { name: "Objective A", exact: true }).click()
   return { page, values, writes, errors }
 }
-const section = (page: Page, name: string) => page.locator(".mission-disclosure", { has: page.getByRole("button", { name, exact: true }) }).last()
 async function guidance(page: Page) {
-  const trigger = page.getByRole("button", { name: "Instructions to the coordinator", exact: true })
+  const trigger = page.getByRole("button", { name: "Give direction", exact: true })
   if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click()
   return page.locator(".mission-guidance")
 }
-test("returned blockers have detail/coordinator links; retired blockers never become native questions", async () => {
+test("orientation starts collapsed and an explicit task direction reaches only its coordinator", async () => {
+  const { page, writes, values, errors } = await setup()
+  try {
+    const trigger = page.getByRole("button", { name: "Give direction", exact: true })
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+    assert.equal(await page.locator(".mission-guidance").isVisible(), false)
+    const form = await guidance(page)
+    assert.equal(await form.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "")
+    assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "")
+    await form.getByRole("combobox", { name: /^Direction type\b/ }).selectOption("alternative")
+    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("task-A")
+    await form.getByLabel("Your instruction", { exact: true }).fill("Use Windows verification while Xcode is unavailable.")
+    await form.getByRole("button", { name: "Send to coordinator", exact: true }).click()
+    await form.getByText("Sent to the coordinator conversation. Being sent does not confirm it has been acted on.", { exact: true }).waitFor()
+    const prompts = writes.filter(write => write.path.endsWith("/prompt"))
+    assert.equal(prompts.length, 1)
+    assert.match(prompts[0].path, /\/session\/ses_A\/prompt$/)
+    assert.equal(prompts[0].body.text, "Alternative approach\n\nTask: Check Xcode (xcode)\n\nUse Windows verification while Xcode is unavailable.")
+    assert.equal(prompts[0].body.delivery, "steer")
+    assert.equal(values[0].notes, "opaque-machine-notes")
+    assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
+    assert.equal(writes.filter(write => /\/missions(?:\/|$)|\/session\/[^/]+\/(agent|model)$/.test(write.path)).length, 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+test("task context remains visibly selected when returning to an independent mission draft", async () => {
+  const { page, writes } = await setup()
+  try {
+    const form = await guidance(page)
+    await form.getByRole("combobox", { name: /^Direction type\b/ }).selectOption("alternative")
+    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("task-A")
+    await form.getByLabel("Your instruction", { exact: true }).fill("Keep A's selected task context.")
+    await page.getByRole("button", { name: "Objective B", exact: true }).click()
+    const other = await guidance(page)
+    assert.equal(await other.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "")
+    assert.equal(await other.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "")
+    await page.getByRole("button", { name: "Objective A", exact: true }).click()
+    assert.equal(await form.getByLabel("Your instruction", { exact: true }).inputValue(), "Keep A's selected task context.")
+    assert.equal(await form.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "alternative")
+    await page.screenshot({ path: screenshotPath("mission-guidance-task-context-restored"), fullPage: true })
+    assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "task-A", "the visible selection must match the task context that would actually be sent")
+    assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0)
+  } finally { await page.close() }
+})
+test("a removed task keeps its direction draft but cannot silently send as mission-wide guidance", async () => {
+  const { page, values, writes } = await setup()
+  try {
+    const form = await guidance(page)
+    await form.getByRole("combobox", { name: /^Direction type\b/ }).selectOption("constraint")
+    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("task-A")
+    await form.getByLabel("Your instruction", { exact: true }).fill("Do not install system software.")
+    values[0].tasks = values[0].tasks.filter(task => task.id !== "task-A")
+    values[0].revision++
+    const refreshed = page.waitForResponse(response => response.url().endsWith("/missions"))
+    await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
+    await refreshed
+    await form.getByRole("option", { name: "Task no longer available", exact: true }).waitFor({ state: "attached" })
+    assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "task-A")
+    assert.equal(await form.getByLabel("Your instruction", { exact: true }).inputValue(), "Do not install system software.")
+    assert.equal(await form.getByRole("button", { name: "Send to coordinator", exact: true }).isDisabled(), true)
+    assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0)
+    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("")
+    assert.equal(await form.getByRole("button", { name: "Send to coordinator", exact: true }).isDisabled(), false)
+    assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0, "changing context never submits automatically")
+  } finally { await page.close() }
+})
+test("returned blockages are results, not native questions or generic coordinator links", async () => {
   const { page, errors } = await setup()
   try {
     assert.equal(await page.getByRole("button", { name: "Your response is needed", exact: true }).count(), 0)
-    const blockages = section(page, "Reported blockages")
-    await blockages.getByText("Check Xcode", { exact: true }).waitFor()
-    assert.equal(await blockages.getByText("Old cancelled build", { exact: true }).count(), 0)
-    await clickMissionAction(blockages.locator(".mission-list-item"), "Read in chat area")
+    const progress = page.getByRole("region", { name: "At a glance", exact: true })
+    await progress.getByText("0 tasks completed · 1 remaining", { exact: true }).waitFor()
+    assert.equal(await progress.getByText("Old cancelled build", { exact: true }).count(), 0)
+    assert.equal(await page.locator(".mission-control").getByText("Full Xcode is missing.", { exact: true }).count(), 1)
+    await page.locator('[data-task-key="xcode"] .mission-list-item').getByRole("button", { name: "Check Xcode", exact: true }).click()
     await page.locator(".mission-reader").getByText("Full Xcode is missing.", { exact: true }).waitFor()
-    await page.locator(".mission-reader").getByRole("button", { name: "Open coordinator", exact: true }).click()
-    await page.waitForFunction(() => window.missionNavigation.snapshot().selectedSession === "ses_A")
-    assert.equal(await page.locator(".mission-reader").count(), 0)
-    await clickMissionAction(page.locator('[data-task-key="old-apk"] .mission-list-item'), "Open coordinator")
+    assert.equal(await page.locator(".mission-reader").getByRole("button", { name: "Open coordinator", exact: true }).count(), 0)
+    await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+    const retired = page.locator('[data-task-key="old-apk"] .mission-list-item')
+    assert.equal(await retired.getByRole("button", { name: "Open coordinator", exact: true }).count(), 0)
+    await clickMissionAction(retired, "Read in chat area")
+    await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
+    assert.equal(await page.locator(".mission-reader").getByText("Full Xcode is missing.", { exact: true }).count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -97,7 +167,7 @@ test("instructions send exact text to the coordinator without selecting it, swit
     assert.equal(values[0].notes, "opaque-machine-notes")
     assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "")
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
-    await page.screenshot({ path: "C:/Users/Admin/AppData/Local/Temp/opencode/mission-guidance-browser.png", fullPage: true })
+    await page.screenshot({ path: screenshotPath("mission-guidance-browser"), fullPage: true })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -213,7 +283,7 @@ for (const transition of ["selection", "selection-aba", "inactive-aba", "directo
     } finally { release(); await page.close() }
   })
 }
-test("narrow coordinator instructions keep the input and both actions within the panel", async () => {
+test("narrow coordinator instructions keep context, input and send action within the panel", async () => {
   const { page, errors } = await setup()
   try {
     await guidance(page)
@@ -223,12 +293,12 @@ test("narrow coordinator instructions keep the input and both actions within the
     const bounds = await form.boundingBox()
     assert.ok(bounds)
     for (const element of [form.locator("textarea"), form.getByRole("button", { name: "Send to coordinator", exact: true }),
-      form.getByRole("button", { name: "Open coordinator", exact: true })]) {
+      ...await form.locator("select").all()]) {
       const box = await element.boundingBox()
       assert.ok(box && box.x >= bounds.x && box.x + box.width <= bounds.x + bounds.width + 1)
     }
     assert.equal(await form.evaluate(node => node.scrollWidth > node.clientWidth), false)
-    await page.screenshot({ path: "C:/Users/Admin/AppData/Local/Temp/opencode/mission-guidance-narrow.png", fullPage: true })
+    await page.screenshot({ path: screenshotPath("mission-guidance-narrow"), fullPage: true })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

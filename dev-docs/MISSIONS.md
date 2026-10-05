@@ -18,14 +18,33 @@ The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, and 
 
 ### Human instructions and actionable attention
 
-Mission Control separates open native Forms/permissions ("Your response is
-needed") from current returned blocked reports ("Reported blockages"). Retired
-or replaced blockers stay readable in Reports/History but are not current requests.
-Work and task readers link to an exact owned task actor when recorded; otherwise
-the action explicitly opens the coordinator. Native ancestry or text mentioning
-a child session never manufactures a task/actor association.
+Mission Control starts with a recorded-result overview, current task counts and
+observed activity. Open native Forms/permissions ("Your response is needed") are
+the only human-response alerts. Returned blocked reports are obstacles to read,
+not an assertion that the user must decide something. Retired or replaced blockers
+remain readable in the historical results but are not current requests.
+Recent recorded advances and results lead into the declared dependency graph.
+The overview does not repeat each task result or blockage title. Technical reports,
+native conversations and plan-change history are
+progressive details, not competing top-level tracking surfaces. Cleanup receipts
+appear at the bottom; successful historical cleanup is collapsed.
 
-"Instructions to the coordinator" is an explicit ordinary user prompt, with
+Work and task readers link only to an exact owned non-coordinator task actor when
+recorded. Missing bindings produce no generic coordinator substitute. The mission
+index keeps its single coordinator action. Native ancestry or text mentioning a
+child session never manufactures a task/actor association. Task readers show the
+current result/evidence/next steps first; the brief and native technical metadata
+are separate collapsed details. A historical late attempt must not replace a
+current result or become evidence of current completion.
+
+Reader pages retain exact surrogate-safe source slices. `mission-markdown-pages.ts`
+adds bounded display-only continuation fences for standalone fenced code; interrupted
+or oversized fence contexts fall back to literal source pages. Copy always uses
+the complete original section, not synthesized Markdown. Arbitrary list/table/quote
+excerpts are not a promise of full-document Markdown pagination equivalence.
+
+"Give direction" is a collapsed, explicit ordinary user prompt, with optional
+priority/constraint/alternative intent and exact task context. It uses
 native `steer` delivery through the existing authorized session proxy and its
 per-send profile environment. It preserves the coordinator's native agent/model,
 does not switch the selected conversation or edit the main composer, and is
@@ -44,6 +63,83 @@ No automatic resume, report recovery, assignment replay or failed-prompt retry i
 added. Late acknowledgements settle the original draft, not the currently viewed
 mission. Browser fixtures exercise real Solid components/generated clients against
 isolated HTTP responses; they never send instructions to a user's live Mission.
+
+### Defaults, reusable briefs and separate executions
+
+Settings → Missions owns the global requested coordinator/task profiles. The
+all-scenarios selection supplies the baseline; scenario-specific choices override it.
+The creation form waits for preferences before freezing its initial choices,
+shows the requested choices and keeps individual overrides collapsed. Opening a
+closed override must not demand an agent/model catalog. Default changes affect
+newly prepared missions only: no running actor is silently reconfigured, and a
+missing requested profile never authorizes an unrelated replacement. Inherit,
+native default and a specific selected profile have distinct meanings. Identical
+requested profiles are summarized together, without a catalog read or execution claim.
+
+Reusable user mission models are bounded, versioned brief records in the existing
+owned UI preference bucket: name, objective, notes, scenario and optional requested
+profiles. They contain no sessions, reports, execution claims or credentials.
+Saving/loading/removing is explicit; removing a brief keeps all existing missions
+and conversations. Loading copies a brief into the ordinary creation form. Each
+creation uses the existing authenticated mission route and explicit Play control,
+not an automatic prompt to a reused accumulating conversation. An uncertain create
+retains the original submitted payload; mutable defaults or saved models must not
+alter a replay. Schema versions here are not a durable history of brief revisions.
+
+There is no scheduler or GitHub-specific trigger in this iteration. A saved PR
+review brief can describe repository scope, candidate selection, freshness and
+human validation before publication; it does not grant publication authority or
+implement deduplication by itself. Date/recurrence/event automation remains gated
+on qualified host continuity, explicit activation, bounded overlap/missed-run
+policy, revision-scoped idempotency and publication safeguards. Continuing an
+existing native background task is not proof that a future mission can launch
+while CodeNomad is closed.
+
+### User-journey regression checks
+
+Run real Solid/HTTP fixtures, never a user's live mission, for these questions:
+
+| Moment | User question | Required evidence |
+| --- | --- | --- |
+| Before | What will run, and with which requested agents? | Loaded owner preferences, visible requested choices, explicit brief copy and prepared creation |
+| During | What has happened, what remains, do I need to answer? | Current recorded results/counts, separately observed native activity, real open Forms/permissions |
+| Blocked | Is this my decision, or a work obstacle? | Blockage result is readable without manufacturing a human request or a coordinator task link |
+| After | What did I get and can I verify it? | Full bounded result/evidence/next pages, historical late results marked separately, no default raw artifact wall |
+| Reuse | Can I launch it again without changing yesterday's run? | Fresh manual mission creation, copied brief/profile payload, removal preserves executions |
+| Failure | Will a retry duplicate work or lose my input? | Exact held create/send identity, no uncertain replay, conditional preference writes and stale-view fencing |
+
+`packages/ui/tests/browser/mission-control.test.ts`, `mission-guidance.test.ts`,
+`mission-task-reader.test.ts`, the editor/default/model fixtures and the progress
+projection unit tests cover these surfaces. Native `test-missions-native.mjs`
+provides a separate isolated execution/storage proof. A deterministic provider
+proves the native transport and result lifecycle, not real-world PR review quality,
+automatic publication policy or unattended scheduling.
+
+`node scripts/test-missions-native-trajectory.mjs <absolute-isolated-cli>` drives
+prepared → Play → two independent declarations → native sibling/grandchild work
+→ native returns → coordinator readouts → terminal completion. It requires real
+simultaneous native activity and separately verifies that successful child returns
+do not themselves settle Mission tasks. Its private receipt retains checkpoint
+snapshots and provider-turn evidence. An optional third argument supplies only a
+read-only bare-dependency resolution root for checkouts with missing test packages;
+it never substitutes another checkout's source or connects to its running service.
+
+The baseline native fixture also qualifies explicit independent-root assignments.
+Managed-root reuse keeps original creation ownership separate from immutable cleanup
+provenance; a later assignment cannot recreate the original root or bypass a lost
+creation acknowledgement. Native request-conflict and a desktop HTTP uncertain-create
+response are deliberately different boundaries, with exact parked request identities.
+
+Mission preference arrays use field-level compare-and-merge against their raw owned
+document. Failed/malformed reads do not authorize writes; explicit repair compares the
+actual invalid field. Conditional writes reread disk synchronously and preserve
+unrelated fields. This prevents renderer lost updates, but is not a cross-process
+filesystem lock against an OS writer between read and atomic replacement.
+Intervening UI events make save acknowledgement ordering ambiguous: reconcile through
+at most three fresh bounded owner reads, never another write. A successfully accepted
+but unreconciled save stays explicitly pending and creation remains fenced until
+an explicit reload succeeds. Earlier GETs/ACKs never substitute stale cached defaults
+as authoritative creation input.
 
 ### Parallel workstreams and context reuse
 

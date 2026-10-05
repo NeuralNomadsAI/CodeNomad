@@ -5,6 +5,9 @@
 .mission-reader .window-action { display: flex; gap: var(--space-xs); align-items: center; flex-shrink: 0; }
 .mission-reader article { max-width: 90ch; margin: var(--space-lg) auto; overflow-wrap: anywhere; }
 .mission-reader pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mission-report-technical { margin-block: var(--space-md); }
+.mission-report-technical > summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.mission-report-technical[open] > summary { margin-block-end: var(--space-md); }
 .mission-editor { border: 1px solid var(--border-base); margin: var(--space-md) 0; }
 .mission-editor label { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
 .mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }

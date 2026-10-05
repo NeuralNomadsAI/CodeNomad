@@ -2,7 +2,7 @@ import type { Logger } from "../logger"
 import type { EventBus } from "../events/bus"
 import type { ConfigLocation } from "../config/location"
 import { z } from "zod"
-import { YamlDocStore, type SettingsDoc } from "./yaml-doc-store"
+import { YamlDocStore, SettingsReadError, type SettingsDoc } from "./yaml-doc-store"
 import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
@@ -121,6 +121,13 @@ export class SettingsService {
     return owner === "server"
       ? normalizeServerConfigOwner(this.getDoc("config").server as SettingsDoc)
       : this.getDoc("config")[owner] as SettingsDoc
+  }
+
+  /** Fresh read-only authority, without unrelated normalization or error fallbacks. */
+  getRawConfigOwner(owner: string): SettingsDoc {
+    const value = this.configStore.getAuthoritativeOwner(owner)
+    if (owner === "ui" && value.settings !== undefined && !isPlainObject(value.settings)) throw new SettingsReadError()
+    return value
   }
 
   mergePatchOwner(kind: DocKind, owner: string, patch: unknown): SettingsDoc {

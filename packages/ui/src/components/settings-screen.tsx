@@ -13,6 +13,7 @@ import {
   type SettingsSectionId,
 } from "../stores/settings-screen"
 import { GeneralSettingsSection } from "./settings/general-settings-section"
+import { MissionsSettingsSection } from "./settings/missions-settings-section"
 import { ChatSettingsSection } from "./settings/chat-settings-section"
 import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
@@ -52,6 +53,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     const items: SettingsSectionOption[] = [
       { id: "general", icon: SlidersHorizontal, label: t("settings.nav.general") },
       { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
+      { id: "missions", icon: Settings, label: t("missions.defaults.nav") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
       { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
@@ -73,6 +75,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     switch (activeSettingsSection()) {
       case "chat":
         return <ChatSettingsSection />
+      case "missions":
+        return <MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "notifications":
         return <NotificationsSettingsSection />
       case "speech":

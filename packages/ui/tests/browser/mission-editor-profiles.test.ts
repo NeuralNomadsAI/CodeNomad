@@ -50,6 +50,8 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
+    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents · defaults and overrides$/ }).click()
     await page.evaluate(async () => {
       const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
       const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
@@ -80,6 +82,13 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/storage/config/ui**", route => {
+    if (route.request().method() !== "PATCH") return route.fulfill({ json: {} })
+    const body = route.request().postDataJSON()
+    assert.equal(new URL(route.request().url()).searchParams.get("conditional"), "missions-v1")
+    assert.deepEqual(body.expected, [{ key: "missionProfileDefaults", present: false }])
+    return route.fulfill({ json: body.patch })
+  })
   await page.route("**/api/workspaces/fixture/missions**", route => {
     if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
     writes.push(route.request().postDataJSON())
@@ -108,6 +117,9 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("Objective", { exact: true }).fill("Profile fixture")
     await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
+    assert.equal(catalogReads.length, 0, "collapsed overrides have no catalog demand")
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
+    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents · defaults and overrides$/ }).click()
     const root = page.getByLabel("Coordinator · Agent", { exact: true }), child = page.getByLabel("Specification reviewer · Agent", { exact: true })
     await root.locator('option[value="root-only"]').waitFor({ state: "attached" })
     assert.equal(await root.locator('option[value="child-only"]').count(), 0)
@@ -137,16 +149,80 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     assert.deepEqual(writes[0].profiles, expected)
     assert.equal(writes[0].directory, undefined, "catalog and creation retain native default directory")
     assert.deepEqual((await page.evaluate(() => window.missionEditorLifetime.held()))!.profiles, expected)
+    // Later preferences are mutable defaults, not the identity of this admitted
+    // request. Restoring its held draft must not consult or replay them.
+    const changedDefaults = [{ template: "custom", profiles: { coordinator: { agent: "all", model: { providerID: "p", id: "m", variant: "low" } }, roles: { specialist: { agent: "all" } } } }]
+    assert.deepEqual(await page.evaluate(async defaults => {
+      const preferencesPath = "/src/stores/preferences.tsx", { updatePreferences, preferences } = await import(preferencesPath)
+      const updated = await updatePreferences({ missionProfileDefaults: defaults })
+      return { updated, defaults: preferences().missionProfileDefaults }
+    }, changedDefaults), { updated: true, defaults: changedDefaults })
+    assert.deepEqual((await page.evaluate(() => window.missionEditorLifetime.held()))!.profiles, expected)
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     await page.evaluate(() => window.missionEditorLifetime.mount(false))
     await page.evaluate(() => window.missionEditorLifetime.mount(true))
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents · defaults and overrides$/ }).click()
     assert.equal(await page.getByLabel("Coordinator · Thinking", { exact: true }).inputValue(), "high")
     assert.equal(await page.getByLabel("Specification reviewer · Thinking", { exact: true }).inputValue(), "low")
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "root-only")
+    assert.equal(await page.getByLabel("Specification reviewer · Agent", { exact: true }).inputValue(), "child-only")
     assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).last().click()
     assert.equal(writes.length, 1)
     assert.equal(catalogReads.length, 2, "uncertain draft does not refresh or replace its original profile")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
+})
+
+test("creation waits for owned defaults and sends their exact snapshot without opening catalog controls", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), errors: string[] = [], writes: Array<Record<string, unknown>> = [], catalogs: string[] = []
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  const profiles = { coordinator: { agent: "saved-root", model: { providerID: "p", id: "saved-model", variant: "high" } }, roles: { specialist: { agent: "saved-child", model: { providerID: "p", id: "child-model", variant: "low" } } } }
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/storage/config/ui", async route => {
+    await hold
+    return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } })
+  })
+  await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() !== "GET") {
+      writes.push(route.request().postDataJSON())
+      return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown result" } })
+    }
+    return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1 } })
+  })
+  await page.route("**/workspaces/fixture/instance/api/{agent,model}**", route => { catalogs.push(route.request().url()); return route.fulfill({ json: { data: [] } }) })
+  try {
+    await page.goto(url)
+    await page.evaluate(async () => {
+      const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
+      const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
+      updateInstance("fixture", { client: getRootClient("fixture") })
+    })
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await page.getByLabel("Objective", { exact: true }).fill("Saved default snapshot")
+    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByLabel("Playbook", { exact: true }).isDisabled(), true)
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
+    await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    assert.deepEqual(writes, [], "pending defaults fence direct form admission, not just the Save button")
+    release()
+    await page.getByRole("button", { name: "Save", exact: true }).waitFor()
+    await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    assert.match(await page.locator("form.mission-editor").innerText(), /saved-root/)
+    assert.match(await page.locator("form.mission-editor").innerText(), /saved-child/)
+    assert.equal(await page.locator("form.mission-editor details").filter({ has: page.locator("summary").filter({ hasText: /^Agents · defaults and overrides$/ }) }).evaluate(element => (element as HTMLDetailsElement).open), false)
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
+    assert.deepEqual(catalogs, [])
+    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
+    assert.equal(writes.length, 1)
+    assert.deepEqual(writes[0].profiles, profiles)
+    assert.equal(writes[0].directory, undefined)
+    assert.deepEqual(catalogs, []); assert.deepEqual(errors, [])
+  } finally { release(); await page.close() }
 })

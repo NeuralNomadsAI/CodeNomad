@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createEffect, createSignal } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
@@ -10,6 +10,13 @@ import { isUncertainCreation, missionMutationErrorKey } from "../lib/mission-mut
 import { copyMissionProfiles, missionCreationPayloadIdentity, retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { profilesForTemplate } from "./mission-profile-controls-data"
+import { useConfig } from "../stores/preferences"
+import { missionDefaultsFor, normalizeMissionDefaults } from "../lib/mission-defaults"
+import type { MissionProfileDefault } from "../lib/mission-defaults"
+import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
+import { MissionModelLibrary } from "./mission-model-library"
+import { MissionProfileSummary } from "./mission-profile-summary"
+import { openSettings } from "../stores/settings-screen"
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionMap }
 
@@ -20,6 +27,7 @@ export function MissionEditor(props: {
   onSaved: (mission?: MissionMap) => void; onCancel: () => void
 }) {
   const { t } = useI18n()
+  const config = useConfig()
   // The revision and draft belong to this editor, not to live snapshot refreshes.
   const action = props.action, original = action.mission, kind = action.kind
   // The UI's physical folder fences the view; it must not replace the server's
@@ -30,7 +38,23 @@ export function MissionEditor(props: {
   const [objective, setObjective] = createSignal(held?.objective ?? original?.objective ?? "")
   const [notes, setNotes] = createSignal(held?.notes ?? original?.notes ?? "")
   const [template, setTemplate] = createSignal<MissionMap["template"]>(held?.template ?? "custom")
-  const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(held?.profiles))
+  const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(held ? copyMissionProfiles(held.profiles) : undefined)
+  const [customProfiles, setCustomProfiles] = createSignal(Boolean(held))
+  const [defaults, setDefaults] = createSignal<MissionProfileDefault[]>([])
+  const [defaultsReady, setDefaultsReady] = createSignal(kind !== "create" || Boolean(held))
+  const [defaultsRefreshing, setDefaultsRefreshing] = createSignal(false)
+  const [defaultsFailed, setDefaultsFailed] = createSignal(false)
+  const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held) || config.isUiConfigLoaded())
+  const [profileDetailsOpen, setProfileDetailsOpen] = createSignal(false)
+  const [modelDetailsOpen, setModelDetailsOpen] = createSignal(false)
+  const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId) : undefined)
+  // One creation-time snapshot only, after the owned preference document loads.
+  // Refreshes and other windows' preference edits never replace this draft.
+  createEffect(() => {
+    if (defaultsReady() || !config.isUiConfigLoaded() || !config.missionDefaultsValid()) return
+    const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
+    setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setDefaultsReady(true)
+  })
   const [uncertain, setUncertain] = createSignal(Boolean(held))
   const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
   const [deleteAttempted, setDeleteAttempted] = createSignal(false)
@@ -38,12 +62,31 @@ export function MissionEditor(props: {
   const [error, setError] = createSignal("")
   let requestId = held?.requestId ?? crypto.randomUUID(), lastPayload = ""
 
+  async function useSavedDefaults() {
+    if (pending() || uncertain() || defaultsRefreshing() || !(props.active?.() ?? true)) return
+    const current = captureView()
+    setDefaultsRefreshing(true); setDefaultsFailed(false)
+    try {
+      await config.reloadMissionPreferences()
+      if (!current()) return
+      if (!config.missionDefaultsValid()) throw new Error("Invalid mission defaults")
+      const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
+      setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setCustomProfiles(false); setDefaultsReady(true)
+    } catch { if (current()) setDefaultsFailed(true) }
+    finally { if (current()) setDefaultsRefreshing(false) }
+  }
+
   async function save(event: SubmitEvent) {
     event.preventDefault()
-    if (pending() || uncertain() || !(props.active?.() ?? true)) return
+    if (!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)) return
     // A hold learned after this editor opened still cannot become a new logical
     // creation merely because the user submits another draft in the same scope.
-    if (kind === "create" && uncertainMissionCreation(identity())) { setUncertain(true); return }
+    const existingHold = kind === "create" ? uncertainMissionCreation(identity()) : undefined
+    if (existingHold) {
+      setObjective(existingHold.objective); setNotes(existingHold.notes); setTemplate(existingHold.template)
+      setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
+      setSelectedModel(submittedMissionModel(existingHold.requestId)); setUncertain(true); return
+    }
     const origin = identity(), directory = props.directory, instanceId = props.instanceId
     const viewCurrent = captureView()
     const operationCurrent = props.captureOperation?.() ?? (() => true)
@@ -56,7 +99,8 @@ export function MissionEditor(props: {
     lastPayload = payload
     setPending(true)
     setError("")
-    const creation = { ...fields, requestId, objective: objective(), directory }
+    const creation = { ...fields, requestId, directory }
+    const modelIdentity = selectedModel()
     try {
       if (kind === "delete" && original) {
         // A failed acknowledgement may follow a committed tombstone. Keep its
@@ -83,7 +127,10 @@ export function MissionEditor(props: {
         else if (identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }
     } catch (error) {
-      if (kind === "create" && isUncertainCreation(error)) retainUncertainMissionCreation(origin, creation)
+      if (kind === "create" && isUncertainCreation(error)) {
+        retainUncertainMissionCreation(origin, creation)
+        retainSubmittedMissionModel(requestId, modelIdentity)
+      }
       if (!current()) return
       if (kind === "delete" && original) {
         // Reads can settle a lost HTTP acknowledgement, but never replay a write.
@@ -123,16 +170,41 @@ export function MissionEditor(props: {
           <textarea maxLength={20_000} value={notes()} disabled={pending() || uncertain()} onInput={e => setNotes(e.currentTarget.value)} />
         </label>
         <Show when={kind === "create"}>
+          <details class="mission-profile-optional" onToggle={event => setModelDetailsOpen(event.currentTarget.open)}>
+          <summary>{t("missions.models.title")}</summary>
+          <Show when={modelDetailsOpen()}>
+          <MissionModelLibrary disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)}
+            draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}) })}
+            onUse={model => {
+              setObjective(model.objective); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+              setCustomProfiles(model.profiles !== undefined)
+              setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
+            }} />
+          </Show></details>
+          <Show when={selectedModel()}>{model => <p>{t("missions.models.current", { name: model().name })}</p>}</Show>
           <label>{t("missions.control.template")}
-            <select aria-label={t("missions.control.template")} value={template()} disabled={pending() || uncertain()} onChange={e => {
+            <select aria-label={t("missions.control.template")} value={template()} disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()} onChange={e => {
               const next = e.currentTarget.value as MissionMap["template"]
-              setTemplate(next); setProfiles(profilesForTemplate(profiles(), next))
+              setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
             }}>
               <For each={["custom", "wayfinder", "pocock-fix-bug"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
             </select>
           </label>
-          <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
-            disabled={pending() || uncertain()} active={() => props.active?.() ?? true} onChange={setProfiles} />
+          <MissionProfileSummary template={template()} profiles={profiles()} />
+          <Show when={!defaultsReady()}><p role={config.uiConfigLoadFailed() ? "alert" : "status"}>{t(config.uiConfigLoadFailed() ? "missions.defaults.unavailable" : "missions.defaults.loading")}</p>
+            <button type="button" class="window-action" disabled={defaultsRefreshing() || uncertain()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.reload")}</button></Show>
+          <Show when={config.isUiConfigLoaded() && !config.missionDefaultsValid()}><p role="alert">{t("missions.defaults.invalid")}</p></Show>
+          <Show when={defaultsFailed()}><p role="alert">{t("missions.defaults.unavailable")}</p></Show>
+          <details class="mission-profile-optional" onToggle={event => setProfileDetailsOpen(event.currentTarget.open)}><summary>{t("missions.defaults.creation")}</summary>
+          <p>{t("missions.defaults.hint")}</p>
+          <button type="button" class="window-text-button" onClick={() => void openSettings("missions")}>{t("missions.defaults.manage")}</button>
+          <Show when={profileDetailsOpen()}>
+           <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
+              disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()} active={() => profileDetailsOpen() && (props.active?.() ?? true)}
+              onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
+          </Show>
+          <button type="button" class="window-action" disabled={pending() || defaultsRefreshing() || uncertain()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
+          </details>
           <p>{t("missions.control.create.detail")}</p>
         </Show>
       </Show>
@@ -141,7 +213,7 @@ export function MissionEditor(props: {
     <footer class="window-footer">
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
       <Show when={uncertain()}><button type="button" class="button-secondary" onClick={() => void missionStore.refresh(props.instanceId)}>{t("missions.control.refresh")}</button></Show>
-      <button type="submit" class="button-primary" disabled={pending() || uncertain() || !(props.active?.() ?? true) || (kind !== "delete" && !objective().trim())}>
+      <button type="submit" class="button-primary" disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true) || (kind !== "delete" && !objective().trim())}>
         {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
       </button>
     </footer>
