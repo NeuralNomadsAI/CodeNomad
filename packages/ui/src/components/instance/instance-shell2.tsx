@@ -301,8 +301,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const handleResize = () => {
       const width = clampWidth(window.innerWidth * 0.3)
       setSessionSidebarWidth((current) => clampWidth(current || width))
-      const fallbackRight = window.innerWidth * 0.35
-      setRightDrawerWidth((current) => clampRightWidth(current || fallbackRight))
+      // Keep the selected width across transient native minimize sizes. The
+      // drawer layout constrains display without overwriting the preference.
       measureDrawerHost()
     }
 
