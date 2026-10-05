@@ -208,7 +208,7 @@ test("real setup keeps journal/tools/context alive without a backend/presence; u
   assert.equal(durablePlugin().id, "codenomad.missions")
   assert.equal(f.counts.registrations, 2)
   assert.equal(f.rpcs.get(CODENOMAD_MISSIONS_AUTHORITY_RPC.id)!.definition, CODENOMAD_MISSIONS_AUTHORITY_RPC)
-  assert.equal(f.tools.size, 4); assert.equal(f.hooks.length, 1)
+  assert.equal(f.tools.size, 5); assert.equal(f.hooks.length, 1)
   assert.deepEqual(await f.journal.events(), before)
   const state = await f.invoke("state", { missionID: saved.id }, CODENOMAD_MISSIONS_AUTHORITY_RPC.id)
   assert.equal(state.continuity, "needs-authorization"); assert.equal(state.grant, null)
@@ -224,12 +224,37 @@ test("real setup keeps journal/tools/context alive without a backend/presence; u
   await assert.rejects(f.tool("delegate", { ...independent, taskKey: "next", title: "Next", brief: "Next", role: "worker", targetSessionID: "ses_actor" }), /authorization-blocked/)
   await assert.rejects(f.tool("revise", { missionID: saved.id, expectedRevision: saved.revision, requestID: "revise-one", reason: "Unauthorized", objective: "Other" }), /authorization-blocked/)
   await assert.rejects(f.tool("report", { missionID: saved.id, final: true, outcome: "failed", summary: "Unauthorized finish" }), /authorization-blocked/)
+  await assert.rejects(f.tool("briefing", { missionID: saved.id, requestID: "unsigned-briefing", basedOnRevision: saved.revision,
+    summary: "Unauthorized narrative", achieved: [], ongoing: [], obstacles: [], next: [] }), /authorization-blocked/)
   const result = await f.tool("report", { missionID: saved.id, taskKey: "task-one", outcome: "completed", summary: "Saved headless",
     evidence: ["Native evidence"], artifact: { proof: "Existing result" } }, "ses_actor")
   assert.equal(result.disposition, "reported")
   assert.equal(result.mission.reports[0].summary, "Saved headless")
   assert.equal(result.mission.reports[0].notificationStatus, "pending")
   assert.equal(f.counts.nativePrompts, 0); assert.equal(f.counts.nativeSynthetics, 0); assert.equal(f.counts.nativeCreates, 0)
+})
+
+test("briefing business write retains durable adoption, Play and current signer authority without a transport send", async t => {
+  const f = fixture(), saved = await f.seed(true)
+  const dispose = await setupDurableMissionsPlugin(f.context, f.host); t.after(dispose)
+  await f.provision()
+  await f.intent(await f.body("adopt", saved.id))
+  await f.intent(await f.body("lifecycle", saved.id))
+  const mission = (await f.journal.snapshot()).missions[0]
+  const input = { missionID: mission.id, requestID: "authorized-briefing", basedOnRevision: mission.revision,
+    summary: "The project plan is open; no deliverable is verified yet.", achieved: [], ongoing: [], obstacles: [], next: [] }
+  const sends = f.admitted.length
+  const result = await f.tool("briefing", input)
+  assert.equal(result.mission.briefing.requestID, input.requestID)
+  assert.equal(f.admitted.length, sends)
+  assert.equal(f.counts.nativePrompts, 0)
+  assert.equal(f.counts.nativeSynthetics, 0)
+  assert.deepEqual(result.mission.tasks, mission.tasks)
+  assert.deepEqual(result.mission.reports, mission.reports)
+  const before = await f.journal.events()
+  f.loseTrust()
+  await assert.rejects(f.tool("briefing", { ...input, requestID: "revoked", basedOnRevision: result.mission.revision }), /authorization-blocked|untrusted-signer/)
+  assert.deepEqual(await f.journal.events(), before)
 })
 
 test("late stopped evidence remains native-actor checked and never wakes coordinator", async t => {
@@ -457,7 +482,7 @@ test("unreadable authority namespace has no stale fallback or automatic repair b
   const namespaceKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`
   f.storage.data.set(namespaceKey, "corrupt-native-UUID")
   const dispose = await setupDurableMissionsPlugin(f.context); t.after(dispose)
-  assert.equal(f.tools.size, 4); assert.equal(f.counts.registrations, 2)
+  assert.equal(f.tools.size, 5); assert.equal(f.counts.registrations, 2)
   assert.equal(f.storage.data.get(namespaceKey), "corrupt-native-UUID")
   await assert.rejects(f.invoke("challenge", { nonce: "bounded-nonce-123456" }, CODENOMAD_MISSIONS_AUTHORITY_RPC.id), /authorization-blocked/)
   assert.equal((await f.tool("inspect", { missionID: saved.id })).mission.id, saved.id)

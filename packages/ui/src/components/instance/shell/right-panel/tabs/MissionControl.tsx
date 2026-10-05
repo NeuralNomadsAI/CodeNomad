@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, onCleanup, untrack, type Component, type JSX } from "solid-js"
-import { AlertTriangle, ArrowUpRight, Check, Eye, Flag, Loader2, Minus, Pencil, Plus, RefreshCw } from "lucide-solid"
+import { AlertTriangle, ArrowUpRight, Eye, Flag, Loader2, Minus, Pencil, Plus, RefreshCw } from "lucide-solid"
 
 import type { MissionMap, MissionReport } from "../../../../../../../server/src/api-types"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
@@ -16,6 +16,7 @@ import { MissionWork } from "../../../../mission-work"
 import { MissionHistory } from "../../../../mission-history"
 import { MissionAttention } from "../../../../mission-attention"
 import { MissionProgress } from "../../../../mission-progress"
+import { MissionBriefing } from "../../../../mission-briefing"
 import { MissionActivity } from "../../../../mission-activity"
 import { MissionGuidance } from "../../../../mission-guidance"
 import { missionIncludesSession } from "../../../../mission-attention-model"
@@ -138,7 +139,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     return origin.current()
   }
 
+  const isReading = (target: MissionReaderTarget) => {
+    const current = missionProjectView(scope()).reader
+    return current?.missionId === target.missionId && current.kind === target.kind && current.itemId === target.itemId
+  }
   const read = async (target: MissionReaderTarget) => {
+    if (isReading(target)) {
+      intent++
+      batch(() => { showSessionChat(scope()); updateMissionProjectView(scope(), { reader: undefined }) })
+      return
+    }
     const origin = navigationOrigin()
     if (!origin.current()) return
     setNavigationError(false)
@@ -156,16 +166,20 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     if (!origin.current()) return
     props.onRevealConversation?.()
   }
-  const readReport = (report: MissionReport) => {
+  const reportTarget = (report: MissionReport): MissionReaderTarget | undefined => {
     const value = mission()
     if (!value) return
     // The report reader resolves the durable report list. A reducer-owned result
     // outside that bounded list remains readable through its exact task instead.
     const task = value.tasks.find(task => task.report?.id === report.id)
-    void read(value.reports.some(item => item.id === report.id)
+    return value.reports.some(item => item.id === report.id)
       ? { missionId: value.id, kind: "report", itemId: report.id }
       : task ? { missionId: value.id, kind: "task", itemId: task.id }
-        : { missionId: value.id, kind: "report", itemId: report.id })
+        : { missionId: value.id, kind: "report", itemId: report.id }
+  }
+  const readReport = (report: MissionReport) => {
+    const target = reportTarget(report)
+    if (target) void read(target)
   }
 
   return (
@@ -252,6 +266,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 <MissionIndex
                   missions={missions()}
                   selectedId={selected().id}
+                  reading={id => isReading({ missionId: id, kind: "overview" })}
                   onSelect={selectMission}
                   disabled={Boolean(editor())}
                   onEdit={value => openEditor({ kind: "edit", mission: value })}
@@ -273,10 +288,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                   t={props.t}
                 />
               <Show when={selected().id} keyed>{id => <MissionLifecycleControls instanceId={props.instanceId} mission={missions().find(mission => mission.id === id)!} disabled={Boolean(editor())} />}</Show>
-              <MissionProgress mission={selected()} activity={state().activity?.missions.find(value => value.missionId === selected().id)?.actors}
-                onOpenActor={async id => { await openActor(id) }}
-                onReadOverview={() => void read({ missionId: selected().id, kind: "overview" })} />
-               <MissionAttention mission={selected()} family={family(selected().id)} instanceId={props.instanceId} onOpenActor={async (id, request) => {
+                <MissionAttention mission={selected()} family={family(selected().id)} instanceId={props.instanceId} onOpenActor={async (id, request) => {
                  const origin = navigationOrigin()
                  await openActor(id, origin, () => {
                    if (!origin.current() || !request) return
@@ -284,12 +296,20 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                    if (queue.some(item => item.id === request.id && item.sessionID === id))
                      focusInterruption(origin.instanceId, id, request.id, request.kind)
                  })
-               }} />
-               <MissionActivity mission={selected()} onRead={readReport} />
-              <MissionWork
+                }} />
+                <MissionBriefing instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
+                  reading={isReading({ missionId: selected().id, kind: "overview" })}
+                 disabled={Boolean(editor()) || state().status !== "ready"}
+                 onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
+                 onReadOverview={() => void read({ missionId: selected().id, kind: "overview" })} />
+                <MissionProgress mission={selected()} activity={state().activity?.missions.find(value => value.missionId === selected().id)?.actors}
+                  observedAt={state().activity?.generatedAt}
+                  onOpenActor={async id => { await openActor(id) }} />
+               <Show when={selected().tasks.length}><MissionWork
                 mission={selected()}
                 instanceId={props.instanceId}
-                activeSessionId={props.activeSessionId()}
+                 activeSessionId={props.activeSessionId()}
+                 reading={task => isReading({ missionId: selected().id, kind: "task", itemId: task.id })}
                 family={family(selected().id)}
                 activity={state().activity?.missions.find(value => value.missionId === selected().id)?.actors}
                 disabled={Boolean(editor()) || !(props.isActive?.() ?? true)}
@@ -297,15 +317,22 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onOpenActor={async id => { await openActor(id) }}
                 onRead={task => void read({ missionId: selected().id, kind: "task", itemId: task.id })}
                 onReport={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })}
-              />
-                <MissionGuidance instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
-                  disabled={Boolean(editor()) || state().status !== "ready"} />
+               /></Show>
+                <Show when={selected().status === "active"}>
+                  <MissionGuidance instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
+                   mode="question" disabled={Boolean(editor()) || state().status !== "ready"}
+                   onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)} />
+                 <MissionGuidance instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
+                    disabled={Boolean(editor()) || state().status !== "ready"} />
+                </Show>
                 <MissionDisclosure missionId={selected().id} name="details" defaultOpen={false} title={props.t("missions.control.task.details")}>
+                 <MissionActivity mission={selected()} onRead={readReport} reading={report => {
+                   const target = reportTarget(report)
+                   return Boolean(target && isReading(target))
+                 }} />
                 <Show when={selected().status === "active" && selected().reports.some(report => report.notificationStatus === "pending" && report.delivery !== "native-return")}>
                   <p class="mission-control-stale" role="status">{props.t("missions.control.report.notificationPending")}</p>
                 </Show>
-               <MissionReports missionId={selected().id} tasks={selected().tasks} reports={selected().reports} t={props.t}
-                onRead={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })} />
               <MissionActors
                 mission={selected()}
                 instanceId={props.instanceId}
@@ -316,23 +343,17 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onOpenActor={async id => { await openActor(id) }}
                 t={props.t}
               />
-                <MissionHistory mission={selected()} onRead={revision => void read({ missionId: selected().id, kind: "change", itemId: String(revision) })} />
+                 <MissionHistory mission={selected()} reading={revision => isReading({ missionId: selected().id, kind: "change", itemId: String(revision) })}
+                   onRead={revision => void read({ missionId: selected().id, kind: "change", itemId: String(revision) })} />
                </MissionDisclosure>
             </>
           )}
         </Match>
       </Switch>
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
-      <MissionCleanupPanel instanceId={props.instanceId} cleanups={(state().cleanups ?? []).filter(item => item.pending > 0)}
+      <MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
         disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} />
-      <Show when={state().cleanups?.some(item => item.pending === 0)}>
-        <MissionDisclosure missionId={`cleanup-history:${props.instanceId}`} name="cleanup-history" defaultOpen={false}
-          title={props.t("missions.progress.cleanupHistory")}>
-          <MissionCleanupPanel instanceId={props.instanceId} cleanups={(state().cleanups ?? []).filter(item => item.pending === 0)}
-            disabled active={props.isActive?.() ?? true} refresh={() => missionStore.refresh(props.instanceId)} />
-        </MissionDisclosure>
-      </Show>
     </section>
   )
 }
@@ -357,6 +378,7 @@ const StateMessage: Component<{
 const MissionIndex: Component<{
   missions: MissionMap[]
   selectedId: string
+  reading: (id: string) => boolean
   onSelect: (id: string) => void
   disabled: boolean
   onEdit: (mission: MissionMap) => void
@@ -376,9 +398,9 @@ const MissionIndex: Component<{
           selected={id === props.selectedId} onSelect={() => props.onSelect(id)}
           statusKind={mission().status === "active" ? mission().runState ?? "active" : mission().status}
           status={props.t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
-            ? `missions.control.run.${mission().runState}` : statusKey(mission().status))}
+            ? `missions.control.run.${mission().runState}` : mission().status === "active" ? "missions.tracking.open" : statusKey(mission().status))}
           actions={[
-            { key: "read", label: props.t("missions.control.read"), icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => props.onRead(mission()) },
+            { key: "read", label: props.t("missions.control.read"), checked: props.reading(id), icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => props.onRead(mission()) },
             { key: "coordinator", label: props.t("missions.control.openCoordinator"), icon: <ArrowUpRight class="h-3.5 w-3.5" />, onSelect: () => props.onOpenCoordinator(mission()) },
             ...(recoveryAction() ? [recoveryAction()!] : []),
             { key: "edit", label: props.t("missions.control.edit"), icon: <Pencil class="h-3.5 w-3.5" />, disabled: props.disabled || mission().status !== "active", onSelect: () => props.onEdit(mission()) },
@@ -391,31 +413,8 @@ const MissionIndex: Component<{
   </nav>
 )
 
-const MissionReports: Component<{ missionId: string; tasks: MissionMap["tasks"]; reports: MissionReport[]; t: MissionControlProps["t"]; onRead: (report: MissionReport) => void }> = (props) => (
-  <MissionDisclosure missionId={props.missionId} name="reports" defaultOpen={false} title={<><Check class="h-4 w-4" /><span>{props.t("missions.control.reports.title")}</span></>}>
-    <Show when={props.reports.length > 0} fallback={<p class="mission-control-empty-line">{props.t("missions.control.reports.empty")}</p>}>
-      <div class="mission-report-list">
-        <For each={props.reports.map(report => report.id).reverse()}>
-          {id => {
-            const report = () => props.reports.find(report => report.id === id)!
-            return <MissionListItem text={<>{props.tasks.find(task => task.key === report().taskKey)?.title ?? report().taskKey}{" — "}{report().summary}</>}
-              title={report().summary} status={props.t(reportOutcomeKey(report().outcome))} statusKind={report().outcome}
-              actions={[{ key: "read", label: props.t("missions.control.read"), icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => props.onRead(report()) }]}>
-              <Show when={report().late}><p class="mission-report-detail">{props.t("missions.control.report.late")}</p></Show>
-            </MissionListItem>
-          }}
-        </For>
-      </div>
-    </Show>
-  </MissionDisclosure>
-)
-
 function statusKey(status: MissionMap["status"]): string {
   return `missions.control.status.${status}`
-}
-
-function reportOutcomeKey(outcome: MissionReport["outcome"]): string {
-  return `missions.control.report.outcome.${outcome}`
 }
 
 export default MissionControl

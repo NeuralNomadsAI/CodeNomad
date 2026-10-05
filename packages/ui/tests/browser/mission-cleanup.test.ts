@@ -54,9 +54,7 @@ async function openCleanupHistory(page: Page) {
   const history = page.getByRole("button", { name: "Conversation cleanup history", exact: true })
   if (await history.getAttribute("aria-expanded") !== "true") await history.click()
   assert.equal(await history.getAttribute("aria-expanded"), "true")
-  const cleanup = page.getByRole("button", { name: "Conversation cleanup", exact: true })
-  if (await cleanup.getAttribute("aria-expanded") !== "true") await cleanup.click()
-  assert.equal(await cleanup.getAttribute("aria-expanded"), "true")
+  assert.equal(await page.locator(".mission-cleanup .mission-disclosure-trigger").count(), 1, "no nested cleanup disclosure")
 }
 
 test("committed partial cleanup survives cancel, remount and reconnect with the exact original request", async () => {

@@ -65,9 +65,90 @@ async function openTechnicalDetails(page: Page) {
   const details = page.locator(".mission-control > .mission-disclosure").filter({ has: page.getByRole("button", { name: "Technical details", exact: true }) }).getByRole("button", { name: "Technical details", exact: true })
   if (await details.getAttribute("aria-expanded") !== "true") await details.click()
 }
+async function openResultHistory(page: Page) {
+  await openTechnicalDetails(page)
+  const history = page.getByRole("button", { name: "Reports", exact: true })
+  if (await history.getAttribute("aria-expanded") !== "true") await history.click()
+}
 async function openTaskTechnicalDetails(page: Page) {
   await page.locator(".mission-task-reader > details").filter({ has: page.locator("summary", { hasText: "Technical details" }) }).locator("summary").click()
 }
+
+test("reader eyes stay pinned, highlight the exact visible content and toggle it off without navigation or writes", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = mission("toggle"), writes: string[] = []
+    value.history = [{ revision: 1, source: "user", reason: "Scope clarified", createdAt: 1, addedTaskKeys: [], retiredTasks: [], dependencyUpdates: [] }]
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (route.request().method() !== "GET") writes.push(route.request().method())
+      return route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0 } })
+    })
+    await page.goto(url)
+    const overview = missionRows(page).getByRole("button", { name: "Read in chat area", exact: true })
+    const task = taskRow(page, "task-one").getByRole("button", { name: "Read in chat area", exact: true })
+    await overview.click()
+    assert.equal(await overview.getAttribute("aria-pressed"), "true")
+    await overview.click()
+    assert.equal(await page.locator(".mission-reader").count(), 0)
+    await fixtureCall(page, "panelWidth", "280px")
+    await task.click()
+    assert.equal(await task.getAttribute("aria-pressed"), "true")
+    assert.equal(await overview.getAttribute("aria-pressed"), "false")
+    await fixtureCall(page, "refresh")
+    await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
+    assert.equal(await task.getAttribute("aria-pressed"), "true")
+    await task.click()
+    assert.equal(await task.getAttribute("aria-pressed"), "false")
+    assert.equal(await page.locator(".mission-reader").count(), 0)
+    await openResultHistory(page)
+    const report = page.locator(".mission-advances .mission-list-preview button")
+    await report.click()
+    assert.equal(await report.getAttribute("aria-pressed"), "true")
+    await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+    assert.equal(await report.getAttribute("aria-pressed"), "false")
+    await page.getByRole("button", { name: "History", exact: true }).click()
+    const change = page.locator(".mission-history-list .mission-list-preview button")
+    await change.click()
+    assert.equal(await change.getAttribute("aria-pressed"), "true")
+    await change.click()
+    assert.equal(await page.locator(".mission-reader").count(), 0)
+    assert.deepEqual(writes, [])
+  } finally { await page.close() }
+})
+
+test("finished missions omit dead controls and duplicate report/cleanup sections without losing receipts", async () => {
+  const page = await browser.newPage({ locale: "fr-FR", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = { ...mission("minimal"), status: "completed" as const, summary: "Une livraison vérifiée avec ses preuves." }
+    const cleanups = [{ deletionID: "deleted", missionID: "old", requestID: "cleanup", expectedRevision: 1, deleteManagedSessions: true,
+      objective: "Ancienne mission", removed: 1, retained: 1, pending: 0, reasons: ["children"], createdAt: 1 }]
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], cleanups, generatedAt: 1, discardedEvents: 0 } }))
+    await page.goto(url)
+    assert.equal(await page.locator(".mission-guidance, .mission-lifecycle").count(), 0)
+    assert.equal(await page.locator("aside").getByText(value.summary, { exact: true }).count(), 0)
+    await page.getByRole("button", { name: "Détails techniques", exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "Rapports", exact: true }).count(), 1)
+    assert.equal(await page.getByRole("button", { name: "Avancées et résultats", exact: true }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Historique", exact: true }).count(), 0, "no empty plan history")
+    const cleanup = page.getByRole("button", { name: "Historique du nettoyage des conversations", exact: true })
+    await cleanup.click()
+    assert.equal(await page.locator(".mission-cleanup .mission-disclosure-trigger").count(), 1)
+    await page.getByText("Ancienne mission", { exact: true }).waitFor()
+    await page.getByText("Conservées car elles ont des conversations enfants.", { exact: true }).waitFor()
+    await cleanup.click()
+    await page.getByRole("button", { name: "Bilan du projet", exact: true }).click()
+    await page.locator(".mission-reader").getByText(value.summary, { exact: true }).waitFor()
+    for (const width of [440, 280, 390]) {
+      await fixtureCall(page, "panelWidth", `${width}px`)
+      if (width === 390) await page.setViewportSize({ width, height: 850 })
+      await page.locator("aside").evaluate(element => { element.scrollTop = 0 })
+      assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+      await page.screenshot({ path: screenshotPath(`mission-minimal-fr-${width}`) })
+    }
+  } finally { await page.close() }
+})
 
 test("mission journey exposes honest progress, real human requests and result-first readers without losing evidence", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1280, height: 900 } })
@@ -90,7 +171,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
       await page.waitForFunction(revision => (window as any).missionFixture.snapshot().missions[0]?.revision === revision
         && (window as any).missionFixture.snapshot().status === "ready", value.revision)
     }
-    const progress = page.getByRole("region", { name: "At a glance", exact: true })
+    const progress = page.getByRole("region", { name: "Activity and remaining work", exact: true })
     const capture = async (name: string, width: number, panelWidth: string, mobile = false) => {
       const target = mobile ? await browser.newPage({ locale: "en-US", viewport: { width, height: 844 }, isMobile: true, hasTouch: true }) : page
       try {
@@ -99,7 +180,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
           await target.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
             activity: { generatedAt: value.revision, missions: [{ missionId: value.id, actors: activity }] } } }))
           await target.goto(url)
-          await target.getByRole("region", { name: "At a glance", exact: true }).waitFor()
+          await target.getByRole("region", { name: "Activity and remaining work", exact: true }).waitFor()
           if (name.includes("human-request")) {
             await fixtureCall(target, "seedActor")
             await fixtureCall(target, "event", { type: "form.created", data: { form: { id: "form-mobile", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
@@ -148,9 +229,8 @@ test("mission journey exposes honest progress, real human requests and result-fi
     activity = [{ sessionId: "ses_background", state: "idle-without-report" }]
     await refresh()
     await taskRow(page, "inspect").getByText("Blocked", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).count(), 1,
-      "the result is presented once in Progress and results, not duplicated in the overview")
-    assert.equal(await progress.getByText(blocked.summary, { exact: true }).count(), 0)
+    assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0,
+      "source prose belongs in the central reader, not duplicated beside the graph")
     const blockedLabel = taskRow(page, "inspect").locator('.mission-list-status [aria-label="Blockage reported"]')
     assert.equal(await blockedLabel.getAttribute("title"), "Blockage reported")
     assert.equal(await page.getByRole("button", { name: "Your response is needed", exact: true }).count(), 0)
@@ -193,7 +273,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await fixtureCall(page, "event", { type: "permission.replied", data: { requestID: "permission-journey", sessionID: "ses_background", response: "once" } })
     await attention.waitFor({ state: "detached" })
     await taskRow(page, "inspect").getByText("Blocked", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).count(), 1)
+    assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0)
 
     const old = { ...blocked, id: "old-report", taskKey: "retired", summary: "Obsolete failure from the cancelled build.", createdAt: 100 }
     const inspectResult = { ...blocked, id: "inspect-done", outcome: "completed" as const, summary: "Windows navigation is verified.", createdAt: 30 }
@@ -207,12 +287,13 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await refresh()
     await progress.getByText("2 tasks completed · 0 remaining", { exact: true }).waitFor()
     assert.equal(await progress.getByText(old.summary, { exact: false }).count(), 0)
-    await page.locator(".mission-advances li").filter({ hasText: verifyResult.summary }).getByText("Complete", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-control").getByText(verifyResult.summary, { exact: true }).count(), 1)
-    await page.locator(".mission-advances li").filter({ hasText: old.summary }).getByText("Previous attempt", { exact: true }).waitFor()
+    assert.equal(await progress.getByText(verifyResult.summary, { exact: true }).filter({ visible: true }).count(), 0)
+    await openResultHistory(page)
+    await page.locator(".mission-advances li").filter({ hasText: verifyResult.summary }).locator(".mission-list-status").getByText(/Complete/).waitFor()
+    await page.locator(".mission-advances li").filter({ hasText: old.summary }).locator(".mission-list-status").getByText(/Previous attempt/).waitFor()
     await page.getByRole("button", { name: "Show more history", exact: true }).click()
     assert.equal(await page.locator(".mission-advances li").count(), 4)
-    await page.locator(".mission-advances li").filter({ hasText: blocked.summary }).getByText("Previous attempt", { exact: true }).waitFor()
+    await page.locator(".mission-advances li").filter({ hasText: blocked.summary }).locator(".mission-list-status").getByText(/Previous attempt/).waitFor()
     await page.locator(".mission-advances li").filter({ hasText: blocked.summary }).getByRole("button").click()
     await page.locator(".mission-reader").getByText("Final evidence sentinel: unchanged.", { exact: false }).waitFor()
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
@@ -220,7 +301,11 @@ test("mission journey exposes honest progress, real human requests and result-fi
     value.summary = "Desktop navigation shipped with an independent review and preserved evidence."
     await refresh()
     await progress.getByText("Completed", { exact: true }).waitFor()
-    await progress.getByRole("button", { name: /Mission result.*Desktop navigation shipped/ }).waitFor()
+    assert.equal(await page.locator(".mission-briefing").getByText(value.summary, { exact: true }).count(), 0)
+    await page.locator(".mission-briefing").getByRole("button", { name: "Project briefing", exact: true }).click()
+    await page.locator(".mission-reader").getByText(value.summary, { exact: true }).waitFor()
+    await page.locator(".mission-briefing").getByRole("button", { name: "Project briefing", exact: true }).click()
+    assert.equal(await page.locator(".mission-reader").count(), 0)
     assert.equal(await progress.getByText("Active conversations", { exact: true }).count(), 0)
     assert.equal(await progress.getByText("Obstacles to resolve", { exact: true }).count(), 0)
     await capture("completed-wide", 1280, "440px")
@@ -243,6 +328,7 @@ test("current report readers honor task-owned results instead of stale history c
     value.reports = [stale]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
+    await openResultHistory(page)
     await page.locator(".mission-advances li").filter({ hasText: current.summary }).getByRole("button").click()
     await page.locator(".mission-reader").getByText(current.summary, { exact: true }).waitFor()
     await page.locator(".mission-reader").getByText(current.evidence[0], { exact: true }).waitFor()
@@ -263,6 +349,7 @@ test("paginated evidence copies its entire unchanged source without touching the
     value.tasks[0].report = value.reports[0]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
+    await openResultHistory(page)
     await page.locator(".mission-advances li").filter({ hasText: value.reports[0].summary }).getByRole("button").click()
     const evidence = page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: "Evidence", exact: true }) })
     await evidence.getByText("SDK inventory: first-page proof.", { exact: false }).waitFor()
@@ -331,12 +418,10 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     await page.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
     await page.getByRole("button", { name: "Objective lifecycle", exact: true }).waitFor()
     await missionRows(page).getByText("Stopped", { exact: true }).waitFor()
-    assert.equal(await play.isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "Pause mission", exact: true }).isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "Stop mission permanently", exact: true }).isDisabled(), true)
+    assert.equal(await page.locator(".mission-lifecycle").count(), 0)
     await fixtureCall(page, "mount", false)
     await fixtureCall(page, "mount", true)
-    assert.equal(await play.isDisabled(), true)
+    assert.equal(await page.locator(".mission-lifecycle").count(), 0)
     await page.screenshot({ path: screenshotPath("mission-lifecycle-stopped") })
     assert.deepEqual(calls.map(call => call.action), ["start", "pause", "pause", "start", "stop"])
   } finally { await page.close() }
@@ -353,7 +438,7 @@ test("disclosures, mission selection and reader survive native invalidations, re
     await openTechnicalDetails(page)
     const reports = page.getByRole("button", { name: "Reports", exact: true })
     await reports.click()
-    const report = page.locator(".mission-report-list > .mission-list-item")
+    const report = page.locator(".mission-advances .mission-list-item")
     await page.getByRole("button", { name: "Work", exact: true }).click()
     assert.equal(await reports.getAttribute("aria-expanded"), "true")
     assert.equal(await report.locator(".mission-disclosure-trigger").count(), 0)
@@ -461,6 +546,7 @@ test("a saved report remains visibly pending until native notification admission
     await setup(page)
     const value = mission("outbox")
     value.reports[0].notificationStatus = "pending"
+    value.tasks[0].report = value.reports[0]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: {
       available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
     } }))
@@ -469,12 +555,12 @@ test("a saved report remains visibly pending until native notification admission
     const pending = page.getByRole("status").filter({ hasText: "Coordinator notification pending" })
     await pending.waitFor()
     await page.getByRole("button", { name: "Reports", exact: true }).click()
-    await page.locator(".mission-report-list > .mission-list-item").getByText("Complete", { exact: true }).waitFor()
+    await page.locator(".mission-advances .mission-list-status").getByText(/Complete/).waitFor()
     value.reports[0].notificationStatus = "admitted"
     value.revision++
     await fixtureCall(page, "refresh")
     await pending.waitFor({ state: "detached" })
-    await page.locator(".mission-report-list > .mission-list-item").getByText("Complete", { exact: true }).waitFor()
+    await page.locator(".mission-advances .mission-list-status").getByText(/Complete/).waitFor()
   } finally { await page.close() }
 })
 
@@ -620,7 +706,7 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await page.screenshot({ path: screenshotPath("mission-compact-overview") })
     await openTechnicalDetails(page)
     await page.getByRole("button", { name: "Reports", exact: true }).click()
-    const report = page.locator(".mission-report-list > .mission-list-item")
+    const report = page.locator(".mission-advances .mission-list-item")
     assert.equal(await report.locator(".mission-disclosure-trigger").count(), 0)
     await clickMissionAction(report, "Read in chat area")
     await page.locator(".mission-reader").getByText("Source proof", { exact: true }).waitFor()
@@ -676,7 +762,7 @@ test("top-level mission rows expose two-line titles, semantic states, readers an
     }
     assert.equal(await page.locator(".mission-control-header h2, .mission-control-overview").count(), 0)
     assert.equal(await page.getByRole("button", { name: "Missions", exact: true }).count(), 0)
-    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Progress and results", "Work1/1", "Give direction", "Technical details"])
+    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Ask a question", "Give direction", "Technical details"])
     assert.equal(await page.getByRole("button", { name: "Technical details", exact: true }).getAttribute("aria-expanded"), "false")
     assert.equal(await page.getByRole("button", { name: "Give direction", exact: true }).getAttribute("aria-expanded"), "false")
     await openTechnicalDetails(page)

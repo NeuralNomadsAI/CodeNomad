@@ -63,14 +63,14 @@ async function setup() {
 async function guidance(page: Page) {
   const trigger = page.getByRole("button", { name: "Give direction", exact: true })
   if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click()
-  return page.locator(".mission-guidance")
+  return page.locator(".mission-guidance:not(.mission-question)")
 }
 test("orientation starts collapsed and an explicit task direction reaches only its coordinator", async () => {
   const { page, writes, values, errors } = await setup()
   try {
     const trigger = page.getByRole("button", { name: "Give direction", exact: true })
     assert.equal(await trigger.getAttribute("aria-expanded"), "false")
-    assert.equal(await page.locator(".mission-guidance").isVisible(), false)
+    assert.equal(await page.locator(".mission-guidance:not(.mission-question)").isVisible(), false)
     const form = await guidance(page)
     assert.equal(await form.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "")
     assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "")
@@ -135,10 +135,10 @@ test("returned blockages are results, not native questions or generic coordinato
   const { page, errors } = await setup()
   try {
     assert.equal(await page.getByRole("button", { name: "Your response is needed", exact: true }).count(), 0)
-    const progress = page.getByRole("region", { name: "At a glance", exact: true })
+    const progress = page.getByRole("region", { name: "Activity and remaining work", exact: true })
     await progress.getByText("0 tasks completed · 1 remaining", { exact: true }).waitFor()
     assert.equal(await progress.getByText("Old cancelled build", { exact: true }).count(), 0)
-    assert.equal(await page.locator(".mission-control").getByText("Full Xcode is missing.", { exact: true }).count(), 1)
+    assert.equal(await page.locator(".mission-control").getByText("Full Xcode is missing.", { exact: true }).filter({ visible: true }).count(), 0)
     await page.locator('[data-task-key="xcode"] .mission-list-item').getByRole("button", { name: "Check Xcode", exact: true }).click()
     await page.locator(".mission-reader").getByText("Full Xcode is missing.", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByRole("button", { name: "Open coordinator", exact: true }).count(), 0)
@@ -288,7 +288,7 @@ test("narrow coordinator instructions keep context, input and send action within
   try {
     await guidance(page)
     await page.evaluate(() => { document.querySelector<HTMLElement>("#root > div")!.style.gridTemplateColumns = "minmax(0, 1fr) 280px" })
-    const form = page.locator(".mission-guidance")
+    const form = page.locator(".mission-guidance:not(.mission-question)")
     await form.getByLabel("Your instruction", { exact: true }).fill("A long draft ".repeat(120))
     const bounds = await form.boundingBox()
     assert.ok(bounds)

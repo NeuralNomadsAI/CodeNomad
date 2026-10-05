@@ -71,7 +71,7 @@ export function MissionLifecycleControls(props: { instanceId: string; mission: M
       }
     }
   }
-  return <div class="mission-lifecycle">
+  return <Show when={!terminal() || pending() || retry() || busy()}><div class="mission-lifecycle">
     <div class="mission-lifecycle-actions">
       <button type="button" class="mission-control-icon-button" aria-label={t(state() === "paused" ? "missions.control.run.resume" : "missions.control.run.start")}
         title={t(state() === "paused" ? "missions.control.run.resume" : "missions.control.run.start")}
@@ -87,5 +87,5 @@ export function MissionLifecycleControls(props: { instanceId: string; mission: M
     </div>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
     <Show when={!busy() && (pending() || retry() || full())}><small role="alert">{t("missions.control.run.error")}</small></Show>
-  </div>
+  </div></Show>
 }

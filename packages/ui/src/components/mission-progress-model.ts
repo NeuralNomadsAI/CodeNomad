@@ -70,3 +70,9 @@ export function missionProgress(mission: MissionMap, activity: readonly MissionA
 export function missionExcerpt(text: string): string {
   return text.replace(/\s+/g, " ").trim()
 }
+
+/** Fallback source excerpt, not an AI synthesis. Full source belongs in the reader. */
+export function missionTrackingExcerpt(text: string, max = 400): string {
+  const points = Array.from(missionExcerpt(text))
+  return points.length > max ? points.slice(0, max).join("") + "…" : points.join("")
+}

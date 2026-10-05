@@ -19,6 +19,8 @@ export type {
   MissionListResponse,
   MissionListUnavailableResponse,
   MissionMap,
+  MissionBriefing,
+  MissionBriefingItem,
   MissionReport,
   MissionReportOutcome,
   MissionSnapshot,

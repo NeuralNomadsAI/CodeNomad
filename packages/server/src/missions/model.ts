@@ -1,4 +1,6 @@
 import type { MissionExecution } from "./execution"
+import { briefingSourcesExist, parseMissionBriefing, type MissionBriefing } from "./briefing"
+export type { MissionBriefing, MissionBriefingItem } from "./briefing"
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
 import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
@@ -167,6 +169,7 @@ export interface MissionMap {
   controlUnavailable?: boolean
   notificationUnavailable?: boolean
   summary?: string
+  briefing?: MissionBriefing
   coordinatorSessionId: string
   actors: MissionActor[]
   tasks: MissionTask[]
@@ -387,6 +390,12 @@ export interface MissionFinishedEvent extends MissionEventBase {
   summary: string
 }
 
+export interface MissionBriefedEvent extends MissionEventBase {
+  type: "mission.briefed"
+  actorSessionID: string
+  briefing: MissionBriefing
+}
+
 export type MissionEvent =
   | MissionControlRequestedEvent
   | MissionControlAppliedEvent
@@ -406,6 +415,7 @@ export type MissionEvent =
   | MissionTaskReportedEvent
   | MissionReportNotifiedEvent
   | MissionFinishedEvent
+  | MissionBriefedEvent
 
 export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.now()): MissionSnapshot {
   const ordered = [...events].sort(compareEvents)
@@ -452,6 +462,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   let status: MissionStatus = "active"
   let objective = created.objective
   let notes = created.notes
+  let briefing: MissionBriefing | undefined
   let updatedAt = created.createdAt
 
   actors.set(created.coordinator.sessionID, {
@@ -490,6 +501,18 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       continue
     }
     if (event.type === "mission.deleted") continue
+    if (event.type === "mission.briefed") {
+      const value = parseMissionBriefing(event.briefing)
+      const index = events.indexOf(event)
+      const lifecycle = projectLifecycle(events.slice(0, index))
+      if (!value || event.actorSessionID !== created.coordinator.sessionID || status !== "active" || stoppedForReports
+        || value.id !== event.id || value.createdAt !== event.createdAt || value.basedOnRevision !== index
+        || value.basedOnUpdatedAt !== Math.max(...events.slice(0, index).map(item => item.createdAt))
+        || ["prepared", "paused", "stopped"].includes(lifecycle.runState ?? "running") || lifecycle.control?.pending.length
+        || !briefingSourcesExist({ tasks: [...tasks.values()] }, value)) { discarded.count++; continue }
+      briefing = value
+      continue
+    }
     if (event.type === "mission.revised") {
       const previousObjective = objective
       const previousNotes = notes
@@ -775,6 +798,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     projectCanonical: created.projectCanonical,
     objective,
     notes,
+    ...(briefing ? { briefing } : {}),
     template: created.template,
     ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
     status,

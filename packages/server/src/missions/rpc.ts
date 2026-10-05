@@ -4,6 +4,7 @@ import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
 import { missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_MAX_EVENTS } from "./model"
+import { missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
@@ -63,6 +64,7 @@ const mission = {
     notificationUnavailable: { type: "boolean" },
     summary: { type: "string" },
     coordinatorSessionId: { type: "string" },
+    briefing: missionBriefingSnapshotSchema,
     actors: {
       type: "array",
       items: {

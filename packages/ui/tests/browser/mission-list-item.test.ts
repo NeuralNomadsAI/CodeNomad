@@ -34,6 +34,23 @@ async function width(page: Page, value: number, collapsed: boolean) {
   await page.waitForFunction(({ row, collapsed }) => document.querySelector(row)?.classList.contains("mission-list-item-overflow") === collapsed, { row, collapsed })
 }
 
+test("the pinned reader eye keeps keyboard focus while secondary actions move into overflow", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    await prepare(page)
+    await width(page, 520, false)
+    const eye = page.locator(`${row} .mission-list-preview button`)
+    await eye.focus()
+    await width(page, 170, true)
+    assert.equal(await eye.isVisible(), true)
+    assert.equal(await eye.evaluate(element => element === document.activeElement), true)
+    await page.evaluate(() => (window as any).missionListFixture.refresh())
+    assert.equal(await eye.evaluate(element => element === document.activeElement), true)
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => document.querySelector('[data-fixture="selection"]')?.textContent === "read:1")
+  } finally { await page.close() }
+})
+
 test("three-line rows keep actions visible and measured overflow stable at fractional zoom, RTL and touch", async () => {
   for (const touch of [false, true]) {
     const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, hasTouch: touch, deviceScaleFactor: 1.25, locale: "en-US" })
@@ -42,7 +59,8 @@ test("three-line rows keep actions visible and measured overflow stable at fract
       for (const dir of ["ltr", "rtl"]) for (const zoom of [0.8, 1, 1.25, 1.5]) {
         await page.evaluate(({ dir, zoom }) => { document.dir = dir; document.body.style.zoom = String(zoom) }, { dir, zoom })
         await width(page, 520, false)
-        assert.equal(await page.locator(`${row} .mission-list-inline button:visible`).count(), 5)
+        assert.equal(await page.locator(`${row} .mission-list-inline button:visible`).count(), 4)
+        assert.equal(await page.locator(`${row} .mission-list-preview button:visible`).count(), 1)
         const geometry = await page.locator(row).evaluate(e => {
           const text = e.querySelector(".mission-list-text")!.getBoundingClientRect()
           const footer = e.querySelector(".mission-list-footer")!.getBoundingClientRect()
@@ -59,14 +77,15 @@ test("three-line rows keep actions visible and measured overflow stable at fract
         await page.waitForTimeout(150)
         assert.equal(await page.locator(row).evaluate(e => e.classList.contains("mission-list-item-overflow")), true)
         await page.locator(trigger).click()
-        assert.equal(await page.getByRole("menuitem").count(), 5)
+        assert.equal(await page.getByRole("menuitem").count(), 4)
+        assert.equal(await page.locator(`${row} .mission-list-preview button:visible`).count(), 1)
         if (process.env.CODENOMAD_MISSION_LIST_CAPTURE && !touch && dir === "ltr" && zoom === 1) {
           await page.screenshot({ path: `${process.env.CODENOMAD_MISSION_LIST_CAPTURE}-narrow.png` })
         }
         // Widening must not unmount a currently open menu.
         await page.evaluate(() => (window as any).missionListFixture.width(520))
         await page.waitForTimeout(80)
-        assert.equal(await page.getByRole("menuitem").count(), 5)
+        assert.equal(await page.getByRole("menuitem").count(), 4)
         await page.keyboard.press("Escape")
         await width(page, 520, false)
         try {
@@ -92,7 +111,7 @@ test("keyboard focus hands off, menu actions keep callbacks and disabled state, 
     await page.waitForFunction(() => document.querySelector('[data-fixture="count"]')?.textContent === "1")
     await page.evaluate(() => (window as any).missionListFixture.disabled(true))
     await page.locator(trigger).click()
-    assert.equal(await page.getByRole("menuitem").nth(3).getAttribute("aria-disabled"), "true")
+    assert.equal(await page.getByRole("menuitem").nth(2).getAttribute("aria-disabled"), "true")
     await page.keyboard.press("Escape")
     await width(page, 520, false)
     await page.evaluate(() => (window as any).missionListFixture.compact(true))
@@ -185,7 +204,7 @@ test("history and cleanup preserve top-level disclosures while sharing item chro
     if (await history.locator(".mission-list-item").evaluate(e => e.classList.contains("mission-list-item-overflow"))) {
       await history.locator(".action-overflow-trigger").click()
       await page.getByRole("menuitem").click()
-    } else await history.locator(".mission-list-inline button").click()
+    } else await history.locator(".mission-list-preview button").click()
     await page.waitForFunction(() => document.querySelector('[data-fixture="count"]')?.textContent === "1")
   } finally { await page.close() }
 })
@@ -205,8 +224,10 @@ test("intrinsic overflow thresholds do not oscillate in compact or full rows at 
         const range = document.createRange()
         range.selectNodeContents(element.querySelector(".mission-list-status")!)
         const style = getComputedStyle(element)
-        const required = (range.getBoundingClientRect().width + element.querySelector(".mission-list-inline")!.getBoundingClientRect().width) / zoom
+        const required = (range.getBoundingClientRect().width + element.querySelector(".mission-list-inline")!.getBoundingClientRect().width
+          + element.querySelector(".mission-list-preview")!.getBoundingClientRect().width) / zoom
           + Number.parseFloat(getComputedStyle(footer).columnGap)
+          + Number.parseFloat(getComputedStyle(element.querySelector(".mission-list-actions")!).columnGap)
         return required + Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight) + 2
           + (compact ? Number.parseFloat(getComputedStyle(element.querySelector(".mission-list-text")!).minWidth) + Number.parseFloat(style.columnGap) : 0)
       }, { compact, zoom })
@@ -232,7 +253,7 @@ test("fresh keyed descriptors preserve focused inline buttons and use all latest
   try {
     await prepare(page)
     await width(page, 520, false)
-    const button = await page.locator(`${row} .mission-list-inline button`).nth(1).elementHandle()
+    const button = await page.locator(`${row} .mission-list-inline button`).nth(0).elementHandle()
     await button!.focus()
     await page.evaluate(() => {
       const fixture = (window as any).missionListFixture
@@ -253,7 +274,7 @@ test("fresh keyed descriptors preserve focused inline buttons and use all latest
     await page.waitForFunction(() => document.querySelector('[data-fixture="selection"]')?.textContent === "coordinator:1")
     await page.evaluate(() => { (window as any).missionListFixture.omitRecovery(true); (window as any).missionListFixture.refresh() })
     await page.waitForTimeout(80)
-    assert.equal(await page.locator(`${row} .mission-list-inline button`).count(), 4)
+    assert.equal(await page.locator(`${row} .mission-list-inline button`).count(), 3)
     assert.equal(await button!.evaluate(e => e.isConnected && e === document.activeElement), true)
     await page.keyboard.press("Enter")
     await page.waitForFunction(() => document.querySelector('[data-fixture="selection"]')?.textContent === "coordinator:2")
@@ -265,17 +286,17 @@ test("open menus retain keyed focused items on refresh, use latest actions, and 
   try {
     await prepare(page)
     await width(page, 170, true)
-    const inline = await page.locator(`${row} .mission-list-inline button`).nth(1).elementHandle()
+    const inline = await page.locator(`${row} .mission-list-inline button`).nth(0).elementHandle()
     await page.locator(trigger).click()
-    const item = await page.getByRole("menuitem").nth(1).elementHandle()
+    const item = await page.getByRole("menuitem").nth(0).elementHandle()
     await item!.focus()
     await page.evaluate(() => { (window as any).missionListFixture.refresh(); (window as any).missionListFixture.reverse() })
     await page.waitForTimeout(100)
     assert.equal(await item!.evaluate(e => e.isConnected && e === document.activeElement), true)
     assert.equal(await item!.getAttribute("aria-description"), "generation 1")
     assert.match((await item!.textContent())!, / 1$/)
-    assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 5)
-    assert.equal(await page.locator(".action-overflow-item svg").count(), 5)
+    assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 4)
+    assert.equal(await page.locator(".action-overflow-item svg").count(), 4)
     await page.evaluate(() => { (window as any).missionListFixture.checked(true); (window as any).missionListFixture.disabled(true) })
     const edit = page.getByRole("menuitemcheckbox", { name: "Edit mission 1" })
     assert.equal(await edit.getAttribute("aria-checked"), "true")
@@ -293,12 +314,12 @@ test("open menus retain keyed focused items on refresh, use latest actions, and 
     await page.waitForFunction(() => document.querySelector('[data-fixture="selection"]')?.textContent === "coordinator:1")
     await width(page, 520, false)
     assert.equal(await inline!.evaluate(e => e.isConnected && e.querySelectorAll("svg").length === 1), true)
-    assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 5)
+    assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 4)
     await width(page, 170, true)
     await page.locator(trigger).click()
-    assert.equal(await page.locator(".action-overflow-item svg").count(), 5)
+    assert.equal(await page.locator(".action-overflow-item svg").count(), 4)
     await page.keyboard.press("Escape")
     await width(page, 520, false)
-    assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 5)
+    assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 4)
   } finally { await page.close() }
 })

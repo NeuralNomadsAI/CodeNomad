@@ -16,6 +16,7 @@ import {
   type MissionTemplateId,
 } from "./model"
 import { runMissionExclusive } from "./exclusive"
+import { parseMissionBriefing } from "./briefing"
 import { parseExecution } from "./execution"
 import { parseExecutionMode } from "./task-execution-mode"
 import { hasInvalidReportNotificationHistory, parseNativeBinding, parseNativeCall } from "./native-report-provenance"
@@ -211,6 +212,11 @@ function isSafeKey(value: string): boolean {
 export function parseMissionEvent(input: unknown): MissionEvent | undefined {
   if (!record(input) || input.version !== MISSION_SCHEMA_VERSION || !baseEvent(input)) return undefined
   switch (input.type) {
+    case "mission.briefed": {
+      const briefing = parseMissionBriefing(input.briefing)
+      if (!briefing || !text(input.actorSessionID, MAX_SHORT_TEXT) || briefing.id !== input.id || briefing.createdAt !== input.createdAt) return undefined
+      return { ...eventBase(input), type: "mission.briefed", actorSessionID: input.actorSessionID, briefing }
+    }
     case "mission.created": {
       if (!text(input.projectCanonical, MAX_TEXT) || !text(input.objective, MAX_TEXT)
         || !template(input.template) || !record(input.coordinator)) return undefined

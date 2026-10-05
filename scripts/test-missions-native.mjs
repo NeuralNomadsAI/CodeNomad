@@ -270,6 +270,27 @@ try {
   assert.equal(requests.length, requestsBeforeDeclaration, "Declarations and replay never create a provider turn")
   gate("default native declaration and canonical prompt replay without actor creation or execution")
 
+  stage = "coordinator project briefing"
+  const beforeBriefing = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
+  const briefingInput = { missionID: beforeBriefing.id, requestID: "fixture-briefing", basedOnRevision: beforeBriefing.revision,
+    summary: "The review is verified; the native follow-up is planned, not executed.",
+    achieved: [{ text: "Selected review returned its evidence.", taskKeys: [task.taskKey] }],
+    ongoing: [], obstacles: [], next: [{ text: "Carry out the declared follow-up after this readout.", taskKeys: [nativeTask.taskKey] }] }
+  const briefed = await invoke("briefing", briefingInput)
+  assert.equal(briefed.mission.briefing.requestID, briefingInput.requestID)
+  assert.equal(briefed.mission.briefing.basedOnRevision, beforeBriefing.revision)
+  assert.deepEqual(briefed.mission.tasks, beforeBriefing.tasks)
+  assert.deepEqual(briefed.mission.reports, beforeBriefing.reports)
+  assert.equal(briefed.mission.status, beforeBriefing.status)
+  assert.equal(requests.length, requestsBeforeDeclaration, "Publishing a briefing never creates a provider turn")
+  assert.deepEqual(await invoke("briefing", briefingInput), briefed)
+  const nativeBriefingSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.deepEqual(nativeBriefingSnapshot.missions[0].briefing, briefed.mission.briefing,
+    "Native RPC output decoding must retain the briefing for the actual UI read path")
+  await assert.rejects(invoke("briefing", { ...briefingInput, requestID: "foreign-briefing" }, actorID))
+  await assert.rejects(invoke("briefing", { ...briefingInput, requestID: "stale-briefing" }))
+  gate("native coordinator briefing, bounded sources, exact replay and no task/execution mutation")
+
   // Exercise the native plan-revision tool and prove that a late report is history, not a reactivation.
   stage = "mission.revise and late report"
   const beforeRevision = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })

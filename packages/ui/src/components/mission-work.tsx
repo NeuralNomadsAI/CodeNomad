@@ -16,6 +16,7 @@ export function MissionWork(props: {
   mission: MissionMap; instanceId: string; activeSessionId: string | null
   onOpenActor: (id: string) => Promise<void>
   onRead: (task: MissionTask) => void; onReport: (report: MissionReport) => void
+  reading?: (task: MissionTask) => boolean
   activity?: MissionActorActivity[]; disabled?: boolean
   family?: MissionObservedFamily
   onRecoveryAdmitted?: () => void | Promise<void>
@@ -48,7 +49,7 @@ export function MissionWork(props: {
                 const current = missionTaskConversation(props.mission, task(), props.family)
                 if (current) return props.onOpenActor(current)
               } }] : []),
-              { key: "read", label: t("missions.control.read"), icon: <Eye class="h-4 w-4" />,
+              { key: "read", label: t("missions.control.read"), checked: props.reading?.(task()) ?? false, icon: <Eye class="h-4 w-4" />,
               onSelect: () => props.onRead(task()) }, ...(recover ? [recover] : [])]
           }
           return <li class="mission-route-task" data-task-key={task().key} data-status={task().status}

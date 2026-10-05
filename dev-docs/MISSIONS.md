@@ -12,22 +12,105 @@ Missions are a thin coordination plane over native OpenCode V2 sessions. They in
 | Checkout isolation and Git policy | Existing CodeNomad worktree/Git modules |
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
-The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, and `mission.report`. The coordinator is the sole topology writer. Specialists receive one bounded assignment and report through a correlated synthetic inbox item. Delegation uses native `queue` delivery and `resume: true`, so a busy actor keeps the work in its durable inbox while an idle actor can begin immediately.
+The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, `mission.report` and `mission.briefing`. The coordinator is the sole topology writer. Specialists receive one bounded assignment and report through a correlated synthetic inbox item. Delegation uses native `queue` delivery and `resume: true`, so a busy actor keeps the work in its durable inbox while an idle actor can begin immediately.
 
 ## Durability and recovery
 
 ### Human instructions and actionable attention
 
-Mission Control starts with a recorded-result overview, current task counts and
-observed activity. Open native Forms/permissions ("Your response is needed") are
+Mission Control separates mission lifecycle (an **open** mission, not a claim of
+activity), the dated coordinator project briefing, and observed native activity.
+Open native Forms/permissions ("Your response is needed") are
 the only human-response alerts. Returned blocked reports are obstacles to read,
 not an assertion that the user must decide something. Retired or replaced blockers
 remain readable in the historical results but are not current requests.
-Recent recorded advances and results lead into the declared dependency graph.
-The overview does not repeat each task result or blockage title. Technical reports,
+Actionable requests precede the project briefing controls. Without a briefing, the
+overview reader exposes bounded exact current task achievements/obstacles, not an
+invented synthesis; absent evidence is not replaced by old attempts. The side
+panel retains compact observed activity and the complete declared dependency graph,
+without repeating task prose or a second remaining-work list.
+Counts describe the declared plan, never a product completion percentage. All
+declared tasks being complete does not imply that the mission has been finalized.
+The single canonical report list (including current, previous and late results),
 native conversations and plan-change history are
 progressive details, not competing top-level tracking surfaces. Cleanup receipts
-appear at the bottom; successful historical cleanup is collapsed.
+appear in one disclosure at the bottom; successful historical cleanup is collapsed,
+without a second nested cleanup section. Pending receipts keep explicit retry and
+their original mutation identity. Empty plan history and unusable terminal guidance
+are omitted. Settled terminal lifecycle commands disappear; unresolved control
+receipts remain available.
+
+### On-demand project briefing
+
+The 2026-10-06 tracking simplification is source-only, not a new installed build.
+Qualification includes the real Solid browser fixtures: briefing/control/cleanup/
+guidance/shared rows and lifecycle revisions (60 passing across the latest runs), result/task readers and report delivery
+(23 passing), plus tracking/briefing/view-fence unit and locale checks (18 passing)
+and the UI typecheck. Captures were read at 440/280 px panels and a 390 px viewport,
+including a full-width central briefing reader. The fixture's central surface uses
+the production relative-positioned transcript host so its absolute reader cannot
+cover the neighboring panel. These checks do not qualify model synthesis quality
+or mutate a live mission.
+An incorrectly placed test-only terminal-settlement update was corrected: ordinary
+uncertain Pause retries still require a mounted settled strip; completed Stop retries
+require its disappearance while retaining the exact request/revision assertions.
+The full lifecycle/shared-row rerun passed 18/18. A fixture-start timeout seen in the
+preceding combined run did not recur; no timeout extension or automatic retry was added.
+
+“Make a status check” composes a fixed application-authored request with the exact
+mission ID, a unique request ID and the UI language. The user does not write a
+prompt. It follows the same ordinary coordinator prompt admission as guidance:
+fresh owned snapshot, exact project/coordinator, view/connection/lifecycle fences,
+targeted hydration and native profile preservation. No session selection, composer
+edit, plan mutation, task dispatch/replay, model switch or implicit Play is added.
+It does admit a normal native coordinator turn, not a separate read-only LLM;
+instructions prohibit new execution, but are not a sandbox removing native tools.
+
+The coordinator publishes a bounded `mission.briefing` (summary and at most three
+entries each for achieved/ongoing/obstacles/next, with exact live task-key sources).
+This coordinator-only journal event records its assessed revision/time and a
+server-assigned publication timestamp. Its exact immutable request replay is
+idempotent; conflicting IDs, stale revisions, missing/retired sources, damaged
+journals, moved roots and non-running/pending-control missions fail closed. The
+event changes no task, result, notification or final outcome and sends nothing.
+The reducer independently checks author, lifecycle, source identity and the
+assessed journal prefix. Durable-plugin publication keeps the existing authority
+grant and signer gates; it does not enable persistent-host rollout.
+
+The latest briefing is plainly attributed to the coordinator, not labeled as an
+observed execution fact. The panel shows its date, freshness and request controls,
+not a second copy of the narrative. Its pinned eye opens the complete briefing in
+the central message-area reader; the highlighted eye hides it on a second click.
+The mission overview eye shares that exact target and highlight. Task/report/plan
+revision eyes follow the same toggle convention and remain visible at narrow widths,
+outside the overflow of secondary actions. Closing the reader clears the highlights.
+Source buttons in the full briefing open the exact task result/brief reader.
+New current task results since the assessed snapshot are counted; other map
+changes produce a separate stale-map notice, not a fabricated progress delta.
+Sources that later retire remain historical reader targets, never fresh proof.
+The briefing is retained while stale. Terminal mission summaries take precedence.
+Coordinator instructions ask for an initial briefing and a useful final summary,
+not another bilan after each task/tool, a timer or a hidden automatic request.
+
+Request admission is visibly distinct from receiving the matching request-ID
+briefing. Pending/uncertain requests survive mission navigation and remount in
+window-local memory. A seen exact response remains recognized if a later briefing
+replaces it. No mutation replay, automatic retries or background polling is added.
+An explicit, confirmed separate request is possible after checking the native
+conversation (for an unresponsive coordinator, unsupported tool or lost ACK).
+Memory does not survive application restart or coordinate independent windows;
+ordinary native conversations retain the actual prompts. This is not proof of
+general planning quality, semantic freshness of every source report, or model
+consumption. An older plugin cannot publish this event: the fixed prompt forbids a
+substitute task and asks it to explain the missing tool in the conversation.
+
+“Ask a question” is a separate initially collapsed explanation form, with its own
+identity-scoped draft. It reuses the ordinary admission and uncertain-send fences,
+asks for an explanation from existing evidence rather than changing priorities or
+executing work, and offers an exact coordinator conversation link after admission.
+It does not claim to refresh the briefing. “Give direction” remains distinct for
+intent/task-context steering. Both still use the native coordinator, not a new
+read-only sandbox or a second execution/planning engine.
 
 Work and task readers link only to an exact owned non-coordinator task actor when
 recorded. Missing bindings produce no generic coordinator substitute. The mission
@@ -278,3 +361,24 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
 Build the shipped plugin with `npm run build:missions --workspace @neuralnomads/codenomad`, then run `node scripts/test-missions-native.mjs <absolute-opencode-executable>`. The fixture uses isolated configuration/storage, the real bundled plugin, typed RPC, WorkspaceManager and bridge, plus a local deterministic provider. It verifies catalog selection, variant persistence, a busy actor's durable queue, mismatched selection refusal, per-send actor/coordinator environment, presence removal/re-registration, and retry idempotence. No shared service or user provider is used. The fixture passed on Windows with CLI/client/plugin 2.0.11 on 2026-09-20.
 
 The native runtime findings and recovery matrix are recorded in [`MISSIONS_RUNTIME_SPIKE.md`](MISSIONS_RUNTIME_SPIKE.md).
+
+The project-briefing follow-up was checked on Windows on 2026-10-05 against an
+isolated 2.0.22 runtime and the rebuilt shipped plugin (16 native gates), including
+the real typed snapshot decoder retaining the briefing, exact request replay,
+foreign/stale refusal, and unchanged tasks/results/provider-turn count. Native
+parallel/recursive trajectory qualification retained all eight gates. Receipts:
+`C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-mXJfp9/receipt.json` and
+`C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-trajectory-GKkfuR/receipt.json`.
+
+Server/Mission regressions passed 800 tests, with one pre-existing opt-in native
+test skipped; UI models/locales/view fences passed 69 tests under browser
+conditions. The general Mission/drawer browser suite passed 230 tests; subsequent
+targeted guidance/control/briefing checks passed 35, then the final seven briefing
+checks covered superseded exact responses and terminal-summary precedence. UI,
+server and Electron typechecks passed. French captures of the real components
+were inspected at 440/280 px panel widths and a 390 px viewport, both with and
+without a briefing (`mission-briefing-fr-*.png` in the approved temporary folder).
+
+These deterministic readouts validate representation and admission semantics,
+not the quality of a real coordinator's synthesis. No live mobile mission was
+mutated and no new desktop version was installed by this follow-up validation.

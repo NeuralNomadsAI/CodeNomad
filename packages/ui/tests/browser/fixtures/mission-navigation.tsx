@@ -50,7 +50,7 @@ function Fixture() {
       view: missionProjectView(scope()), reveals: reveals() }),
   }
   return <div style={{ display: "grid", "grid-template-columns": "minmax(0,1fr) 390px", height: "100vh" }}>
-    <main><p>Private chat surface</p><Show when={missionProjectView(scope()).reader}><MissionReader instanceId={instanceId()} scope={scope()} /></Show>
+    <main class="mission-transcript-surface" style={{ "min-width": 0, overflow: "hidden" }}><p>Private chat surface</p><Show when={missionProjectView(scope()).reader}><MissionReader instanceId={instanceId()} scope={scope()} /></Show>
       <output data-testid="navigation-state">{JSON.stringify(window.missionNavigation.snapshot())}</output></main>
     <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId={instanceId()} isActive={active}
       activeSessionId={() => activeSessionId().get(instanceId()) ?? null} t={t} onRevealConversation={() => reveal(value => value + 1)} /></Show></aside>

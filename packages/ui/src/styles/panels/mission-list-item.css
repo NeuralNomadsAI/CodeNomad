@@ -34,9 +34,11 @@
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
-.mission-list-actions { position: relative; flex: 0 0 auto; }
+.mission-list-actions { position: relative; display: flex; align-items: center; gap: var(--space-xs); flex: 0 0 auto; }
+.mission-list-preview { display: flex; flex-shrink: 0; }
+.mission-list-preview:empty, .mission-list-inline:empty { display: none; }
 .mission-list-inline { display: flex; align-items: center; gap: var(--space-xs); width: max-content; }
-.mission-list-inline .mission-control-icon-button,
+.mission-list-inline .mission-control-icon-button, .mission-list-preview .mission-control-icon-button,
 .mission-list-overflow .action-overflow-trigger {
   min-width: var(--touch-target-size-compact);
   min-height: var(--touch-target-size-compact);

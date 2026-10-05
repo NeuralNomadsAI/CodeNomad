@@ -28,6 +28,7 @@ import { parseExecutionMode } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
 import { buildAssignmentPrompt } from "../missions/recipes"
+import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string }): unknown
@@ -110,7 +111,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
 // Opt-in native continuity seam. The desktop setup keeps its existing defaults.
 export interface MissionsPluginPolicy {
   configure(control: MissionControl): Promise<void>
-  beforeTool(name: "inspect" | "declare" | "delegate" | "revise" | "report", input: unknown, sessionID: string): Promise<void>
+  beforeTool(name: "inspect" | "declare" | "delegate" | "revise" | "report" | "briefing", input: unknown, sessionID: string): Promise<void>
   beforeJournalWrite(event: MissionEvent): Promise<void | (() => void)>
   authorizeNativeReport?: MissionNativeReportAuthorization
 }
@@ -272,6 +273,19 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
               sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report))
         },
       })
+      draft.add({
+        name: "briefing",
+        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Inspect the current mission first and pass its revision as basedOnRevision. Explain usable achievements, remaining work, obstacles and the next step in the user's language; reference exact live task keys where relevant. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. Use the requestID from an explicit UI request; otherwise a unique initial briefing ID. On a revision conflict reread before publishing, never replay work.",
+        input: missionBriefingSchema,
+        options: { namespace: "mission", codemode: false },
+        execute: async (input, tool) => {
+          assertActive()
+          await policy?.beforeTool("briefing", input, tool.sessionID)
+          assertActive()
+          await tool.progress({ status: "Recording project briefing" })
+          return textResult(await control.briefing(tool.sessionID, parseMissionBriefingInput(input)))
+        },
+      })
     })
     registrations.push(tools)
 
@@ -287,6 +301,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         if (mission && mission.coordinatorSessionId !== event.sessionID) {
           delete event.tools.mission_delegate
           delete event.tools.mission_revise
+          delete event.tools.mission_briefing
         }
       } catch {
         // Mission context is additive. A damaged optional map must not block an otherwise valid model request.

@@ -15,8 +15,9 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { sessionPreviews } from "../stores/session-previews"
 import { missionIncludesSession } from "./mission-attention-model"
 import { missionTaskConversation } from "./mission-task-navigation"
-import { missionReports, missionReportIsPrevious } from "./mission-progress-model"
+import { missionReports, missionReportIsPrevious, missionTaskReport, missionProgress } from "./mission-progress-model"
 import { missionMarkdownPage } from "../lib/mission-markdown-pages"
+import { missionBriefingFreshness } from "./mission-briefing-model"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -70,7 +71,7 @@ export function MissionReaderSection(props: { text: string; raw?: boolean; ident
 }
 
 export function MissionReader(props: { instanceId: string; scope: string }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const target = () => missionProjectView(props.scope).reader
   const mission = () => missionStore.state(props.instanceId).missions.find(m => m.id === target()?.missionId)
   const task = () => mission()?.tasks.find(task => task.id === target()?.itemId)
@@ -83,7 +84,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const change = () => mission()?.history?.find(change => String(change.revision) === target()?.itemId)
   const title = () => target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
-    : t(target()?.kind === "change" ? "missions.control.history.title" : "missions.control.overview")
+    : t(target()?.kind === "change" ? "missions.control.history.title"
+      : mission()?.briefing && !mission()?.summary ? "missions.briefing.title" : "missions.control.overview")
   const [navigationError, setNavigationError] = createSignal(false)
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
@@ -120,7 +122,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       updateMissionProjectView(scope, { reader: undefined })
     })
   }
-  const sections = createMemo<Array<{ label: string; text: string; raw?: boolean }>>(() => {
+  const sections = createMemo<Array<{ label: string; text: string; raw?: boolean; taskKeys?: string[] }>>(() => {
     if (target()?.kind === "change") {
       const value = change()
       const taskName = (key: string) => mission()?.tasks.find(task => task.key === key)?.title ?? key
@@ -144,8 +146,25 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       ] : []
     }
     const value = mission()
+    if (value?.briefing && !value.summary) return [
+      { label: "missions.control.summary", text: value.briefing.summary },
+      ...(["achieved", "ongoing", "obstacles", "next"] as const).map(section => ({
+        label: `missions.briefing.${section}`, text: value.briefing![section].map(item => item.text).join("\n\n"),
+        taskKeys: [...new Set(value.briefing![section].flatMap(item => item.taskKeys))],
+      })),
+      { label: "missions.control.objective", text: value.objective },
+      { label: "missions.control.notes", text: value.notes ?? "" },
+    ]
+    const current = value ? missionProgress(value) : undefined
+    const recorded = current?.tasks.filter(task => missionTaskReport(value!, task)?.outcome === "completed")
+      .sort((a, b) => b.report!.createdAt - a.report!.createdAt).slice(0, 3) ?? []
+    const blockers = value?.status === "active" ? current?.blockers.slice(0, 3) ?? [] : []
     return value ? [
       { label: "missions.control.summary", text: value.summary ?? "" },
+      ...(!value.summary ? [
+        { label: "missions.tracking.recorded", text: recorded.map(task => `${task.title}\n\n${task.report!.summary}`).join("\n\n"), taskKeys: recorded.map(task => task.key) },
+        { label: "missions.tracking.obstacles", text: blockers.map(task => `${task.title}\n\n${task.report!.summary}`).join("\n\n"), taskKeys: blockers.map(task => task.key) },
+      ] : []),
       { label: "missions.control.objective", text: value.objective },
       { label: "missions.control.notes", text: value.notes ?? "" },
     ] : []
@@ -185,6 +204,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     </header>
     <div class="window-body" ref={body}>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
+      <Show when={target()?.kind === "overview" && mission()?.briefing && !mission()?.summary}>
+        <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>
+        <Show when={missionBriefingFreshness(mission()!).changed}><p class="mission-briefing-stale">{t("missions.briefing.changed")}</p></Show>
+      </Show>
       <Show when={target()?.kind === "report" && report()?.late}><p>{t("missions.control.report.late")}</p></Show>
       <Show when={target()?.kind === "report" && previousReport() && !report()?.late}>
         <p>{t("missions.progress.previousAttempt")}</p>
@@ -197,7 +220,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <For each={sections().map(section => section.label)}>{label => {
           const section = () => sections().find(section => section.label === label)!
           return <Show when={section().text}><MissionReaderSection label={label} text={section().text}
-            raw={section().raw} identity={JSON.stringify([props.instanceId, props.scope, target()])} instanceId={props.instanceId} /></Show>
+            raw={section().raw} identity={JSON.stringify([props.instanceId, props.scope, target()])} instanceId={props.instanceId} />
+            <Show when={section().taskKeys?.length}><div class="mission-briefing-sources"><For each={section().taskKeys}>{key => {
+              const source = () => mission()?.tasks.find(task => task.key === key)
+              return <Show when={source()}>{task => <button type="button" class="window-text-button"
+                onClick={() => updateMissionProjectView(props.scope, { reader: { missionId: mission()!.id, kind: "task", itemId: task().id } })}>
+                {task().title}
+              </button>}</Show>
+            }}</For></div></Show>
+          </Show>
         }}</For>
         </Show>
       }>

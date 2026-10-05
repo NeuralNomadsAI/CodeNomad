@@ -1,0 +1,10 @@
+.mission-briefing { padding-block: var(--space-md); border-block-end: 1px solid var(--border-base); font-size: var(--font-size-sm); }
+.mission-briefing > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs) var(--space-sm); }
+.mission-briefing h3 { margin: 0; font-size: var(--font-size-md); font-weight: 600; }
+.mission-briefing-empty, .mission-briefing-meta { color: var(--text-secondary); margin-block: var(--space-sm); }
+.mission-briefing-meta, .mission-briefing-stale, .mission-briefing-feedback { font-size: var(--font-size-xs); }
+.mission-briefing-stale { color: var(--status-warning); }
+.mission-briefing-sources { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-block-start: var(--space-xs); }
+.mission-briefing-sources button { font-size: var(--font-size-xs); min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.mission-briefing .window-text-button { display: inline-flex; align-items: center; gap: var(--space-xs); text-align: start; }
+.mission-briefing .window-text-button svg { flex-shrink: 0; }

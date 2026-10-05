@@ -5,6 +5,7 @@ import { lifecycleOperationSchema } from "./lifecycle-schema"
 import { taskExecutionModeSchema, taskExecutionModeRpcSchema } from "./native-wire-schema"
 import { parseExecutionMode } from "./task-execution-mode"
 import { parseNativeBinding } from "./native-report-provenance"
+import { missionBriefingSnapshotSchema } from "./briefing"
 
 test("Missions native RPC schemas avoid unsupported not and pattern keywords", () => {
   const visit = (value: unknown, path = "rpc") => {
@@ -21,6 +22,15 @@ test("Missions native RPC schemas avoid unsupported not and pattern keywords", (
 test("native snapshot decoder admits coordinator business readout as distinct delivery", () => {
   const schema = JSON.stringify(CODENOMAD_MISSIONS_RPC)
   assert(schema.includes('"enum":["coordinator-notification","native-return","coordinator-readout"]'))
+})
+
+test("native snapshot and mutation output decoders retain the same optional project briefing contract", () => {
+  const snapshotMission = CODENOMAD_MISSIONS_RPC.methods.snapshot.output.properties.missions.items
+  assert.deepEqual(snapshotMission.properties.briefing, missionBriefingSnapshotSchema)
+  assert.ok(!snapshotMission.required.some(key => key === "briefing" as string), "existing missions may lack a briefing")
+  assert.deepEqual(CODENOMAD_MISSIONS_RPC.methods.lifecycle.output.properties.mission.properties.briefing, missionBriefingSnapshotSchema)
+  assert.equal(missionBriefingSnapshotSchema.additionalProperties, false)
+  assert.equal(missionBriefingSnapshotSchema.properties.achieved.maxItems, 3)
 })
 
 test("RPC acknowledgement branches keep known evidence required and unknown evidence absent", () => {

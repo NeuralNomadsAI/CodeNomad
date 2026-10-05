@@ -39,7 +39,7 @@ test("validates the compact mission tool contracts", () => {
   assert.throws(() => parseReviseInput({ expectedRevision: 1, requestID: "bad", reason: "Missing contract", addTasks: [{ taskKey: "bad" }] }), /title/)
 })
 
-test("registers four tools, typed snapshot RPC, and role context", async () => {
+test("registers five tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
@@ -87,7 +87,7 @@ test("registers four tools, typed snapshot RPC, and role context", async () => {
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing"])
   const inspect = tools.find((tool) => tool.name === "inspect")!
   await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},

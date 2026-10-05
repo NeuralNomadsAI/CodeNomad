@@ -32,6 +32,7 @@ import { parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, typ
 import { hasUnsettledNativeExecution } from "./native-call-observation"
 import { sameExecutionMode } from "./task-execution-mode"
 import { coordinatorReadout } from "./coordinator-readout"
+import { briefingSourcesExist, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 export { MissionControlError } from "./control-error"
 import type {
@@ -83,6 +84,46 @@ export class MissionControl {
 
   snapshot(): Promise<MissionSnapshot> {
     return this.journal.snapshot()
+  }
+
+  /** A point-in-time readout only: no task result, prompt, notification or profile change. */
+  briefing(sessionID: string, raw: MissionBriefingInput): Promise<{ mission: MissionMap }> {
+    const input = parseMissionBriefingInput(raw)
+    return this.mutate(async () => {
+      const caller = await this.ownedRootSession(sessionID), snapshot = await this.snapshot()
+      if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable)
+        throw new MissionControlError("Damaged Mission journal", "invalid-journal")
+      const mission = this.selectMission(snapshot, sessionID, input.missionID)
+      if (!mission) throw new MissionControlError("Mission not found", "mission-not-found")
+      this.assertCoordinator(mission, sessionID)
+      const actor = mission.actors.find(actor => actor.sessionId === sessionID)
+      if (!actor || !sameLocation(caller.location, actor.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
+      const id = this.eventID(mission.id, `briefing-${input.requestID}`)
+      const existing = await this.journal.event(mission.id, id)
+      const { missionID: _missionID, ...content } = input
+      if (existing) {
+        if (existing.type !== "mission.briefed" || !isDeepStrictEqual(content, {
+          requestID: existing.briefing.requestID, basedOnRevision: existing.briefing.basedOnRevision,
+          summary: existing.briefing.summary, achieved: existing.briefing.achieved, ongoing: existing.briefing.ongoing,
+          obstacles: existing.briefing.obstacles, next: existing.briefing.next,
+        })) throw new MissionControlError("Briefing request ID already used", "request-conflict")
+        return { mission }
+      }
+      if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
+      if (mission.control?.pending.length) throw new MissionControlError("Mission control pending", "control-pending")
+      if (mission.revision !== input.basedOnRevision) throw new MissionControlError("Read the current map before publishing a briefing", "revision-conflict")
+      if (!briefingSourcesExist(mission, input)) throw new MissionControlError("Briefing sources are missing or retired", "invalid-report-contract")
+      const fresh = await this.ownedRootSession(sessionID)
+      if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
+      this.assertActive()
+      const createdAt = this.timestamp(snapshot)
+      await this.journal.append({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
+        projectID: mission.projectID, actorSessionID: sessionID, createdAt,
+        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } })
+      const saved = await this.snapshot()
+      await this.emitChanged(mission.id, saved)
+      return { mission: this.requireMission(saved, mission.id) }
+    })
   }
 
   create(input: MissionCreateInput): Promise<{ mission: MissionMap }> {

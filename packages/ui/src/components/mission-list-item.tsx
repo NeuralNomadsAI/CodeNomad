@@ -22,7 +22,9 @@ export function MissionListItem(props: MissionListItemProps) {
   const [overflow, setOverflow] = createSignal(false)
   const [open, setOpen] = createSignal(false)
   const actions = createMissionListActions(() => props.actions)
-  let row!: HTMLDivElement, footer!: HTMLDivElement, status!: HTMLDivElement, inline!: HTMLDivElement
+  const preview = () => actions.inline().filter(item => item.key === "read")
+  const secondary = () => actions.inline().filter(item => item.key !== "read")
+  let row!: HTMLDivElement, footer!: HTMLDivElement, status!: HTMLDivElement, inline!: HTMLDivElement, pinned!: HTMLDivElement
   let frame = 0, focusFrame = 0, disposed = false, menuOpen = false
   const measure = () => {
     frame = 0
@@ -34,16 +36,18 @@ export function MissionListItem(props: MissionListItemProps) {
     // derive zoom from the shrinking footer's rounded offsetWidth.
     const scale = row.getBoundingClientRect().width / row.offsetWidth || 1
     const gap = (Number.parseFloat(getComputedStyle(footer).columnGap) || 0) * scale
-    const required = range.getBoundingClientRect().width + inline.getBoundingClientRect().width + gap
+    const actionGap = (Number.parseFloat(getComputedStyle(pinned.parentElement!).columnGap) || 0) * scale
+    const required = range.getBoundingClientRect().width + inline.getBoundingClientRect().width + pinned.getBoundingClientRect().width
+      + gap + (preview().length && secondary().length ? actionGap : 0)
     const rowStyle = getComputedStyle(row)
     const minimumText = Number.parseFloat(getComputedStyle(row.querySelector(".mission-list-text")!).minWidth) || 0
     const available = props.compact
       ? (row.clientWidth - (Number.parseFloat(rowStyle.paddingLeft) || 0) - (Number.parseFloat(rowStyle.paddingRight) || 0)
         - minimumText - (Number.parseFloat(rowStyle.columnGap) || 0)) * scale
       : footer.getBoundingClientRect().width
-    const next = required > available + 0.5
+    const next = secondary().length > 0 && required > available + 0.5
     const focused = document.activeElement
-    const handoff = focused instanceof HTMLElement && footer.contains(focused)
+    const handoff = focused instanceof HTMLElement && footer.contains(focused) && !pinned.contains(focused)
       && (next !== overflow() || (!next && !menuOpen && focused.classList.contains("action-overflow-trigger")))
     if (next !== overflow()) setOverflow(next)
     // Keep the trigger visible through Kobalte's close autofocus. This frame
@@ -58,7 +62,7 @@ export function MissionListItem(props: MissionListItemProps) {
   const schedule = () => { if (!frame && !disposed) frame = requestAnimationFrame(measure) }
   createEffect(() => {
     const resize = new ResizeObserver(schedule)
-    for (const element of [row, footer, inline, status]) resize.observe(element)
+    for (const element of [row, footer, inline, status, pinned]) resize.observe(element)
     const mutation = new MutationObserver(schedule)
     mutation.observe(row, { childList: true, characterData: true, subtree: true })
     document.fonts?.addEventListener("loadingdone", schedule)
@@ -76,9 +80,15 @@ export function MissionListItem(props: MissionListItemProps) {
     </Show>
     <div ref={footer} class="mission-list-footer">
       <div ref={status} class="mission-list-status">{props.status}</div>
-      <div class="mission-list-actions">
+       <div class="mission-list-actions">
+        <div ref={pinned} class="mission-list-preview"><For each={preview()}>{item =>
+          <button type="button" class="mission-control-icon-button icon-toggle" aria-label={item.label}
+            title={item.label} aria-pressed={item.checked ?? false} disabled={item.disabled} onClick={() => void item.onSelect()}>
+            <span aria-hidden="true">{item.icon}</span>
+          </button>
+        }</For></div>
         <div ref={inline} class="mission-list-inline" inert={collapsed()} aria-hidden={collapsed() ? "true" : undefined}>
-          <For each={actions.inline()}>{item => <button type="button" class="mission-control-icon-button"
+          <For each={secondary()}>{item => <button type="button" class="mission-control-icon-button"
             aria-label={item.label} aria-description={item.description} title={item.description ?? item.label} disabled={item.disabled}
             aria-pressed={item.checked} onClick={() => void item.onSelect()}
             onMouseEnter={() => item.onMouseEnter?.()} onMouseLeave={() => item.onMouseLeave?.()}>
@@ -86,7 +96,7 @@ export function MissionListItem(props: MissionListItemProps) {
           </button>}</For>
         </div>
         <div class="mission-list-overflow" inert={!collapsed()} aria-hidden={!collapsed() ? "true" : undefined}>
-          <ActionOverflowMenu items={actions.menu()} label={t("messageItem.actions.more")} onOpenChange={value => {
+          <ActionOverflowMenu items={actions.menu().filter(item => item.key !== "read")} label={t("messageItem.actions.more")} onOpenChange={value => {
             menuOpen = value
             if (value) setOpen(true)
             schedule()
