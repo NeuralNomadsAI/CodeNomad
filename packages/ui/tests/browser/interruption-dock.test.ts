@@ -38,31 +38,34 @@ async function fixture(width = 1100, theme: "light" | "dark" = "light") {
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
 
-async function assertLeadingDisclosure(page: Page, label = "Needs Input") {
+async function assertLeadingDisclosure(page: Page, external = false) {
   const metrics = await page.locator(".interruption-heading").evaluate(heading => {
     const toggle = heading.querySelector(".interruption-toggle")!
     const copy = heading.querySelector(".interruption-heading-copy")!
-    const badge = heading.querySelector(".session-permission")!
+    const icon = toggle.nextElementSibling!, badge = heading.querySelector(".session-permission")
     const probe = document.createElement("span")
     probe.style.color = "var(--session-status-permission-fg)"
     probe.style.backgroundColor = "var(--session-status-permission-bg)"
     probe.style.borderRadius = "var(--chip-radius)"
     heading.append(probe)
-    const expected = getComputedStyle(probe), actual = getComputedStyle(badge)
+    const expected = getComputedStyle(probe), actual = badge ? getComputedStyle(badge) : undefined
+    const toggleBounds = toggle.getBoundingClientRect(), iconBounds = icon.getBoundingClientRect(), copyBounds = copy.getBoundingClientRect()
     const result = {
-      leading: toggle.getBoundingClientRect().right <= copy.getBoundingClientRect().left,
+      leading: toggleBounds.right <= iconBounds.left && iconBounds.right <= copyBounds.left,
       firstControl: heading.firstElementChild === toggle,
-      badgeMatches: actual.color === expected.color && actual.backgroundColor === expected.backgroundColor
+      sameRow: Math.abs(toggleBounds.y + toggleBounds.height / 2 - iconBounds.y - iconBounds.height / 2) < 1
+        && Math.abs(iconBounds.y + iconBounds.height / 2 - copyBounds.y - copyBounds.height / 2) < 1,
+      hasBadge: Boolean(badge),
+      badgeMatches: !actual || actual.color === expected.color && actual.backgroundColor === expected.backgroundColor
         && actual.borderRadius === expected.borderRadius,
-      noAnimation: actual.animationName === "none",
-      expanded: toggle.getAttribute("aria-expanded"),
+      iconOnly: !badge || badge.textContent?.trim() === "" && badge.children.length === 1 && iconBounds.width <= 40,
+      noAnimation: !actual || actual.animationName === "none",
     }
     probe.remove()
     return result
   })
-  assert.deepEqual(metrics, { leading: true, firstControl: true, badgeMatches: true, noAnimation: true,
-    expanded: await page.locator(".interruption-toggle").getAttribute("aria-expanded") })
-  assert.equal((await page.locator(".interruption-heading .session-permission").textContent())?.trim(), label)
+  assert.deepEqual(metrics, { leading: true, firstControl: true, sameRow: true, hasBadge: external,
+    badgeMatches: true, iconOnly: true, noAnimation: true })
 }
 
 async function assertBoundedActions(page: Page, footerSelector = ".form-request-actions") {
@@ -223,12 +226,13 @@ test("a single request has no navigation; the badge restores the collapsed edito
 
 async function assertReadableHeading(page: Page, external = false) {
   const metrics = await page.locator(".interruption-heading").evaluate((heading, external) => {
-    const title = heading.querySelector(".window-title")!, badge = heading.querySelector(".session-permission")!
-    const bounds = title.getBoundingClientRect(), status = badge.getBoundingClientRect()
+    const title = heading.querySelector(".window-title")!, badge = heading.querySelector(".session-permission")
+    const bounds = title.getBoundingClientRect(), status = badge?.getBoundingClientRect()
     const range = document.createRange()
     range.selectNodeContents(title)
-    const overlaps = Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0
+    const overlaps = Boolean(status && Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0
       && rect.left < status.right && rect.right > status.left && rect.top < status.bottom && rect.bottom > status.top)
+    )
     const source = heading.querySelector(".interruption-origin-title")
     if (source) range.selectNodeContents(source)
     const sourceVisible = !external || Boolean(source && Array.from(range.getClientRects()).some(rect => rect.width > 0
@@ -239,8 +243,39 @@ async function assertReadableHeading(page: Page, external = false) {
   assert.deepEqual(metrics, { readableWidth: true, overlaps: false, sourceVisible: true, overflow: false })
 }
 
+test("only external questions replace their icon with a compact red shield; arrival stays collapsed", async () => {
+  const { page, errors } = await fixture(393)
+  try {
+    await page.evaluate(() => (window as any).fixture.other())
+    await page.locator(".interruption-toggle").waitFor()
+    assert.equal(await page.locator(".interruption-toggle").getAttribute("aria-expanded"), "false")
+    assert.equal(await answer(page).count(), 0)
+    await assertLeadingDisclosure(page, true)
+    const badge = page.locator(".interruption-heading .session-permission")
+    assert.equal(await badge.getAttribute("aria-label"), "Needs Input")
+    assert.equal(await badge.getAttribute("title"), "Needs Input")
+    assert.equal(await badge.locator("svg.lucide-shield-alert").count(), 1)
+    await page.locator(".interruption-toggle").click()
+    await answer(page).fill("External draft")
+    await assertLeadingDisclosure(page, true)
+    await page.evaluate(() => (window as any).fixture.switch("other"))
+    await assertLeadingDisclosure(page)
+    assert.equal(await page.locator(".interruption-heading > svg.lucide-message-circle-question").count(), 1)
+    assert.equal(await answer(page).inputValue(), "External draft")
+    await page.evaluate(() => { (window as any).fixture.switch("s"); (window as any).fixture.ask(); (window as any).fixture.focus("question") })
+    await assertLeadingDisclosure(page)
+    await page.evaluate(() => { (window as any).fixture.permission(); (window as any).fixture.focus("permission") })
+    await assertLeadingDisclosure(page)
+    assert.equal(await page.locator(".interruption-heading > svg.lucide-shield-check").count(), 1)
+    await page.evaluate(() => { (window as any).fixture.global(); (window as any).fixture.focus("global-question") })
+    await assertLeadingDisclosure(page)
+    assert.equal(await page.locator(".interruption-heading > svg.lucide-message-circle-question").count(), 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const locale of ["de", "fr"]) for (const theme of ["light", "dark"] as const) {
-  test(`localized titles and provenance stay readable beside pending badges at 393px in ${locale}/${theme}`, async () => {
+  test(`localized titles and provenance stay readable beside external shield badges at 393px in ${locale}/${theme}`, async () => {
     const { page, errors } = await fixture(393, theme)
     try {
       await page.evaluate(async locale => {
@@ -249,7 +284,7 @@ for (const locale of ["de", "fr"]) for (const theme of ["light", "dark"] as cons
         ;(window as any).fixture.permission()
       }, locale)
       await page.waitForFunction(locale => document.documentElement.lang === locale
-        && document.querySelector(".interruption-heading .session-permission span")?.textContent !== "Needs Input", locale)
+        && document.querySelector(".interruption-heading .window-title")?.textContent !== "Your response", locale)
       await answer(page).fill("Preserved localized answer")
       await assertReadableHeading(page)
       await page.locator(".interruption-toggle").click()
@@ -261,9 +296,11 @@ for (const locale of ["de", "fr"]) for (const theme of ["light", "dark"] as cons
       await assertReadableHeading(page)
       await page.evaluate(() => { (window as any).fixture.other(); (window as any).fixture.focus("other") })
       await assertReadableHeading(page, true)
+      await assertLeadingDisclosure(page, true)
       await page.screenshot({ path: join(tmpdir(), "opencode", `interruption-dock-localized-${locale}-${theme}.png`) })
       await page.locator(".interruption-toggle").click()
       await assertReadableHeading(page)
+      await assertLeadingDisclosure(page, true)
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   })
@@ -331,7 +368,8 @@ test("new permissions do not replace the draft; bounded navigation stays separat
     assert.equal(await answer(page).inputValue(), "Keep typing")
     await page.getByRole("button", { name: "Previous request", exact: true }).click()
     await page.getByRole("button", { name: "Allow Once", exact: true }).waitFor()
-    await assertLeadingDisclosure(page, "Needs Permission")
+    await assertLeadingDisclosure(page)
+    assert.equal(await page.locator(".interruption-heading > svg.lucide-shield-check").count(), 1)
     assert.equal(await page.getByRole("button", { name: "Previous request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Next request", exact: true }).click()
     assert.equal(await answer(page).inputValue(), "Keep typing")

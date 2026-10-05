@@ -8,12 +8,14 @@ its draft. The panel is non-modal and height-bounded. Request content scrolls
 independently; reply, cancel and permission actions remain in a fixed footer
 outside that scrolling content. Its square shared window chrome uses the existing
 accent/surface tokens for the header and leading border. The disclosure chevron
-precedes the heading, as in transcript disclosures. The header keeps the same red
-“Needs Input” / “Needs Permission” badge as the session list, including its shield
-icon, status tokens and chip geometry, whether expanded or collapsed. This static
-cue does not replace provenance or introduce an attention animation. The title
-retains a readable width; the badge wraps below it only when the available heading
-width cannot fit both, including localized labels alongside queue navigation.
+precedes the heading, as in transcript disclosures. A question from another
+conversation outside the current conversation's descendant scope replaces the
+blue question icon with a compact red shield badge, using the session list's
+status tokens and chip geometry. Its localized accessible label and tooltip remain,
+but there is no visible badge text or additional badge row: chevron, icon/badge,
+then title. Local, descendant and project questions and permissions retain their
+existing icons. This static cue does not replace provenance, introduce animation
+or automatically expand external requests.
 
 An expanded request takes priority over a manually enlarged composer. The composer
 temporarily uses its minimum field height and disables resizing without overwriting

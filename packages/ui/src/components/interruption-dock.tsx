@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, on, onCleanup, untrack } from "solid-js"
-import { ChevronLeft, ChevronRight, ChevronDown, ShieldAlert } from "lucide-solid"
+import { ChevronLeft, ChevronRight, ChevronDown, MessageCircleQuestion, ShieldCheck, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { getPermissionQueue, sendFormCancel, sendFormReply } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
@@ -23,6 +23,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   const own = () => sourceId() === props.sessionId
   const project = () => sourceId() === "global"
   const descendant = () => !own() && !project() && scope().has(sourceId())
+  const externalQuestion = () => current()?.kind === "form" && !own() && !project() && !descendant()
   const origin = (sessionId: string) => sessionId === "global" ? t("interruption.projectRequest")
     : `${t(scope().has(sessionId) ? "interruption.subagent" : "interruption.otherConversation")} · ${title(sessionId)}`
   const heading = () => own() ? t(current()?.kind === "permission" ? "interruption.permission" : "interruption.question") : origin(sourceId())
@@ -53,19 +54,21 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
             aria-controls={`interruption-body-${props.instanceId}`} onClick={() => select(current()!.key, !expanded())}>
             <Show when={expanded()} fallback={<ChevronRight size={16} aria-hidden="true" />}><ChevronDown size={16} aria-hidden="true" /></Show>
           </button>
+          <Show when={externalQuestion()} fallback={
+            <Show when={current()?.kind === "permission"} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}><ShieldCheck size={18} aria-hidden="true" /></Show>
+          }>
+            <span class="status-indicator session-status session-status-list session-permission badge-shape" role="img"
+              aria-label={t("sessionList.status.needsInput")} title={t("sessionList.status.needsInput")}>
+              <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+            </span>
+          </Show>
           <div class="interruption-heading-copy">
-            <div class="interruption-heading-title">
-              <h2 class="window-title" title={heading()}>
-                <Show when={expanded() && !own() && !project()} fallback={heading()}>
-                  <span class="interruption-origin-kind">{t(descendant() ? "interruption.subagent" : "interruption.otherConversation")} · </span>
-                  <span class="interruption-origin-title">{title(sourceId())}</span>
-                </Show>
-              </h2>
-              <span class="status-indicator session-status session-status-list session-permission badge-shape notranslate" translate="no">
-                <ShieldAlert class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>{t(current()?.kind === "permission" ? "sessionList.status.needsPermission" : "sessionList.status.needsInput")}</span>
-              </span>
-            </div>
+            <h2 class="window-title" title={heading()}>
+              <Show when={expanded() && !own() && !project()} fallback={heading()}>
+                <span class="interruption-origin-kind">{t(descendant() ? "interruption.subagent" : "interruption.otherConversation")} · </span>
+                <span class="interruption-origin-title">{title(sourceId())}</span>
+              </Show>
+            </h2>
             <Show when={own()}><span class="interruption-session" title={title(sourceId())}>{title(sourceId())}</span></Show>
           </div>
         </div>

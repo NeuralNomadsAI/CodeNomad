@@ -26,12 +26,9 @@
   overscroll-behavior-y: auto;
 }
 .interruption-heading { display: flex; flex: 1; align-items: center; gap: var(--space-sm); min-width: 0; }
+.interruption-heading > svg { flex-shrink: 0; color: var(--accent-primary); }
+.interruption-heading > .session-status-list { flex-shrink: 0; }
 .interruption-heading-copy { min-width: 0; flex: 1; }
-.interruption-heading-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); min-width: 0; }
-/* Wrap the badge before sacrificing readable provenance to navigation or long translations. */
-.interruption-heading-title .window-title { min-width: min(100%, 10rem); flex: 1 1 10rem; overflow-wrap: anywhere; }
-.interruption-heading-title .session-status-list { flex: 0 1 auto; max-width: 100%; }
-.interruption-heading-title .session-status-list > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .interruption-dock .window-title { font-weight: var(--font-weight-semibold); }
 .interruption-dock.has-origin .window-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
 .interruption-dock.has-origin.is-collapsed .window-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
