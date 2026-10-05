@@ -75,6 +75,9 @@ test("Attention keeps an exact open menu item through queue refresh and routes t
         inline: e.querySelector(".mission-list-inline")!.getBoundingClientRect().width, status: range.getBoundingClientRect().width, class: e.className }
     })))
     await form.locator(".action-overflow-trigger").click()
+    // Kobalte's deferred opening autofocus must finish before choosing the
+    // exact item whose focus a subsequent snapshot refresh must preserve.
+    await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menu")
     const menu = await page.getByRole("menuitem").elementHandle()
     await menu!.focus()
     await refetch(page)
@@ -120,6 +123,8 @@ test("Cleanup preserves exact retry controls/open menus while current receipt te
     await page.evaluate(() => (window as any).missionRowFixture.disabled(false))
     await page.evaluate(() => (window as any).missionRowFixture.width(80))
     await page.locator(`${cleanupRow} .action-overflow-trigger`).click()
+    // Do not race the menu's deferred opening autofocus with item.focus().
+    await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menu")
     const menu = await page.getByRole("menuitem").elementHandle()
     await menu!.focus()
     await refetch(page)
