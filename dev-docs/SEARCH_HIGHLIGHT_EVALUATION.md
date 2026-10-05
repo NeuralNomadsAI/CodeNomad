@@ -24,6 +24,8 @@ full-history retrieval.
   Markdown, tool and streaming updates. It is disconnected during its own fallback
   mutations. Query/record changes retain the existing `MessageBlock` effect lifecycle.
 - Hosts missing either `Highlight` or `CSS.highlights` use `<mark>` wrappers.
+  `search-highlight-marks.ts` partitions original text before mutation so two
+  case-folded hits sharing an original character cannot truncate the active hit.
   Fallback removal restores text and normalizes the parent. This path still
   mutates DOM and does **not** gain selection preservation.
 - Native highlight colors retain the existing search palette. The active match
@@ -89,33 +91,34 @@ Metrics:
 
 ## Timings
 
-Initial production runs, 30 samples per cell; values are **p50 / p95 ms**:
+Reviewed-source production runs at `897ccbcc`, 30 samples per cell; values are **p50 / p95 ms**:
 
 | Workload | Chromium baseline sync | Chromium CSS sync | Electron baseline sync | Electron CSS sync |
 | --- | ---: | ---: | ---: | ---: |
-| short | 0.30 / 0.50 | 0.10 / 0.30 | 0.40 / 0.60 | 0.10 / 0.20 |
-| long | 0.80 / 1.30 | 0.20 / 0.50 | 1.20 / 2.20 | 0.40 / 0.50 |
-| dense | 2.80 / 3.40 | 0.40 / 0.70 | 3.70 / 4.50 | 0.60 / 0.80 |
-| mixed | 13.30 / 25.00 | 3.90 / 5.90 | 16.70 / 19.40 | 4.20 / 5.60 |
-| sparse | 0.30 / 0.60 | 0.20 / 0.20 | 0.50 / 0.80 | 0.30 / 0.70 |
-| missing | 0.20 / 0.30 | 0.10 / 0.30 | 0.40 / 0.80 | 0.30 / 0.60 |
+| short | 0.30 / 0.40 | 0.10 / 0.20 | 0.30 / 0.50 | 0.10 / 0.40 |
+| long | 0.70 / 1.30 | 0.20 / 0.30 | 0.90 / 1.70 | 0.20 / 0.40 |
+| dense | 2.80 / 3.40 | 0.40 / 0.60 | 3.50 / 4.30 | 0.50 / 0.90 |
+| mixed | 16.45 / 29.70 | 4.05 / 6.80 | 14.50 / 26.10 | 4.30 / 4.70 |
+| sparse | 0.30 / 0.40 | 0.10 / 0.30 | 0.30 / 0.60 | 0.20 / 0.40 |
+| missing | 0.20 / 0.30 | 0.10 / 0.20 | 0.20 / 0.50 | 0.20 / 0.30 |
 
-Mixed-query synchronous work falls **71% in Chromium and 75% in Electron**.
-Mixed paint-opportunity p50/p95 changes from **41.40/62.50 to 33.35/34.70 ms**
-in Chromium, and **58.50/72.90 to 11.90/56.30 ms** in Electron. Most small/sparse
-cases remain bounded by frame cadence rather than painting work. Electron's
-mixed long-task count was **1 baseline versus 3 CSS**, so these measurements do
-not justify a blanket claim that long tasks are eliminated.
+Mixed-query synchronous work falls **75% in Chromium and 70% in Electron**.
+Mixed paint-opportunity p50/p95 changes from **49.70/68.30 to 33.20/34.50 ms**
+in Chromium, and **50.00/66.80 to 12.00/162.60 ms** in Electron. The Electron
+tail is **worse**, despite its improved median and synchronous cost. Its mixed
+long-task count was **2 baseline versus 4 CSS**. These outliers are retained;
+the evidence supports less synchronous work and selection preservation, not a
+universal latency/FPS improvement. Most small/sparse cases remain frame-bound.
 
 DOM mutation-record medians fall from **96 / 582 / 3455 / 3708 / 6 / 0**
 (short/long/dense/mixed/sparse/missing) to **zero** for every CSS workload.
 
-Raw evidence: [Chromium](measurements/search-highlights/chromium-initial.json),
-[Electron](measurements/search-highlights/electron-initial.json).
+Raw reviewed-source evidence: [Chromium](measurements/search-highlights/chromium.json),
+[Electron](measurements/search-highlights/electron.json).
 Generate all percentiles with `tests/browser/search-highlight-report.mjs`.
-These initial runs precede the final Unicode-boundary optimization, stale-scroll
-callback fence and theme-fixture refinements. A clean final-source comparison is
-queued after the full browser suite; the initial evidence is retained transparently.
+The earlier [Chromium](measurements/search-highlights/chromium-initial.json) and
+[Electron](measurements/search-highlights/electron-initial.json) runs are retained
+separately; they predate the final review fixes and are not the final table's inputs.
 
 ## Correctness and lifetime evidence
 
@@ -140,11 +143,21 @@ Selection text is verified; operating-system clipboard integration is not measur
 
 ## Host coverage and limits
 
-Validation at publication: UI typecheck passes. Targeted Chromium tests pass,
-including reruns after fixing fixture theme persistence and waiting for committed
-Markdown before geometry assertions. Electron passed its initial nine checks;
-WebKit passed nine functional checks before the final fixture assertions.
-The full browser suite and final production reruns are still in progress.
+UI typecheck passes. The first full browser run finished with **467 passing,
+five failing and two skipped** checks. Two failures were obsolete `<mark>`-only
+assertions in `system-messages.test.ts`; these now assert painted range content
+and ownership. The other three are `permission-fallback-diff.test.ts` timeouts,
+reproduced unchanged in an isolated archive of the pinned base commit.
+
+Review found and corrected overlapping Unicode fold ranges in the mark fallback:
+searching `\u0307i` in `İİİ` previously truncated the first active hit. Original-text
+partitioning now preserves both active occurrences. The post-fix Chromium search
+and system-message run passes **16 checks, with only the opt-in benchmark skipped**.
+The subsequent review pass found no further actionable defects in the PR changes.
+Reviewed-source production reruns: **12/12 Chromium, 12/12 Electron, 10/10 WebKit**
+(WebKit skips Chromium GC counters and the opt-in benchmark). Selected captures:
+[light, Chromium](measurements/search-highlights/chromium-light-125.png) and
+[dark, Electron](measurements/search-highlights/electron-dark-125.png), both at 125%.
 
 | Host | Coverage |
 | --- | --- |
