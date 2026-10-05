@@ -7,6 +7,7 @@ import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance, addPermissionToQueue, removePermissionFromQueue } from "../../../src/stores/instances"
 import type { PermissionRequest } from "../../../src/types/permission"
+import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 const instanceId = "permission-fallback"
@@ -19,6 +20,7 @@ serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${instanceId}/instance`, status: "ready", client })
 addPermissionToQueue(instanceId, current)
+await applyUiSettings({ locale: "en" })
 const [open, setOpen] = createSignal(true)
 render(() => <ConfigProvider><I18nProvider>
   <Show when={open()}><InterruptionDock instanceId={instanceId} /></Show>
