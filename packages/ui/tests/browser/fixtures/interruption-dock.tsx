@@ -119,10 +119,10 @@ const [conversationFocus, setConversationFocus] = createSignal(false)
 const [phone, setPhone] = createSignal(false)
 let focusHandled = 0
 function App() {
-  const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId)} />
+  const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId) ?? null} />
   return <main style={{ display: "flex", "flex-direction": "column", height: "100vh", width: "100%" }}>
     <PermissionNotificationBanner instanceId={instanceId} onClick={() => focusInterruption(instanceId)} />
-    <For each={[activeSessionId().get(instanceId)!]}>{id => <SessionView
+    <For each={[activeSessionId().get(instanceId) ?? sessionId]}>{id => <SessionView
       sessionId={id} instanceId={instanceId} instanceFolder="/fixture" activeSessions={sessions().get(instanceId)!}
       escapeInDebounce={false} isActive={active()} isPhoneLayout={phone()} focusConversationOnActivate={conversationFocus()}
       onConversationFocusHandled={() => { focusHandled++ }}
@@ -164,7 +164,7 @@ const store = messageStoreBus.getOrCreate(instanceId)
   focusScoped: (id: string, session = sessionId, kind?: "form" | "permission") => focusInterruption(instanceId, session, id, kind),
   collidingPermission: () => addPermissionToQueue(instanceId, { id: "question", sessionID: "other", action: "bash", resources: ["other-scope.txt"], metadata: {} }),
   sameScopePermission: () => addPermissionToQueue(instanceId, { id: "question", sessionID: sessionId, action: "bash", resources: ["same-scope.txt"], metadata: {} }),
-  switch: (id: string) => setActiveSession(instanceId, id),
+  switch: (id: string | null) => setActiveSession(instanceId, id),
   permission: () => addPermissionToQueue(instanceId, { id: "permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {} }),
   preview: () => openFilePreview(instanceId, { sessionId, slug: instanceId, directory: "/fixture", path: "example.ts", kind: "workspace" }),
   hasPreview: () => Boolean(getFilePreview(instanceId)),

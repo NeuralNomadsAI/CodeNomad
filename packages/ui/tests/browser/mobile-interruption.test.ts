@@ -45,7 +45,7 @@ async function dockSnapshot(page: Page) {
 }
 
 for (const size of ["portrait", "short", "keyboard"] as const) {
-  test(`Android ${size} keeps long background/global forms and permission actions reachable above a saved maximum composer`, async () => {
+  test(`Android ${size} keeps descendant and explicitly opened global forms reachable above a saved maximum composer`, async () => {
     const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 393, height: size === "short" ? 393 : 851 } })
     page.setDefaultTimeout(15000)
     const errors: string[] = []
@@ -72,7 +72,7 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
       const saved = await page.evaluate(() => (window as any).fixture.promptHeight())
       await page.evaluate(() => {
         const f = (window as any).fixture
-        f.addSession("background")
+        f.addSession("background", "session")
         f.nativeQuestion("background", "background-form", true)
       })
       if (size === "keyboard") {
@@ -81,7 +81,15 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
         assert.equal(await page.evaluate(() => innerHeight), 851)
       }
       for (const request of ["background", "global"]) {
-        if (request === "global") await page.evaluate(() => (window as any).fixture.nativeQuestion("global", "global-form", true))
+        if (request === "global") {
+          await page.evaluate(() => (window as any).fixture.nativeQuestion("global", "global-form", true))
+          assert.equal(await page.locator('.interruption-dock').isVisible(), true)
+          assert.equal(await page.locator('.interruption-dock input:visible').count(), 0)
+          await page.locator('.session-header-indicators .permission-center-trigger:visible').click()
+          assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+          assert.equal(await page.getByRole('heading', { name: 'Project request', exact: true }).isVisible(), true)
+          assert.equal(await page.getByRole('button', { name: 'View conversation', exact: true }).count(), 0)
+        }
         const fields = page.locator(".interruption-dock .form-request-fields")
         assert.equal(await fields.evaluate(el => el.scrollHeight > el.clientHeight), true)
         await assertFooter(page)
@@ -90,7 +98,7 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
         await assertReachable(answer)
         await assertFooter(page)
         assert.equal(await composer.inputValue(), draft)
-        assert.equal(await composer.isDisabled(), false, "background/global requests still compact the unrelated active composer")
+        assert.equal(await composer.isDisabled(), false, "descendant/global requests compact their own surface's composer")
         assert.equal(await resize.getAttribute("aria-disabled"), "true")
         if (size === "keyboard") {
           for (const immersive of [true, false]) {
@@ -106,6 +114,7 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
         await page.getByRole("button", { name: "Submit", exact: true }).click()
         await page.locator(".interruption-dock").waitFor({ state: "detached" })
         assert.deepEqual(await page.evaluate(() => (window as any).fixture.promptHeight()), saved)
+        if (request === "global") await page.evaluate(() => (window as any).fixture.selectSession("session"))
       }
       await page.evaluate(() => (window as any).fixture.queuePermission())
       await page.locator(".interruption-dock .tool-call-permission").waitFor()
@@ -135,6 +144,299 @@ async function assertReachable(control: Locator) {
     const r = el.getBoundingClientRect()
     return r.height > 0 && r.width > 0 && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
   }), true, "the actual control must receive pointer hit testing")
+}
+
+for (const mobile of [false, true]) {
+  for (const owner of ["unrelated", "global"]) {
+    test(`Info badge opens the ${owner} request on the conversation surface without owner navigation on ${mobile ? "mobile" : "desktop"}`, async () => {
+      const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
+      const errors: string[] = []
+      page.on("pageerror", error => errors.push(error.message))
+      await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      try {
+        await page.goto(url, { timeout: 60000 })
+        await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60000 })
+        await page.locator('textarea.prompt-input:visible').fill("Original conversation draft")
+        await page.evaluate(owner => {
+          const f = (window as any).fixture
+          if (owner !== "global") f.addSession(owner)
+          f.nativeQuestion(owner)
+          f.showInfo()
+        }, owner)
+        assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "info")
+        assert.equal(await page.locator('.interruption-dock:visible').count(), 0)
+        await page.locator('.session-header-indicators .permission-center-trigger:visible').click()
+        // The existing Back to conversation behavior uses the no-session surface
+        // when Info has no mounted conversation pane; never infer the request owner.
+        assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)
+        const answer = page.locator('.interruption-dock input[type="text"]:visible')
+        await answer.waitFor()
+        assert.equal(await page.locator('.interruption-dock').evaluate(el => el === document.activeElement), true)
+        assert.equal(await page.getByRole('heading', {
+          name: owner === "global" ? "Project request" : "Other conversation · Fixture unrelated", exact: true,
+        }).isVisible(), true)
+        assert.equal(await page.getByRole('button', { name: 'View conversation', exact: true }).count(), owner === "global" ? 0 : 1)
+        await answer.fill("Answer from Info")
+        await page.getByRole('button', { name: 'Submit', exact: true }).click()
+        assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), owner)
+        assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)
+        await page.evaluate(() => (window as any).fixture.selectSession("session"))
+        assert.equal(await page.locator('textarea.prompt-input:visible').inputValue(), "Original conversation draft")
+        assert.deepEqual(errors, [])
+      } finally { await page.close() }
+    })
+  }
+
+  test(`real shell keeps a focused local draft and one bounded foreign preview on ${mobile ? "mobile" : "desktop"}`, async () => {
+    const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url, { timeout: 60000 })
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60000 })
+      const answer = page.locator('.interruption-dock input[type="text"]:visible')
+      await page.evaluate(() => (window as any).fixture.nativeQuestion())
+      await answer.fill("Focused local draft")
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        for (let i = 0; i < 20; i++) {
+          f.addSession(`foreign-${i}`)
+          f.nativeQuestion(`foreign-${i}`)
+        }
+        // A permission may sort before the current Form, even with the same ID.
+        f.queuePermission("foreign-0", "question-session")
+        f.nativeQuestion()
+      })
+      assert.equal(await answer.inputValue(), "Focused local draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true)
+      assert.equal(await page.locator('.interruption-external-preview').count(), 1)
+      assert.equal(await page.locator('.interruption-external-preview .interruption-position').innerText(), "21")
+      assert.equal(await page.locator('.interruption-editor:not([hidden])').count(), 1)
+      assert.equal(await page.locator('.interruption-editor[hidden][inert]').count(), 21)
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+      if (process.env.CODENOMAD_MOBILE_CAPTURE) {
+        await mkdir(process.env.CODENOMAD_MOBILE_CAPTURE, { recursive: true })
+        await page.screenshot({ path: join(process.env.CODENOMAD_MOBILE_CAPTURE, `external-${mobile ? "portrait" : "desktop"}-alongside-local.png`), scale: "css" })
+      }
+      await page.locator('.interruption-external-preview').focus()
+      await page.keyboard.press("Enter")
+      assert.equal(await page.locator('.interruption-dock').evaluate(el => el === document.activeElement), true,
+        "opening a preview keeps keyboard focus in the dock after the compact button is removed")
+      assert.equal(await page.getByRole('heading', { name: 'Other conversation · Fixture foreign-0', exact: true }).isVisible(), true)
+      await page.locator('.interruption-dock textarea:visible').fill("Foreign permission reason")
+      await page.getByRole('button', { name: 'Deny', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), "foreign-0")
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].requestID), "question-session")
+      assert.equal(await answer.inputValue(), "Focused local draft")
+      await page.getByRole('button', { name: 'Submit', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[1].formID), "question-session")
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[1].sessionID), "session")
+      assert.equal(await answer.count(), 0)
+      assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)
+      await page.getByRole('button', { name: 'Open request from Fixture foreign-0', exact: true }).click()
+      await answer.fill("Foreign form draft")
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.nativeQuestion("foreign-0")
+        f.nativeQuestion("session", "new-local")
+      })
+      assert.equal(await answer.inputValue(), "Foreign form draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true)
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      assert.equal(await answer.count(), 0)
+      await page.getByRole('button', { name: 'Previous request', exact: true }).click()
+      assert.equal(await answer.count(), 0, "returning through navigation requires deliberate foreign expansion")
+      await page.getByRole('button', { name: 'Open request from Fixture foreign-0', exact: true }).click()
+      assert.equal(await answer.inputValue(), "Foreign form draft")
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`real shell labels recursive interruptions and preserves per-conversation selection on ${mobile ? "mobile" : "desktop"}`, async () => {
+    const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url, { timeout: 60000 })
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60000 })
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.addSession("child", "session")
+        f.addSession("grandchild", "child")
+        f.addSession("sibling", "session")
+        f.addSession("unrelated")
+        for (const id of ["session", "child", "grandchild", "sibling", "unrelated"]) f.nativeQuestion(id)
+      })
+      const answer = page.locator('.interruption-dock input[type="text"]:visible')
+      const heading = page.locator('.interruption-heading .window-title')
+      const position = page.locator('.interruption-navigation .interruption-position')
+      assert.equal(await page.locator('.interruption-session').innerText(), "Fixture conversation")
+      assert.equal(await position.innerText(), "1 / 5")
+      assert.equal(await page.locator('.interruption-external-preview').count(), 1)
+      await answer.fill("Parent draft")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      assert.equal(await heading.textContent(), "Subagent · Fixture child")
+      assert.equal(await page.locator('.interruption-parent').innerText(), "From Fixture conversation")
+      await answer.fill("Child draft")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      assert.equal(await heading.textContent(), "Subagent · Fixture grandchild")
+      assert.equal(await page.locator('.interruption-parent').innerText(), "From Fixture child")
+      await answer.fill("Grandchild draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await page.locator('.interruption-session').innerText(), "Fixture child")
+      assert.equal(await answer.inputValue(), "Child draft")
+      assert.equal(await position.innerText(), "2 / 5")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      await answer.focus()
+      await page.evaluate(() => (window as any).fixture.queuePermission("child"))
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true)
+      assert.equal(await position.innerText(), "4 / 6")
+      await page.evaluate(() => (window as any).fixture.focusRequest("child", "dock-permission"))
+      await page.locator('.interruption-dock textarea:visible').fill("Child permission draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("unrelated"))
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await page.locator('.interruption-dock textarea:visible').inputValue(), "Child permission draft")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+
+      await page.evaluate(() => (window as any).fixture.selectSession("grandchild"))
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      assert.equal(await position.innerText(), "4 / 6", "parents and siblings remain answerable through compact previews")
+      await page.evaluate(() => (window as any).fixture.selectSession("unrelated"))
+      assert.equal(await page.locator('.interruption-session').innerText(), "Fixture unrelated")
+      assert.equal(await position.innerText(), "6 / 6")
+      await answer.fill("Unrelated draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await heading.textContent(), "Subagent · Fixture grandchild", "child conversation restores its selected descendant")
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      assert.equal(await heading.textContent(), "Subagent · Fixture grandchild", "parent conversation restores its selection independently")
+
+      // Reconciliation changes payload identity without replacing the mounted editor.
+      await page.evaluate(() => (window as any).fixture.nativeQuestion("grandchild"))
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      await page.getByRole('button', { name: 'Submit', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), "grandchild")
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await page.locator('.interruption-dock textarea:visible').inputValue(), "Child permission draft")
+      await page.getByRole('button', { name: 'Deny', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[1].sessionID), "child")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      await page.getByRole('button', { name: 'View conversation', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "child")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`real shell opens foreign requests in place with persistent provenance on ${mobile ? "mobile" : "desktop"}`, async () => {
+    const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url, { timeout: 60000 })
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60000 })
+      const dock = page.locator('.interruption-dock')
+      const answer = page.locator('.interruption-dock input[type="text"]:visible')
+      const badge = page.locator('.session-header-indicators .permission-center-trigger:visible')
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.addSession("unrelated")
+        f.nativeQuestion("unrelated")
+      })
+      assert.equal(await dock.isVisible(), true)
+      assert.equal(await answer.count(), 0)
+      assert.equal(await page.getByRole('heading', { name: 'Other conversation · Fixture unrelated', exact: true }).isVisible(), true)
+      assert.ok((await dock.boundingBox())!.height < 80)
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+      assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)
+      if (process.env.CODENOMAD_MOBILE_CAPTURE) {
+        await mkdir(process.env.CODENOMAD_MOBILE_CAPTURE, { recursive: true })
+        await page.screenshot({ path: join(process.env.CODENOMAD_MOBILE_CAPTURE, `external-${mobile ? "portrait" : "desktop"}-compact.png`), scale: "css" })
+      }
+      await badge.click()
+      await answer.fill("Owner draft")
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+      assert.equal(await dock.evaluate(el => el.contains(document.activeElement)), true)
+      assert.equal(await page.getByRole('heading', { name: 'Other conversation · Fixture unrelated', exact: true }).isVisible(), true)
+      assert.equal(await page.getByRole('button', { name: 'View conversation', exact: true }).isVisible(), true)
+      assert.equal(await page.locator('.interruption-origin-title').evaluate(el => {
+        const source = getComputedStyle(el), kind = getComputedStyle(el.previousElementSibling!)
+        return Number(source.fontWeight) >= 600 && parseFloat(source.fontSize) > parseFloat(kind.fontSize)
+          && !el.closest('.interruption-body')
+      }), true, "the actual source name is a prominent persistent heading outside the scrolling form")
+      assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), 'true')
+      if (process.env.CODENOMAD_MOBILE_CAPTURE) {
+        await page.screenshot({ path: join(process.env.CODENOMAD_MOBILE_CAPTURE, `external-${mobile ? "portrait" : "desktop"}-expanded.png`), scale: "css" })
+      }
+      await page.evaluate(() => (window as any).fixture.nativeQuestion("global"))
+      assert.equal(await page.locator('.interruption-navigation .interruption-position').innerText(), "1 / 2")
+      assert.equal(await answer.inputValue(), "Owner draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true)
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      assert.equal(await answer.count(), 0, "navigation to a foreign request is a preview, not permission to open its editor")
+      assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)
+      assert.equal(await page.getByRole('heading', { name: 'Project request', exact: true }).isVisible(), true)
+      await page.getByRole('button', { name: 'Open request from Project request', exact: true }).click()
+      assert.equal(await page.getByRole('button', { name: 'View conversation', exact: true }).count(), 0)
+      await answer.fill("Global draft")
+      await page.evaluate(() => (window as any).fixture.selectSession(null))
+      assert.equal(await answer.count(), 0, "global request on a new surface still requires explicit expansion")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      assert.equal(await answer.inputValue(), "Global draft")
+      await page.getByRole('button', { name: 'Submit', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), "global")
+      assert.equal(await answer.count(), 0, "settlement must not reopen the previously viewed foreign request")
+      await page.getByRole('button', { name: 'Open request from Fixture unrelated', exact: true }).click()
+      assert.equal(await answer.inputValue(), "Owner draft")
+      await page.getByRole('button', { name: 'View conversation', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "unrelated")
+      assert.equal(await answer.inputValue(), "Owner draft")
+      await page.getByRole('button', { name: 'Submit', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[1].sessionID), "unrelated")
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[1].formID), "question-unrelated")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.addSession("late-grandchild", "late-child")
+        f.nativeQuestion("late-grandchild")
+      })
+      assert.equal(await answer.count(), 0)
+      await page.evaluate(() => (window as any).fixture.addSession("late-child", "session"))
+      assert.equal(await page.getByRole('heading', { name: 'Subagent · Fixture late-grandchild', exact: true }).isVisible(), true)
+      // Classification changes alone preserve the compact selection.
+      await page.getByRole('button', { name: 'Open request from Fixture late-grandchild', exact: true }).click()
+      await answer.fill("Late draft")
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.focusRequest("late-grandchild", "already-settled")
+      })
+      assert.equal(await answer.inputValue(), "Late draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true, "invalid focus intents cannot fall back to the current request")
+      // Even a queued valid focus is fenced when the surface changes before its microtask.
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.focusRequest("late-grandchild", "question-late-grandchild")
+        f.selectSession("missing-session")
+      })
+      assert.equal(await answer.count(), 0)
+      await page.evaluate(() => (window as any).fixture.showInfo())
+      assert.equal(await answer.count(), 0)
+      await page.evaluate(() => (window as any).fixture.selectSession(null))
+      assert.equal(await answer.count(), 0)
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      assert.equal(await answer.inputValue(), "Late draft")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
 }
 
 async function assertFooter(page: Page, selector = ".form-request-actions") {
@@ -233,7 +535,12 @@ for (const landscape of [false, true]) for (const keyboardHeight of [260, 220, 1
       const height = await composer.evaluate(el => el.getBoundingClientRect().height)
       const saved = await page.evaluate(() => (window as any).fixture.promptHeight())
       await page.evaluate(keyboardHeight => {
-        ;(window as any).fixture.nativeQuestion("session", "short-keyboard-form", true)
+        ;(window as any).fixture.addSession("foreign")
+        ;(window as any).fixture.nativeQuestion("foreign", "short-keyboard-form", true)
+      }, keyboardHeight)
+      assert.equal(await page.locator('.interruption-dock input:visible').count(), 0)
+      await page.getByRole('button', { name: 'Open request from Fixture foreign', exact: true }).click()
+      await page.evaluate(keyboardHeight => {
         ;(window as any).keyboardViewport(keyboardHeight)
       }, keyboardHeight)
       await page.waitForFunction(bottom => document.querySelector(".content-area")!.getBoundingClientRect().bottom <= bottom, keyboardHeight)
@@ -316,7 +623,12 @@ for (const mode of ["desktop", "mobile", "immersive", "landscape"] as const) {
         await page.evaluate(sid => (window as any).fixture.selectSession(sid), sid)
         await page.locator(`.session-cache-pane[data-session-id="${sid}"][data-session-active="true"] textarea`).waitFor()
         assert.equal(await page.locator(".interruption-dock:visible").count(), 1, JSON.stringify(await dockSnapshot(page)))
-        assert.equal(await answer.inputValue(), "Preserve my answer")
+        if (sid === "session") assert.equal(await answer.inputValue(), "Preserve my answer")
+        else {
+          assert.equal(await page.locator('.interruption-editor[hidden][inert] input').inputValue(), "Preserve my answer")
+          assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)
+          assert.equal(await composer.evaluate(el => el.getBoundingClientRect().height), originalHeight)
+        }
       }
       if (mode !== "immersive") {
         await page.getByRole("button", { name: "Collapse requests", exact: true }).click()

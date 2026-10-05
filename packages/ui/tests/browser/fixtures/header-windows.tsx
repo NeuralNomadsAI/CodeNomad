@@ -12,8 +12,9 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { runtimeEnv } from "../../../src/lib/runtime-env"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { getFormQueue } from "../../../src/stores/forms"
+import { focusInterruption } from "../../../src/stores/interruption-navigation"
 import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
-import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
+import { setSessions, setActiveSession, setActiveParentSession, clearActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 
@@ -47,6 +48,12 @@ let config = { settings: { locale: "en" } }
 serverApi.fetchConfigOwner = async () => config as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
+serverApi.fetchPermissionReceipts = async () => ({ receipts: [] })
+serverApi.listWorkspaceFiles = async () => []
+serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
+  entries: [{ id: "hello", seq: 0, type: "user", tools: 0, reasoning: 0 }],
+  checkpoints: [{ after: -1, through: 0, digest: "0".repeat(64), changed: true }], cursor: null,
+})
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))
@@ -93,12 +100,14 @@ await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
   runtimeEnv, replies, setImmersive, setActive,
-  addSession: (sid: string) => {
-    fixtureSessions.set(sid, { ...session, id: sid, title: `Fixture ${sid}` })
+  addSession: (sid: string, parentId: string | null = null) => {
+    fixtureSessions.set(sid, { ...session, id: sid, parentId, title: `Fixture ${sid}` })
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
     setSessionPage(id, [...fixtureSessions.keys()], false, true)
   },
-  selectSession: (sid: string) => { setActiveParentSession(id, sid); setActiveSession(id, sid) },
+  selectSession: (sid: string | null) => { if (sid === null) clearActiveParentSession(id); else { setActiveParentSession(id, sid); setActiveSession(id, sid) } },
+  selectedSession: () => activeSessionId().get(id) ?? null,
+  focusRequest: (sid?: string, requestId?: string) => focusInterruption(id, sid, requestId),
   nativeQuestion: (sid = sessionId, formId = `question-${sid}`, long = false) => emit("form.created", {
     sessionID: sid, form: { id: formId, sessionID: sid, location: { directory: "/repo" }, title: "Questions", metadata: { kind: "question" },
       fields: [{ key: "q0", type: "string", title: long ? "Choose the deployment approach for the mobile browser release" : "Approach",
@@ -111,8 +120,8 @@ bootStage("preferences-after")
     fields: [{ key: "q0", type: "string", title: "Approach", description: "Which approach?", required: true }],
     state: { status: "pending" },
   }),
-  queuePermission: () => addPermissionToQueue(id, {
-    id: "dock-permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {},
+  queuePermission: (sid = sessionId, requestId = "dock-permission") => addPermissionToQueue(id, {
+    id: requestId, sessionID: sid, action: "bash", resources: ["git status"], metadata: {},
   }),
   viewAction: (action: string) => viewAction(action),
   menuInstance: setMenuInstance,

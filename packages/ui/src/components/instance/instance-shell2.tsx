@@ -169,7 +169,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
   const interruptionViewport = useInterruptionViewport(() => sessionCenterEl() ?? undefined, interruptionExpanded)
   const interruptionPanel = <InterruptionDock instanceId={props.instance.id}
-    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} onExpandedChange={setInterruptionExpanded} />
+    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} onExpandedChange={setInterruptionExpanded}
+    onViewConversation={handleSessionSelect} />
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
@@ -584,7 +585,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
         <PermissionNotificationBanner
           instanceId={props.instance.id}
-          onClick={() => { handleBackToConversation(); focusInterruption(props.instance.id) }}
+          onClick={handleProjectInterruptionClick}
         />
       </Show>
       {renderYoloModePill()}
@@ -1031,6 +1032,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const handleSidebarSessionSelect = (sessionId: string) => {
     if (sessionId === "info" && showingInfoView()) handleBackToConversation()
     else handleSessionSelect(sessionId)
+  }
+
+  function handleProjectInterruptionClick() {
+    // Info has no dock mount. Restore the ordinary conversation surface first,
+    // without treating the pending request's owner as a navigation destination.
+    if (showingInfoView()) handleBackToConversation()
+    focusInterruption(props.instance.id)
   }
   const sessionLayout = (
     <div
