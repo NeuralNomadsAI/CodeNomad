@@ -1,5 +1,6 @@
 import type { SessionSearchMatch } from "../lib/session-search"
 import { collectSearchRanges, revealSearchRange, type SearchRange } from "./search-highlight-ranges"
+import { paintSearchMarks } from "./search-highlight-marks"
 
 const MATCHES = "codenomad-search"
 const ACTIVE = "codenomad-search-active"
@@ -86,14 +87,9 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
         if (item.active) { owner.documentHighlights.active.add(item.range); activeRange = item.range }
       }
     } else {
-      // Reverse document order keeps earlier ranges valid while splitting nodes.
-      for (const item of [...owner.ranges].reverse()) {
-        const mark = root.ownerDocument.createElement("mark")
-        mark.className = item.active ? "session-search-match session-search-match-active" : "session-search-match"
-        item.range.surroundContents(mark)
-        owner.marks.push(mark)
-        if (item.active) { activeRange = root.ownerDocument.createRange(); activeRange.selectNodeContents(mark) }
-      }
+      const painted = paintSearchMarks(owner.ranges)
+      owner.marks = painted.marks
+      activeRange = painted.activeRange
       owner.ranges = []
     }
     if (needsScroll && activeRange) {

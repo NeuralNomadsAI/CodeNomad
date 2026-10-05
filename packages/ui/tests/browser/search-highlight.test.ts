@@ -174,6 +174,31 @@ test("repeated real component churn releases highlight registries and DOM nodes"
   } finally { await close(page) }
 })
 
+test("expanding case folds can overlap original characters without breaking fallback painting", async () => {
+  for (const mode of ["css", "fallback"]) {
+    const page = await open(mode)
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    try {
+      await page.evaluate(() => (window as any).highlightFixture.rows(1))
+      await page.locator(".message-text").evaluate(element => { element.textContent = "İİİ" })
+      await change(page, "\u0307i", 1)
+      assert.equal((await snapshot(page)).active, 1)
+      await change(page, "\u0307i", 0)
+      const activeText = await page.evaluate(() => {
+        const ranges = CSS.highlights?.get("codenomad-search-active")
+        return ranges ? ([...ranges][0] as Range).toString() : document.querySelector("mark.session-search-match-active")?.textContent
+      })
+      assert.equal(activeText, "İİ")
+      assert.equal(await page.locator(".message-text").textContent(), "İİİ")
+      await change(page, "")
+      assert.equal(await page.locator("mark.session-search-match").count(), 0)
+      assert.equal(await page.locator(".message-text").textContent(), "İİİ")
+      assert.deepEqual(errors, [])
+    } finally { await close(page) }
+  }
+})
+
 test("light/dark and fractional zoom keep active highlight distinct without layout changes", async () => {
   const page = await open("css")
   try {
@@ -285,7 +310,7 @@ test("alternating before/after benchmark on identical rendered transcripts", {
   const path = process.env.CODENOMAD_HIGHLIGHT_RESULTS!
   await mkdir(dirname(path), { recursive: true })
   const sourceHashes = Object.fromEntries(await Promise.all([
-    "src/components/search-highlights.ts", "src/components/search-highlight-ranges.ts", "src/components/message-block.tsx",
+    "src/components/search-highlights.ts", "src/components/search-highlight-ranges.ts", "src/components/search-highlight-marks.ts", "src/components/message-block.tsx",
     "src/styles/messaging/search-highlights.css", "tests/browser/fixtures/search-highlight.tsx",
     "tests/browser/fixtures/search-highlight-baseline.ts", "tests/browser/fixtures/search-highlight-adapter.ts",
   ].map(async path => [path, createHash("sha256").update((await readFile(new URL(`../../${path}`, import.meta.url), "utf8")).replaceAll("\r\n", "\n")).digest("hex")])))
