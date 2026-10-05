@@ -21,7 +21,6 @@ interface ResolvedMarkdownSnapshot {
   partId: string | undefined
   cacheId: string
   version: string
-  requestKey: string
 }
 
 let markdownModulePromise: Promise<MarkdownModule> | null = null
@@ -113,12 +112,21 @@ export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
   const [html, setHtml] = createSignal("")
   let containerRef: HTMLDivElement | undefined
-  let latestRequestKey = ""
+  let latestRenderRequest = 0
+  let disposed = false
   let cleanupLanguageListener: (() => void) | undefined
   const codeBlockWrapOverrides = new Map<string, boolean>()
 
+  onCleanup(() => {
+    disposed = true
+  })
+
+  const isCurrentRender = (request: number) => !disposed && request === latestRenderRequest
+
   const notifyRendered = () => {
-    Promise.resolve().then(() => props.onRendered?.())
+    Promise.resolve().then(() => {
+      if (!disposed) props.onRendered?.()
+    })
   }
 
   const codeBlockWrapKey = (codeBlock: HTMLElement): string | null => {
@@ -150,7 +158,7 @@ export function Markdown(props: MarkdownProps) {
   }
 
   const syncCodeBlockWrapStates = () => {
-    if (!containerRef) {
+    if (disposed || !containerRef) {
       return
     }
 
@@ -176,7 +184,6 @@ export function Markdown(props: MarkdownProps) {
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
     const version = resolvePartVersion(part, text)
-    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}:${version}`
     return {
       part,
       text,
@@ -188,7 +195,6 @@ export function Markdown(props: MarkdownProps) {
       partId,
       cacheId,
       version,
-      requestKey,
     }
   })
 
@@ -221,8 +227,11 @@ export function Markdown(props: MarkdownProps) {
     notifyRendered()
   }
 
-  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot): Promise<void> => {
+  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot, request: number): Promise<void> => {
     const markdown = await loadMarkdownModule()
+    // Awaiting even a warm module suspends this invocation. Skip stale work before
+    // entering the synchronous parser, including retries with the same key.
+    if (!isCurrentRender(request)) return
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
@@ -230,16 +239,18 @@ export function Markdown(props: MarkdownProps) {
       literalRawHtml: snapshot.literalRawHtml,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
     })
+    if (!isCurrentRender(request)) return
     const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
-    if (latestRequestKey === snapshot.requestKey) {
+    if (isCurrentRender(request)) {
       commitCacheEntry(snapshot, rendered, { cache: shouldCache })
     }
   }
 
   createEffect(() => {
     const snapshot = resolved()
-    latestRequestKey = snapshot.requestKey
+    // Cache hits must also invalidate any older render waiting to publish.
+    const request = ++latestRenderRequest
     const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
@@ -264,9 +275,9 @@ export function Markdown(props: MarkdownProps) {
     setHtml(renderFallbackHtml(snapshot.text))
     notifyRendered()
 
-    void renderSnapshot(snapshot).catch((error) => {
+    void renderSnapshot(snapshot, request).catch((error) => {
       log.error("Failed to render markdown:", error)
-      if (latestRequestKey === snapshot.requestKey) {
+      if (isCurrentRender(request)) {
         commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
       }
     })
@@ -326,7 +337,6 @@ export function Markdown(props: MarkdownProps) {
 
     containerRef?.addEventListener("click", handleClick)
 
-    let disposed = false
     void loadMarkdownModule()
       .then((markdown) => {
         if (disposed) {
@@ -339,8 +349,8 @@ export function Markdown(props: MarkdownProps) {
             return
           }
 
-          latestRequestKey = snapshot.requestKey
-          void renderSnapshot(snapshot).catch((error) => {
+          const request = ++latestRenderRequest
+          void renderSnapshot(snapshot, request).catch((error) => {
             log.error("Failed to re-render markdown after language load:", error)
           })
         })
@@ -350,7 +360,6 @@ export function Markdown(props: MarkdownProps) {
       })
 
     onCleanup(() => {
-      disposed = true
       containerRef?.removeEventListener("click", handleClick)
       cleanupLanguageListener?.()
       cleanupLanguageListener = undefined
