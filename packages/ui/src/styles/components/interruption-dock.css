@@ -27,8 +27,7 @@
 }
 .interruption-heading { display: flex; flex: 1; align-items: center; gap: var(--space-sm); min-width: 0; }
 .interruption-heading > svg { flex-shrink: 0; color: var(--accent-primary); }
-.interruption-heading > .session-status-list { flex-shrink: 0; }
-.interruption-heading-copy { min-width: 0; flex: 1; }
+.interruption-heading-copy { min-width: 0; }
 .interruption-dock .window-title { font-weight: var(--font-weight-semibold); }
 .interruption-dock.has-origin .window-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
 .interruption-dock.has-origin.is-collapsed .window-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -38,7 +37,7 @@
 .interruption-parent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--font-size-xs); }
 .interruption-origin-actions .window-action { margin-inline-start: auto; flex-shrink: 0; }
 .interruption-external-preview { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-base); text-align: start; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
-.interruption-external-preview > span:not(.interruption-position) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.interruption-external-preview > span[title] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .interruption-external-preview > svg { flex-shrink: 0; }
 .interruption-external-preview:hover { background: var(--surface-interactive-hover); }
 .interruption-external-preview:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
@@ -49,8 +48,6 @@
 .interruption-dock .window-icon-button { width: 32px; height: 32px; }
 .interruption-navigation .window-icon-button:disabled { opacity: 0.3; cursor: default; background: transparent; }
 .interruption-navigation .window-icon-button > svg:dir(rtl) { transform: scaleX(-1); }
-.interruption-toggle { color: var(--text-secondary); }
-:is(.interruption-toggle, .interruption-external-preview) > .lucide-chevron-right:dir(rtl) { transform: scaleX(-1); }
 .interruption-body { display: flex; padding: 0; overflow: hidden; min-height: 0; }
 .interruption-editor { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .interruption-dock[hidden], .interruption-dock [hidden] { display: none; }

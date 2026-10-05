@@ -37,17 +37,9 @@ async function openFixture(page: Page, clipboard: "success" | "failure" | "pendi
     document.execCommand = () => false
   }`)
   await page.goto(url)
-  await page.waitForFunction(() => Boolean((window as any).fixture))
-  await expandExternalDock(page)
   await page.getByRole("button", { name: "Copy patch", exact: true }).waitFor()
+  await page.waitForFunction(() => Boolean((window as any).fixture))
   assert.deepEqual(errors, [], "fixture must initialize without browser errors")
-}
-
-async function expandExternalDock(page: Page) {
-  const toggle = page.locator(".interruption-toggle")
-  assert.equal(await toggle.getAttribute("aria-expanded"), "false", "an external request starts compact")
-  await toggle.click()
-  assert.equal(await toggle.getAttribute("aria-expanded"), "true")
 }
 
 test("source-less dock diff is complete through bounded pages even when clipboard fails", async () => {
@@ -98,7 +90,6 @@ test("full copy unlocks both approvals only for the same request and unchanged d
     await copy.click()
     assert.equal(await allow.isEnabled(), true)
     await page.evaluate(() => (window as any).fixture.nextRequest())
-    await expandExternalDock(page)
     assert.equal(await allow.isDisabled(), true)
     await copy.click()
     await page.getByRole("button", { name: "Always Allow", exact: true }).click()
@@ -119,7 +110,6 @@ test("late clipboard success cannot unlock a changed diff or a dismissed view", 
     await page.evaluate(() => (window as any).fixture.dismiss())
     await page.evaluate(() => (window as any).finishCopy())
     await page.evaluate(() => (window as any).fixture.reopen())
-    await expandExternalDock(page)
     assert.equal(await page.getByRole("button", { name: "Allow Once", exact: true }).isDisabled(), true)
   } finally { await page.close() }
 })
