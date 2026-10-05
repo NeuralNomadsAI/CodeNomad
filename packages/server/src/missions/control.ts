@@ -971,16 +971,28 @@ export class MissionControl {
   }
 
   private async ensureActorSession(mission: MissionMap, actor: MissionActor, task: MissionMap["tasks"][number]): Promise<NativeMissionSession> {
+    const ownsCreation = actor.managed && actor.sessionId === `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`
     // Every managed desktop retry consults the held-operation capability, even
     // when a late root is now readable. GET existence cannot settle an ACK loss.
-    if (actor.managed && this.options.createManagedRoot) {
+    if (ownsCreation && this.options.createManagedRoot) {
       this.assertActive()
       return this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+    }
+    if (actor.managed && !ownsCreation) {
+      // managed is immutable cleanup provenance, not a create permit for every
+      // later assignment. Reuse requires the original dispatch acknowledgement;
+      // mere existence of a late root must not bypass an uncertain create hold.
+      const source = mission.tasks.find(candidate => candidate.actorSessionId === actor.sessionId
+        && actor.sessionId === `ses_${stableToken(`${mission.id}\0task\0${candidate.id}`, 26)}`)
+      const dispatched = source && await this.journal.event(mission.id, this.eventID(mission.id, `task-${source.key}-dispatched`))
+      if (dispatched?.type !== "task.dispatched" || dispatched.taskKey !== source?.key) {
+        throw new MissionControlError("Managed root creation has not been acknowledged; retry its original assignment", "invalid-dispatch")
+      }
     }
     try {
       return await this.options.sessions.get({ sessionID: actor.sessionId })
     } catch (getError) {
-      if (!actor.managed) throw new MissionControlError("Target session no longer exists", "target-missing")
+      if (!ownsCreation) throw new MissionControlError("Target session no longer exists", "target-missing")
       this.assertActive()
       // Desktop creation must cross the same authenticated backend/fence as
       // prompts, but BEFORE creating the root. No native fallback on rejection.

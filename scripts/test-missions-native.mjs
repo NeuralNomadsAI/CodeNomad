@@ -5,6 +5,9 @@ import { createServer } from "node:http"
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { registerHooks, createRequire } from "node:module"
+import { pathToFileURL } from "node:url"
+import { isDeepStrictEqual } from "node:util"
 import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
@@ -12,6 +15,16 @@ import pino from "pino"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable")
+// Optional read-only fallback for checkouts missing bare workspace dependencies.
+// Never redirects source modules, installs packages, or modifies node_modules.
+const dependencies = process.argv[3]
+const resolver = dependencies && createRequire(path.join(path.resolve(dependencies), "package.json"))
+const dependencyHook = resolver && registerHooks({ resolve(specifier, context, next) {
+  try { return next(specifier, context) } catch (error) {
+    if (error.code !== "ERR_MODULE_NOT_FOUND" || /^[./]|:/.test(specifier)) throw error
+    return { url: pathToFileURL(resolver.resolve(specifier)).href, shortCircuit: true }
+  }
+} })
 const version = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim()
 const temporary = path.join(os.tmpdir(), "opencode")
 await mkdir(temporary, { recursive: true })
@@ -19,7 +32,7 @@ const root = await mkdtemp(path.join(temporary, "missions-native-"))
 for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_)/i.test(key)) delete process.env[key]
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
 Object.assign(process.env, {
-  HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root, LOCALAPPDATA: root, XDG_RUNTIME_DIR: root,
+  HOME: root, USERPROFILE: root, APPDATA: root, OPENCODE_TEST_HOME: root, LOCALAPPDATA: root, XDG_RUNTIME_DIR: root,
   OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
   OPENCODE_SERVER_PASSWORD: "isolated-missions", OPENCODE_CONFIG_PROJECT_DISABLE: "1",
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
@@ -39,7 +52,17 @@ const { registerAutomationPluginRoute } = await tsImport("../packages/server/src
 const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
+const { stableToken } = await tsImport("../packages/server/src/missions/journal.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
+const diagnosticReads = []
+const gates = [], failedGates = [], failures = []
+const receipt = { status: "running", cli, cliVersion: version, nodeVersion: process.version, artifacts: root, gates, failedGates, failures }
+let previousFailures = 0
+const gate = name => {
+  if (failures.length > previousFailures) { failedGates.push(name); console.error(`FAIL ${name}`) }
+  else { gates.push(name); console.log(`PASS ${name}`) }
+  previousFailures = failures.length
+}
 let requests = []
 const blockSessions = new Set(), heldSessions = new Map()
 const provider = createServer(async (request, response) => {
@@ -103,7 +126,7 @@ try {
     } })
   } }`)
   process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    model: "fixture/fixture", permissions: [{ action: "*", resource: "*", effect: "allow" }],
+    model: "fixture/fixture", update: "disable", snapshots: false, permissions: [{ action: "*", resource: "*", effect: "allow" }],
     agents: { reviewer: { mode: "all", description: "Fixture reviewer" } },
     providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",
       settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture" },
@@ -111,6 +134,7 @@ try {
   })
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env: process.env, windowsHide: true })
   stopped = new Promise(resolve => child.once("close", resolve))
+  child.once("error", error => { failure = error })
   child.stdout.on("data", data => { output += data })
   child.stderr.on("data", data => { output += data })
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
@@ -118,6 +142,7 @@ try {
   const endpoint = { url, auth: { type: "basic", username: "opencode", password: process.env.OPENCODE_SERVER_PASSWORD } }
   const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
   const info = await (await fetch(`${url}/api/info`, { headers: { authorization } })).json()
+  receipt.runtime = { version: info.version, pid: info.pid, url }
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   let variables = { MISSION_FIXTURE: "first" }
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
@@ -131,8 +156,36 @@ try {
   const paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: cli })
   assert.equal(paths.config, process.env.OPENCODE_CONFIG_DIR)
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
-  registerMissionRoutes(bridge, { workspaceManager: manager })
-  registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence(),
+  bridge.addHook("onResponse", async (request, reply) => {
+    if (reply.statusCode < 400 || request.body?.mode !== "mission-input") return
+    const command = request.body.command
+    if (command?.kind === "create-root") {
+      receipt.rejectedAdmission = { status: reply.statusCode, kind: command.kind, taskKey: command.input?.taskKey }
+      diagnosticReads.push((async () => {
+        const snapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location: { directory: project }, signal: AbortSignal.timeout(10_000) })
+        const mission = snapshot.missions.find(value => value.id === command.input?.missionID)
+        const task = mission?.tasks.find(value => value.key === command.input?.taskKey)
+        const actor = mission?.actors.find(value => value.sessionId === task?.actorSessionId)
+        Object.assign(receipt.rejectedAdmission, { taskStatus: task?.status, actorSessionID: actor?.sessionId, actorManaged: actor?.managed,
+          expectedFreshActorSessionID: task && `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}` })
+        receipt.failureSnapshot = snapshot
+      })().catch(() => { receipt.rejectedAdmission.observation = "unknown" }))
+      return
+    }
+    if (command?.kind !== "prompt") return
+    const metadata = command.input?.metadata?.["codenomad.mission"]
+    const snapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location: { directory: project } })
+    const mission = snapshot.missions.find(value => value.id === metadata?.missionID)
+    const task = mission?.tasks.find(value => value.key === metadata?.taskKey)
+    const { assignmentInput } = await tsImport("../packages/server/src/missions/inputs.ts", import.meta.url)
+    const expected = mission && task && assignmentInput(mission, task)
+    // Identity/shape-only diagnosis; never persist bridge tokens or environment.
+    receipt.rejectedAdmission = { status: reply.statusCode, taskKey: task?.key, taskStatus: task?.status,
+      differences: expected && Object.keys(expected).filter(key => !isDeepStrictEqual(expected[key], command.input[key])) }
+  })
+  const worktreeDeletionFence = new WorktreeDeletionFence()
+  registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence })
+  registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence,
     authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
@@ -147,10 +200,20 @@ try {
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
   assert(inspected.catalog.agents.some(agent => agent.id === "reviewer"))
   assert(inspected.catalog.models.some(model => model.id === "selected" && model.variants.includes("careful")))
+  gate("native catalog and configured variant discovery")
+  // These original cases test durable root queues, report notifications and
+  // root lifecycle/cleanup across plugin reloads. They are explicit independent
+  // lifetime exceptions, not the default native child declaration path.
   const task = { taskKey: "native-review", title: "Review", brief: "Conclude briefly", role: "reviewer",
+    executionMode: { kind: "independent", reason: "lifetime",
+      explanation: "Exercise durable independent-root inbox, notification, lifecycle and cleanup behavior across plugin reloads." },
     execution: { agent: "reviewer", model: { providerID: "fixture", id: "selected", variant: "careful" } } }
-  stage = "initial native assignment"
-  const delegated = await invoke("delegate", task)
+  stage = "explicit independent root assignment"
+  // Keep reused-root inbox/outbox/lifecycle cases independent of managed-root
+  // creation provenance. The original managed-root reuse regression remains
+  // mandatory at the end, so a failure cannot suppress these other checks.
+  const existingActor = await client.session.create({ location, title: "Existing durable fixture actor", ...task.execution })
+  const delegated = await invoke("delegate", { ...task, targetSessionID: existingActor.id })
   const actorID = delegated.mission.tasks[0].actorSessionId
   const actor = await client.session.get({ sessionID: actorID })
   assert.equal(actor.parentID, undefined)
@@ -158,6 +221,8 @@ try {
   assert.deepEqual(actor.model, task.execution.model)
   await client.session.wait({ sessionID: actorID }, { signal: AbortSignal.timeout(20_000) })
   assert(requests.some(request => request.session === actorID && request.model === "selected"))
+  assert.deepEqual(delegated.mission.tasks.find(value => value.key === task.taskKey).executionMode, task.executionMode)
+  gate("explicit independent root selection and variant persistence")
   const probe = async (sessionID, expected) => {
     const file = path.join(project, "environment.json")
     await writeFile(path.join(project, "probe.cjs"), `require('node:fs').writeFileSync(${JSON.stringify(file)}, JSON.stringify(process.env.MISSION_FIXTURE))`)
@@ -166,6 +231,7 @@ try {
   }
   await probe(actorID, "first")
   variables = { MISSION_FIXTURE: "changed" }
+  stage = "busy independent root queue and environment"
   hold = true
   await client.session.prompt({ sessionID: actorID, text: "Busy actor" })
   await until(() => Boolean(held))
@@ -184,6 +250,25 @@ try {
   await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes("Native verified")))
   await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
   await probe(coordinator.id, "changed")
+  gate("busy root queue, selection conflict, fresh actor/coordinator environment and idle coordinator report consumption")
+
+  stage = "default native task declaration"
+  const nativeTask = { taskKey: "native-declaration", title: "Native declaration", brief: "Return ordinary native evidence to the coordinator.",
+    role: "reviewer", execution: task.execution, blockedBy: [] }
+  const sessionsBeforeDeclaration = await client.session.list({ location, limit: 32 })
+  const requestsBeforeDeclaration = requests.length
+  const declared = await invoke("delegate", nativeTask)
+  const declaration = declared.mission.tasks.find(value => value.key === nativeTask.taskKey)
+  assert.equal(declared.disposition, "declared")
+  assert.deepEqual(declaration.executionMode, { kind: "native", parentTaskKey: null })
+  assert.equal(declaration.actorSessionId, undefined)
+  assert.equal(declaration.admissionId, undefined)
+  assert.equal(declaration.status, "ready")
+  assert.match(declared.assignmentPrompt, /ordinary native subagent result/)
+  assert.equal((await invoke("delegate", nativeTask)).disposition, "existing")
+  assert.deepEqual(await client.session.list({ location, limit: 32 }), sessionsBeforeDeclaration)
+  assert.equal(requests.length, requestsBeforeDeclaration, "Declarations and replay never create a provider turn")
+  gate("default native declaration and canonical prompt replay without actor creation or execution")
 
   // Exercise the native plan-revision tool and prove that a late report is history, not a reactivation.
   stage = "mission.revise and late report"
@@ -215,6 +300,7 @@ try {
   assert.equal(lateReport.mission.tasks.find(task => task.key === queued.taskKey).lateReports.at(-1).late, true)
   assert(lateReport.mission.reports.some(report => report.taskKey === queued.taskKey && report.late === true))
   assert((await client.session.get({ sessionID: actorID })).id === actorID, "Revision keeps the original actor conversation")
+  gate("revision lineage, withdrawn late evidence and busy coordinator report consumption")
 
   // A durable report must wake its coordinator after transport recovery, without
   // another report call or human prompt. Exercise both live recovery and reload.
@@ -234,6 +320,13 @@ try {
     assert(!requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
     if (restart) {
       await plugin.stop()
+      assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
+        .reports.find(report => report.taskKey === taskKey)?.notificationStatus, "pending",
+      "Presence loss retains active Mission executors and the pending report")
+      // Presence loss deliberately retains active work now. Explicitly reload
+      // only this owned private daemon to exercise real executor teardown and
+      // re-registration; never discover or reload the shared user service.
+      await client.location.reload({ signal: AbortSignal.timeout(20_000) })
       await until(async () => { try { await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); return false } catch { return true } })
     }
     removeBridge = await publishAutomationBridge(registration)
@@ -249,6 +342,7 @@ try {
     const transcript = await client.message.list({ sessionID: coordinator.id, limit: { order: "asc", limit: 100 } })
     assert.equal(transcript.data.filter(message => message.type === "synthetic"
       && message.metadata?.["codenomad.mission"]?.taskKey === taskKey).length, 1, "One correlated native report survives recovery and replay")
+    gate(`durable report outbox recovery and one-message replay (plugin restart=${restart})`)
   }
 
   stage = "explicit targeted coordinator recovery"
@@ -269,6 +363,7 @@ try {
   const recoveredMessages = await client.message.list({ sessionID: coordinator.id, limit: { order: "asc", limit: 100 } })
   assert.equal(recoveredMessages.data.filter(message => message.type === "synthetic"
     && message.metadata?.["codenomad.mission"]?.kind === "recovery").length, 1)
+  gate("targeted coordinator recovery without plan changes or duplicate model turn")
 
   stage = "explicit targeted missing-report recovery"
   const missingReportTask = "targeted-report"
@@ -293,12 +388,17 @@ try {
   await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
 
   // Native lifecycle RPC is the same typed capability brokered by the authenticated UI routes.
+  gate("targeted missing-report recovery without task replay or duplicate model turn")
   stage = "lifecycle CRUD and transcript preservation"
+  const missionURL = `/api/workspaces/${workspace.id}/missions`
   const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom" }
   const crudCreated = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
   const crudReplay = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
   assert.equal(crudReplay.mission.id, crudCreated.mission.id)
   assert.equal(crudReplay.mission.coordinatorSessionId, crudCreated.mission.coordinatorSessionId)
+  await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).create({ ...crudInput, objective: "Different creation" }, { location }),
+    error => error.type === "mission.rejected" && error.data?.code === "request-conflict",
+    "Native creation rejects a changed contract with the exact declared request-conflict")
   const crudCoordinator = crudCreated.mission.coordinatorSessionId
   await client.session.prompt({ sessionID: crudCoordinator, text: "Conversation retained by tombstone" })
   await client.session.wait({ sessionID: crudCoordinator }, { signal: AbortSignal.timeout(20_000) })
@@ -314,11 +414,18 @@ try {
   assert.equal(updateReplay.mission.revision, crudUpdated.mission.revision)
   assert.equal(updateReplay.mission.notes, "Updated notes")
   stage = "native mutation errors through HTTP routes"
-  const missionURL = `/api/workspaces/${workspace.id}/missions`
   const rejectedMutation = async (method, suffix, payload, status, code) => {
     const response = await bridge.inject({ method, url: missionURL + suffix, payload })
-    assert.equal(response.statusCode, status, `${method} ${suffix}: ${response.body}`)
-    assert.equal(response.json().code, code)
+    // Keep every contract assertion and a red overall exit, but collect independent
+    // structured-error failures so later storage/deletion/control checks still run.
+    try {
+      assert.equal(response.statusCode, status, `${method} ${suffix}: ${response.body}`)
+      assert.equal(response.json().code, code)
+    } catch (error) {
+      failures.push({ stage, method, suffix, expected: { status, code }, actual: { status: response.statusCode, code: response.json().code },
+        message: error.message })
+      console.error(`FAIL ${method} ${suffix}: expected ${status}/${code}, got ${response.statusCode}/${response.json().code}`)
+    }
   }
   await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {
     requestId: "stale-update", expectedRevision: 1, objective: "Stale edit",
@@ -326,9 +433,16 @@ try {
   await rejectedMutation("DELETE", `/${crudCreated.mission.id}`, {
     requestId: "stale-delete", expectedRevision: 1,
   }, 409, "revision-conflict")
-  await rejectedMutation("POST", "", {
-    requestId: crudInput.requestID, objective: "Different creation", template: "custom",
-  }, 409, "request-conflict")
+   const beforeCreationConflict = await client.session.list({ location, limit: 32 })
+   const conflictingCreation = { requestId: crudInput.requestID, objective: "Different creation", template: "custom" }
+   // POST adds prepared:true and holds physical creation admission. The declared
+   // RPC rejection above is not a successful native settlement receipt: after
+   // dispatch this stricter boundary parks its permit rather than claiming denial.
+   await rejectedMutation("POST", "", conflictingCreation, 409, "creation-uncertain")
+   await rejectedMutation("POST", "", conflictingCreation, 409, "creation-uncertain")
+   await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed held contract" }, 409, "creation-conflict")
+   assert.deepEqual(await client.session.list({ location, limit: 32 }), beforeCreationConflict,
+     "Native conflict and parked HTTP retries never create another coordinator")
   await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {
     requestId: "native-crud-update", expectedRevision: 1, objective: "Different edit",
   }, 409, "request-conflict")
@@ -348,6 +462,7 @@ try {
   assert.equal((await client.session.get({ sessionID: crudCoordinator })).id, crudCoordinator, "Tombstone preserves the coordinator session")
   const messagesAfter = await client.message.list({ sessionID: crudCoordinator, limit: { order: "asc", limit: 50 } })
   assert.deepEqual(messagesAfter, messagesBefore, "Tombstone preserves the native conversation transcript")
+  gate("lifecycle CRUD replay, structured HTTP/RPC conflicts, tombstone and exact transcript preservation")
 
   stage = "optional managed specialist cleanup"
   const cleanup = await client.rpc(CODENOMAD_MISSIONS_RPC).create({
@@ -361,15 +476,27 @@ try {
   const reusedTask = await invoke("delegate", { ...task, missionID: cleanup.mission.id, taskKey: "reused-cleanup", targetSessionID: reusedSession.id }, cleanupCoordinator, "cleanup-reused")
   await client.session.wait({ sessionID: reusedSession.id }, { signal: AbortSignal.timeout(20_000) })
   const cleanupRequest = { requestId: "native-cleanup-delete", expectedRevision: reusedTask.mission.revision, deleteManagedSessions: true }
+  let cleanupReceipt
   for (let replay = 0; replay < 2; replay++) {
     const response = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
     assert.equal(response.statusCode, 200, response.body)
-    assert.deepEqual(response.json(), { deleted: true })
+    const result = response.json()
+    assert.equal(result.deleted, true)
+    assert.equal(result.cleanup.missionID, cleanup.mission.id)
+    assert.equal(result.cleanup.requestID, cleanupRequest.requestId)
+    assert.equal(result.cleanup.expectedRevision, cleanupRequest.expectedRevision)
+    assert.equal(result.cleanup.deleteManagedSessions, true)
+    assert.equal(result.cleanup.removed, 1)
+    assert.equal(result.cleanup.pending, 0)
+    assert.equal(result.cleanup.retained, 0, "Reused roots are excluded from immutable cleanup targets")
+    if (cleanupReceipt) assert.deepEqual(result, cleanupReceipt, "Exact deletion replay retains the same cleanup receipt")
+    cleanupReceipt = result
   }
   await assert.rejects(client.session.get({ sessionID: managedSession }), "Opt-in cleanup removes the managed specialist")
   assert.equal((await client.session.get({ sessionID: reusedSession.id })).id, reusedSession.id, "Cleanup preserves reused conversations")
   assert.equal((await client.session.get({ sessionID: cleanupCoordinator })).id, cleanupCoordinator, "Cleanup preserves the coordinator")
   await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
+  gate("opt-in managed specialist deletion preserves coordinator and reused session")
 
   stage = "Play Pause Resume and terminal Stop"
   const preparedResponse = await bridge.inject({ method: "POST", url: missionURL, payload: { requestId: "native-run-create", objective: "Controlled mission", template: "custom" } })
@@ -429,6 +556,7 @@ try {
   const staleStart = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: startRequest })
   assert.equal(staleStart.json().mission.status, "stopped", "Replaying an old Play cannot restart a stopped mission")
   assert.equal((await client.session.get({ sessionID: runWorker })).id, runWorker)
+  gate("prepared Play, root Pause/Resume, parked report notification and irreversible Stop")
 
   stage = "native outcome and queued idle boundary"
   const { resolveHydratedGenerationRecovery, reconcileFetchedSessionRuntime } = await tsImport(
@@ -452,10 +580,14 @@ try {
   const completedOutcome = await client.session.get({ sessionID: outcomeSession.id })
   assert.ok(completedOutcome.time.idle > previousOutcome.time.idle, "real queued execution publishes a newer idle boundary")
   assert.equal(reconcileFetchedSessionRuntime(completedOutcome, pendingOutcome, await client.session.active()).generationRecovery, null)
+  gate("normal native outcome and distinct queued-but-unexecuted idle boundary")
 
   stage = "presence restart and durable replay"
   const beforeRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   await plugin.stop()
+  assert.deepEqual((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions, beforeRestart.missions,
+    "Presence loss alone retains active Mission executors without changing the journal")
+  await client.location.reload({ signal: AbortSignal.timeout(20_000) })
   await until(async () => { try { await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); return false } catch { return true } })
   plugin = new DesktopPluginLifecycle("missions")
   await plugin.start(paths)
@@ -464,12 +596,50 @@ try {
   const afterRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.deepEqual(afterRestart.missions, beforeRestart.missions)
   assert.equal((await client.server.info()).pid, info.pid)
+  receipt.finalSnapshot = afterRestart; receipt.providerRequests = requests.length
+  gate("presence retention, explicit private reload/re-registration, durable journal and idempotent root admission on the same daemon")
+  stage = "managed root busy reuse retains its original creation ownership"
+  const managedReuse = await invoke("delegate", { ...task, taskKey: "managed-reuse-source" })
+  const managedReuseSession = managedReuse.mission.tasks.find(value => value.key === "managed-reuse-source").actorSessionId
+  const managedReuseActor = await client.session.get({ sessionID: managedReuseSession })
+  assert.equal(managedReuseActor.parentID, undefined)
+  assert.equal(managedReuseActor.agent, task.execution.agent)
+  assert.deepEqual(managedReuseActor.model, task.execution.model)
+  await client.session.wait({ sessionID: managedReuseSession }, { signal: AbortSignal.timeout(20_000) })
+  await probe(managedReuseSession, "changed")
+  hold = true
+  await client.session.prompt({ sessionID: managedReuseSession, text: "Busy managed actor before reused assignment" })
+  await until(() => Boolean(held))
+  const beforeManagedReuse = await client.session.list({ location, limit: 32 })
+  variables = { MISSION_FIXTURE: "managed-reuse-fresh" }
+  const reusedManagedInput = { ...task, taskKey: "managed-reuse-queued", targetSessionID: managedReuseSession,
+    executionMode: { kind: "independent", reason: "existing-root", explanation: "Reuse the same managed actor's durable native context without creating another root or changing its profile." } }
+  const reusedManaged = await invoke("delegate", reusedManagedInput)
+  assert.equal(reusedManaged.mission.tasks.find(value => value.key === reusedManagedInput.taskKey).actorSessionId, managedReuseSession)
+  assert.equal(reusedManaged.mission.actors.find(value => value.sessionId === managedReuseSession).managed, true,
+    "Reuse retains the original immutable managed cleanup provenance")
+  assert.deepEqual((await client.session.list({ location, limit: 32 })).data.map(value => value.id).sort(),
+    beforeManagedReuse.data.map(value => value.id).sort(), "Explicit managed reuse never creates another root")
+  const managedInbox = await client.session.inbox.list({ sessionID: managedReuseSession })
+  assert(managedInbox.some(item => item.id === reusedManaged.mission.tasks.find(value => value.key === reusedManagedInput.taskKey).admissionId),
+    "Busy managed root retains the second durable assignment without a new creation identity")
+  held(); held = undefined
+  await client.session.wait({ sessionID: managedReuseSession }, { signal: AbortSignal.timeout(20_000) })
+  assert.deepEqual((await client.session.get({ sessionID: managedReuseSession })).model, managedReuseActor.model)
+  await probe(managedReuseSession, "managed-reuse-fresh")
+  gate("managed root creation, environment and busy reuse preserve original ownership and durable queue")
+  assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
+  receipt.status = "passed"; receipt.passCount = gates.length
+  receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length
   console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, explicit targeted coordinator/report recovery without replay, native outcome/queued idle boundary, revise/late report, lifecycle create/update/delete idempotence, Play/Pause/Resume/terminal Stop, optional managed specialist cleanup, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
 } catch (error) {
+  if (!failedGates.includes(stage)) failedGates.push(stage)
+  receipt.status = "failed"; receipt.failure = { stage, message: error.message, stack: error.stack }
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error
 } finally {
   held?.()
+  await Promise.allSettled(diagnosticReads)
   await removeBridge?.()
   await plugin?.stop()
   await bridge.close()
@@ -478,4 +648,12 @@ try {
   if (stopped) await stopped
   provider.closeAllConnections()
   await new Promise(resolve => provider.close(resolve))
+  receipt.cleanup = { ownedServeExited: child ? child.exitCode !== null || child.signalCode !== null : false,
+    exitCode: child?.exitCode, signalCode: child?.signalCode }
+  receipt.passCount = gates.length; receipt.failedGateCount = failedGates.length
+  await writeFile(path.join(root, "runtime.log"), output)
+  await writeFile(path.join(root, "provider-requests.json"), JSON.stringify(requests, null, 2))
+  await writeFile(path.join(root, "receipt.json"), JSON.stringify(receipt, null, 2))
+  console.log(`RECEIPT ${path.join(root, "receipt.json")}`)
+  dependencyHook?.deregister()
 }
