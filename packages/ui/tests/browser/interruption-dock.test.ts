@@ -60,6 +60,17 @@ async function fixture(width = 1100, theme: "light" | "dark" = "light") {
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
 
+async function assertHeader(page: Page, icon: string) {
+  assert.equal(await page.locator(".interruption-heading").evaluate((heading, icon) => {
+    const [toggle, status, title] = Array.from(heading.children)
+    const direction = toggle.getAttribute("aria-expanded") === "true" ? "down" : "up"
+    const a = toggle.getBoundingClientRect(), b = status.getBoundingClientRect(), c = title.getBoundingClientRect()
+    return toggle.matches(".interruption-toggle") && Boolean(toggle.querySelector(`.lucide-chevron-${direction}`))
+      && status.matches(icon) && title.matches(".interruption-heading-copy") && a.right <= b.left && b.right <= c.left
+      && Math.abs(a.y + a.height / 2 - b.y - b.height / 2) < 1
+  }, icon), true)
+}
+
 async function assertBoundedActions(page: Page, footerSelector = ".form-request-actions") {
   const metrics = await page.locator(".interruption-dock").evaluate((dock, footerSelector) => {
     const panel = dock.getBoundingClientRect()
@@ -97,6 +108,7 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
       assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).count(), 0)
       assert.equal(await fields.evaluate(element => element.scrollHeight > element.clientHeight), true)
       await assertBoundedActions(page)
+      await assertHeader(page, ".lucide-message-circle-question")
       await capture("open")
       const hierarchy = await page.locator(".form-request-field").first().evaluate(field => {
         const question = getComputedStyle(field.querySelector(".form-request-description")!)
@@ -138,6 +150,7 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
       const panel = await page.locator(".interruption-dock").boundingBox()
       const header = await page.locator(".interruption-dock > header").boundingBox()
       assert.ok(panel && header && panel.height <= header.height + 3 && panel.height < 80)
+      await assertHeader(page, ".lucide-message-circle-question")
       await capture("collapsed")
       await page.keyboard.press("Enter")
       assert.equal(await answer(page).inputValue(), "Include the keyboard shortcuts and deployment schedule.")
@@ -304,11 +317,13 @@ test("new permissions do not replace the draft; bounded navigation stays separat
     assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Collapse requests", exact: true }).click()
     await page.evaluate(() => { (window as any).fixture.other(); (window as any).fixture.refresh() })
+    assert.equal(await page.locator(".interruption-external-preview > :first-child.lucide-chevron-up").count(), 1)
     assert.equal(await page.getByRole("button", { name: "Expand requests", exact: true }).getAttribute("aria-expanded"), "false")
     await page.locator('.permission-center-trigger').click()
     assert.equal(await answer(page).inputValue(), "Keep typing")
     await page.getByRole("button", { name: "Previous request", exact: true }).click()
     await page.getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    await assertHeader(page, ".lucide-shield-check")
     assert.equal(await page.getByRole("button", { name: "Previous request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Next request", exact: true }).click()
     assert.equal(await answer(page).inputValue(), "Keep typing")
@@ -418,7 +433,12 @@ test("partial answers survive refresh and conversation navigation; failed sends 
     await page.waitForFunction(() => !(window as any).fixture.snapshot().forms.includes("question"))
     assert.equal(await page.locator('.interruption-dock').isVisible(), true)
     assert.equal(await answer(page).count(), 0, "foreign fallback stays compact after submission")
+    await assertHeader(page, ".session-permission")
+    assert.equal(await page.locator(".interruption-heading .session-permission").textContent(), "")
+    await page.locator(".interruption-toggle").click()
+    await assertHeader(page, ".session-permission")
     await page.evaluate(() => (window as any).fixture.switch("other"))
+    await assertHeader(page, ".lucide-message-circle-question")
     assert.equal(await answer(page).inputValue(), "Other answer")
     assert.equal(await page.evaluate(() => (window as any).fixture.replies.length), 2)
     assert.deepEqual(errors, [])
@@ -443,6 +463,7 @@ test("mobile dock handles source-less permissions, global Forms and remote settl
     assert.equal(await answer(page).count(), 0)
     await page.evaluate(() => (window as any).fixture.switch(null))
     await page.getByRole("heading", { name: "Project request", exact: true }).waitFor()
+    await assertHeader(page, ".lucide-message-circle-question")
     assert.equal(await answer(page).count(), 0)
     await page.getByRole("button", { name: "Open request from Project request", exact: true }).click()
     assert.equal(await page.getByRole("button", { name: "View conversation", exact: true }).count(), 0)

@@ -286,6 +286,7 @@ for (const mobile of [false, true]) {
       await answer.fill("Parent draft")
       await page.getByRole('button', { name: 'Next request', exact: true }).click()
       assert.equal(await heading.textContent(), "Subagent · Fixture child")
+      assert.equal(await page.locator(".interruption-heading > .lucide-message-circle-question").count(), 1)
       assert.equal(await page.locator('.interruption-parent').innerText(), "From Fixture conversation")
       await answer.fill("Child draft")
       await page.getByRole('button', { name: 'Next request', exact: true }).click()

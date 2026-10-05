@@ -17,6 +17,7 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import { formatElapsedClock, inferReasoningDurationMs } from "../lib/message-timing"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { applySearchHighlights, clearSearchHighlights } from "./search-highlights"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
@@ -157,83 +158,6 @@ function clearInstanceCaches(instanceId: string) {
 messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
 messageStoreBus.onSessionCleared(clearSessionRenderCache)
 messageStoreBus.onMessagesRemoved(clearMessageRenderCache)
-
-function removeSearchMarks(root: HTMLElement) {
-  const marks = Array.from(root.querySelectorAll("mark.session-search-match"))
-  for (const mark of marks) {
-    const parent = mark.parentNode
-    if (!parent) continue
-    parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark)
-    parent.normalize()
-  }
-}
-
-function getPartIdForSearchContainer(container: HTMLElement): string | undefined {
-  const target = container.closest<HTMLElement>("[data-part-id]") ?? container
-  const id = target.dataset.partId
-  return id && id.length > 0 ? id : undefined
-}
-
-function applySearchMarks(root: HTMLElement, query: string, activeMatch?: SessionSearchMatch | null, scrollActive = false) {
-  removeSearchMarks(root)
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  if (!normalizedQuery) return
-
-  const containers = Array.from(root.querySelectorAll<HTMLElement>(".message-text, .tool-call, .message-reasoning-text"))
-  let occurrenceInActivePart = 0
-  let activeMark: HTMLElement | null = null
-
-  for (const container of containers) {
-    const containerPartId = getPartIdForSearchContainer(container)
-    const canContainActiveMatch = Boolean(activeMatch) && (!activeMatch?.partId || activeMatch.partId === containerPartId)
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parent = node.parentElement
-        if (!parent) return NodeFilter.FILTER_REJECT
-        if (parent.closest("button, input, textarea, select, mark.session-search-match")) return NodeFilter.FILTER_REJECT
-        if (!node.nodeValue || !node.nodeValue.toLocaleLowerCase().includes(normalizedQuery)) return NodeFilter.FILTER_REJECT
-        return NodeFilter.FILTER_ACCEPT
-      },
-    })
-
-    const textNodes: Text[] = []
-    while (walker.nextNode()) {
-      textNodes.push(walker.currentNode as Text)
-    }
-
-    for (const textNode of textNodes) {
-      const original = textNode.nodeValue ?? ""
-      const lower = original.toLocaleLowerCase()
-      const fragment = document.createDocumentFragment()
-      let cursor = 0
-      while (cursor < original.length) {
-        const index = lower.indexOf(normalizedQuery, cursor)
-        if (index === -1) break
-        if (index > cursor) {
-          fragment.appendChild(document.createTextNode(original.slice(cursor, index)))
-        }
-        const mark = document.createElement("mark")
-        const isActive = Boolean(canContainActiveMatch && activeMatch && occurrenceInActivePart === activeMatch.occurrence)
-        mark.className = isActive ? "session-search-match session-search-match-active" : "session-search-match"
-        mark.textContent = original.slice(index, index + normalizedQuery.length)
-        fragment.appendChild(mark)
-        if (canContainActiveMatch) {
-          if (isActive) activeMark = mark
-          occurrenceInActivePart += 1
-        }
-        cursor = index + normalizedQuery.length
-      }
-      if (cursor < original.length) {
-        fragment.appendChild(document.createTextNode(original.slice(cursor)))
-      }
-      textNode.parentNode?.replaceChild(fragment, textNode)
-    }
-  }
-
-  if (activeMark && scrollActive) {
-    requestAnimationFrame(() => activeMark?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }))
-  }
-}
 
 interface ContentDisplayItem {
   type: "content"
@@ -631,10 +555,10 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!element) return
     if (shouldScrollActive && relevantActiveMatch) lastInlineScrolledSearchMatchId = relevantActiveMatch.id
 
-    const frame = requestAnimationFrame(() => applySearchMarks(element, query, relevantActiveMatch, shouldScrollActive))
+    const frame = requestAnimationFrame(() => applySearchHighlights(element, query, relevantActiveMatch, shouldScrollActive))
     onCleanup(() => {
       cancelAnimationFrame(frame)
-      removeSearchMarks(element)
+      clearSearchHighlights(element)
     })
   })
 

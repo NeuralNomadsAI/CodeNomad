@@ -24,6 +24,21 @@ type DataEntry = {
 type QueuedTranscriptEvent = {
   event: OpenCodeEvent
   onApplied?: (data: Data) => void
+  publication?: TranscriptPublication
+}
+
+type TranscriptPublication = (input: {
+  instanceId: string
+  sessionId: string
+  data: Data
+  events: readonly OpenCodeEvent[]
+}) => void
+
+// Opt-in publications observe a reduced chunk, not individual event states.
+// Legacy onDeferred callbacks remain per-event ordering barriers.
+export type OpenCodeDataEventAdmission = {
+  deferred: boolean
+  publication?: TranscriptPublication
 }
 
 type TranscriptEntry = {
@@ -49,6 +64,8 @@ const MAX_TRANSCRIPT_MESSAGES = MESSAGE_WINDOW_PAGE_SIZE
 // ponytail: overflow collapses all native deltas; one quiet, revision-stable fresh snapshot becomes authority.
 const MAX_TRANSCRIPT_EVENT_QUEUE = 4096
 const MAX_ROTATION_RESERVE = 64
+const TRANSCRIPT_REPLAY_BUDGET_MS = 8
+const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
@@ -65,11 +82,13 @@ type CompactionDeltaContext = {
   directory: string
   onDeferred?: (data: Data) => void
   onResynced?: (data: Data) => void
+  publication?: TranscriptPublication
 }
 const coalescedCompactionEvents = new WeakSet<object>()
 const compactionDeltas = createCompactionDeltaBuffer<CompactionDeltaContext>((event, context) => {
   coalescedCompactionEvents.add(event)
-  applyOpenCodeDataEvent(context.instanceId, context.directory, event, context.onDeferred, context.onResynced)
+  applyOpenCodeDataEvent(context.instanceId, context.directory, event, context.onDeferred, context.onResynced, false,
+    context.publication ? { deferred: false, publication: context.publication } : undefined)
 })
 let nextInstanceGeneration = 0
 
@@ -467,6 +486,7 @@ async function resyncAuthoritativeTranscript(
     previous.dispose()
 
     transcript.onResynced?.(fresh.data)
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
     retireDrainedTranscript(instanceId, sessionId, transcript)
   } catch {
@@ -492,25 +512,63 @@ function enqueueTranscriptEvent(
   }
 }
 
-function drainTranscriptQueue(
+async function drainTranscriptQueue(
   instanceId: string,
   sessionId: string,
   transcript: TranscriptEntry,
   entry: DataEntry,
   generation: number,
-): boolean {
+): Promise<boolean> {
+  const current = () => isRotationCurrent(instanceId, sessionId, transcript, entry, generation)
   while (transcript.queue.length > 0) {
-    if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
-    const queued = transcript.queue[0]
-    const runningCompactions = entry.data.session.message.list(sessionId)
-      .filter((message) => message.type === "compaction" && message.status === "running").length
-    if (eventMayAppendMessage(queued.event, runningCompactions)
-      && entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES) return true
-    transcript.queue.shift()
-    entry.emit(queued.event)
-    if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
-    queued.onApplied?.(entry.data)
-    if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
+    if (!current()) return false
+    const started = performance.now()
+    let count = 0
+    let needsRotation = false
+    let publication: TranscriptPublication | undefined
+    let events: OpenCodeEvent[] = []
+    const publish = () => {
+      if (publication && events.length) publication({ instanceId, sessionId, data: entry.data, events })
+      events = []
+      return current()
+    }
+    while (transcript.queue.length && count < MAX_TRANSCRIPT_REPLAY_CHUNK) {
+      if (!current()) return false
+      const queued = transcript.queue[0]
+      // A different publication or an event-specific callback is an ordering
+      // barrier: never run its side effects against a later event's state.
+      if (queued.onApplied || queued.publication !== publication) {
+        if (!publish()) return false
+        publication = queued.publication
+        if (count && performance.now() - started >= TRANSCRIPT_REPLAY_BUDGET_MS) break
+        // Publication can admit more events or collapse the queue.
+        if (transcript.queue[0] !== queued) return false
+      }
+      const messages = entry.data.session.message.list(sessionId)
+      const runningCompactions = messages.filter((message) => message.type === "compaction" && message.status === "running").length
+      if (eventMayAppendMessage(queued.event, runningCompactions) && messages.length >= MAX_TRANSCRIPT_MESSAGES) {
+        needsRotation = true
+        break
+      }
+      transcript.queue.shift()
+      entry.emit(queued.event)
+      if (!current()) return false
+      if (queued.publication) events.push(queued.event)
+      if (queued.onApplied) {
+        queued.onApplied(entry.data)
+        if (!current()) return false
+        if (!publish()) return false
+      }
+      count += 1
+      if (performance.now() - started >= TRANSCRIPT_REPLAY_BUDGET_MS) break
+    }
+    if (!publish()) return false
+    if (!transcript.queue.length) return true
+    // A real task boundary lets input/timers run, including hidden windows.
+    // Microtasks (including SDK sync) do not provide that opportunity.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    if (!current()) return false
+    if (needsRotation) return true
   }
   return true
 }
@@ -545,7 +603,7 @@ async function rotateTranscript(
         () => isRotationCurrent(instanceId, sessionId, transcript, entry, generation),
       )
       if (!synced || !isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return
-      if (!drainTranscriptQueue(instanceId, sessionId, transcript, entry, generation)) return
+      if (!await drainTranscriptQueue(instanceId, sessionId, transcript, entry, generation)) return
       if (transcript.queue.length === 0) break
     }
   } catch {
@@ -596,7 +654,9 @@ export function applyOpenCodeDataEvent(
   onDeferred?: (data: Data) => void,
   onResynced?: (data: Data) => void,
   skipUnobservedCompaction = false,
+  admission?: OpenCodeDataEventAdmission,
 ): Data {
+  if (admission) admission.deferred = false
   if (event.type === "server.connected") destroyOpenCodeData(instanceId)
   const primary = ensureData(instanceId, directory)
   // This native reducer owns transcript/inbox projection only. CodeNomad's
@@ -662,30 +722,39 @@ export function applyOpenCodeDataEvent(
       // up a start or appending a delta to a REST page that already includes it.
       transcript.preserveNativePageOnResync = true
       collapseTranscriptQueue(instanceId, sessionId, transcript)
+      if (admission) admission.deferred = true
       return transcript.entry.data
     }
     if (transcript.needsAuthoritativeResync || transcript.resyncing) {
       collapseTranscriptQueue(instanceId, sessionId, transcript)
+      if (admission) admission.deferred = true
       return transcript.entry.data
     }
     if (event.type === "session.compaction.delta" && !coalesced) {
       // Admission fences both CodeNomad and SDK reads immediately, even though
       // the reactive payload is reduced only once per interval.
       entry.fencePendingReads(sessionId)
-      compactionDeltas.push(instanceId, sessionId, event, { instanceId, directory, onDeferred, onResynced })
+      if (admission) admission.deferred = true
+      compactionDeltas.push(instanceId, sessionId, event, { instanceId, directory, onDeferred, onResynced, publication: admission?.publication })
       return entry.data
     }
     if (transcript.rotating
       || (eventMayAppendMessage(event, transcript.entry.data.session.message.list(sessionId)
         .filter((message) => message.type === "compaction" && message.status === "running").length)
         && transcript.entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES)) {
-      enqueueTranscriptEvent(instanceId, sessionId, transcript, { event, onApplied: onDeferred })
+      if (admission) admission.deferred = true
+      enqueueTranscriptEvent(instanceId, sessionId, transcript, { event, onApplied: onDeferred, publication: admission?.publication })
       startTranscriptRotation(instanceId, sessionId, transcript)
       return transcript.entry.data
     }
   }
   entry.emit(event)
-  if (coalesced) onDeferred?.(entry.data)
+  if (coalesced) {
+    onDeferred?.(entry.data)
+    if (!transcript || (isTranscriptCurrent(instanceId, sessionId!, transcript) && transcript.entry === entry)) {
+      admission?.publication?.({ instanceId, sessionId: sessionId!, data: entry.data, events: [event] })
+    }
+  }
   return entry.data
 }
 

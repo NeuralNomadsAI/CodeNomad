@@ -17,3 +17,4 @@
 @import "./messaging/log-view.css";
 @import './messaging/timeline-virtual-list.css';
 @import './messaging/timeline-preview.css';
+@import "./messaging/search-highlights.css";

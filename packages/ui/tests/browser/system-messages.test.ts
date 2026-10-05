@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { waitForSearchHighlights } from "./search-highlight-assertions"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -61,6 +62,7 @@ test("popup controls preserve content, synchronize Chat settings, and survive re
   const row = page.getByRole("group", { name: "System", exact: true })
   await row.getByRole("button", { name: "Show System", exact: true }).click()
   await page.locator(system).waitFor()
+  assert.equal(await page.locator(`${system} button > :first-child.lucide-chevron-right:not(.rotate-90)`).count(), 1)
   assert.equal(await page.locator(`${system} pre`).count(), 0)
   assert.equal(await page.locator(`${system} [data-message-role="assistant"]`).count(), 0)
   assert.equal(await page.locator(system).getByRole("button", { name: /Fork|Copy|Speak/ }).count(), 0)
@@ -68,6 +70,7 @@ test("popup controls preserve content, synchronize Chat settings, and survive re
   await row.getByRole("button", { name: "Expand System", exact: true }).click()
   const content = page.locator(`${system} pre`)
   await content.waitFor()
+  assert.equal(await page.locator(`${system} button > :first-child.lucide-chevron-right.rotate-90`).count(), 1)
   assert.equal(await content.textContent(), (await page.evaluate(() => (window as any).fixture.snapshot())).nativeText)
   await page.keyboard.press("Escape")
   assert.equal(await page.locator('#chat-settings .settings-expansion-row').filter({ hasText: "System" }).locator(".selector-trigger-primary").textContent(), "Expanded")
@@ -106,17 +109,16 @@ test("search highlights system occurrences and restores highlights after disclos
   await page.keyboard.press("Escape")
   await page.keyboard.press("Control+f")
   await page.getByPlaceholder("Search current chat...").fill("system-reminder")
-  await page.locator(`${system} mark.session-search-match-active`).waitFor()
-  assert.equal(await page.locator(`${system} mark.session-search-match`).count(), 2)
+  assert.deepEqual(await waitForSearchHighlights(page, system, 1, true), ["system-reminder"])
+  assert.deepEqual(await waitForSearchHighlights(page, system, 2), ["system-reminder", "system-reminder"])
   await toggleSystemDisclosure(page)
   assert.equal(await page.locator(`${system} pre`).count(), 0)
   await toggleSystemDisclosure(page)
   await page.locator(`${system} pre`).waitFor({ timeout: 5000 })
-  await page.locator(`${system} mark.session-search-match-active`).waitFor({ timeout: 5000 })
-  assert.equal(await page.locator(`${system} mark.session-search-match-active`).count(), 1)
+  assert.deepEqual(await waitForSearchHighlights(page, system, 1, true), ["system-reminder"])
   await toggleSystemDisclosure(page)
   await toggleSystemDisclosure(page)
-  await page.locator(`${system} mark.session-search-match-active`).waitFor({ timeout: 5000 })
+  await waitForSearchHighlights(page, system, 1, true)
 }))
 
 test("search refreshes on system visibility changes and still finds assistant text", async () => open(async page => {
@@ -127,14 +129,13 @@ test("search refreshes on system visibility changes and still finds assistant te
   await page.getByRole("button", { name: "Message content", exact: true }).click()
   const row = page.getByRole("group", { name: "System", exact: true })
   await row.getByRole("button", { name: "Show System", exact: true }).click()
-  await page.locator(`${system} mark.session-search-match-active`).waitFor()
+  assert.deepEqual(await waitForSearchHighlights(page, system, 1, true), ["Today's date"])
   await row.getByRole("button", { name: "Hide System", exact: true }).click()
   await page.keyboard.press("Escape")
   await page.getByText("No matches", { exact: true }).waitFor()
   assert.equal(await page.locator(system).count(), 0)
   await query.fill("Normal assistant")
-  await page.locator("mark.session-search-match-active").waitFor()
-  assert.equal(await page.locator("mark.session-search-match-active").textContent(), "Normal assistant")
+  assert.deepEqual(await waitForSearchHighlights(page, "body", 1, true), ["Normal assistant"])
   assert.ok((await page.evaluate(() => (window as any).fixture.snapshot())).messageReads < 10,
     "paging must not subscribe the search effect to its own window mutations")
 }))
