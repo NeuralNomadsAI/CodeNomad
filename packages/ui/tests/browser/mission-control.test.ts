@@ -217,7 +217,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     assert.equal(await cleanup.isDisabled(), true)
     await fixtureCall(page, "refresh")
     await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
-    await page.locator("form").waitFor({ state: "detached" })
+    await page.locator("form.mission-editor").waitFor({ state: "detached" })
     await missionRows(page).locator('.mission-list-select[aria-current="true"]', { hasText: "Objective one" }).waitFor()
     assert.equal(deletions.length, 2)
     assert.equal(deletions[0].deleteManagedSessions, true)
@@ -443,7 +443,7 @@ test("top-level mission rows expose two-line titles, semantic states, readers an
     }
     assert.equal(await page.locator(".mission-control-header h2, .mission-control-overview").count(), 0)
     assert.equal(await page.getByRole("button", { name: "Missions", exact: true }).count(), 0)
-    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Reports", "Conversations0", "History"])
+    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Instructions to the coordinator", "Reports", "Conversations0", "History"])
     assert.equal(await page.getByRole("button", { name: "Work", exact: true }).getAttribute("aria-expanded"), "true")
     assert.equal(await page.getByRole("button", { name: "Reports", exact: true }).getAttribute("aria-expanded"), "false")
     const geometry = await rows.first().locator(".mission-list-text").evaluate(el => ({

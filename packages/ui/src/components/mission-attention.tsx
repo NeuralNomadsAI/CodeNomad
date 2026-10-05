@@ -12,7 +12,7 @@ import { selectMissionAttention, type MissionObservedFamily } from "./mission-at
 /**
  * What the mission currently needs from the human: native Forms and permission
  * requests still held by one of its actors, including actors that are not the
- * active session, plus blockages already reported.
+ * active session. Returned blockages have their own section.
  *
  * Answering always happens in the actor conversation, so this section only routes
  * to it and never becomes a second reply path.

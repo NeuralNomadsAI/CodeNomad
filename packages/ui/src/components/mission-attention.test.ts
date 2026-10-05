@@ -4,6 +4,7 @@ import { describe, it } from "node:test"
 import {
   MISSION_ATTENTION_UNCORRELATABLE_SESSION,
   selectMissionAttention,
+  selectMissionBlockages,
   selectMissionFamilyMembers,
   missionIncludesSession,
   type MissionObservedFamily,
@@ -82,6 +83,7 @@ const task = (id: string, outcome?: "blocked" | "completed", summary = `Reported
   id,
   key: "mission-ux",
   title: "Choose the journey",
+  status: outcome === "blocked" ? "needs-input" : outcome === "completed" ? "completed" : "ready",
   ...(outcome ? { report: { outcome, summary } } : {}),
 })
 
@@ -133,9 +135,9 @@ describe("selectMissionAttention", () => {
   it("reports a blockage as history rather than as a live wait", () => {
     // A `blocked` report is what produces the historical `needs-input` task
     // status, so the actor has already returned: it must not read as a live wait.
-    const items = selectMissionAttention(source({
-      tasks: [task("task-1", "blocked", "Waiting on a coordinator decision.")],
-    }))
+    const tasks = [task("task-1", "blocked", "Waiting on a coordinator decision.")]
+    assert.deepEqual(selectMissionAttention(source({ tasks })), [])
+    const items = selectMissionBlockages(tasks)
 
     assert.equal(items.length, 1)
     assert.equal(items[0].kind, "blocked")
@@ -150,12 +152,20 @@ describe("selectMissionAttention", () => {
     assert.deepEqual(selectMissionAttention(source({ tasks: [task("task-1", "completed")] })), [])
   })
 
-  it("lists live requests before reported blockages", () => {
+  it("keeps live requests separate from returned blockages", () => {
     const items = selectMissionAttention(source({
       forms: [form("form-1", "ses-background")],
       tasks: [task("task-1", "blocked")],
     }))
 
-    assert.deepEqual(items.map(item => item.open), [true, false])
+    assert.deepEqual(items.map(item => item.open), [true])
+  })
+  it("excludes replaced, retired, completed and late historical blockages", () => {
+    const blocked = task("old", "blocked")
+    for (const status of ["withdrawn", "completed", "ready", "blocked"]) {
+      assert.deepEqual(selectMissionBlockages([{ ...blocked, status }]), [])
+    }
+    assert.deepEqual(selectMissionBlockages([{ ...blocked, replacedByTaskKey: "replacement" }]), [])
+    assert.equal(selectMissionBlockages([blocked]).length, 1)
   })
 })

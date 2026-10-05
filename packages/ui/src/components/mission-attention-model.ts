@@ -81,6 +81,8 @@ export interface MissionAttentionTask {
   id: string
   key: string
   title: string
+  status: string
+  replacedByTaskKey?: string
   report?: { outcome: string; summary: string }
 }
 
@@ -99,8 +101,7 @@ export interface MissionAttentionSource {
 export const MISSION_ATTENTION_UNCORRELATABLE_SESSION = "global"
 
 /**
- * Reconcile still-open native requests against this mission's actors, then list
- * reported blockages separately.
+ * Reconcile only still-open native requests against this mission's actors.
  *
  * The live "waiting on you" state comes only from a native request that is still
  * queued. It is deliberately not derived from the historical `needs-input` task
@@ -135,8 +136,14 @@ export function selectMissionAttention(source: MissionAttentionSource): MissionA
     })),
   ]
 
-  const blocked: MissionAttentionItem[] = source.tasks
-    .filter(task => task.report?.outcome === "blocked")
+  return open
+}
+
+/** Current returned blockages are not native requests. Retired/replaced reports
+ * remain readable in Reports/History, not in the current blockers. */
+export function selectMissionBlockages(tasks: readonly MissionAttentionTask[]): MissionAttentionItem[] {
+  return tasks
+    .filter(task => task.status === "needs-input" && !task.replacedByTaskKey && task.report?.outcome === "blocked")
     .map(task => ({
       id: `blocked:${task.id}`,
       kind: "blocked" as const,
@@ -146,5 +153,4 @@ export function selectMissionAttention(source: MissionAttentionSource): MissionA
       open: false,
     }))
 
-  return [...open, ...blocked]
 }

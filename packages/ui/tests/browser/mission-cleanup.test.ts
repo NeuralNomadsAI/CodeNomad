@@ -43,7 +43,7 @@ async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement =
   await page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" }).check()
   return { page, requests }
 }
-const submit = (page: Page) => page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
+const submit = (page: Page) => page.locator("form.mission-editor").getByRole("button", { name: "Delete mission", exact: true }).click()
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
 
 test("committed partial cleanup survives cancel, remount and reconnect with the exact original request", async () => {
@@ -81,7 +81,7 @@ test("a lost successful HTTP acknowledgement settles by reading receipts without
   const f = cleanupBackend(), mission = await f.create("lost-ack")
   const { page, requests } = await setup(f, true)
   try {
-    await submit(page); await page.locator("form").waitFor({ state: "detached" })
+    await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
     await page.getByText("No missions yet", { exact: true }).waitFor()
     assert.equal(requests.length, 1); assert.equal(f.removed.length, 1)
     await page.reload()
@@ -95,7 +95,7 @@ test("child-bearing specialists remain intact and expose the durable retention r
   f.children.add(actor.sessionId)
   const { page, requests } = await setup(f)
   try {
-    await submit(page); await page.locator("form").waitFor({ state: "detached" })
+    await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
     await page.getByRole("button", { name: "Conversation cleanup", exact: true }).click()
     await page.getByText("0 removed · 1 kept · 0 pending", { exact: true }).waitFor()
     await page.getByText("Kept because the conversation has child conversations.", { exact: true }).waitFor()

@@ -165,7 +165,7 @@ test("task reader session link uses authorized catalog navigation and never writ
   const f = await setup()
   try {
     await show(f.page)
-    await f.page.getByRole("button", { name: "Native actor", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
     await f.page.locator(".mission-reader").waitFor({ state: "detached" })
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "actor")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
@@ -181,7 +181,7 @@ test(`late native session preparation cannot navigate or publish cache after ${t
     await f.page.route("**/instance/api/session/actor", async route => { reached(); await held; await route.fulfill({ json: { data: nativeSession("actor") } }) })
     await f.page.evaluate(() => (window as any).taskReader.removeActor())
     await show(f.page)
-    await f.page.getByRole("button", { name: "Native actor", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
     await started
     if (transition === "target-aba") { await show(f.page, "before"); await show(f.page) }
     if (transition === "directory-aba") {
@@ -217,7 +217,7 @@ test("cold task session navigation hydrates only its native ID and parent chain,
   try {
     await f.page.evaluate(() => (window as any).taskReader.removeActor())
     await show(f.page)
-    await f.page.getByRole("button", { name: "Native actor", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
     await f.page.locator(".mission-reader").waitFor({ state: "detached" })
     const snapshot = await f.page.evaluate(() => (window as any).taskReader.snapshot())
     assert.equal(snapshot.active, "actor")
@@ -241,7 +241,7 @@ for (const deleted of [false, true]) test(`cold task session ${deleted ? "delete
       await route.fulfill(deleted ? { json: { data: nativeSession("actor") } } : { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } })
     })
     await f.page.evaluate(() => (window as any).taskReader.removeActor()); await show(f.page)
-    await f.page.getByRole("button", { name: "Native actor", exact: true }).click(); await started
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click(); await started
     if (deleted) await f.page.evaluate(() => (window as any).taskReader.deleteActor())
     const response = f.page.waitForResponse(response => response.url().endsWith("/instance/api/session/actor"))
     release(); await response

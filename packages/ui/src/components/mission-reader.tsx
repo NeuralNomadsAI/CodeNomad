@@ -14,6 +14,7 @@ import { activeSessionId, activeParentSessionId, getAuthoritativelyDeletedSessio
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { sessionPreviews } from "../stores/session-previews"
 import { missionIncludesSession } from "./mission-attention-model"
+import { missionTaskConversation } from "./mission-task-navigation"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -93,9 +94,11 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
     const authorized = () => {
       const value = mission()
-      if (!value || target()?.kind !== "task" || task()?.actorSessionId !== sessionId) return false
+      const currentTask = task()
+      if (!value || target()?.kind !== "task" || !currentTask) return false
       const family = missionStore.state(instanceId).activity?.missions.find(item => item.missionId === value.id)?.family
-      return value.coordinatorSessionId === sessionId || missionIncludesSession(value.actors, sessionId, family)
+      return missionTaskConversation(value, currentTask, family) === sessionId
+        && (value.coordinatorSessionId === sessionId || missionIncludesSession(value.actors, sessionId, family))
     }
     const admitted = () => current() && intent === navigationIntent && authorized()
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
@@ -193,6 +196,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       }>
         <MissionTaskReader instanceId={props.instanceId} scope={props.scope} mission={mission()!} task={task()!}
           identity={JSON.stringify([props.instanceId, props.scope, target()])} onOpenActor={openActor}
+          family={missionStore.state(props.instanceId).activity?.missions.find(item => item.missionId === mission()?.id)?.family}
           activity={missionStore.state(props.instanceId).activity?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state} />
       </Show>
     </div>

@@ -110,6 +110,7 @@ export function MissionEditor(props: {
   return <form class="mission-editor window-shell" onSubmit={save} aria-label={t(`missions.control.${kind}`)}>
     <header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header>
     <div class="window-body">
+      <Show when={kind === "edit"}><p>{t("missions.control.guidance.editHint")}</p></Show>
       <Show when={kind !== "delete"} fallback={<>
         <p>{t("missions.control.delete.detail")}</p>
         <label class="mission-delete-sessions"><input type="checkbox" checked={deleteManagedSessions()} disabled={pending() || deleteAttempted()}
@@ -118,7 +119,7 @@ export function MissionEditor(props: {
         <label>{t("missions.control.objective")}
           <textarea required maxLength={20_000} value={objective()} disabled={pending() || uncertain()} onInput={e => setObjective(e.currentTarget.value)} />
         </label>
-        <label>{t("missions.control.notes")}
+        <label>{t(kind === "edit" ? "missions.control.guidance.notes" : "missions.control.notes")}
           <textarea maxLength={20_000} value={notes()} disabled={pending() || uncertain()} onInput={e => setNotes(e.currentTarget.value)} />
         </label>
         <Show when={kind === "create"}>

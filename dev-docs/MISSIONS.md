@@ -16,6 +16,35 @@ The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, and 
 
 ## Durability and recovery
 
+### Human instructions and actionable attention
+
+Mission Control separates open native Forms/permissions ("Your response is
+needed") from current returned blocked reports ("Reported blockages"). Retired
+or replaced blockers stay readable in Reports/History but are not current requests.
+Work and task readers link to an exact owned task actor when recorded; otherwise
+the action explicitly opens the coordinator. Native ancestry or text mentioning
+a child session never manufactures a task/actor association.
+
+"Instructions to the coordinator" is an explicit ordinary user prompt, with
+native `steer` delivery through the existing authorized session proxy and its
+per-send profile environment. It preserves the coordinator's native agent/model,
+does not switch the selected conversation or edit the main composer, and is
+separate from objective/shared technical-note metadata edits. Mission identity,
+connection, view lifetime and current running state are rechecked during
+preparation/admission; paused/prepared/terminal missions cannot be sent from this
+surface. These UI checks are not an atomic Mission lifecycle/native prompt
+transaction and do not replace native ownership or execution gates.
+
+Drafts are in-memory and scoped by instance, project/directory, mission and
+coordinator; they survive navigation/remount, not application restart. Confirmation
+means prompt admission only, never model consumption or execution of the requested
+change. An uncertain send preserves its draft and disables another attempt until
+the user explicitly discards it and starts anew after checking the conversation.
+No automatic resume, report recovery, assignment replay or failed-prompt retry is
+added. Late acknowledgements settle the original draft, not the currently viewed
+mission. Browser fixtures exercise real Solid components/generated clients against
+isolated HTTP responses; they never send instructions to a user's live Mission.
+
 ### Parallel workstreams and context reuse
 
 The coordinator charts every explicitly requested workstream as soon as its work is

@@ -7,14 +7,18 @@ import { MissionExecution } from "./mission-execution"
 import { MissionNativeExecution, MissionReportNotification } from "./mission-native-execution"
 import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { MissionReaderSection } from "./mission-reader"
+import { missionTaskConversation } from "./mission-task-navigation"
+import type { MissionObservedFamily } from "./mission-attention-model"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
 export function MissionTaskReader(props: {
   instanceId: string; scope: string; mission: MissionMap; task: MissionTask
   identity: string; activity?: MissionActorActivity["state"]
+  family?: MissionObservedFamily
   onOpenActor: (sessionId: string) => Promise<void>
 }) {
   const { t } = useI18n()
+  const conversation = () => missionTaskConversation(props.mission, props.task, props.family)
   const byKey = (key: string) => props.mission.tasks.find(task => task.key === key)
   const navigate = (key: string) => {
     const task = byKey(key)
@@ -58,11 +62,12 @@ export function MissionTaskReader(props: {
       <h3>{t("missions.control.execution.title")}</h3>
       <MissionExecution instanceId={props.instanceId} task={props.task} />
       <MissionNativeExecution task={props.task} activity={props.activity} />
-      <Show when={props.task.actorSessionId}>{sessionId => <button type="button" class="mission-inline-session"
-        onClick={() => void props.onOpenActor(sessionId())}>
-        <span>{props.mission.actors.find(actor => actor.sessionId === sessionId())?.title ?? sessionId()}</span>
+      <button type="button" class="mission-inline-session"
+        onClick={() => void props.onOpenActor(conversation())}>
+        <span>{conversation() === props.mission.coordinatorSessionId ? t("missions.control.openCoordinator")
+          : t("missions.control.attention.openActor", { actor: props.mission.actors.find(actor => actor.sessionId === conversation())?.title ?? conversation() })}</span>
         <ArrowUpRight class="h-3 w-3" aria-hidden="true" />
-      </button>}</Show>
+      </button>
     </article>
     <Show when={latest()}>{report => <>
       <article aria-label={t("missions.control.native.business")}>

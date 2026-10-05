@@ -1,0 +1,7 @@
+.mission-guidance { --window-control-height: var(--control-height-sm); display: grid; gap: var(--space-sm); }
+.mission-guidance p { margin: 0; font-size: var(--font-size-xs); color: var(--text-secondary); }
+.mission-guidance label { display: grid; gap: var(--space-xs); font-size: var(--font-size-sm); }
+.mission-guidance textarea { width: 100%; min-height: 96px; max-height: 240px; resize: vertical;
+  padding: var(--space-sm); background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); }
+.mission-guidance .window-action { white-space: normal; }
+.mission-guidance [hidden] { display: none; }
