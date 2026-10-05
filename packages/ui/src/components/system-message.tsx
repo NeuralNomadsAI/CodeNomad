@@ -23,10 +23,10 @@ export default function SystemMessage(props: {
       <section class="border border-base bg-surface-secondary text-secondary" data-message-kind="system" aria-label={t("messageBlock.system.label")}>
         <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs" aria-expanded={expanded()}
           onClick={() => setExpanded(value => !value)}>
+          <ChevronRight class={`w-3.5 h-3.5 shrink-0 ${expanded() ? "rotate-90" : ""}`} aria-hidden="true" />
           <Info class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
           <span class="shrink-0 font-medium">{t("messageBlock.system.label")}</span>
           <Show when={props.part.description}><span class="min-w-0 flex-1 truncate">{props.part.description}</span></Show>
-          <ChevronRight class={`ml-auto w-3.5 h-3.5 shrink-0 ${expanded() ? "rotate-90" : ""}`} aria-hidden="true" />
         </button>
         <Show when={expanded()}>
           <pre class="message-text m-0 max-h-96 overflow-auto border-t border-base bg-surface-base p-3 whitespace-pre-wrap break-words font-mono text-xs" data-part-type="system" data-part-id={props.part.id} dir="auto">{props.part.text}</pre>
