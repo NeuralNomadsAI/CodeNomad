@@ -38,6 +38,33 @@ async function fixture(width = 1100, theme: "light" | "dark" = "light") {
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
 
+async function assertLeadingDisclosure(page: Page, label = "Needs Input") {
+  const metrics = await page.locator(".interruption-heading").evaluate(heading => {
+    const toggle = heading.querySelector(".interruption-toggle")!
+    const copy = heading.querySelector(".interruption-heading-copy")!
+    const badge = heading.querySelector(".session-permission")!
+    const probe = document.createElement("span")
+    probe.style.color = "var(--session-status-permission-fg)"
+    probe.style.backgroundColor = "var(--session-status-permission-bg)"
+    probe.style.borderRadius = "var(--chip-radius)"
+    heading.append(probe)
+    const expected = getComputedStyle(probe), actual = getComputedStyle(badge)
+    const result = {
+      leading: toggle.getBoundingClientRect().right <= copy.getBoundingClientRect().left,
+      firstControl: heading.firstElementChild === toggle,
+      badgeMatches: actual.color === expected.color && actual.backgroundColor === expected.backgroundColor
+        && actual.borderRadius === expected.borderRadius,
+      noAnimation: actual.animationName === "none",
+      expanded: toggle.getAttribute("aria-expanded"),
+    }
+    probe.remove()
+    return result
+  })
+  assert.deepEqual(metrics, { leading: true, firstControl: true, badgeMatches: true, noAnimation: true,
+    expanded: await page.locator(".interruption-toggle").getAttribute("aria-expanded") })
+  assert.equal((await page.locator(".interruption-heading .session-permission").textContent())?.trim(), label)
+}
+
 async function assertBoundedActions(page: Page, footerSelector = ".form-request-actions") {
   const metrics = await page.locator(".interruption-dock").evaluate((dock, footerSelector) => {
     const panel = dock.getBoundingClientRect()
@@ -75,6 +102,7 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
       assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).count(), 0)
       assert.equal(await fields.evaluate(element => element.scrollHeight > element.clientHeight), true)
       await assertBoundedActions(page)
+      await assertLeadingDisclosure(page)
       await capture("open")
       const hierarchy = await page.locator(".form-request-field").first().evaluate(field => {
         const question = getComputedStyle(field.querySelector(".form-request-description")!)
@@ -116,6 +144,7 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
       const panel = await page.locator(".interruption-dock").boundingBox()
       const header = await page.locator(".interruption-dock > header").boundingBox()
       assert.ok(panel && header && panel.height <= header.height + 3 && panel.height < 80)
+      await assertLeadingDisclosure(page)
       await capture("collapsed")
       await page.keyboard.press("Enter")
       assert.equal(await answer(page).inputValue(), "Include the keyboard shortcuts and deployment schedule.")
@@ -254,6 +283,7 @@ test("new permissions do not replace the draft; bounded navigation stays separat
     assert.equal(await answer(page).inputValue(), "Keep typing")
     await page.getByRole("button", { name: "Previous request", exact: true }).click()
     await page.getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    await assertLeadingDisclosure(page, "Needs Permission")
     assert.equal(await page.getByRole("button", { name: "Previous request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Next request", exact: true }).click()
     assert.equal(await answer(page).inputValue(), "Keep typing")
@@ -350,6 +380,7 @@ test("mobile dock handles source-less permissions, global Forms and remote settl
     assert.equal(await answer(page).count(), 0)
     await page.evaluate(() => (window as any).fixture.switch(null))
     await page.getByRole("heading", { name: "Project request", exact: true }).waitFor()
+    await assertLeadingDisclosure(page)
     assert.equal(await answer(page).count(), 0)
     await page.getByRole("button", { name: "Open request from Project request", exact: true }).click()
     assert.equal(await page.getByRole("button", { name: "View conversation", exact: true }).count(), 0)

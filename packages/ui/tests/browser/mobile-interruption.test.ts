@@ -449,7 +449,10 @@ async function assertFooter(page: Page, selector = ".form-request-actions") {
         return b.top >= r.top && b.bottom <= r.bottom && button.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2))
       }) }
   })
-  assert.deepEqual(metrics, { bounded: true, controls: true })
+  assert.deepEqual(metrics, { bounded: true, controls: true }, JSON.stringify(await page.locator(`.interruption-dock ${selector}`).evaluate(el => ({
+    footer: el.getBoundingClientRect().toJSON(), dock: el.closest(".interruption-dock")!.getBoundingClientRect().toJSON(),
+    viewportBottom: (visualViewport?.offsetTop ?? 0) + (visualViewport?.height ?? innerHeight),
+  }))))
 }
 
 // Exercise native nested scrolling rather than scrollIntoView: the field scrolls

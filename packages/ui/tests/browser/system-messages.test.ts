@@ -35,6 +35,14 @@ async function open(run: (page: Page) => Promise<void>) {
   } finally { await page.close() }
 }
 const system = '[data-message-kind="system"]'
+async function assertLeadingDisclosure(page: Page) {
+  const leading = await page.locator(system).first().getByRole("button").evaluate(button => {
+    const chevron = button.querySelector("svg.lucide-chevron-right")!
+    const icon = button.querySelector("svg.lucide-info")!
+    return button.firstElementChild === chevron && chevron.getBoundingClientRect().right <= icon.getBoundingClientRect().left
+  })
+  assert.equal(leading, true, "System disclosure precedes the semantic icon and label")
+}
 async function toggleSystemDisclosure(page: Page) {
   await page.locator(system).getByRole("button").focus()
   await page.keyboard.press("Enter")
@@ -61,6 +69,7 @@ test("popup controls preserve content, synchronize Chat settings, and survive re
   const row = page.getByRole("group", { name: "System", exact: true })
   await row.getByRole("button", { name: "Show System", exact: true }).click()
   await page.locator(system).waitFor()
+  await assertLeadingDisclosure(page)
   assert.equal(await page.locator(`${system} pre`).count(), 0)
   assert.equal(await page.locator(`${system} [data-message-role="assistant"]`).count(), 0)
   assert.equal(await page.locator(system).getByRole("button", { name: /Fork|Copy|Speak/ }).count(), 0)
@@ -68,6 +77,7 @@ test("popup controls preserve content, synchronize Chat settings, and survive re
   await row.getByRole("button", { name: "Expand System", exact: true }).click()
   const content = page.locator(`${system} pre`)
   await content.waitFor()
+  await assertLeadingDisclosure(page)
   assert.equal(await content.textContent(), (await page.evaluate(() => (window as any).fixture.snapshot())).nativeText)
   await page.keyboard.press("Escape")
   assert.equal(await page.locator('#chat-settings .settings-expansion-row').filter({ hasText: "System" }).locator(".selector-trigger-primary").textContent(), "Expanded")

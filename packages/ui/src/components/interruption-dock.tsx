@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, on, onCleanup, untrack } from "solid-js"
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageCircleQuestion, ShieldCheck } from "lucide-solid"
+import { ChevronLeft, ChevronRight, ChevronDown, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { getPermissionQueue, sendFormCancel, sendFormReply } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
@@ -49,30 +49,35 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
       style={{ "min-height": expanded() && minimumHeight() !== undefined ? `${minimumHeight()}px` : undefined }} tabIndex={-1} aria-label={t("permissionApproval.title")}>
       <header class="window-header">
         <div class="interruption-heading">
-          <Show when={current()?.kind === "permission"} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}><ShieldCheck size={18} aria-hidden="true" /></Show>
+          <button type="button" class="window-icon-button interruption-toggle icon-toggle" aria-label={!expanded() && !own() ? openLabel(sourceId()) : t(expanded() ? "interruption.collapse" : "interruption.expand")} title={t(expanded() ? "interruption.collapse" : "interruption.expand")} aria-expanded={expanded()}
+            aria-controls={`interruption-body-${props.instanceId}`} onClick={() => select(current()!.key, !expanded())}>
+            <Show when={expanded()} fallback={<ChevronRight size={16} aria-hidden="true" />}><ChevronDown size={16} aria-hidden="true" /></Show>
+          </button>
           <div class="interruption-heading-copy">
-            <h2 class="window-title" title={heading()}>
-              <Show when={expanded() && !own() && !project()} fallback={heading()}>
-                <span class="interruption-origin-kind">{t(descendant() ? "interruption.subagent" : "interruption.otherConversation")} · </span>
-                <span class="interruption-origin-title">{title(sourceId())}</span>
-              </Show>
-            </h2>
+            <div class="interruption-heading-title">
+              <h2 class="window-title" title={heading()}>
+                <Show when={expanded() && !own() && !project()} fallback={heading()}>
+                  <span class="interruption-origin-kind">{t(descendant() ? "interruption.subagent" : "interruption.otherConversation")} · </span>
+                  <span class="interruption-origin-title">{title(sourceId())}</span>
+                </Show>
+              </h2>
+              <span class="status-indicator session-status session-status-list session-permission badge-shape notranslate" translate="no">
+                <ShieldAlert class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>{t(current()?.kind === "permission" ? "sessionList.status.needsPermission" : "sessionList.status.needsInput")}</span>
+              </span>
+            </div>
             <Show when={own()}><span class="interruption-session" title={title(sourceId())}>{title(sourceId())}</span></Show>
           </div>
         </div>
-        <div class="window-actions">
-          <Show when={pending().length > 1}>
+        <Show when={pending().length > 1}>
+          <div class="window-actions">
             <div class="interruption-navigation">
               <button type="button" class="window-icon-button" disabled={index() === 0} aria-label={t("interruption.previous")} title={t("interruption.previous")} onClick={() => move(-1)}><ChevronLeft size={16} /></button>
               <span class="interruption-position" aria-live="polite">{index() + 1} / {pending().length}</span>
               <button type="button" class="window-icon-button" disabled={index() === pending().length - 1} aria-label={t("interruption.next")} title={t("interruption.next")} onClick={() => move(1)}><ChevronRight size={16} /></button>
             </div>
-          </Show>
-          <button type="button" class="window-icon-button interruption-toggle icon-toggle" aria-label={!expanded() && !own() ? openLabel(sourceId()) : t(expanded() ? "interruption.collapse" : "interruption.expand")} title={t(expanded() ? "interruption.collapse" : "interruption.expand")} aria-expanded={expanded()}
-            aria-controls={`interruption-body-${props.instanceId}`} onClick={() => select(current()!.key, !expanded())}>
-            <Show when={!expanded()} fallback={<ChevronDown size={16} />}><ChevronUp size={16} /></Show>
-          </button>
-        </div>
+          </div>
+        </Show>
         <Show when={expanded() && (descendant() || canView())}>
           <div class="interruption-origin-actions">
             <Show when={descendant()}><span class="interruption-parent" title={parentTitle()}>{t("interruption.parentConversation", { title: parentTitle() })}</span></Show>
@@ -83,8 +88,9 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
           <button type="button" class="interruption-external-preview" aria-label={openLabel(preview().payload.sessionID)}
             aria-expanded="false" aria-controls={`interruption-body-${props.instanceId}`}
             onClick={() => focusInterruption(props.instanceId, preview().payload.sessionID, preview().payload.id, preview().kind)}>
+            <ChevronRight size={16} aria-hidden="true" />
             <span title={origin(preview().payload.sessionID)}>{origin(preview().payload.sessionID)}</span>
-            <span class="interruption-position">{previews().length}</span><ChevronUp size={16} aria-hidden="true" />
+            <span class="interruption-position">{previews().length}</span>
           </button>
         }</Show>
       </header>
