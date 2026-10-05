@@ -4,7 +4,7 @@ import SessionView from "../../../src/components/session/session-view"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
 import PermissionNotificationBanner from "../../../src/components/permission-notification-banner"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
-import { ConfigProvider, setThemePreference } from "../../../src/stores/preferences"
+import { ConfigProvider, setThemePreference, updatePreferences, type UiSettings } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -134,6 +134,7 @@ const store = messageStoreBus.getOrCreate(instanceId)
   focusHandled: () => focusHandled,
   replies, windows,
   theme: setThemePreference,
+  locale: (locale: UiSettings["locale"]) => updatePreferences({ locale }),
   ask: () => emit("form.created", { form: form() }),
   liveAsk: (long = false) => {
     if (long) questions = longQuestions

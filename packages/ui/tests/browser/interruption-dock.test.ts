@@ -221,6 +221,54 @@ test("a single request has no navigation; the badge restores the collapsed edito
   } finally { await page.close() }
 })
 
+async function assertReadableHeading(page: Page, external = false) {
+  const metrics = await page.locator(".interruption-heading").evaluate((heading, external) => {
+    const title = heading.querySelector(".window-title")!, badge = heading.querySelector(".session-permission")!
+    const bounds = title.getBoundingClientRect(), status = badge.getBoundingClientRect()
+    const range = document.createRange()
+    range.selectNodeContents(title)
+    const overlaps = Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0
+      && rect.left < status.right && rect.right > status.left && rect.top < status.bottom && rect.bottom > status.top)
+    const source = heading.querySelector(".interruption-origin-title")
+    if (source) range.selectNodeContents(source)
+    const sourceVisible = !external || Boolean(source && Array.from(range.getClientRects()).some(rect => rect.width > 0
+      && rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom))
+    return { readableWidth: bounds.width >= 150, overlaps, sourceVisible,
+      overflow: document.documentElement.scrollWidth > innerWidth || heading.scrollWidth > heading.clientWidth }
+  }, external)
+  assert.deepEqual(metrics, { readableWidth: true, overlaps: false, sourceVisible: true, overflow: false })
+}
+
+for (const locale of ["de", "fr"]) for (const theme of ["light", "dark"] as const) {
+  test(`localized titles and provenance stay readable beside pending badges at 393px in ${locale}/${theme}`, async () => {
+    const { page, errors } = await fixture(393, theme)
+    try {
+      await page.evaluate(async locale => {
+        await (window as any).fixture.locale(locale)
+        ;(window as any).fixture.ask()
+        ;(window as any).fixture.permission()
+      }, locale)
+      await page.waitForFunction(locale => document.documentElement.lang === locale
+        && document.querySelector(".interruption-heading .session-permission span")?.textContent !== "Needs Input", locale)
+      await answer(page).fill("Preserved localized answer")
+      await assertReadableHeading(page)
+      await page.locator(".interruption-toggle").click()
+      await assertReadableHeading(page)
+      await page.locator(".interruption-toggle").click()
+      assert.equal(await answer(page).inputValue(), "Preserved localized answer")
+      await page.evaluate(() => (window as any).fixture.focus("permission"))
+      await page.locator(".tool-call-permission-buttons").waitFor()
+      await assertReadableHeading(page)
+      await page.evaluate(() => { (window as any).fixture.other(); (window as any).fixture.focus("other") })
+      await assertReadableHeading(page, true)
+      await page.screenshot({ path: join(tmpdir(), "opencode", `interruption-dock-localized-${locale}-${theme}.png`) })
+      await page.locator(".interruption-toggle").click()
+      await assertReadableHeading(page)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
+
 test("native receipt metadata wins and custom multiline answers stay literal", async () => {
   const { page, errors } = await fixture()
   try {
