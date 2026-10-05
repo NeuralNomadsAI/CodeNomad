@@ -49,7 +49,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox, type OpenCodeDataEventAdmission } from "./opencode-data"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -2069,6 +2069,22 @@ const USAGE_EVENT_TYPES = new Set<string>([
   "session.step.failed",
 ])
 
+// One stable, explicitly chunk-safe publication identity for ordinary replay.
+// Destructive event-specific effects below retain per-event callback barriers.
+const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publication"]> = ({ instanceId, sessionId, data, events }) => {
+  const sessionEvents = events.filter((event) => event.type.startsWith("session."))
+  if (!sessionEvents.length) return
+  if (activeSessionId().get(instanceId) !== sessionId) {
+    if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
+    return
+  }
+  if (!isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) return
+  projectOpenCodeMessages(instanceId, sessionId, data, true, sessionEvents.at(-1)?.type !== "session.inbox.enqueued")
+  if (sessionEvents.some((event) => USAGE_EVENT_TYPES.has(event.type) || event.type === "session.compaction.delta")) {
+    updateSessionInfo(instanceId, sessionId)
+  }
+}
+
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -2079,12 +2095,15 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       ? event.data.form.sessionID
       : undefined
   const isCompactionDelta = event.type === "session.compaction.delta"
-  const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+  const invalidateInactiveMessages = () => {
     if (sessionId && event.type.startsWith("session.")
       && activeSessionId().get(instanceId) !== sessionId
       && messagesLoaded().get(instanceId)?.has(sessionId)) {
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
+  }
+  const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+    invalidateInactiveMessages()
     if (isCompactionDelta && !force) {
       return
     }
@@ -2113,15 +2132,18 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       }
     }
   }
-  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, (next) => {
-    if (isCompactionDelta) projectMessages(next, true, true)
-    else project(next)
-  }, (next) => {
+  const hasEventSideEffects = event.type === "session.inbox.cancelled" || event.type === "session.revert.committed"
+  const admission: OpenCodeDataEventAdmission = {
+    deferred: false,
+    publication: hasEventSideEffects ? undefined : publishTranscriptChunk,
+  }
+  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, hasEventSideEffects ? (next) => project(next) : undefined, (next) => {
     projectMessages(next, false, true)
     schedulePendingRequestReconciliation(instanceId)
   }, Boolean(sessionId && activeSessionId().get(instanceId) !== sessionId
-    && !messageStoreBus.getInstance(instanceId)?.getSessionMessageIds(sessionId).length))
-  project(data)
+    && !messageStoreBus.getInstance(instanceId)?.getSessionMessageIds(sessionId).length), admission)
+  if (admission.deferred) invalidateInactiveMessages()
+  else project(data)
   if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
     const current = data.session.permission.list(sessionId) ?? []
     const remote = (event.type === "permission.asked"
