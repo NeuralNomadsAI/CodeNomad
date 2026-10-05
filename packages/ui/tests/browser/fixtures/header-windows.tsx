@@ -16,11 +16,13 @@ import { focusInterruption } from "../../../src/stores/interruption-navigation"
 import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, clearActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
+import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import "../../../src/index.css"
 
 // Optional, synchronous test-only marks; no observer is installed on native pages.
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
 bootStage("imports-complete")
+if (new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
 const id = "header-windows", sessionId = "session"
 let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },
@@ -100,6 +102,7 @@ await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
   runtimeEnv, replies, setImmersive, setActive,
+  readLayout: readClientLayoutValue,
   addSession: (sid: string, parentId: string | null = null) => {
     fixtureSessions.set(sid, { ...session, id: sid, parentId, title: `Fixture ${sid}` })
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
