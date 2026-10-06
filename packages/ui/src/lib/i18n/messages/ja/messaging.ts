@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "会話を表示",
   "interruption.openExternal": "{title} からのリクエストを開く",
   "interruption.projectRequest": "プロジェクトのリクエスト",
+  "interruption.recoveryIncomplete": "質問と権限の復元は不完全です。既知のリクエストは保持され、非アクティブなワークツリーは読み込まれません。",
   "interruption.answered": "回答済み",
   "interruption.noAnswer": "回答なし",
   "promptInput.skills.title": "スキル",

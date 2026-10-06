@@ -1,9 +1,10 @@
 // Opt-in, in-process correctness proof. No listener, service discovery, user database or runtime mutation.
-// Run with Bun and absolute paths: <published-2.0.22-study-directory> <fresh-output-directory>.
+// Run with Bun and absolute paths: <published-2.0.22-or-2.0.24-study-directory> <fresh-output-directory>.
 import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { createHash } from "node:crypto"
+import { execFileSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { build } from "esbuild"
 
@@ -13,12 +14,14 @@ assert(globalThis.Bun, "This isolated published Core fixture requires Bun")
 await fs.mkdir(output) // Refuse overwriting an earlier receipt or fixture.
 const repository = fileURLToPath(new URL("../", import.meta.url))
 const packageRoot = path.join(study, "node_modules")
+const version = JSON.parse(await fs.readFile(path.join(packageRoot, "@opencode/core/package.json"), "utf8")).version
+assert(["2.0.22", "2.0.24"].includes(version), "Use a source-qualified native version, not arbitrary private internals")
 const packages = {}
 for (const name of ["core", "server", "plugin", "client", "schema", "protocol", "util"]) {
   const filename = path.join(packageRoot, "@opencode", name, "package.json")
   const content = await fs.readFile(filename, "utf8")
   const metadata = JSON.parse(content)
-  assert.equal(metadata.version, "2.0.22")
+  assert.equal(metadata.version, version)
   packages[name] = { version: metadata.version, packageSha256: createHash("sha256").update(content).digest("hex") }
 }
 assert.equal(JSON.parse(await fs.readFile(path.join(packageRoot, "effect/package.json"), "utf8")).version, "4.0.0-rc.112")
@@ -33,7 +36,7 @@ await build({
   entryPoints: [path.join(repository, "packages/server/src/opencode/session-pruning/desktop-plugin.ts")],
   outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22",
   banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
-  // The checkout's node_modules can lag its existing 2.0.22 lockfile. Use the already verified private packages, no install.
+    // Use verified isolated native packages; no install or shared service discovery.
   plugins: [{ name: "exact-existing-native-packages", setup(build) {
     build.onResolve({ filter: /^(?:@opencode\/|effect(?:\/|$))/ }, async args => {
       if (args.pluginData?.exactNative) return
@@ -41,12 +44,18 @@ await build({
     })
   } }],
 })
-const localPlugin = path.join(output, "local-plugin")
+const localPlugin = path.join(output, "config", "plugins")
 const presence = path.join(output, "backend-presence")
 const bootstrap = path.join(output, "bootstrap")
 const idle = [1, 2, 3].map(n => path.join(output, `idle-${n}`))
-for (const directory of [localPlugin, presence, bootstrap, ...idle]) await fs.mkdir(directory)
-await fs.writeFile(path.join(localPlugin, "index.mjs"), `import {desktopPlugin} from ${JSON.stringify(pathToFileURL(bundle).href)}; export default desktopPlugin(${JSON.stringify(presence)});`)
+for (const directory of [localPlugin, presence, bootstrap, ...idle]) await fs.mkdir(directory, { recursive: true })
+const coldWorktrees = [1, 2, 3].map(n => path.join(output, `cold-worktree-${n}`))
+execFileSync("git", ["init", "--quiet", bootstrap])
+execFileSync("git", ["-C", bootstrap, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture"])
+for (const directory of coldWorktrees) execFileSync("git", ["-C", bootstrap, "worktree", "add", "--quiet", "--detach", directory])
+// Match production discovery of a managed .ts entry, not configured-package
+// directory resolution (which has different host/subpath semantics).
+await fs.writeFile(path.join(localPlugin, "codenomad-session-pruning.ts"), `import {desktopPlugin} from ${JSON.stringify(pathToFileURL(bundle).href)}; export default desktopPlugin(${JSON.stringify(presence)});`)
 for (const key of ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR"]) process.env[key] = output
 process.env.OPENCODE_DISABLE_AUTOUPDATE = "true"
 process.env.OPENCODE_DB = ":memory:"
@@ -66,10 +75,11 @@ const locations = Object.fromEntries(["data", "cache", "config", "state", "tmp",
 const ref = directory => Location.Ref.make({ directory })
 const rpc = "/api/rpc/codenomad.pending-requests/snapshot"
 const leaseA = path.join(presence, "abc-123.lease"), leaseB = path.join(presence, "def-456.lease")
+const booted = []
 const receipt = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const configured = Layer.unwrap(Effect.gen(function* () {
     const location = yield* Location.Service
-    return Config.layer({ project: false, global: false, content: JSON.stringify({ plugins: location.directory === bootstrap ? [localPlugin] : [] }) })
+    return Config.layer({ project: false, global: location.directory === bootstrap, content: "{}" })
   }))
   const context = yield* Layer.build(createRoutes({
     password: "isolated-stage1-only", database: { path: ":memory:" }, app: { version: packages.core.version },
@@ -126,8 +136,10 @@ const receipt = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const promise = yield* request("/api/rpc/codenomad.session-pruning/preview", { sessionID: rootSession.id, messageID: "msg_fixture_missing" })
   assert.equal(promise.status, 200)
   assert.deepEqual(promise.body.output, { status: "blocked", reason: "unavailable" })
-  const cold = Array.from({ length: 100 }, (_, n) => path.join(output, `cold-${n}`))
+  const cold = [...coldWorktrees, ...Array.from({ length: 97 }, (_, n) => path.join(output, `cold-${n}`))]
   const before = yield* keys()
+  const startsBefore = booted.length, memoryBefore = process.memoryUsage()
+  assert(startsBefore >= before.length, "Fixture must observe real native Location boot logs")
   const unauthorized = yield* request(rpc, { directories: idle }, false, cold[0])
   assert.equal(unauthorized.status, 401)
   const snapshots = []
@@ -150,8 +162,9 @@ const receipt = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     snapshots.push(snapshot)
   }
   assert.deepEqual(yield* keys(), before)
+  assert.equal(booted.length, startsBefore, "Recovery must not boot even a temporarily retained cold Location")
   assert.equal((yield* request(rpc, { directories: Array(65).fill(bootstrap) })).status, 400)
-  assert.equal((yield* request(rpc, { directories: [bootstrap], version: "2.0.22" })).status, 400)
+  assert.equal((yield* request(rpc, { directories: [bootstrap], version })).status, 400)
   const nonAuthoritative = yield* request(rpc, { directories: ["relative"] })
   assert.equal(nonAuthoritative.status, 400)
   assert.equal(nonAuthoritative.body.type, "unavailable")
@@ -173,10 +186,15 @@ const receipt = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   return { status: "passed", pid: process.pid, bun: Bun.version, nativePackages: packages, publishedIntegrity: setupReceipt, publishedSources: sourceReceipt.published,
     transport: "authenticated unmodified published production HTTP router, in-process, no listener", database: ":memory:",
     productionEntry: "packages/server/src/opencode/session-pruning/desktop-plugin.ts", bundleSha256: createHash("sha256").update(yield* Effect.promise(() => fs.readFile(bundle))).digest("hex"),
-    before, after: yield* keys(), coldCount: 100, coldConstructed: 0, seeded, snapshots, promise, nonAuthoritative,
+    before, after: yield* keys(), coldCount: 100, coldWorktrees, coldConstructed: 0, startsBefore, startsAfter: booted.length,
+    memory: { before: memoryBefore, after: process.memoryUsage(), scope: "short isolated fixture, not a memory profile or deployment soak" },
+    seeded, snapshots, promise, nonAuthoritative,
     lifecycle: { absent: true, present: true, multipleBackendsRetained: true, expired: true, returned: true, stoppedAgain: true },
     separateBundledEffectCopy: "4.0.0-rc.112", unauthorizedStatus: unauthorized.status, requests }
-})).pipe(Effect.provide(Logger.layer([Logger.make(() => {})]))))
+})).pipe(Effect.provide(Logger.layer([Logger.make((entry) => {
+  if (Array.isArray(entry.message) && entry.message.includes("location services booted")) booted.push(entry.message)
+  if (entry.logLevel === "Error" || entry.logLevel === "Warn") console.error(JSON.stringify(entry.message, (_key, value) => value instanceof Error ? { message: value.message, stack: value.stack } : value))
+})]))))
 await fs.writeFile(path.join(output, "receipt.json"), JSON.stringify(receipt, null, 2))
 console.log(JSON.stringify({ status: receipt.status, before: receipt.before.length, after: receipt.after.length, coldConstructed: 0, forms: 6, globalForms: 3, permissions: 3, lifecycle: receipt.lifecycle, output }, null, 2))
 // ponytail: all owned scopes and receipts are closed; don't retain native package process handles in a one-shot fixture.

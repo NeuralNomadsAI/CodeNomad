@@ -57,9 +57,8 @@ import {
   clearRepliedPermissions,
   hasRepliedPermission,
   markPermissionReplied,
-  pruneRepliedPermissions,
 } from "./permission-replies"
-import { clearSettledForms, hasSettledForm, markFormSettled, pruneSettledForms } from "./form-settlements"
+import { clearSettledForms, hasSettledForm, markFormSettled } from "./form-settlements"
 import {
   clearPermissionAutoAcceptForInstance,
   isPermissionAutoAcceptEnabled,
@@ -261,6 +260,17 @@ const pendingRequestSyncs = new Map<string, {
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
+const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
+export { incompletePendingRecovery }
+function markPendingRecovery(instanceId: string, incomplete: boolean): void {
+  setIncompletePendingRecovery((previous) => {
+    if (previous.has(instanceId) === incomplete) return previous
+    const next = new Set(previous)
+    if (incomplete) next.add(instanceId)
+    else next.delete(instanceId)
+    return next
+  })
+}
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 const pendingDiscoveryDeferred = new Error("Pending discovery deferred during compaction")
 type PendingCompaction = {
@@ -284,6 +294,7 @@ function isPendingDiscoveryCompacting(): boolean {
 
 function deferPendingDiscovery(instanceId: string): boolean {
   if (!isPendingDiscoveryCompacting()) return false
+  markPendingRecovery(instanceId, true)
   deferredPendingDiscovery.add(instanceId)
   return true
 }
@@ -379,6 +390,7 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 }
 
 function invalidatePendingRequestSync(instanceId: string): void {
+  if (instances().has(instanceId)) markPendingRecovery(instanceId, true)
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
@@ -740,12 +752,13 @@ async function syncPendingPermissions(
   const mutationEpoch = pendingPermissionMutationEpochs.get(instanceId) ?? 0
 
   try {
-    const syncStartedAt = Date.now()
     const remote: Array<{ request: PermissionRequest; location: RequestAuthorityLocation; key: string }> = []
     const scannedLocations = new Set<string>()
     const pending = await snapshot
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    if (!pending?.supported && !targetLocations) throw new Error("Loaded-only pending requests unavailable; retain existing queues")
     if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
-    const locations = pending?.supported ? [] : targetLocations ?? getPendingRequestLocations(instanceId, instance.folder)
+    const locations = targetLocations ?? []
     const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.permissions) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
         instance.client!.permission.request.list({ location: toRequestLocation(location) }, {
@@ -774,14 +787,12 @@ async function syncPendingPermissions(
       remote.push(...response.data.map((request) => ({ request, location: authority, key })))
     }
 
-    const remotePendingIds = new Set(remote.map(({ request }) => request.id))
     if (!isCurrent() || (pendingPermissionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
     // ponytail: retain tombstones until instance removal; location-scoped settlement
     // provenance is needed before bounded coverage can safely retire them.
-    if (!pending?.supported && !targetLocations && !failures.length) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
 
     const pendingRemote = remote.filter(({ request }) => !hasRepliedPermission(instanceId, request.id))
     const remoteIds = new Set(pendingRemote.map(({ request }) => request.id))
@@ -825,12 +836,13 @@ async function syncPendingForms(
   const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
 
   try {
-    const syncStartedAt = Date.now()
     const remote: Array<{ form: FormWithLocation; location: RequestAuthorityLocation; key: string }> = []
     const scannedLocations = new Set<string>()
     const pending = await snapshot
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    if (!pending?.supported && !targetLocations) throw new Error("Loaded-only pending requests unavailable; retain existing queues")
     if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
-    const locations = pending?.supported ? [] : targetLocations ?? getPendingRequestLocations(instanceId, instance.folder)
+    const locations = targetLocations ?? []
     const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.forms) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
         instance.client!.form.list({ location: toRequestLocation(location) }, {
@@ -865,8 +877,6 @@ async function syncPendingForms(
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    const remotePendingIds = new Set(remote.map(({ form }) => form.id))
-    if (!pending?.supported && !targetLocations && !failures.length) pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
     const pendingRemote = remote.filter(({ form }) => !hasSettledForm(instanceId, form.id))
     const remoteIds = new Set(pendingRemote.map(({ form }) => form.id))
     for (const form of getFormQueue(instanceId)) {
@@ -904,16 +914,19 @@ async function runPendingRequestSync(
       && pendingRequestSyncEpochs.get(instanceId) === epoch
       && pendingRequestSyncGenerations.get(instanceId) === generation
     try {
-      // ponytail: capability only, not an unreleased version gate. Older daemons
-      // keep their existing discovery scans so background/global Forms survive.
+      // Unavailable loaded-only recovery is non-authoritative, never permission
+      // to construct every historical/worktree Location. Only settlement targets
+      // use ordinary lists; SSE and later snapshots still recover global Forms.
       const snapshot = targetLocations ? undefined : readPendingRequestSnapshot(instanceId, isCurrent)
       const results = await Promise.allSettled([
         syncPendingPermissions(instanceId, true, isCurrent, snapshot, targetLocations),
         syncPendingForms(instanceId, true, isCurrent, snapshot, targetLocations),
       ])
       for (const result of results) if (result.status === "rejected") throw result.reason
+      if (!targetLocations && isCurrent()) markPendingRecovery(instanceId, false)
       return
     } catch (error) {
+      if (isCurrent()) markPendingRecovery(instanceId, true)
       if (error === pendingDiscoveryDeferred) { resumePendingDiscovery(); return }
       if (error !== pendingRequestSyncSuperseded) throw error
     }
@@ -1072,8 +1085,9 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
-  clearPermissionQueue(instanceId)
-  clearPendingFormQueue(instanceId)
+  // Recovery can be unavailable; only authoritative coverage or settlement
+  // removes known interruptions, not a catalogue/location rehydration.
+  markPendingRecovery(instanceId, true)
 }
 
 async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
@@ -1415,6 +1429,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   abortPendingRequestWork(id)
   pendingRequestLiveness.delete(id)
   pendingRequestSyncGenerations.delete(id)
+  markPendingRecovery(id, false)
   resumePendingDiscovery()
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 

@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "कुराकानी हेर्नुहोस्",
   "interruption.openExternal": "{title} बाट आएको अनुरोध खोल्नुहोस्",
   "interruption.projectRequest": "परियोजनाको अनुरोध",
+  "interruption.recoveryIncomplete": "प्रश्न र अनुमतिहरूको पुनःप्राप्ति अपूर्ण छ। ज्ञात अनुरोधहरू सुरक्षित छन्; निष्क्रिय वर्कट्रीहरू लोड गरिँदैनन्।",
   "interruption.answered": "उत्तर दिइयो",
   "interruption.noAnswer": "उत्तर छैन",
   "promptInput.skills.title": "सीपहरू",

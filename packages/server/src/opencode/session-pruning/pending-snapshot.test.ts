@@ -23,7 +23,7 @@ const form = { id: "frm_pending", sessionID: "global", title: "Idle global form"
 const permission = { id: "per_pending", sessionID: "ses_idle", action: "fixture", resources: [] }
 const good = (ref: Location.Ref, permissions = () => Effect.succeed<unknown>([permission]), forms = () => Effect.succeed<unknown>([form])) =>
   Layer.succeedContext(Context.empty().pipe(Context.add(locationTag, ref), Context.add(formTag, { list: forms }), Context.add(permissionTag, { list: permissions })))
-const read = (map: unknown, value: unknown) => readPendingSnapshot(value, "2.0.22").pipe(
+const read = (map: unknown, value: unknown) => readPendingSnapshot(value, "2.0.24").pipe(
   Effect.provideService(mapTag, map), Effect.provideService(locationTag, origin),
 )
 const fails = Effect.fn("test.pendingSnapshot.fails")(function* (effect: Effect.Effect<unknown, unknown>) {
@@ -140,7 +140,7 @@ test("registration trusts native setup version/shape only and invalidates alread
     (entry) => Effect.sync(() => { entry.dispose = true }),
   ).pipe(Effect.as({ dispose: Effect.void, events: { emit: () => Effect.void } })) })
   const ctx = (version: string) => ({ app: { version }, rpc }) as unknown as Plugin.Context
-  await Effect.runPromise(Effect.scoped(registerPendingSnapshot(ctx("2.0.23"))))
+  for (const version of ["2.0.23", "2.0.25", "2.0.24-dev.1", "custom"]) await Effect.runPromise(Effect.scoped(registerPendingSnapshot(ctx(version))))
   await Effect.runPromise(Effect.scoped(registerPendingSnapshot(ctx(undefined as unknown as string))))
   await Effect.runPromise(Effect.scoped(registerPendingSnapshot({ app: { version: "2.0.22" }, rpc: {} } as unknown as Plugin.Context)))
   assert.equal(registrations.length, 0)
@@ -166,6 +166,16 @@ test("registration trusts native setup version/shape only and invalidates alread
   assert(registrations[0].dispose)
   const unavailable = await Effect.runPromise(Effect.exit(registrations[0].handlers.snapshot(input(origin), { error: () => new Error("unavailable") })))
   assert(Exit.isFailure(unavailable))
+})
+
+test("qualified native 2.0.24 registers the same presence-owned loaded-only reader", async () => {
+  let registered = 0
+  const rpc = Object.assign(() => {}, { register: (definition: unknown) => Effect.sync(() => {
+    assert.equal(definition, PendingSnapshotRpc)
+    registered++
+  }) })
+  await Effect.runPromise(Effect.scoped(registerPendingSnapshot({ app: { version: "2.0.24" }, rpc } as unknown as Plugin.Context)))
+  assert.equal(registered, 1)
 })
 
 test("production entry shares one presence lifecycle for old/new RPCs, never double-registers and disposes scopes", async t => {

@@ -7,7 +7,7 @@ import { Cause, Context, Effect, MutableHashMap, Option, Predicate, RcMap, Schem
 import effectPackage from "effect/package.json" with { type: "json" }
 
 export const PENDING_SNAPSHOT_RPC_ID = "codenomad.pending-requests"
-export const PENDING_SNAPSHOT_NATIVE_VERSION = "2.0.22"
+export const PENDING_SNAPSHOT_NATIVE_VERSIONS = ["2.0.22", "2.0.24"] as const
 export const PENDING_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024
 const MAX_DIRECTORIES = 64
 const MAX_REQUESTS = 1024
@@ -63,15 +63,16 @@ const nativeRef = Schema.toType(Location.Ref).check(Schema.makeFilter((ref) => S
 const nativeForms = Schema.Array(Schema.toType(Form.Info)).check(Schema.isMaxLength(MAX_REQUESTS))
 const nativePermissions = Schema.Array(Schema.toType(Permission.Request)).check(Schema.isMaxLength(MAX_REQUESTS))
 
-// Private 2.0.22 / Effect rc.112 internals, not a supported native pending API.
+// Private qualified 2.0.22/2.0.24 / Effect rc.112 internals, not a supported native pending API.
 // Optional lookup keeps the public RPC handler's R=never without importing Core or constructing a graph.
 const mapTag = Context.Service<never, unknown>("@opencode/example/LocationServiceMap")
 const formTag = Context.Service<never, unknown>("@opencode/Form")
 const permissionTag = Context.Service<never, unknown>("@opencode/Permission")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
-const compatible = (version: unknown) => version === PENDING_SNAPSHOT_NATIVE_VERSION && effectPackage.version === "4.0.0-rc.112"
+const nativeVersion = Schema.Union(PENDING_SNAPSHOT_NATIVE_VERSIONS.map((version) => Schema.Literal(version)))
+const compatible = (version: unknown) => Schema.is(nativeVersion)(version) && effectPackage.version === "4.0.0-rc.112"
 const hostShape = Schema.Struct({
-  app: Schema.Struct({ version: Schema.Literal(PENDING_SNAPSHOT_NATIVE_VERSION) }),
+  app: Schema.Struct({ version: nativeVersion }),
   rpc: Schema.declare<Plugin.Context["rpc"]>((value): value is Plugin.Context["rpc"] =>
     Predicate.isFunction(value) && Predicate.hasProperty(value, "register") && Predicate.isFunction(value.register)),
 })

@@ -38,7 +38,13 @@ const fixtures: ReturnType<typeof harness>[] = []
 beforeEach(() => {
   toast.custom = () => "fixture-toast"
   brokerReads = 0
-  serverApi.getPendingRequests = async () => { brokerReads++; return { supported: false } }
+  serverApi.getPendingRequests = async (id, directories) => {
+    brokerReads++
+    const h = fixtures.find((h) => h.id === id)!
+    return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [{
+      location: { directory }, permissions: directory === h.directory ? h.permissions : [], forms: directory === h.directory ? h.forms : [],
+    }] })) }
+  }
   sdkManager.createClient = (id) => fixtures.find((h) => h.id === id)!.client
 })
 afterEach(() => {
@@ -99,7 +105,7 @@ async function history(h: ReturnType<typeof harness>) {
   }))))
 }
 
-test("published-daemon scans defer across instances and recover idle/global Forms only after the last overlapping compaction", async () => {
+test("loaded-only scans defer across instances and recover idle/global Forms only after the last overlapping compaction", async () => {
   const a = harness(), b = harness()
   await history(b)
   compact(a, "started")
@@ -125,35 +131,34 @@ test("published-daemon scans defer across instances and recover idle/global Form
   await syncPendingRequests(b.id)
   assert.equal(brokerReads, 0)
   compact(b, "failed", "other-child")
-  await until(() => a.reads.length === 2 && b.reads.length === 402)
-  assert.equal(brokerReads, 2, "one trailing scan per deferred instance, not per event")
+  await until(() => brokerReads === 27 && getFormQueue(b.id).length === 2)
+  assert.deepEqual([...a.reads, ...b.reads], [], "no ordinary list may initialize a cold Location")
   assert.deepEqual(getPermissionQueue(b.id).map((p) => p.id), ["missed-idle"])
   assert.deepEqual(getFormQueue(b.id).map((f) => f.id), ["missed-global", "missed-ordinary"])
 })
 
-test("a compaction beginning mid legacy scan stops queued admissions and preserves every unscanned queue", async () => {
+test("an unavailable capability after compaction retains requests without legacy admissions", async () => {
   const h = harness()
   await history(h)
   addPermissionToQueue(h.id, permission("unscanned"), `${h.directory}/cold-99`)
   addPendingForm(h.id, { ...form("unscanned"), location: { directory: `${h.directory}/cold-99` } })
   const held = deferred<void>()
-  const listPermissions = h.client.permission.request.list, listForms = h.client.form.list
-  h.client.permission.request.list = async (...args) => { const result = await listPermissions(...args); await held.promise; return result }
-  h.client.form.list = async (...args) => { const result = await listForms(...args); await held.promise; return result }
+  serverApi.getPendingRequests = async () => { brokerReads++; await held.promise; return { supported: false } }
   const syncing = syncPendingRequests(h.id)
-  await until(() => h.reads.length === 2)
+  await until(() => brokerReads === 1)
   compact(h, "started")
   held.resolve()
-  await syncing
-  assert.equal(h.reads.length, 2)
+  await assert.rejects(syncing)
+  assert.equal(h.reads.length, 0)
   assert.equal(getPermissionQueue(h.id)[0]?.id, "unscanned")
   assert.equal(getFormQueue(h.id)[0]?.id, "unscanned")
   await syncPendingRequests(h.id)
   assert.equal(brokerReads, 1)
   compact(h, "ended")
-  await until(() => h.reads.length === 404)
-  assert.deepEqual(getPermissionQueue(h.id), [])
-  assert.deepEqual(getFormQueue(h.id), [])
+  await until(() => brokerReads === 2)
+  assert.deepEqual(h.reads, [])
+  assert.equal(getPermissionQueue(h.id)[0]?.id, "unscanned")
+  assert.equal(getFormQueue(h.id)[0]?.id, "unscanned")
 })
 
 test("supported snapshot batching also stops before the next batch during compaction", async () => {
@@ -190,7 +195,8 @@ test("liveness handles a missed end for an unloaded child, but an active or newl
   assert.equal(brokerReads, 0, "a stale status read cannot settle a newer delta")
   a.client.session.active = async () => ({})
   await reconcilePendingRequestLiveness(a.id)
-  await until(() => a.reads.length === 2 && b.reads.length === 2)
+  await until(() => brokerReads === 2)
+  assert.deepEqual([...a.reads, ...b.reads], [])
   assert.equal(brokerReads, 2)
 })
 
@@ -205,8 +211,8 @@ test("disconnect/client replacement fence old ends; removal cannot revive a remo
   await syncPendingRequests(b.id)
   assert.equal(brokerReads, 0)
   await reconcilePendingRequestLiveness(a.id)
-  await until(() => b.reads.length === 2)
-  assert.equal(a.reads.length, 2, "explicit liveness, not the invalidated deferred scan, recovers this instance")
+  await until(() => brokerReads === 2)
+  assert.deepEqual([...a.reads, ...b.reads], [], "reconnect recovery uses only the broker")
   const reads = brokerReads
   compact(a, "started")
   await syncPendingRequests(a.id)
