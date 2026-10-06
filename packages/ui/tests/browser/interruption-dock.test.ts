@@ -60,6 +60,26 @@ async function fixture(width = 1100, theme: "light" | "dark" = "light") {
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
 
+test("incomplete recovery is visible even with no requests and never destroys an answer draft", async () => {
+  const { page, errors } = await fixture(393)
+  try {
+    await page.evaluate(() => (window as any).fixture.recover(false))
+    const warning = page.getByRole("status").filter({ hasText: "Question and permission recovery is incomplete" })
+    await warning.waitFor()
+    assert.equal(await page.locator(".interruption-dock").count(), 0)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Keep this answer")
+    await page.evaluate(() => (window as any).fixture.recover(false))
+    assert.equal(await answer(page).inputValue(), "Keep this answer")
+    await page.screenshot({ path: join(tmpdir(), "opencode", "pending-recovery-incomplete-393.png") })
+    await page.evaluate(() => (window as any).fixture.recover(true))
+    await warning.waitFor({ state: "detached" })
+    assert.equal(await answer(page).inputValue(), "Keep this answer")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 async function assertHeader(page: Page, icon: string) {
   assert.equal(await page.locator(".interruption-heading").evaluate((heading, icon) => {
     const [toggle, status, title] = Array.from(heading.children)

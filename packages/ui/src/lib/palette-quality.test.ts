@@ -70,7 +70,7 @@ describe("palette quality", () => {
       for (const bg of [c.surfaceBase, c.surfaceSecondary, c.surfaceMuted, p.get("--message-user-bg")!, p.get("--message-assistant-bg")!]) {
         for (const key of ["textPrimary", "textMuted"] as const) {
           // Saved calibration retains softer secondary text in these two families.
-          // Primary text still meets 4.5 everywhere. See SAVED_PALETTE_CALIBRATION_2026-09-11.md.
+          // Primary text still meets 4.5 everywhere.
           const minimum = key === "textMuted" && scheme.id === "slate" && c[key] === "#9DB5D2" && bg === "#404E65" ? 3.99
             : key === "textMuted" && scheme.id === "clay" && c[key] === "#C6B9A5" && bg === "#55524E" ? 4.02 : 4.5
           assert.ok(contrastRatio(c[key], bg) >= minimum, `${key} on ${bg}: ${contrastRatio(c[key], bg)}`)

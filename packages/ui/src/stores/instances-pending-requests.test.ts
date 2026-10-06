@@ -8,6 +8,7 @@ import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied,
   addPendingForm, sendFormReply,
+  incompletePendingRecovery, clearReloadableInstanceState,
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled } from "./form-settlements"
@@ -270,7 +271,7 @@ test("complete empty pending coverage never implies a working session is idle", 
 })
 
 test("late snapshots cannot publish after removal, invalidation or client replacement", async () => {
-  for (const invalidate of ["remove", "reconnect", "client"] as const) {
+  for (const unsupported of [false, true]) for (const invalidate of ["remove", "reconnect", "client"] as const) {
     const h = harness()
     try {
       let reads = 0
@@ -281,7 +282,7 @@ test("late snapshots cannot publish after removal, invalidation or client replac
       if (invalidate === "remove") removeInstance(h.id, { authoritative: false })
       if (invalidate === "reconnect") invalidatePendingRequestSync(h.id)
       if (invalidate === "client") updateInstance(h.id, { client: { ...h.client } as OpenCodeClient })
-      pending.resolve(snapshot(h.directory, [permission("late")], [form("late")]))
+      pending.resolve(unsupported ? { supported: false } : snapshot(h.directory, [permission("late")], [form("late")]))
       await syncing
       assert.deepEqual(getPermissionQueue(h.id), [])
       assert.deepEqual(getFormQueue(h.id), [])
@@ -289,23 +290,44 @@ test("late snapshots cannot publish after removal, invalidation or client replac
   }
 })
 
-test("unsupported retains original discovery scans, while snapshot failures never silently clear queues", async () => {
+test("unsupported and failed snapshots retain queues without loading cold worktrees, then reconnect recovers active/global requests", async () => {
   const h = harness()
+  const originalWorktrees = serverApi.fetchWorktrees
   try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: Array.from({ length: 100 }, (_, index) => ({
+      slug: `cold-${index}`, directory: `/cold-${index}`, kind: "worktree" as const,
+    })) })
+    await reloadWorktrees(h.id)
     addPendingForm(h.id, { ...form("background"), location: { directory: "/background" } })
+    addPermissionToQueue(h.id, permission("background"), "/background")
     serverApi.getPendingRequests = async () => { throw new Error("snapshot unavailable") }
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(getFormQueue(h.id).length, 1)
+    assert.equal(incompletePendingRecovery().has(h.id), true)
     assert.deepEqual(h.calls, [])
     serverApi.getPendingRequests = async () => ({} as WorkspacePendingRequestsResponse)
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(getFormQueue(h.id).length, 1)
     assert.deepEqual(h.calls, [])
     serverApi.getPendingRequests = async () => ({ supported: false })
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.deepEqual(h.calls, [])
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["background"])
+    assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["background"])
+    clearReloadableInstanceState(h.id)
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["background"])
+    assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["background"])
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    invalidatePendingRequestSync(h.id)
+    updateInstance(h.id, { client: { ...h.client } as OpenCodeClient })
+    serverApi.getPendingRequests = async () => snapshot(h.directory, [permission("active")], [form("global")])
     await syncPendingRequests(h.id)
-    assert.ok((h.calls as string[]).includes("form:/background"))
-    assert.ok((h.calls as string[]).includes(`permission:${h.directory}`))
-  } finally { h.cleanup() }
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.deepEqual(h.calls, [])
+    assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["background", "active"])
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["background", "global"])
+    assert.equal(getFormQueue(h.id).find((entry) => entry.id === "global")?.location?.directory, h.directory)
+  } finally { serverApi.fetchWorktrees = originalWorktrees; h.cleanup(); assert.equal(incompletePendingRecovery().has(h.id), false) }
 })
 
 test("ambiguous global Form reply is not replayed and recovery keeps location authority", async () => {

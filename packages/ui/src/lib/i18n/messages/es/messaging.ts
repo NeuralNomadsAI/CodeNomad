@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "Ver conversación",
   "interruption.openExternal": "Abrir solicitud de {title}",
   "interruption.projectRequest": "Solicitud del proyecto",
+  "interruption.recoveryIncomplete": "La recuperación de preguntas y permisos está incompleta. Se conservan las solicitudes conocidas; no se cargan los worktrees inactivos.",
   "interruption.answered": "Respondida",
   "interruption.noAnswer": "Sin respuesta",
   "promptInput.skills.title": "Skills",

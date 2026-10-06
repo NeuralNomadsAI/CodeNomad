@@ -5,9 +5,6 @@ are recorded in the PR. This document retains the interaction contract.
 
 Reference: [review direction](https://github.com/NeuralNomadsAI/CodeNomad/pull/729#issuecomment-5751384618).
 
-Rendered captures: [French, narrow](pr729-attachments-fr-narrow.png) and
-[Hebrew, wide](pr729-attachments-he-wide.png).
-
 The isolated Windows native-picker smoke uses
 `node scripts/test-attachment-picker-desktop.mjs tauri` (or `electron`). It renders
 the source SessionView in an isolated host profile and drives the actual OS dialog

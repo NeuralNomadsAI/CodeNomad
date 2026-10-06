@@ -12,4 +12,5 @@ out/
 # Local runtime artifacts
 .codenomad/
 .tmp/
+/temp/
 packages/cloudflare/.wrangler/

@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "הצגת השיחה",
   "interruption.openExternal": "פתיחת בקשה מתוך {title}",
   "interruption.projectRequest": "בקשת פרויקט",
+  "interruption.recoveryIncomplete": "שחזור השאלות וההרשאות אינו מלא. בקשות מוכרות נשמרות; עצי עבודה לא פעילים אינם נטענים.",
   "interruption.answered": "נענתה",
   "interruption.noAnswer": "אין תשובה",
   "promptInput.skills.title": "מיומנויות",

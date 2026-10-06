@@ -9,7 +9,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
-import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue } from "../../../src/stores/instances"
+import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue, syncPendingRequests } from "../../../src/stores/instances"
 import { getFormQueue } from "../../../src/stores/forms"
 import { sessions, setSessions, setActiveSession, activeSessionId, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
@@ -175,4 +175,10 @@ const store = messageStoreBus.getOrCreate(instanceId)
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
   rehydrate: () => loadMessageAnchor(instanceId, sessionId, messageId),
   snapshot: () => ({ ids: store.getSessionMessageIds(sessionId), forms: getFormQueue(instanceId).map(item => item.id), question: store.getMessage(messageId) }),
+  recover: async (supported: boolean) => {
+    serverApi.getPendingRequests = async () => supported ? { supported: true, directories: [{ directory: "/fixture", status: "ok", locations: [{
+      location: { directory: "/fixture" }, permissions: getPermissionQueue(instanceId), forms: getFormQueue(instanceId),
+    }] }] } : { supported: false }
+    await syncPendingRequests(instanceId).catch(() => {})
+  },
 }
