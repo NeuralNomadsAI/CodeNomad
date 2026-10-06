@@ -1,0 +1,56 @@
+.panel-extension-surface {
+  height: 100%;
+  min-height: 12rem;
+}
+
+.panel-extension-surface iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 12rem;
+  border: 0;
+  background: var(--surface-base);
+}
+
+.panel-extension-manager {
+  margin-top: var(--space-md);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border-base);
+}
+
+.right-panel-customization-popover:has(.panel-extension-manager) {
+  max-height: min(40rem, calc(100dvh - 8rem));
+  overflow-y: auto;
+}
+
+.panel-extension-manager h3 {
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.panel-extension-row,
+.panel-extension-review {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface-secondary);
+  overflow-wrap: anywhere;
+}
+
+.panel-extension-review code {
+  display: block;
+  font-size: var(--font-size-xs);
+}
+
+.panel-extension-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.panel-extension-manager label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
