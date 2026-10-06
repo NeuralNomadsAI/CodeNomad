@@ -25,6 +25,7 @@ function start() {
   });
 }
 function connect(backend, descendant) {
+  if (boot.controlPipe) require('./broker.cjs').connect(boot, 'manager.control', boot.controlPipe);
   const key = Buffer.from(boot.secret, 'hex');
   const mac = bytes => crypto.createHmac('sha256', key).update(bytes).digest();
   const challenge = crypto.randomBytes(32).toString('hex');

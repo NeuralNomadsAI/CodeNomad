@@ -19,6 +19,15 @@ impl Drop for Shutdown {
     }
 }
 pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
+    let mut ending = None;
+    let result = dispatch(&mut host, &mut ending);
+    // Services/controls join and exact broker cleanup are part of Stop, not
+    // destructors allowed to turn an in-budget result into late success.
+    drop(host);
+    deadline::check(ending)?;
+    result
+}
+fn dispatch(host: &mut SupervisedRuntime, ending: &mut Option<Instant>) -> Result<()> {
     let authority = host.authority.clone();
     let boot = host.manager_channel.boot.clone();
     let ledger = host.services.as_ref().map(|s| s.ledger.clone());
@@ -33,14 +42,13 @@ pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
     })?;
     let _shutdown = Shutdown(host.authority.clone());
     let mut decoder = Decoder::new();
-    let mut ending: Option<Instant> = None;
     let mut partial: Option<Instant> = None;
     let mut observed = Vec::new();
     let mut pending = crate::service_response::PendingServices::new();
     loop {
-        deadline::check(ending)?;
+        deadline::check(*ending)?;
         if host.authority.manager().exited()? {
-            return confirm_members(&observed, ending);
+            return confirm_members(&observed, *ending);
         }
         if let Some(services) = &host.services {
             while let Ok(done) = services.results.try_recv() {
@@ -53,11 +61,11 @@ pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
             }
         }
         if host.authority.manager().exited()? {
-            return confirm_members(&observed, ending);
+            return confirm_members(&observed, *ending);
         }
         host.authority.revalidate()?;
         host.manager_channel.revalidate()?;
-        deadline::check(ending)?;
+        deadline::check(*ending)?;
         if partial.is_some_and(|end| Instant::now() >= end) {
             return Err(Error("native-runtime-partial-deadline"));
         }
@@ -67,7 +75,7 @@ pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
             match host
                 .manager_channel
                 .pipe
-                .read_bytes(deadline::remaining(ending, Duration::from_millis(20))?)
+                .read_bytes(deadline::remaining(*ending, Duration::from_millis(20))?)
             {
                 Ok(bytes) => {
                     if !bytes.is_empty() {
@@ -79,10 +87,10 @@ pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
                     continue;
                 }
                 Err(_) if ending.is_some() => {
-                    deadline::wait_exit(ending, "native-runtime-stop-unconfirmed", |ms| {
+                    deadline::wait_exit(*ending, "native-runtime-stop-unconfirmed", |ms| {
                         host.authority.manager().wait_exit(ms)
                     })?;
-                    return confirm_members(&observed, ending);
+                    return confirm_members(&observed, *ending);
                 }
                 Err(error) => {
                     if host.authority.manager().wait_exit(100)? {
@@ -148,7 +156,11 @@ pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
             3 if packet.payload.is_empty() && ending.is_none() && pending.is_empty() => {
                 // Authenticated M has drained native BackendProcess/control close. The
                 // acknowledgement is NOT native proof of successful graceful Stop.
-                ending = Some(Instant::now() + Duration::from_secs(5));
+                let end = Instant::now() + Duration::from_secs(5);
+                *ending = Some(end);
+                if let Some(services) = &host.services {
+                    services.begin_stop(end)?;
+                }
                 vec![]
             }
             4 if ending.is_none() && host.authority.independent() => {
@@ -188,12 +200,12 @@ pub(crate) fn serve(mut host: SupervisedRuntime) -> Result<()> {
             1,
             &payload,
         )?;
-        let written = host
-            .manager_channel
-            .pipe
-            .write_bytes(&bytes, deadline::remaining(ending, Duration::from_secs(5))?);
+        let written = host.manager_channel.pipe.write_bytes(
+            &bytes,
+            deadline::remaining(*ending, Duration::from_secs(5))?,
+        );
         // Even synchronous I/O or a cancellation-race completion can be observed late.
-        deadline::check(ending)?;
+        deadline::check(*ending)?;
         written?;
         if packet.opcode == 2 {
             host.authority.close();

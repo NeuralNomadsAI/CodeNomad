@@ -2,6 +2,7 @@ use crate::{Error, Result};
 use std::mem::{size_of, zeroed};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr::null_mut;
+use std::time::Instant;
 use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS, FILETIME, HANDLE};
 use windows_sys::Win32::System::JobObjects::*;
 use windows_sys::Win32::System::Threading::*;
@@ -103,6 +104,9 @@ impl Process {
     }
     // Only CreateProcess-owned handles (not identities opened by PID) reach this API.
     pub fn terminate_owned(&self) -> Result<()> {
+        self.terminate_owned_before(None)
+    }
+    pub(crate) fn terminate_owned_before(&self, deadline: Option<Instant>) -> Result<()> {
         self.revalidate()?;
         if self.exited()? {
             return Ok(());
@@ -110,7 +114,12 @@ impl Process {
         if unsafe { TerminateProcess(self.handle.raw(), 1) } == 0 {
             return Err(Error("native-owned-stop-failed"));
         }
-        if !self.wait_exit(5000)? {
+        let milliseconds = deadline.map_or(5000, |end| {
+            end.saturating_duration_since(Instant::now())
+                .as_millis()
+                .min(5000) as u32
+        });
+        if !self.wait_exit(milliseconds)? {
             return Err(Error("native-owned-stop-unconfirmed"));
         }
         Ok(())

@@ -13,7 +13,7 @@ use std::sync::{
     mpsc::{self, Receiver, SyncSender},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 pub(crate) enum Work {
     Start {
         id: u64,
@@ -37,14 +37,22 @@ pub(crate) struct Services {
     pub(crate) ledger: SharedLedger,
     thread: Option<std::thread::JoinHandle<()>>,
     controls: Vec<ControlServer>,
+    stop_deadline: Arc<Mutex<Option<Instant>>>,
 }
 struct Broker {
     child: Child,
     channel: BoundChannel,
+    stop_deadline: Arc<Mutex<Option<Instant>>>,
 }
 impl Drop for Broker {
     fn drop(&mut self) {
-        let _ = self.child.process().terminate_owned();
+        let ending = match self.stop_deadline.lock() {
+            Ok(ending) => *ending,
+            Err(_) => Some(Instant::now()),
+        };
+        // Always request exact-handle cleanup, even at expiry, but never grant a
+        // second wait budget after the Stop cutoff. No daemon handle is owned.
+        let _ = self.child.process().terminate_owned_before(ending);
     }
 }
 impl Services {
@@ -98,7 +106,12 @@ impl Services {
         manager.control_pipe = manager_locator;
         channel.boot.control_pipe = peer_locator;
         channel.publish_child(&mut child)?;
-        let mut broker = Broker { child, channel };
+        let stop_deadline = Arc::new(Mutex::new(None));
+        let mut broker = Broker {
+            child,
+            channel,
+            stop_deadline: stop_deadline.clone(),
+        };
         broker.channel.authenticate()?;
         let (sender, work) = mpsc::sync_channel(wire::MAX_PENDING);
         let (done, results) = mpsc::sync_channel(wire::MAX_PENDING);
@@ -219,7 +232,29 @@ impl Services {
             }
             // Pipe EOF makes peer cancel exact starter handles and drain before exiting.
             broker.channel.pipe.disconnect();
-            let _ = broker.child.process().wait_exit(5000);
+            let fallback = Instant::now() + Duration::from_secs(5);
+            loop {
+                // Re-read while waiting: Stop may arrive after peer loss has
+                // already started teardown. Never hold this lock over a wait.
+                let end = match broker.stop_deadline.lock() {
+                    Ok(ending) => ending.map_or(fallback, |end| end.min(fallback)),
+                    Err(_) => break,
+                };
+                let Some(left) = end
+                    .checked_duration_since(Instant::now())
+                    .filter(|left| !left.is_zero())
+                else {
+                    break;
+                };
+                match broker
+                    .child
+                    .process()
+                    .wait_exit(left.as_millis().min(20) as u32)
+                {
+                    Ok(false) => std::thread::yield_now(),
+                    _ => break,
+                }
+            }
             if let Err(error) = run {
                 let _ = done.try_send(Completion {
                     id: 0,
@@ -240,7 +275,15 @@ impl Services {
             ledger,
             thread: Some(thread),
             controls: vec![peer_control, manager_control],
+            stop_deadline,
         })
+    }
+    pub(crate) fn begin_stop(&self, end: Instant) -> Result<()> {
+        *self
+            .stop_deadline
+            .lock()
+            .map_err(|_| Error("native-service-stop-deadline-poisoned"))? = Some(end);
+        Ok(())
     }
     pub(crate) fn submit(
         &self,
