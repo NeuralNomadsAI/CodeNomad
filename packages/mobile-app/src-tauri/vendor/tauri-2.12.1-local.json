@@ -1,0 +1,34 @@
+{
+  "upstreamArchiveSHA256": "ed99ee9694a2deb776d91cae48ac7411ddfc89ecae2f9b5041111d8c88f2ace9",
+  "patchSHA256": "7416bbd978eb088706ad61439b5ac06a2632512c13aa7ebb4794c4138c9f300e",
+  "modified": {
+    "build.rs": {
+      "upstreamSHA256": "98109a67415599af635edd9c041ccdd9b92525556d012369e59cb4b4df25ca29",
+      "patchedSHA256": "82903f5593c97180dcf89d6be4d1aa42f771a400cf0b14406256417b7c3f31e8"
+    },
+    "Cargo.toml": {
+      "upstreamSHA256": "c7a328551449e54a9cc5c8ddc61a2b9eef3c6f85980bbccc7e1a5212133bafad",
+      "patchedSHA256": "b529ac117054acd98fe38f554460efba5acb7f77d6e7c9ae88df832bb9927f9d"
+    },
+    "mobile/ios-api/Package.swift": {
+      "upstreamSHA256": "bd322622d84f3538b512646267fcf063734ad3dcede35480950cfd95c2ed392a",
+      "patchedSHA256": "77d1eb6e485cdd6e119f98a29624fbb676f8d79df87153fcdde8ef7ffbe860b6"
+    },
+    "mobile/ios-api/Sources/Tauri/Tauri.swift": {
+      "upstreamSHA256": "4c7aa0b830e17851784fd14ca6941d2d53bd3b902e0477e7416f90da4488333c",
+      "patchedSHA256": "595f7c8bb38e3e29745f2728d356463f87f732f2c3805cf038cfba23248d2433"
+    }
+  },
+  "added": {
+    "codenomad_ios_abi_guard.rs": "d4bf74812a1c77d70a3d65db9d83ebaa478a72f4b21e6255f9bbf6b752d18225",
+    "codenomad-ios-abi.sha256": "e00c1a905579e35e744b211902e9558774c9c92b366d290726253205640a82d0"
+  },
+  "swiftRs": {
+    "swiftVersion": "1.0.7",
+    "swiftRevision": "f64a4514de07f450ec5b6aa297624cd3479d9579",
+    "swiftSourceSHA256": "d666f824f48ed780eddefc213c3def0faa8b9cf017ea0febbde3829f4efd58e3",
+    "rustVersion": "1.0.8",
+    "rustArchiveSHA256": "e45c444e496845d3f2a351146bff59aae4975b2280238df1dfaa0c7d1846f38e"
+  },
+  "scope": "Local separate mobile workspace; no upstream Rust ABI/Android source edits, no SwiftRs buffer fix."
+}

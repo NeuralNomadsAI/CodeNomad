@@ -15,6 +15,7 @@ import { createFileAttachment } from "../../../src/types/attachment"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { attachInstanceTab, getInstanceAppTabId, selectAppTab } from "../../../src/stores/app-tabs"
 import { useAppSessionCapture } from "../../../src/lib/hooks/use-app-session-capture"
+import { runtimeEnv } from "../../../src/lib/runtime-env"
 import "../../../src/index.css"
 
 let opens = 0
@@ -34,6 +35,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <AuthRecoveryDialog />
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
+  runtimeEnv,
   opens: () => opens,
   seed: (id = "auth-fixture") => {
     setInstanceId(id)

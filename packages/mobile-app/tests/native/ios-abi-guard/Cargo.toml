@@ -1,0 +1,14 @@
+[package]
+name = "codenomad-ios-abi-guard-tests"
+version = "2.12.1"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+sha2 = "=0.10.9"
+
+[[test]]
+name = "integration"
+path = "integration.rs"

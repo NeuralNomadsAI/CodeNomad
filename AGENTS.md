@@ -130,6 +130,7 @@ Behavior for agents:
 - Run them with `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`. `CODENOMAD_BROWSER_PATH` optionally selects an existing Chromium executable; it does not target the installed application or user sessions.
 
 ## V2 Runtime Launch
+- The Android-first companion is isolated in `packages/mobile-app/`: one webview, a trusted bundled launcher, and a top-level hosted web/remote UI. Never bundle the desktop server/Node/CLI or grant remote native capabilities. Keep endpoint validation mirrored by shared JS/Rust fixtures; native navigation restricts redirects to the selected HTTPS origin. Recovery chrome belongs to the native mobile recovery plugin, never hosted DOM/IPC or a second mobile webview. Launcher-only styles reuse UI tokens in `packages/mobile-app/src/launcher.css`; its standalone locale adapter reuses each UI locale's remote-access messages without mounting server-backed preferences. All platform recovery changes require real-device verification before claiming mobile readiness.
 - Native automation instrumentation starts automatically; no Developer Mode toggle or activation restart is required. Do not configure a fixed CDP port or a manual WebView2 profile.
 - Rebuild Electron before calling `codenomad.act({ action: "restart" })`. For Windows Tauri, stop and relaunch the release executable only when the linker cannot replace it; never stop the shared OpenCode daemon.
 

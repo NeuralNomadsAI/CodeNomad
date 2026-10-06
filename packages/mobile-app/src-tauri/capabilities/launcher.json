@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/capabilities.json",
+  "identifier": "launcher",
+  "description": "Only the bundled launcher may select a server. No remote native grants.",
+  "local": true,
+  "webviews": ["main"],
+  "permissions": ["allow-connect-server"]
+}

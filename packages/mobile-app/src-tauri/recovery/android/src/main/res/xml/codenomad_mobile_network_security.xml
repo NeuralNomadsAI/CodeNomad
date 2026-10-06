@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- API 37 adds implicit localhost cleartext permission UNLESS a localhost
+         domain is explicitly defined. This also removes the implicit fallback
+         for other numerical loopback spellings; those inherit the denying base. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">ip6-localhost</domain>
+        <domain>127.0.0.1</domain>
+        <domain>::1</domain>
+    </domain-config>
+</network-security-config>

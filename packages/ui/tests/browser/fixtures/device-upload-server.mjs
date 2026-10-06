@@ -7,7 +7,7 @@ export async function startDeviceUploadFixture() {
     plugins: [solid(), { name: "device-upload-fixture", configureServer(s) {
       s.middlewares.use("/device-upload-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/device-upload-fixture", '<html><body><div id="root" style="display:flex;height:700px;width:1000px"></div><script type="module" src="/tests/browser/fixtures/device-upload.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml("/device-upload-fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root" style="display:flex;height:700px;width:100%;max-width:1000px"></div><script type="module" src="/tests/browser/fixtures/device-upload.tsx"></script></body></html>'))
       })
       s.middlewares.use("/api", (_req, res) => { res.setHeader("Content-Type", "application/json"); res.end("{}") })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },

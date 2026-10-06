@@ -1,0 +1,167 @@
+name: Mobile Android validation and debug APK
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile-android.yml'
+      - 'packages/mobile-app/**'
+      - 'packages/*/package.json'
+      - 'packages/ui/src/styles/tokens.css'
+      - 'packages/ui/src/lib/i18n/messages/**/remoteAccess.ts'
+      - 'packages/server/src/server/routes/auth-pages/login.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.npmrc'
+  workflow_dispatch:
+    inputs:
+      accept_sdk_licenses:
+        description: I am authorized to accept Android SDK licenses on this disposable runner
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-android-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-validation:
+    name: Launcher, source contracts and Rust policy (not a native APK)
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # github.sha is the PR merge commit, not an interpolated fork branch name.
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # reviewed master commit
+        with:
+          toolchain: '1.94.0'
+      - name: Install locked npm dependencies without desktop lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Require production Android XML parsing (no CI skip)
+        working-directory: packages/mobile-app
+        run: java --source 17 tests/native/TransportPolicyTest.java
+      - name: Validate launcher and source-owned native contracts
+        run: |
+          npm run typecheck:mobile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run ios:verify --workspace @codenomad/mobile-app
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run test:mobile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx --workspace @codenomad/mobile-app playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run test:browser --workspace @codenomad/mobile-app
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path packages/mobile-app/src-tauri/policy/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Report APK license gate separately from source validation
+        if: always()
+        env:
+          SDK_LICENSE_AUTHORIZED: ${{ (github.event_name == 'pull_request' && vars.CODENOMAD_ANDROID_ACCEPT_SDK_LICENSES == 'true') || (github.event_name == 'workflow_dispatch' && inputs.accept_sdk_licenses == true) }}
+        run: |
+          'Source/browser/policy checks are not Android compilation or device qualification.' >> $env:GITHUB_STEP_SUMMARY
+          if ($env:SDK_LICENSE_AUTHORIZED -eq 'true') {
+            'SDK license consent is enabled. See the separate ARM64 debug APK job for actual build success/failure; it also requires source validation to pass.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            'ARM64 debug APK job SKIPPED: no explicit SDK license consent. An authorized maintainer must set CODENOMAD_ANDROID_ACCEPT_SDK_LICENSES=true for PR builds, or confirm the manual dispatch checkbox. Source success is not APK build success.' >> $env:GITHUB_STEP_SUMMARY
+          }
+  debug-apk:
+    name: ARM64 debug APK (explicit SDK license consent required)
+    needs: source-validation
+    if: ${{ (github.event_name == 'pull_request' && vars.CODENOMAD_ANDROID_ACCEPT_SDK_LICENSES == 'true') || (github.event_name == 'workflow_dispatch' && inputs.accept_sdk_licenses == true) }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CI: 'true'
+      NDK_VERSION: '28.2.13676358'
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # reviewed master commit
+        with:
+          toolchain: '1.94.0'
+          targets: aarch64-linux-android
+      - name: Set up explicit Android SDK packages on the CI runner only
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          cmdline-tools-version: '12266719'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'true'
+          # CLI 2.12.1 generates API 37; the recovery library uses API 36.
+          packages: platform-tools platforms;android-37.0 platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358
+      - name: Configure and verify execution-host Android paths
+        run: |
+          if (!$env:ANDROID_HOME -or !$env:JAVA_HOME) { throw 'SDK/JDK environment is missing.' }
+          $ndk = Join-Path $env:ANDROID_HOME "ndk\$env:NDK_VERSION"
+          foreach ($relative in @('platforms\android-37.0\android.jar', 'platforms\android-36\android.jar', 'build-tools\36.0.0\aapt.exe')) {
+            if (!(Test-Path (Join-Path $env:ANDROID_HOME $relative))) { throw "Missing SDK component: $relative" }
+          }
+          if (!(Test-Path (Join-Path $ndk 'source.properties'))) { throw 'Pinned NDK is missing.' }
+          "ANDROID_SDK_ROOT=$env:ANDROID_HOME" >> $env:GITHUB_ENV
+          "NDK_HOME=$ndk" >> $env:GITHUB_ENV
+          java -version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Install locked npm dependencies without desktop lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Initialize Android without interactive prompts or extra Rust targets
+        run: npm run android:init --workspace @codenomad/mobile-app -- --ci --skip-targets-install
+      - name: Build development-signed ARM64 debug APK only
+        run: npm run android:debug --workspace @codenomad/mobile-app -- --ci
+      - name: Require APK output and create SHA-256 manifest
+        run: |
+          $outputs = Join-Path $env:GITHUB_WORKSPACE 'packages\mobile-app\src-tauri\gen\android\app\build\outputs\apk'
+          if (!(Test-Path $outputs)) { throw 'Android APK output directory is missing.' }
+          $apks = @(Get-ChildItem $outputs -Recurse -File -Filter '*debug*.apk')
+          if ($apks.Count -eq 0) { throw 'Build completed without a debug APK.' }
+          $destination = Join-Path $env:RUNNER_TEMP 'codenomad-mobile-apk'
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          $hashes = foreach ($apk in $apks) {
+            $target = Join-Path $destination $apk.Name
+            if (Test-Path $target) { throw "Duplicate APK filename: $($apk.Name)" }
+            Copy-Item $apk.FullName $target
+            $hash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($apk.Name)"
+          }
+          $hashes | Set-Content (Join-Path $destination 'SHA256SUMS.txt') -Encoding utf8
+          @("commit=$env:GITHUB_SHA", "run=$env:GITHUB_RUN_ID", 'variant=debug', 'target=aarch64', 'not-for-store-distribution=true') |
+            Set-Content (Join-Path $destination 'build.txt') -Encoding utf8
+          '## ARM64 debug APK SHA-256' >> $env:GITHUB_STEP_SUMMARY
+          $hashes | ForEach-Object { "- ``$_``" >> $env:GITHUB_STEP_SUMMARY }
+      - name: Upload test APK and hashes, not a store/release publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codenomad-android-debug-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codenomad-mobile-apk/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
