@@ -1,0 +1,10 @@
+{
+  "id": "example.session",
+  "name": "Session example",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "Example",
+  "license": "MIT",
+  "repository": "https://github.com/example/session",
+  "permissions": ["session.context"]
+}

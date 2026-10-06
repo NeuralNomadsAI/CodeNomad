@@ -31,6 +31,11 @@ description: |
 
 ## Package Map
 
+External right-panel UI addons use `packages/server/src/panel-extensions/` and
+`packages/ui/src/components/panel-extensions/`; see `dev-docs/PANEL_EXTENSIONS.md`.
+They are sandboxed UI packages, not native OpenCode/backend plugins. Never import
+author code into the primary renderer, expose generic RPC or grant native commands.
+
 - `packages/server/`: Fastify control API, shared OpenCode service, locations, auth, filesystem, Git, Yolo, speech.
 - `packages/ui/`: SolidJS application, generated client adapters, stores, components, i18n.
 - `packages/electron-app/`: Electron host.

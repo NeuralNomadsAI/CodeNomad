@@ -38,6 +38,8 @@ import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
+import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
+import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { WebSearchSettings } from "../opencode/websearch-settings"
@@ -95,6 +97,7 @@ interface HttpServerDeps {
   logger: Logger
   nativeParent: NativeParent
   automationBridgeToken: string
+  panelExtensions?: PanelExtensionStore
 }
 
 interface HttpServerStartResult {
@@ -156,7 +159,7 @@ export function createHttpServer(deps: HttpServerDeps) {
         ...base,
         params: redactSecrets(request.params),
         query: redactSecrets(request.query),
-        body: typeof request.body === "string" ? "<redacted>" : redactSecrets(request.body),
+        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
       }, "HTTP request payload")
     }
     done()
@@ -356,6 +359,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {

@@ -34,6 +34,12 @@ import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files
 import { loadRightPanelPluginManifests, type RightPanelPluginLoadError } from "./plugin-manifest"
 import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
+import { useI18n } from "../../../../lib/i18n"
+import { useTheme } from "../../../../lib/theme"
+import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
+import { ExtensionManager } from "../../../panel-extensions/extension-manager"
+import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
+import type { RightPanelModule } from "./registry"
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
@@ -94,6 +100,9 @@ interface RightPanelProps {
 }
 
 const RightPanel: Component<RightPanelProps> = (props) => {
+  const { locale } = useI18n()
+  const theme = useTheme()
+  const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
   const savedTab = readStoredRightPanelTab("files")
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
@@ -229,7 +238,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     },
   )
 
-  const rightPanelModules = createMemo(() => rightPanelPluginRuntime.modules)
+  const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().filter(entry => entry.enabled).map(entry => {
+    const id = `extension:${entry.manifest.id}`
+    return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
+      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={extensions.verified() && props.isActive() && rightPanelTab() === id}
+        context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
+    }] }
+  }))
+  const rightPanelModules = createMemo(() => [...rightPanelPluginRuntime.modules, ...externalModules()])
   const rightPanelPluginErrors = createMemo(() => rightPanelPluginRuntime.errors)
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
@@ -298,7 +314,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                             active={rightPanelTab() === tab.id}
                             tabId={tabId(tab.id)}
                             panelId={tabPanelId(tab.id)}
-                            label={props.t(tab.labelKey)}
+                            label={tab.label ?? props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
                             tabIndex={rightPanelTab() === tab.id ? 0 : -1}
                             onSelect={() => setRightPanelTab(tab.id)}
@@ -319,7 +335,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           <div class="right-panel-customization-grid">
             <For each={orderedRightPanelTabs()}>
               {(tab) => {
-                const label = () => props.t(tab.labelKey)
+                const label = () => tab.label ?? props.t(tab.labelKey)
                 const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
                 return (
                   <>
@@ -396,6 +412,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           >
             {props.t("instanceShell.rightPanel.customize.reset")}
           </button>
+          <ExtensionManager instanceId={() => props.instanceId} controller={extensions} />
         </div>
       </Show>
 
