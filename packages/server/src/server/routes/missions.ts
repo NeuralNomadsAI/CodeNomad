@@ -5,7 +5,7 @@ import type { MissionListResponse, MissionMap, MissionSnapshot } from "../../mis
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
-import { readMissionMutationError } from "../../missions/rpc-errors"
+import { isMissionCreateNoEffectError, readMissionMutationError } from "../../missions/rpc-errors"
 import { projectMissionActivity } from "../../missions/activity"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
@@ -140,7 +140,12 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       admission.dispatched()
       // Do not abort/race the RPC after dispatch. A rejected transport is NOT a
       // native denial/completion receipt: finally parks the original permit.
-      const result = await rpc.create(input, setup.options) as { mission: MissionMap }
+      let result: { mission: MissionMap }
+      try { result = await rpc.create(input, setup.options) as { mission: MissionMap } }
+      catch (error) {
+        if (isMissionCreateNoEffectError(error, input.requestID, missionID)) admission.settled()
+        throw error
+      }
       const coordinator = result.mission?.actors?.find(actor => actor.sessionId === sessionID && actor.kind === "coordinator")
       if (result.mission?.id !== missionID || result.mission.projectID !== setup.projectID
         || result.mission.coordinatorSessionId !== sessionID || !coordinator

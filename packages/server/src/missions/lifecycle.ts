@@ -40,11 +40,11 @@ export async function controlMission(input: MissionLifecycleInput, options: {
     const targets = mission.actors.filter(actor => input.action !== "start" || actor.kind === "coordinator"
       || mission!.tasks.some(task => task.actorSessionId === actor.sessionId && (task.status === "queued" || task.status === "dispatching" || task.outstandingExecution)))
       .map(actor => ({ sessionID: actor.sessionId, location: { ...actor.location } }))
-    await journal.assertCanAppend(1 + targets.length)
     const event: MissionControlRequestedEvent = {
       ...input, version: MISSION_SCHEMA_VERSION, id: eventID, type: "mission.control-requested", projectID: mission.projectID,
       targets, createdAt: options.timestamp(snapshot),
     }
+    await journal.assertCanAppend(event)
     await journal.append(event)
     snapshot = await journal.snapshot()
     mission = snapshot.missions.find(mission => mission.id === input.missionID)!

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:http"
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, readFile, realpath } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { registerHooks, createRequire } from "node:module"
@@ -28,7 +28,9 @@ const dependencyHook = resolver && registerHooks({ resolve(specifier, context, n
 const version = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim()
 const temporary = path.join(os.tmpdir(), "opencode")
 await mkdir(temporary, { recursive: true })
-const root = await mkdtemp(path.join(temporary, "missions-native-"))
+// Windows CI's TEMP may use RUNNER~1. Direct RPC and the canonical workspace
+// must address one native Location/journal, not two directory spellings.
+const root = await realpath(await mkdtemp(path.join(temporary, "missions-native-")))
 for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_)/i.test(key)) delete process.env[key]
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
 Object.assign(process.env, {
@@ -193,6 +195,10 @@ try {
   plugin = new DesktopPluginLifecycle("missions")
   await plugin.start(paths)
   const location = { directory: project }
+  assert.deepEqual(manager.getServiceLocation(workspace.id), location, "HTTP and direct RPC use the same owned Location")
+  assert.equal((await client.location.get({ location })).project.id,
+    (await client.location.get({ location: manager.getServiceLocation(workspace.id) })).project.id,
+    "HTTP and direct RPC use the same native project authority")
   await until(async () => (await client.plugin.list({ location })).data.some(plugin => plugin.id === "codenomad.missions" && plugin.state.status === "active"))
   const coordinator = await client.session.create({ location, title: "Coordinator" })
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) =>
@@ -418,8 +424,9 @@ try {
   assert.equal(crudReplay.mission.id, crudCreated.mission.id)
   assert.equal(crudReplay.mission.coordinatorSessionId, crudCreated.mission.coordinatorSessionId)
   await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).create({ ...crudInput, objective: "Different creation" }, { location }),
-    error => error.type === "mission.rejected" && error.data?.code === "request-conflict",
-    "Native creation rejects a changed contract with the exact declared request-conflict")
+    error => error.type === "mission.rejected" && error.data?.code === "request-conflict"
+      && isDeepStrictEqual(error.data.noEffect, { requestID: crudInput.requestID, missionID: crudCreated.mission.id }),
+    "Native creation rejects a changed contract with an exact pre-effect request-conflict receipt")
   const crudCoordinator = crudCreated.mission.coordinatorSessionId
   await client.session.prompt({ sessionID: crudCoordinator, text: "Conversation retained by tombstone" })
   await client.session.wait({ sessionID: crudCoordinator }, { signal: AbortSignal.timeout(20_000) })
@@ -454,16 +461,17 @@ try {
   await rejectedMutation("DELETE", `/${crudCreated.mission.id}`, {
     requestId: "stale-delete", expectedRevision: 1,
   }, 409, "revision-conflict")
-   const beforeCreationConflict = await client.session.list({ location, limit: 32 })
-   const conflictingCreation = { requestId: crudInput.requestID, objective: "Different creation", template: "custom" }
-   // POST adds prepared:true and holds physical creation admission. The declared
-   // RPC rejection above is not a successful native settlement receipt: after
-   // dispatch this stricter boundary parks its permit rather than claiming denial.
-   await rejectedMutation("POST", "", conflictingCreation, 409, "creation-uncertain")
-   await rejectedMutation("POST", "", conflictingCreation, 409, "creation-uncertain")
-   await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed held contract" }, 409, "creation-conflict")
-   assert.deepEqual(await client.session.list({ location, limit: 32 }), beforeCreationConflict,
-     "Native conflict and parked HTTP retries never create another coordinator")
+  const beforeCreationConflict = await client.session.list({ location, limit: 32 })
+  const conflictingCreation = { requestId: crudInput.requestID, objective: "Different creation", template: "custom" }
+  // POST adds prepared:true. Healthy existing-create evidence certifies this
+  // exact pre-effect rejection, so admission drains instead of parking a hold.
+  // Ordinary/unknown/post-effect errors still park; real-route regressions cover
+  // their exact/changed retries without weakening creation-uncertain/conflict.
+  await rejectedMutation("POST", "", conflictingCreation, 409, "request-conflict")
+  await rejectedMutation("POST", "", conflictingCreation, 409, "request-conflict")
+  await rejectedMutation("POST", "", { ...conflictingCreation, objective: "Changed contract" }, 409, "request-conflict")
+  assert.deepEqual(await client.session.list({ location, limit: 32 }), beforeCreationConflict,
+    "Native pre-effect conflicts and HTTP retries never create another coordinator")
   await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {
     requestId: "native-crud-update", expectedRevision: 1, objective: "Different edit",
   }, 409, "request-conflict")

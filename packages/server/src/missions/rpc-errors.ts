@@ -27,7 +27,14 @@ const statuses = {
 export const missionMutationErrors = {
   [MISSION_RPC_REJECTION]: {
     type: "object",
-    properties: { code: { type: "string", enum: Object.keys(statuses) } },
+    properties: {
+      code: { type: "string", enum: Object.keys(statuses) },
+      noEffect: {
+        type: "object",
+        properties: { requestID: { type: "string" }, missionID: { type: "string" } },
+        required: ["requestID", "missionID"], additionalProperties: false,
+      },
+    },
     required: ["code"],
     additionalProperties: false,
   },
@@ -45,4 +52,15 @@ export function readMissionMutationError(error: unknown): { code: string; messag
     || !("message" in error) || typeof error.message !== "string") return
   const status = missionMutationStatus(error.data.code)
   if (status) return { code: error.data.code, message: error.message, status }
+}
+
+/** A general mission.rejected (notably post-create invalid-execution) proves nothing. */
+export function isMissionCreateNoEffectError(error: unknown, requestID: string, missionID: string): boolean {
+  const code = readMissionMutationError(error)?.code
+  if (code !== "mission-limit" && code !== "request-conflict") return false
+  const receipt = (error as { data: { noEffect?: unknown } }).data.noEffect
+  return Boolean(receipt && typeof receipt === "object" && !Array.isArray(receipt)
+    && Object.keys(receipt).length === 2
+    && "requestID" in receipt && receipt.requestID === requestID
+    && "missionID" in receipt && receipt.missionID === missionID)
 }

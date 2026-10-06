@@ -23,7 +23,7 @@ import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
-import { MissionControlError } from "./control-error"
+import { MissionControlError, MissionCreateNoEffectError } from "./control-error"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
@@ -140,12 +140,17 @@ export class MissionControl {
     const existingEvent = await this.journal.event(missionID, eventID)
     let snapshot = await this.snapshot()
     const existing = snapshot.missions.find((mission) => mission.id === missionID)
+    if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable) {
+      throw new MissionControlError("Damaged Mission journal cannot authorize creation", "invalid-journal")
+    }
     if (existingEvent) {
       if (existingEvent.type !== "mission.created" || existingEvent.objective !== input.objective
         || existingEvent.notes !== input.notes || existingEvent.template !== input.template || Boolean(existingEvent.prepared) !== Boolean(input.prepared)
         || !sameMissionProfiles(existingEvent.profiles, input.profiles)
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
-        throw new MissionControlError("Creation request ID was already used with a different mission", "request-conflict")
+        // Healthy original creation evidence rejects the changed request before
+        // coordinator lookup/creation, profile writes or journal publication.
+        throw new MissionCreateNoEffectError(input.requestID, missionID, "request-conflict")
       }
       if (!existing) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
       if (input.expectedCoordinatorLocation && !sameLocation(existingEvent.coordinator.location, input.expectedCoordinatorLocation)) {
@@ -153,7 +158,9 @@ export class MissionControl {
       }
       return { mission: existing }
     }
-    if (snapshot.missions.length >= MISSION_MAX_MISSIONS) throw new MissionControlError("Project mission limit reached", "mission-limit")
+    // The exact creation event is absent in a healthy journal, and neither a
+    // coordinator creation nor publication has been attempted by this invocation.
+    if (snapshot.missions.length >= MISSION_MAX_MISSIONS) throw new MissionCreateNoEffectError(input.requestID, missionID)
     await this.journal.assertCanAppend()
     try { await this.options.validateProfiles?.(input.profiles, input.expectedCoordinatorLocation?.directory ?? this.options.project.location.directory) }
     catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }

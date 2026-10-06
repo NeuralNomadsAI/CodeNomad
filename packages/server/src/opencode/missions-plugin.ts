@@ -29,9 +29,10 @@ import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missio
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
 import { buildAssignmentPrompt } from "../missions/recipes"
 import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
+import { MissionCreateNoEffectError } from "../missions/control-error"
 
 interface MutationContext {
-  error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string }): unknown
+  error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
 }
 
 async function mutationResult(context: MutationContext, action: () => Promise<unknown>): Promise<unknown> {
@@ -39,7 +40,8 @@ async function mutationResult(context: MutationContext, action: () => Promise<un
     return JSON.parse(JSON.stringify(await action()))
   } catch (error) {
     if (error instanceof MissionControlError && missionMutationStatus(error.code)) {
-      return context.error(MISSION_RPC_REJECTION, error.message, { code: error.code })
+      return context.error(MISSION_RPC_REJECTION, error.message, { code: error.code,
+        ...(error instanceof MissionCreateNoEffectError ? { noEffect: error.noEffect } : {}) })
     }
     throw error
   }

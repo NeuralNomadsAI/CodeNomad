@@ -56,8 +56,8 @@ export function holdMissionCreation(fence: WorktreeDeletionFence, binding: Bindi
       binding.connection.assertCurrent()
       record.state = "dispatched"
     },
-    // Only the original awaited, validated successful native/RPC response is
-    // evidence here. A later existing root, empty GET, timeout or error is not.
+    // Only the original awaited, validated response (success or exact certified
+    // no-effect create rejection) is evidence. Later GETs and ordinary errors aren't.
     settled() { if (record.state === "dispatched" && !finished) proven = true },
     release() {
       if (finished) return

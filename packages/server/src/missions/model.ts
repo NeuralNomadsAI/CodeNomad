@@ -430,14 +430,14 @@ export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.
   const missions = [...groups.values()].flatMap((group) => {
     const mission = reduceMission(group, discarded)
     return mission ? [mission] : []
-  }).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, MISSION_MAX_MISSIONS)
+  }).sort((left, right) => right.updatedAt - left.updatedAt)
 
   return {
     version: MISSION_SCHEMA_VERSION,
     projectID: missions[0]?.projectID ?? events[0]?.projectID ?? "",
     generatedAt: now,
-    missions,
-    discardedEvents: discarded.count + Math.max(0, groups.size - MISSION_MAX_MISSIONS),
+    missions: missions.slice(0, MISSION_MAX_MISSIONS),
+    discardedEvents: discarded.count + Math.max(0, missions.length - MISSION_MAX_MISSIONS),
     ...(hasInvalidControlHistory(events) ? { controlUnavailable: true } : {}),
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
   }
@@ -819,6 +819,6 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   }
 }
 
-function compareEvents(left: MissionEvent, right: MissionEvent): number {
+export function compareEvents(left: MissionEvent, right: MissionEvent): number {
   return left.createdAt - right.createdAt || left.id.localeCompare(right.id)
 }

@@ -7,6 +7,7 @@ import {
   MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
   reduceMissionEvents,
+  compareEvents,
   type MissionEvent,
   type MissionJsonValue,
   type MissionLocation,
@@ -108,9 +109,13 @@ export class MissionJournal {
     return parsed
   }
 
-  async assertCanAppend(count = 1): Promise<void> {
+  async assertCanAppend(count: number | MissionEvent = 1): Promise<void> {
+    const event = typeof count === "number" ? undefined
+      : this.parseEntry(this.eventKey(count.missionID, count.id), JSON.parse(JSON.stringify(count)))
+    if (typeof count !== "number" && !event) throw new Error("Mission event is not durable owned JSON")
     const capacity = await this.storedCapacity()
-    if (capacity.count + capacity.cleanupSlots.size + count > MISSION_MAX_EVENTS) {
+    const required = event ? this.requiredCapacity(event, capacity.cleanupSlots) : count as number
+    if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
       throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
     }
   }
@@ -128,15 +133,25 @@ export class MissionJournal {
       return
     }
     const capacity = await this.storedCapacity()
-    const consumesSlot = this.matchesCapacityReceipt(parsed, capacity.cleanupSlots)
-    const required = consumesSlot ? 0 : 1
-      + (parsed.type === "mission.deleted" ? parsed.cleanupTargets?.length ?? 0 : 0)
-      + (parsed.type === "mission.control-requested" ? parsed.targets.length : 0)
+    const required = this.requiredCapacity(parsed, capacity.cleanupSlots)
     if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
       throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
     }
     current?.()
     await this.storage.set(key, stored, current)
+  }
+
+  private requiredCapacity(event: MissionEvent, slots: Map<string, CapacitySlot>): number {
+    if (this.matchesCapacityReceipt(event, slots)) return 0
+    // A newer Stop replaces only this mission's pending start/pause slots.
+    // Physical events, cleanup reservations and other missions remain counted.
+    const superseded = event.type === "mission.control-requested" && event.action === "stop"
+      ? [...slots.values()].filter(({ intent }) => intent.type === "mission.control-requested" && intent.action !== "stop"
+        && intent.projectID === event.projectID && intent.missionID === event.missionID
+        && event.expectedRevision > intent.expectedRevision
+        && compareEvents(event, intent) > 0).length : 0
+    return 1 + (event.type === "mission.deleted" ? event.cleanupTargets?.length ?? 0 : 0)
+      + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
   private async storedCapacity(): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot> }> {
@@ -165,7 +180,7 @@ export class MissionJournal {
         } else if (event?.type === "mission.session-cleaned") receipts.push(event)
         else if (event?.type === "mission.control-requested") {
           const previous = latestControls.get(event.missionID)
-          if (!previous || event.createdAt > previous.createdAt || (event.createdAt === previous.createdAt && event.id > previous.id)) latestControls.set(event.missionID, event)
+          if (!previous || compareEvents(event, previous) > 0) latestControls.set(event.missionID, event)
         } else if (event?.type === "mission.control-applied") receipts.push(event)
       }
       after = page.next

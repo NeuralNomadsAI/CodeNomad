@@ -3,7 +3,7 @@ import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionDeleteInput, MissionSessionAdapter, NativeMissionSession } from "./control-types"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
-import { MISSION_MAX_EVENTS, type MissionJsonValue, type MissionMap } from "./model"
+import { MISSION_MAX_EVENTS, MISSION_MAX_MISSIONS, type MissionJsonValue, type MissionMap } from "./model"
 import { cleanupReceiptID } from "./cleanup-projection"
 
 function fixture() {
@@ -72,6 +72,37 @@ function fixture() {
 
 const specialist = (mission: MissionMap) => mission.actors.find((actor) => actor.kind === "specialist")!.sessionId
 const code = (expected: string) => (error: unknown) => error instanceof MissionControlError && error.code === expected
+
+test("valid tombstones do not exhaust live reconstruction or block subsequent native business work", async () => {
+  const f = fixture()
+  for (let index = 0; index < MISSION_MAX_MISSIONS; index++) {
+    const mission = await f.create(`historical-${index}`)
+    await f.control().delete(f.deletion(mission))
+  }
+  let mission = await f.create("next-live-mission")
+  const snapshot = await f.control().snapshot()
+  assert.equal(f.values.size, 2 * MISSION_MAX_MISSIONS + 1)
+  assert.equal(snapshot.missions.length, 1)
+  assert.equal(snapshot.discardedEvents, 0)
+  assert.equal(snapshot.controlUnavailable, undefined)
+  assert.equal(snapshot.cleanupUnavailable, undefined)
+  const declaration = { missionID: mission.id, taskKey: "native-work", title: "Work", brief: "Read returned evidence", role: "specialist", blockedBy: [] }
+  mission = (await f.control().declare(mission.coordinatorSessionId, declaration)).mission
+  mission = (await f.control().report(mission.coordinatorSessionId, { missionID: mission.id, taskKey: declaration.taskKey,
+    outcome: "completed", summary: "Returned evidence", evidence: [], next: [], final: false })).mission
+  mission = (await f.control().briefing(mission.coordinatorSessionId, { missionID: mission.id, requestID: "initial-briefing",
+    basedOnRevision: mission.revision, summary: "Work complete", achieved: [], ongoing: [], obstacles: [], next: [] })).mission
+  mission = (await f.control().report(mission.coordinatorSessionId, { missionID: mission.id, outcome: "completed",
+    summary: "Delivered", evidence: [], next: [], final: true })).mission
+  assert.equal(mission.status, "completed")
+  assert.equal(f.native.size, MISSION_MAX_MISSIONS + 1)
+  assert.deepEqual(f.removed, [], "tombstones never remove conversations by default")
+
+  const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${f.journal.projectToken}`
+  f.values.set(`${prefix}/${mission.id}/evt_invalid`, { damaged: true })
+  assert.equal((await f.control().snapshot()).discardedEvents, 1)
+  await assert.rejects(f.control().declare(mission.coordinatorSessionId, declaration), code("invalid-journal"))
+})
 
 test("bridge cleanup authority is limited to pending tombstone targets and expires with receipts", async () => {
   const f = fixture()

@@ -196,3 +196,91 @@ test("legitimate retained cleanup receipts discharge only their exact declared t
   assert.equal(f.values.size, 2000)
   await f.journal.assertCanAppend(0)
 })
+
+test("prospective Stop preflight and append replace only the superseded control reservation", async () => {
+  const f = fixture(); f.fillTo(1997)
+  const pause = { ...f.control(), action: "pause" as const }
+  await f.journal.append(pause)
+  const stop = { ...f.control(f.base.missionID, "evt_stop"), createdAt: 2, expectedRevision: 2 }
+  await f.journal.assertCanAppend(stop)
+  await f.journal.append(stop)
+  assert.equal(f.values.size, 1999)
+  await assert.rejects(f.journal.append(f.applied(pause)), /safety limit/, "an old receipt cannot consume the new Stop's slot")
+  await f.journal.append(f.applied(stop))
+  assert.equal(f.values.size, 2000)
+  await f.journal.assertCanAppend(0)
+  const writes = f.counts().writes
+  await f.journal.append(stop)
+  assert.equal(f.counts().writes, writes, "the original intent replay writes nothing")
+})
+
+test("prospective control credit cannot waive ordering, revision, scope or real receipt capacity", async () => {
+  for (const fault of ["project", "mission", "time", "tie-order", "revision", "nonterminal", "old-stop", "extra-target"] as const) {
+    const f = fixture(); f.fillTo(1997)
+    const previous = { ...f.control(), action: fault === "old-stop" ? "stop" as const : "pause" as const }
+    await f.journal.append(previous)
+    const stop = { ...f.control(f.base.missionID, "evt_stop"), createdAt: 2, expectedRevision: 2 }
+    if (fault === "project") stop.projectID = "foreign-project"
+    if (fault === "mission") stop.missionID = "msn_other"
+    if (fault === "time") stop.createdAt = 0
+    if (fault === "tie-order") { stop.createdAt = previous.createdAt; stop.id = "evt_aaa" }
+    if (fault === "revision") stop.expectedRevision = previous.expectedRevision
+    if (fault === "nonterminal") stop.action = "pause"
+    if (fault === "extra-target") stop.targets.push({ sessionID: "ses_other", location: { directory: "/owned/project" } })
+    const bytes = structuredClone([...f.values]), writes = f.counts().writes
+    await assert.rejects(f.journal.assertCanAppend(stop), /safety limit|durable|another project/, fault)
+    await assert.rejects(f.journal.append(stop), /safety limit|durable|another project/, fault)
+    assert.deepEqual([...f.values], bytes, fault)
+    assert.equal(f.counts().writes, writes, fault)
+  }
+})
+
+test("Stop leaves cleanup and other-mission control reservations intact", async () => {
+  const f = fixture(); f.fillTo(1994)
+  const pause = { ...f.control(), action: "pause" as const }
+  await f.journal.append(pause)
+  await f.journal.append(f.deletion())
+  await f.journal.append({ ...f.control("msn_other", "evt_other_control"), action: "pause" })
+  const stop = { ...f.control(f.base.missionID, "evt_stop"), createdAt: 2, expectedRevision: 2 }
+  const bytes = structuredClone([...f.values])
+  await assert.rejects(f.journal.assertCanAppend(stop), /safety limit/)
+  await assert.rejects(f.journal.append(stop), /safety limit/)
+  assert.deepEqual([...f.values], bytes)
+})
+
+test("append rechecks prospective Stop capacity after an earlier preflight", async () => {
+  const f = fixture(); f.fillTo(1997)
+  await f.journal.append({ ...f.control(), action: "pause" })
+  const stop = { ...f.control(f.base.missionID, "evt_stop"), createdAt: 2, expectedRevision: 2 }
+  await f.journal.assertCanAppend(stop)
+  await f.journal.append(f.ordinary())
+  const bytes = structuredClone([...f.values])
+  await assert.rejects(f.journal.append(stop), /safety limit/)
+  assert.deepEqual([...f.values], bytes)
+})
+
+for (const [pauseID, stopID, newer] of [["evt_Z", "evt_a", false], ["evt_a", "evt_Z", true]] as const) {
+  test(`equal-timestamp Stop ${stopID} uses reconstruction's ordering relative to Pause ${pauseID}`, async () => {
+    const f = fixture()
+    f.seed({ ...f.base, id: "evt_created", type: "mission.created", projectCanonical: "/owned/project",
+      objective: "Fixture", template: "custom", coordinator: { sessionID: "ses_owned", title: "Coordinator", location: { directory: "/owned/project" } } })
+    f.fillTo(1997)
+    const pause = { ...f.control(f.base.missionID, pauseID), action: "pause" as const, createdAt: 2 }
+    await f.journal.append(pause)
+    const stop = { ...f.control(f.base.missionID, stopID), createdAt: 2, expectedRevision: 2 }
+    if (!newer) {
+      const bytes = structuredClone([...f.values])
+      await assert.rejects(f.journal.assertCanAppend(stop), /safety limit/)
+      await assert.rejects(f.journal.append(stop), /safety limit/)
+      assert.deepEqual([...f.values], bytes)
+      return
+    }
+    await f.journal.assertCanAppend(stop)
+    await f.journal.append(stop)
+    assert.equal((await f.journal.snapshot()).missions[0].control?.id, stopID)
+    await f.journal.append(f.applied(stop))
+    assert.deepEqual((await f.journal.snapshot()).missions[0].control?.pending, [])
+    assert.equal(f.values.size, 2000)
+    await f.journal.assertCanAppend(0)
+  })
+}

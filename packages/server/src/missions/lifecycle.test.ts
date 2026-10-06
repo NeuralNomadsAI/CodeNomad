@@ -3,7 +3,7 @@ import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
 import type { MissionJsonValue, MissionMap } from "./model"
-import { parseMissionEvent, type MissionStorage } from "./journal"
+import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
 import { controlResumeAdmissionID } from "./receipt-identity"
 
 function fixture() {
@@ -50,7 +50,7 @@ function fixture() {
   const create = async () => (await control().create({ requestID: "create", objective: "Fixture", template: "custom", prepared: true })).mission
   const action = (mission: MissionMap, action: "start" | "pause" | "stop", requestID = `${action}-${mission.revision}`) => ({ missionID: mission.id, action, expectedRevision: mission.revision, requestID })
   const delegate = (mission: MissionMap, key: string) => control().delegate(mission.coordinatorSessionId, { missionID: mission.id, taskKey: key, title: key, brief: key, role: "worker", blockedBy: [], delivery: "queue" })
-  return { control, create, calls, failing, action, delegate, values, native, transport, state }
+  return { control, create, calls, failing, action, delegate, values, native, transport, state, storage }
 }
 const code = (value: string) => (error: unknown) => error instanceof MissionControlError && error.code === value
 
@@ -270,4 +270,36 @@ test("Stop can supersede an incomplete start while CAS prevents stale new action
   await f.control().lifecycle(start)
   assert.equal(f.calls.length, count)
   assert.equal(mission.status, "stopped")
+})
+
+test("Stop supersedes pending Pause reservations at the physical journal limit without replay", async () => {
+  const f = fixture()
+  let mission = (await f.control().lifecycle(f.action(await f.create(), "start"))).mission
+  const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${new MissionJournal(f.storage, "project", "/repo").projectToken}`
+  for (let index = 0; f.values.size < 1997; index++) {
+    const event = { version: 1 as const, missionID: mission.id, projectID: mission.projectID, id: `evt_update_${index}`,
+      type: "mission.updated" as const, requestID: `update-${index}`, expectedRevision: 3 + index,
+      objective: "Fixture", notesSpecified: false, createdAt: 2000 + index }
+    assert.ok(parseMissionEvent(event))
+    f.values.set(`${prefix}/${mission.id}/${event.id}`, event)
+  }
+  mission = (await f.control().snapshot()).missions[0]
+  f.failing.add(mission.coordinatorSessionId)
+  const pause = f.action(mission, "pause")
+  await assert.rejects(f.control().lifecycle(pause), code("control-pending"))
+  mission = (await f.control().snapshot()).missions[0]
+  assert.equal(f.values.size, 1998)
+  assert.equal(mission.control?.pending.length, 1)
+  f.failing.clear()
+  const stop = f.action(mission, "stop")
+  mission = (await f.control().lifecycle(stop)).mission
+  assert.equal(f.values.size, 2000)
+  assert.equal(mission.status, "stopped")
+  assert.deepEqual(mission.control?.pending, [])
+  assert.deepEqual(f.calls.map(call => call.action), ["start", "pause", "stop"])
+  const bytes = structuredClone([...f.values])
+  await f.control().lifecycle(stop)
+  await f.control().lifecycle(pause)
+  assert.deepEqual([...f.values], bytes)
+  assert.equal(f.calls.length, 3)
 })
