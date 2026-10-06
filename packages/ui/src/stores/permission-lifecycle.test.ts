@@ -24,7 +24,9 @@ import { setSessions } from "./session-state"
 const instanceIds: string[] = []
 const originalCreateClient = sdkManager.createClient
 const originalPendingRequests = serverApi.getPendingRequests
-beforeEach(() => { serverApi.getPendingRequests = async () => ({ supported: false }) })
+beforeEach(() => { serverApi.getPendingRequests = async (_id, directories) => ({ supported: true,
+  directories: directories.map((directory) => ({ directory, status: "ok", locations: [{ location: { directory }, permissions: [], forms: [] }] })),
+}) })
 
 function addTestInstance(id: string, client: OpenCodeClient): void {
   instanceIds.push(id)
@@ -103,15 +105,21 @@ test("pending request sync cannot erase newer SSE mutations", async () => {
   const newPermission = {
     id: "new-permission", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
   }
-  let resolvePermissions!: (value: { location: never; data: never[] }) => void
+  let resolvePermissions!: () => void
   let permissionCalls = 0
   const client = {
     permission: { request: { list: () => ++permissionCalls === 1
-      ? new Promise((resolve) => { resolvePermissions = resolve })
+      ? new Promise(() => {})
       : Promise.resolve({ location: {} as never, data: [newPermission] }) } },
     form: { list: async () => ({ location: {} as never, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("pending-request-race", client)
+  serverApi.getPendingRequests = async () => {
+    if (++permissionCalls === 1) await new Promise<void>((resolve) => { resolvePermissions = resolve })
+    return { supported: true, directories: [{ directory: "/workspace", status: "ok", locations: [{
+      location: { directory: "/workspace" }, permissions: permissionCalls === 1 ? [] : [newPermission], forms: [],
+    }] }] }
+  }
   setSessions((previous) => new Map(previous).set("pending-request-race", new Map([["session", {
     id: "session", location: { directory: "/workspace" },
   } as any]])))
@@ -122,13 +130,13 @@ test("pending request sync cannot erase newer SSE mutations", async () => {
   await new Promise<void>((resolve) => setImmediate(resolve))
   updateInstance("pending-request-race", { pid: 2 })
   addPermissionToQueue("pending-request-race", newPermission)
-  resolvePermissions({ location: {} as never, data: [] })
+  resolvePermissions()
 
   await sync
   assert.deepEqual(getPermissionQueue("pending-request-race").map(({ id }) => id), ["new-permission"])
 })
 
-test("pending request sync uses native global lists with an explicit directory", async () => {
+test("pending request sync uses loaded-only broker recovery, never native per-directory lists", async () => {
   const locations: unknown[] = []
   const client = {
     permission: { request: {
@@ -147,6 +155,11 @@ test("pending request sync uses native global lists with an explicit directory",
     },
   } as unknown as OpenCodeClient
   addTestInstance("native-pending-api", client)
+  serverApi.getPendingRequests = async (_id, directories) => ({ supported: true,
+    directories: directories.map((directory) => ({ directory, status: "ok", locations: [{ location: { directory }, forms: [],
+      permissions: directory === "/worktree" ? [{ id: "permission", sessionID: "session", action: "edit", resources: ["*"] }] : [],
+    }] })),
+  })
   setSessions((previous) => {
     const next = new Map(previous)
     next.set("native-pending-api", new Map([["session", {
@@ -157,10 +170,7 @@ test("pending request sync uses native global lists with an explicit directory",
 
   await syncPendingRequests("native-pending-api")
 
-  assert.deepEqual(locations, [
-    { directory: "/workspace" }, { directory: "/worktree" },
-    { directory: "/workspace" }, { directory: "/worktree" },
-  ])
+  assert.deepEqual(locations, [])
   assert.deepEqual(getPermissionQueue("native-pending-api").map(({ id }) => id), ["permission"])
 })
 
@@ -176,6 +186,9 @@ test("liveness recovers a missed permission with an idle session and empty queue
     form: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("missed-permission", client)
+  serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: "/workspace", status: "ok", locations: [{
+    location: { directory: "/workspace" }, forms: [], permissions: [{ id: "missed", sessionID: "session", action: "edit", resources: ["*"] }],
+  }] }] })
 
   await reconcilePendingRequestLiveness("missed-permission")
 
@@ -211,6 +224,7 @@ test("partial pending scans preserve permission reply tombstones", async () => {
     id: "session", location,
   } as any]])))
   markPermissionReplied("partial-permission-scan", "answered")
+  serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: "/workspace", status: "error" }] })
 
   await assert.rejects(syncPendingRequests("partial-permission-scan"))
 
@@ -227,13 +241,14 @@ test("pending authority normalizes Windows directory keys", async () => {
   addPermissionToQueue("normalized-permission-location", {
     id: "stale", sessionID: "deleted", action: "edit", resources: ["*"], metadata: {},
   }, "C:\\Repo\\")
+  serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: "/workspace", status: "ok", locations: [{ location, permissions: [], forms: [] }] }] })
 
   await syncPendingRequests("normalized-permission-location")
 
   assert.deepEqual(getPermissionQueue("normalized-permission-location"), [])
 })
 
-test("cancelling a bounded pending scan does not launch queued locations", async () => {
+test("cancelling a bounded snapshot does not launch further batches or ordinary lists", async () => {
   let calls = 0
   const list = (_input: unknown, options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
     calls++
@@ -245,6 +260,11 @@ test("cancelling a bounded pending scan does not launch queued locations", async
   } as unknown as OpenCodeClient
   const instanceId = "cancelled-bounded-scan"
   addTestInstance(instanceId, client)
+  let brokerReads = 0
+  serverApi.getPendingRequests = async (_id, _directories, signal) => new Promise<never>((_resolve, reject) => {
+    brokerReads++
+    signal?.addEventListener("abort", () => reject(signal.reason), { once: true })
+  })
   setSessions((previous) => new Map(previous).set(instanceId, new Map(Array.from({ length: 10 }, (_, index) => [
     `session-${index}`,
     { id: `session-${index}`, location: { directory: `/workspace-${index}` } } as any,
@@ -252,11 +272,12 @@ test("cancelling a bounded pending scan does not launch queued locations", async
 
   const sync = syncPendingRequests(instanceId)
   await new Promise<void>((resolve) => setImmediate(resolve))
-  // The shared background-read budget admits two requests across both scans.
-  assert.equal(calls, 2)
+  assert.equal(brokerReads, 1)
+  assert.equal(calls, 0)
   removeInstance(instanceId)
   await sync
   await new Promise<void>((resolve) => setImmediate(resolve))
 
-  assert.equal(calls, 2)
+  assert.equal(brokerReads, 1)
+  assert.equal(calls, 0)
 })

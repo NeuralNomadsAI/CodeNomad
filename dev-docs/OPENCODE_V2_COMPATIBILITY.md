@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.22**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.24**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -339,15 +339,82 @@ The compaction-isolation fixture additionally passes on 2.0.22, preserving a
 second session's progress while the first provider response is held. Detailed
 test counts, limits, independent review and remote CI results belong in the PR.
 
-### Loaded-only pending recovery on 2.0.22
+### OpenCode 2.0.24 qualification
+
+Client/plugin pins and the recommended target are **2.0.24**; the technical
+minimum remains **2.0.7**. The authenticated isolated Windows daemon exposes 117
+OpenAPI paths (116 on 2.0.22), adding `/api/vcs/init`. Its 167 structural schema
+changes predominantly declare `LocationNotFoundError` on location-sensitive
+routes; other changes add optional `ServerInfo.capabilities.persistentPty`, a
+literal WorktreeError `_tag` and the VCS-init error. No proxy route is added.
+Published declarations change in 11/30 client files (+service-probe), 3/60
+plugin files, 8/36 protocol files and 3/102 schema files (three retired legacy
+IDE/question declarations removed). CodeNomad does not import those removed
+declarations or adopt VCS init. None demonstrates a higher blocking minimum.
+
+Native service contender/probe and persistent-PTY handoff internals changed,
+but CodeNomad still uses its selected CLI status/start/password adapter and
+bounded authenticated registration fallback, not SDK `Service.ensure/stop`.
+These upstream changes do not authorize automatic replacement/restart of the
+shared daemon. The existing lifecycle and proxy regressions remain applicable.
+
+The source review also accounts for behavior changes beyond generated APIs:
+
+- Non-native compaction can select the configured compaction agent's model and
+  budget; native compaction keeps its native path. CodeNomad delegates compaction
+  to OpenCode and does not reproduce that selection. The isolation fixture tests
+  concurrent progress, not every alternate summarizer-model configuration.
+- ChatGPT temporarily stops remote `/models` synchronization and uses the native
+  fallback catalog; local providers share discovery/cache logic and automatic
+  defaults prefer text-capable models. CodeNomad consumes native catalogs and
+  connection metadata, not those internal discovery implementations. Synthetic
+  usage/account tests do not certify real provider availability or OAuth login.
+- MCP retries are bounded to transient connection/read-only catalog failures;
+  OAuth callback success waits for token exchange. These remain native-owned:
+  no CodeNomad mutation replay or credential-secret read is introduced.
+- Windows instruction ancestry now compares directory identity case-insensitively;
+  skill frontmatter accepts `disable-model-invocation`. Native instruction/skill
+  resolution remains authoritative. Subagent completion inserts paragraph breaks
+  between text blocks; this changes text, not the message/event envelope.
+- Persistent PTY runtime directories move under native state, with availability
+  advertised in server metadata and best-effort restart handoff. CodeNomad does
+  not select those directories or initiate handoff during connection. No live
+  desktop terminal-survival test across a service restart is claimed here.
+
+These changes are not grounds for a higher minimum or a runtime allowlist.
+
+Windows validation uses Node **25.2.1** and Bun **1.3.14**, not the Node version
+recorded for the preceding qualification. Twelve isolated 2.0.24 suites pass:
+automation, pruning, Location/worktree/proxy/event relay, environment, fork,
+aside, degraded Git, prompt skills, provider usage/accounts, permission receipts
+and blank-session cleanup. The same 2.0.24 client/plugin dependencies pass nine
+isolated suites on the minimum 2.0.7 runtime: automation, pruning,
+Location/worktree/proxy/event relay, environment, fork, aside, degraded Git,
+prompt skills and blank-session cleanup. Provider usage/accounts and permission
+receipt suites remain operation-specific current-runtime checks, not new global
+minimum claims. A real 2 MiB synthetic compaction passes with a
+second session completing before releasing the first session's provider and
+with the pruning outline enabled. Shared server/UI/plugin builds and typechecks
+pass. The 37 pending-request UI tests and browser interruption regressions cover
+unsupported capability, partial recovery, compaction, reconnection, settlement,
+late responses and editor drafts.
+
+The broad UI unit run reports 1189 passes and two failures, reproduced unchanged
+from the base revision in an extracted source tree: `classic-dark-surfaces`' old
+accent-hover expectation and `tool-content`'s copy-text expectation. Neither test
+path imports the runtime client (its OpenCode imports are type-only). Do not
+describe that suite as green or fold unrelated UI fixes into this qualification.
+Detailed receipts, package integrity hashes and command logs belong in the PR.
+
+### Capability-checked loaded-only pending recovery
 
 The bundled pruning entry also registers the fixed read-only
 `codenomad.pending-requests.snapshot` RPC under its existing backend-presence
-lifecycle. This narrow native-internals exception is qualified against published
-OpenCode **2.0.22** and bundled Effect **4.0.0-rc.112**. Registration uses the
-native setup context's version, not browser input or plugin options. Missing or
-different versions omit only this new capability; the global minimum remains
-**2.0.7** and the recommendation remains **2.0.22**. Existing pruning/history
+lifecycle. Registration requires the actual native RPC capability, not a runtime
+or Effect version allowlist. Each read validates the native graph/queue contracts
+below and fails non-authoritatively if they are absent or incompatible. Tested
+versions are evidence, not permission to block an untested version. The global
+minimum remains **2.0.7**. Existing pruning/history
 methods retain their own support and write checks.
 
 The reader uses private native LocationServiceMap, Location, Form and Permission
@@ -359,8 +426,9 @@ complete coverage (including empty cold directories) with actual caller
 UTF-8 output and a two-second reader deadline. The broker's 30-second overall
 deadline includes bounded Git ownership revalidation (eight directories at a
 time through the existing Git worker). Overflow or unsafe serialization
-fails rather than truncates. This is unsupported internal coupling: another
-runtime needs separate qualification, not a version-range expansion.
+fails rather than truncates. This remains unsupported internal coupling;
+qualification must distinguish untested contracts from demonstrated failures.
+An unfamiliar label alone never disables the reader.
 
 The UI sends at most eight directories per request, also retaining the escaped
 URL budget, to bound Git-heavy historical authorization within its independent
@@ -390,8 +458,14 @@ Successful capability negotiation is connection-scoped and occurs only after
 all origin/coverage/placement checks. The existing compaction guard defers an
 unverified capability before inventory work and again before forwarding. It
 cannot probe during an observed compaction until capability was previously
-verified; this conservative hold is intentional. Older/unsupported runtimes
-retain guarded legacy discovery. No general RPC proxy, native pending-API
+verified; this conservative hold is intentional. On **every runtime version**, a
+missing capability retains known requests and reports incomplete recovery. It
+never triggers ordinary queue lists across historical/inactive worktrees. Only
+settlement reconciliation reads the explicitly authorized request location;
+this does not certify automatic discovery of missing requests on unsupported
+daemons. Rehydration retains known queues and drafts until authoritative
+coverage or settlement; bounded snapshots never retire settlement tombstones.
+No general RPC proxy, native pending-API
 dependency, provisioning mutation, reload or service restart was added.
 
 Candidate traversal does not construct cold Locations. Native HTTP middleware
@@ -403,3 +477,33 @@ existing graph/Bus/TUI CPU costs or claim live desktop acceptance. Isolated
 published production-loader/authenticated-router proof and ordinary bundle
 resolution are separate from desktop deployment qualification; detailed checks
 and receipts belong in the PR.
+
+The 2.0.22→2.0.24 source audit finds unchanged LocationServiceMap, Form,
+Permission, RPC handler and queue schemas; LocationServiceMap's implementation
+wrapper changes only its TypeScript error parameter. Effect stays rc.112.
+The published production-discovery/authenticated-router fixture passes separately
+on 2.0.22 and 2.0.24, including three actual Git worktrees and 100 cold candidates:
+four preloaded Locations remain four, and native boot logs show no additional
+Location construction. Active/idle permissions and ordinary/global Forms are
+recovered, and absent/expired/returning backend presence follows the existing
+lifecycle. These results are not exhaustive qualification of every runtime.
+Untested, future/custom or missing version labels do not block registration;
+RPC and graph/queue capability validation remain mandatory on each read.
+
+After removing the unjustified version gate, the native fixture passes on
+**2.0.23 and 2.0.24**, with the same 100 cold candidates, three actual worktrees,
+four retained Locations/native boots and recovered global queues. All 29 focused
+reader/broker/admission tests pass. Registration tests cover 2.0.7–2.0.24,
+future/custom/prerelease/missing labels and a throwing `app` getter to ensure
+version metadata is never consulted. The tagged 2.0.7–2.0.24 source comparison
+finds unchanged existing-only LocationServiceMap and queue-list contracts;
+older changes affect cancellation/rejection feedback and types, not this read.
+No source or test evidence justified the removed version allowlist.
+
+Deployment acceptance remains separate. After deploying the new CodeNomad
+bundle, observe passive request recovery with inactive worktrees: compare native
+Location boot/eviction counts and process RSS/private memory over a comparable
+window, recording explicit user actions separately. An explicitly confirmed
+shared-service restart may release Locations accumulated before the fix; neither
+an upgrade nor this recovery code restarts or evicts them automatically. Without
+a memory profile, do not attribute the entire observed 10 GiB to this fallback.

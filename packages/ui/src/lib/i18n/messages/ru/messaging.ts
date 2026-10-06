@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "Открыть разговор",
   "interruption.openExternal": "Открыть запрос из «{title}»",
   "interruption.projectRequest": "Запрос проекта",
+  "interruption.recoveryIncomplete": "Восстановление вопросов и разрешений неполное. Известные запросы сохранены; неактивные рабочие деревья не загружаются.",
   "interruption.answered": "Ответ получен",
   "interruption.noAnswer": "Нет ответа",
   "promptInput.skills.title": "Навыки",

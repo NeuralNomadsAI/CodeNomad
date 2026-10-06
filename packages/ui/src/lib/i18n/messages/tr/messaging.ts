@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "Sohbeti görüntüle",
   "interruption.openExternal": "{title} sohbetinden gelen isteği aç",
   "interruption.projectRequest": "Proje isteği",
+  "interruption.recoveryIncomplete": "Soru ve izin kurtarma işlemi eksik. Bilinen istekler korunur; etkin olmayan çalışma ağaçları yüklenmez.",
   "interruption.answered": "Yanıtlandı",
   "interruption.noAnswer": "Yanıt yok",
   "promptInput.skills.title": "Beceriler",

@@ -16,6 +16,7 @@ export const messagingMessages = {
   "interruption.viewConversation": "查看会话",
   "interruption.openExternal": "打开来自 {title} 的请求",
   "interruption.projectRequest": "项目请求",
+  "interruption.recoveryIncomplete": "问题和权限请求恢复不完整。已知请求会保留；不会加载不活跃的工作树。",
   "interruption.answered": "已回答",
   "interruption.noAnswer": "无回答",
   "promptInput.skills.title": "技能",
