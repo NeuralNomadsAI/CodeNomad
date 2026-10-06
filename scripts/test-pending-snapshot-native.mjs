@@ -1,5 +1,5 @@
 // Opt-in, in-process correctness proof. No listener, service discovery, user database or runtime mutation.
-// Run with Bun and absolute paths: <published-2.0.22-or-2.0.24-study-directory> <fresh-output-directory>.
+// Run with Bun and absolute paths: <isolated-published-package-directory> <fresh-output-directory>.
 import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import path from "node:path"
@@ -15,7 +15,7 @@ await fs.mkdir(output) // Refuse overwriting an earlier receipt or fixture.
 const repository = fileURLToPath(new URL("../", import.meta.url))
 const packageRoot = path.join(study, "node_modules")
 const version = JSON.parse(await fs.readFile(path.join(packageRoot, "@opencode/core/package.json"), "utf8")).version
-assert(["2.0.22", "2.0.24"].includes(version), "Use a source-qualified native version, not arbitrary private internals")
+assert(/^2\.0\.\d+$/.test(version), "Use explicit published V2 packages, not an unrelated runtime")
 const packages = {}
 for (const name of ["core", "server", "plugin", "client", "schema", "protocol", "util"]) {
   const filename = path.join(packageRoot, "@opencode", name, "package.json")

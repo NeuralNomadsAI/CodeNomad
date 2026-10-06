@@ -23,7 +23,7 @@ const form = { id: "frm_pending", sessionID: "global", title: "Idle global form"
 const permission = { id: "per_pending", sessionID: "ses_idle", action: "fixture", resources: [] }
 const good = (ref: Location.Ref, permissions = () => Effect.succeed<unknown>([permission]), forms = () => Effect.succeed<unknown>([form])) =>
   Layer.succeedContext(Context.empty().pipe(Context.add(locationTag, ref), Context.add(formTag, { list: forms }), Context.add(permissionTag, { list: permissions })))
-const read = (map: unknown, value: unknown) => readPendingSnapshot(value, "2.0.24").pipe(
+const read = (map: unknown, value: unknown) => readPendingSnapshot(value).pipe(
   Effect.provideService(mapTag, map), Effect.provideService(locationTag, origin),
 )
 const fails = Effect.fn("test.pendingSnapshot.fails")(function* (effect: Effect.Effect<unknown, unknown>) {
@@ -66,8 +66,7 @@ test("bounded existing-only queues preserve global forms, exact provenance, nume
 test("context, graph, shape, encoding, limits and timeout failures remain non-authoritative", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const loaded = ref("loaded")
-    yield* fails(readPendingSnapshot(input(loaded), "2.0.22"))
-    yield* fails(readPendingSnapshot(input(loaded), "2.0.23"))
+    yield* fails(readPendingSnapshot(input(loaded)))
     yield* fails(read({}, input(loaded)))
     const unknown = yield* LayerMap.make(() => good(loaded), { idleTimeToLive: "1 hour" })
     yield* unknown.contextEffect("changed-key-format")
@@ -133,15 +132,13 @@ test("eviction and same-key replacement never construct absent candidates; cance
   })))
 })
 
-test("registration trusts native setup version/shape only and invalidates already-admitted callbacks on disposal", async () => {
+test("registration requires native RPC capability and invalidates already-admitted callbacks on disposal", async () => {
   const registrations: Array<{ definition: unknown; handlers: any; dispose: boolean }> = []
   const rpc = Object.assign(() => {}, { register: (definition: unknown, handlers: unknown) => Effect.acquireRelease(
     Effect.sync(() => { const entry = { definition, handlers, dispose: false }; registrations.push(entry); return entry }),
     (entry) => Effect.sync(() => { entry.dispose = true }),
   ).pipe(Effect.as({ dispose: Effect.void, events: { emit: () => Effect.void } })) })
   const ctx = (version: string) => ({ app: { version }, rpc }) as unknown as Plugin.Context
-  for (const version of ["2.0.23", "2.0.25", "2.0.24-dev.1", "custom"]) await Effect.runPromise(Effect.scoped(registerPendingSnapshot(ctx(version))))
-  await Effect.runPromise(Effect.scoped(registerPendingSnapshot(ctx(undefined as unknown as string))))
   await Effect.runPromise(Effect.scoped(registerPendingSnapshot({ app: { version: "2.0.22" }, rpc: {} } as unknown as Plugin.Context)))
   assert.equal(registrations.length, 0)
   const scope = await Effect.runPromise(Scope.make())
@@ -168,14 +165,19 @@ test("registration trusts native setup version/shape only and invalidates alread
   assert(Exit.isFailure(unavailable))
 })
 
-test("qualified native 2.0.24 registers the same presence-owned loaded-only reader", async () => {
+test("untested, custom and missing version labels do not block a capable reader", async () => {
   let registered = 0
   const rpc = Object.assign(() => {}, { register: (definition: unknown) => Effect.sync(() => {
     assert.equal(definition, PendingSnapshotRpc)
     registered++
   }) })
-  await Effect.runPromise(Effect.scoped(registerPendingSnapshot({ app: { version: "2.0.24" }, rpc } as unknown as Plugin.Context)))
-  assert.equal(registered, 1)
+  const versions = [...Array.from({ length: 18 }, (_, index) => `2.0.${index + 7}`), "2.0.25", "2.0.24-dev.1", "custom", undefined]
+  for (const version of versions) await Effect.runPromise(Effect.scoped(registerPendingSnapshot({ app: { version }, rpc } as unknown as Plugin.Context)))
+  assert.equal(registered, versions.length)
+  await Effect.runPromise(Effect.scoped(registerPendingSnapshot(new Proxy({ rpc }, {
+    get(target, key) { if (key === "app") throw new Error("Version metadata must not be consulted"); return Reflect.get(target, key) },
+  }) as unknown as Plugin.Context)))
+  assert.equal(registered, versions.length + 1)
 })
 
 test("production entry shares one presence lifecycle for old/new RPCs, never double-registers and disposes scopes", async t => {
@@ -240,7 +242,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   for (const version of ["2.0.23", undefined]) {
     Object.assign(ctx.app, { version })
     await Effect.runPromise(Effect.scoped(desktopPlugin(directory).effect(ctx)))
-    assert.equal(entries.at(-1)?.id, "codenomad.session-pruning", "Unsupported/missing native version retains old RPCs only")
+    assert.equal(entries.at(-1)?.id, "codenomad.pending-requests", "Untested/missing version does not block loaded-only recovery")
     assert(entries.at(-1)?.closed)
   }
   Object.assign(ctx.app, { version: "2.0.22" })

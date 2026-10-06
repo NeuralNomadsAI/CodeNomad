@@ -358,6 +358,31 @@ bounded authenticated registration fallback, not SDK `Service.ensure/stop`.
 These upstream changes do not authorize automatic replacement/restart of the
 shared daemon. The existing lifecycle and proxy regressions remain applicable.
 
+The source review also accounts for behavior changes beyond generated APIs:
+
+- Non-native compaction can select the configured compaction agent's model and
+  budget; native compaction keeps its native path. CodeNomad delegates compaction
+  to OpenCode and does not reproduce that selection. The isolation fixture tests
+  concurrent progress, not every alternate summarizer-model configuration.
+- ChatGPT temporarily stops remote `/models` synchronization and uses the native
+  fallback catalog; local providers share discovery/cache logic and automatic
+  defaults prefer text-capable models. CodeNomad consumes native catalogs and
+  connection metadata, not those internal discovery implementations. Synthetic
+  usage/account tests do not certify real provider availability or OAuth login.
+- MCP retries are bounded to transient connection/read-only catalog failures;
+  OAuth callback success waits for token exchange. These remain native-owned:
+  no CodeNomad mutation replay or credential-secret read is introduced.
+- Windows instruction ancestry now compares directory identity case-insensitively;
+  skill frontmatter accepts `disable-model-invocation`. Native instruction/skill
+  resolution remains authoritative. Subagent completion inserts paragraph breaks
+  between text blocks; this changes text, not the message/event envelope.
+- Persistent PTY runtime directories move under native state, with availability
+  advertised in server metadata and best-effort restart handoff. CodeNomad does
+  not select those directories or initiate handoff during connection. No live
+  desktop terminal-survival test across a service restart is claimed here.
+
+These changes are not grounds for a higher minimum or a runtime allowlist.
+
 Windows validation uses Node **25.2.1** and Bun **1.3.14**, not the Node version
 recorded for the preceding qualification. Twelve isolated 2.0.24 suites pass:
 automation, pruning, Location/worktree/proxy/event relay, environment, fork,
@@ -381,15 +406,15 @@ path imports the runtime client (its OpenCode imports are type-only). Do not
 describe that suite as green or fold unrelated UI fixes into this qualification.
 Detailed receipts, package integrity hashes and command logs belong in the PR.
 
-### Loaded-only pending recovery on qualified runtimes
+### Capability-checked loaded-only pending recovery
 
 The bundled pruning entry also registers the fixed read-only
 `codenomad.pending-requests.snapshot` RPC under its existing backend-presence
-lifecycle. This narrow native-internals exception is qualified against published
-OpenCode **2.0.22 and 2.0.24** and bundled Effect **4.0.0-rc.112**. Registration uses the
-native setup context's version, not browser input or plugin options. Missing or
-different versions omit only this new capability; the global minimum remains
-**2.0.7**. Existing pruning/history
+lifecycle. Registration requires the actual native RPC capability, not a runtime
+or Effect version allowlist. Each read validates the native graph/queue contracts
+below and fails non-authoritatively if they are absent or incompatible. Tested
+versions are evidence, not permission to block an untested version. The global
+minimum remains **2.0.7**. Existing pruning/history
 methods retain their own support and write checks.
 
 The reader uses private native LocationServiceMap, Location, Form and Permission
@@ -401,8 +426,9 @@ complete coverage (including empty cold directories) with actual caller
 UTF-8 output and a two-second reader deadline. The broker's 30-second overall
 deadline includes bounded Git ownership revalidation (eight directories at a
 time through the existing Git worker). Overflow or unsafe serialization
-fails rather than truncates. This is unsupported internal coupling: another
-runtime needs separate qualification, not a version-range expansion.
+fails rather than truncates. This remains unsupported internal coupling;
+qualification must distinguish untested contracts from demonstrated failures.
+An unfamiliar label alone never disables the reader.
 
 The UI sends at most eight directories per request, also retaining the escaped
 URL budget, to bound Git-heavy historical authorization within its independent
@@ -460,8 +486,19 @@ on 2.0.22 and 2.0.24, including three actual Git worktrees and 100 cold candidat
 four preloaded Locations remain four, and native boot logs show no additional
 Location construction. Active/idle permissions and ordinary/global Forms are
 recovered, and absent/expired/returning backend presence follows the existing
-lifecycle. This is not a version-range claim: 2.0.23, future/custom labels and
-different Effect versions remain unqualified for the private reader.
+lifecycle. These results are not exhaustive qualification of every runtime.
+Untested, future/custom or missing version labels do not block registration;
+RPC and graph/queue capability validation remain mandatory on each read.
+
+After removing the unjustified version gate, the native fixture passes on
+**2.0.23 and 2.0.24**, with the same 100 cold candidates, three actual worktrees,
+four retained Locations/native boots and recovered global queues. All 29 focused
+reader/broker/admission tests pass. Registration tests cover 2.0.7–2.0.24,
+future/custom/prerelease/missing labels and a throwing `app` getter to ensure
+version metadata is never consulted. The tagged 2.0.7–2.0.24 source comparison
+finds unchanged existing-only LocationServiceMap and queue-list contracts;
+older changes affect cancellation/rejection feedback and types, not this read.
+No source or test evidence justified the removed version allowlist.
 
 Deployment acceptance remains separate. After deploying the new CodeNomad
 bundle, observe passive request recovery with inactive worktrees: compare native

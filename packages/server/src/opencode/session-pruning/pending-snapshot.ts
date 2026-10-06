@@ -4,10 +4,8 @@ import { Location, Rpc, type Plugin } from "@opencode/plugin/effect"
 import { Form } from "@opencode/schema/form"
 import { Permission } from "@opencode/schema/permission"
 import { Cause, Context, Effect, MutableHashMap, Option, Predicate, RcMap, Schema, type Scope } from "effect"
-import effectPackage from "effect/package.json" with { type: "json" }
 
 export const PENDING_SNAPSHOT_RPC_ID = "codenomad.pending-requests"
-export const PENDING_SNAPSHOT_NATIVE_VERSIONS = ["2.0.22", "2.0.24"] as const
 export const PENDING_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024
 const MAX_DIRECTORIES = 64
 const MAX_REQUESTS = 1024
@@ -63,16 +61,14 @@ const nativeRef = Schema.toType(Location.Ref).check(Schema.makeFilter((ref) => S
 const nativeForms = Schema.Array(Schema.toType(Form.Info)).check(Schema.isMaxLength(MAX_REQUESTS))
 const nativePermissions = Schema.Array(Schema.toType(Permission.Request)).check(Schema.isMaxLength(MAX_REQUESTS))
 
-// Private qualified 2.0.22/2.0.24 / Effect rc.112 internals, not a supported native pending API.
+// Private loaded-only contracts, not a supported native pending API.
+// Validate the actual graph and queue shapes; an untested version is not an incompatibility.
 // Optional lookup keeps the public RPC handler's R=never without importing Core or constructing a graph.
 const mapTag = Context.Service<never, unknown>("@opencode/example/LocationServiceMap")
 const formTag = Context.Service<never, unknown>("@opencode/Form")
 const permissionTag = Context.Service<never, unknown>("@opencode/Permission")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
-const nativeVersion = Schema.Union(PENDING_SNAPSHOT_NATIVE_VERSIONS.map((version) => Schema.Literal(version)))
-const compatible = (version: unknown) => Schema.is(nativeVersion)(version) && effectPackage.version === "4.0.0-rc.112"
 const hostShape = Schema.Struct({
-  app: Schema.Struct({ version: nativeVersion }),
   rpc: Schema.declare<Plugin.Context["rpc"]>((value): value is Plugin.Context["rpc"] =>
     Predicate.isFunction(value) && Predicate.hasProperty(value, "register") && Predicate.isFunction(value.register)),
 })
@@ -104,8 +100,7 @@ const queues = Effect.fn("pendingSnapshot.queues")(function* (context: NativeCon
   return { location, forms, permissions, formValue, permissionValue, locationValue: Context.get(context, locationTag) }
 })
 
-export const readPendingSnapshot = Effect.fn("readPendingSnapshot")(function* (input: unknown, executingVersion: unknown) {
-  if (!compatible(executingVersion)) return yield* unavailable()
+export const readPendingSnapshot = Effect.fn("readPendingSnapshot")(function* (input: unknown) {
   const decoded = yield* Schema.decodeUnknownEffect(pendingSnapshotInput)(input, { onExcessProperty: "error" })
   const origin = yield* Schema.decodeUnknownEffect(nativeRef)(yield* Effect.serviceOption(locationTag).pipe(Effect.flatMap(Effect.fromOption)))
   const found = yield* Effect.serviceOption(mapTag)
@@ -147,13 +142,13 @@ export const readPendingSnapshot = Effect.fn("readPendingSnapshot")(function* (i
 }, Effect.scoped, Effect.timeout("2 seconds"))
 
 export const registerPendingSnapshot = Effect.fn("registerPendingSnapshot")(function* (ctx: Plugin.Context) {
-  // Authority comes from native setup, not browser input or plugin options. Existing pruning has no version gate.
-  if (!compatible(ctx.app?.version) || !Schema.is(hostShape)(ctx)) return
+  // Capability comes from native setup, not a version label or browser input.
+  if (!Schema.is(hostShape)(ctx)) return
   let present = true
   yield* ctx.rpc.register(PendingSnapshotRpc, {
     snapshot: (input, call) => Effect.gen(function* () {
       if (!present) return yield* unavailable()
-      const output = yield* readPendingSnapshot(input, ctx.app.version)
+      const output = yield* readPendingSnapshot(input)
       if (!present) return yield* unavailable()
       return output
     }).pipe(Effect.catchCause((cause) => Cause.hasInterruptsOnly(cause) ? Effect.interrupt :
