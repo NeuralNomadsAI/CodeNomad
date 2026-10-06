@@ -22,7 +22,9 @@
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
-    "bumpVersion": "node ./scripts/bump-version.js"
+    "bumpVersion": "node ./scripts/bump-version.js",
+    "build:help": "node scripts/build-help.mjs",
+    "test:help": "node --test scripts/test-help.mjs"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",
