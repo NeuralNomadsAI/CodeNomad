@@ -1,14 +1,16 @@
 import { For, Show, createEffect, createSignal, type Accessor } from "solid-js"
-import type { PanelExtensionManifest } from "../../../../server/src/api-types"
+import type { PanelExtensionManifest, PanelExtensionCatalogEntry } from "../../../../server/src/api-types"
 import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
 import type { PanelExtensionsController } from "./use-panel-extensions"
+import { ExtensionCatalog } from "./extension-catalog"
 
 export function ExtensionManager(props: { instanceId: Accessor<string>; controller: PanelExtensionsController }) {
   const { t } = useI18n()
   const [busy, setBusy] = createSignal(false), [failed, setFailed] = createSignal(false), [acknowledged, setAcknowledged] = createSignal(false)
-  const [preview, setPreview] = createSignal<{ manifest: PanelExtensionManifest; digest: string; archive: string; previousDigest?: string }>()
+  const [preview, setPreview] = createSignal<{ manifest: PanelExtensionManifest; digest: string;
+    source: { kind: "zip"; archive: string } | { kind: "catalog" }; previousDigest?: string }>()
   const [removal, setRemoval] = createSignal<{ id: string; digest: string }>()
   createEffect(() => {
     const pending = removal()
@@ -34,7 +36,15 @@ export function ExtensionManager(props: { instanceId: Accessor<string>; controll
       })
       const result = await panelExtensionsApi.inspect(archive)
       const previousDigest = props.controller.entries().find(entry => entry.manifest.id === result.manifest.id)?.digest
-      setPreview({ ...result, archive, previousDigest })
+      setPreview({ ...result, source: { kind: "zip", archive }, previousDigest })
+    })
+  }
+  const inspectCatalog = (entry: PanelExtensionCatalogEntry) => {
+    setPreview(undefined); setAcknowledged(false)
+    void run(async () => {
+      const previousDigest = props.controller.entries().find(value => value.manifest.id === entry.manifest.id)?.digest
+      const result = await panelExtensionsApi.inspectCatalog(entry.manifest.id, entry.digest)
+      setPreview({ ...result, source: { kind: "catalog" }, previousDigest })
     })
   }
   return <section class="panel-extension-manager" aria-label={t("panelExtensions.title")}>
@@ -59,12 +69,16 @@ export function ExtensionManager(props: { instanceId: Accessor<string>; controll
       <label><input type="checkbox" checked={acknowledged()} onChange={event => setAcknowledged(event.currentTarget.checked)} />{t("panelExtensions.trust")}</label>
       <div class="panel-extension-actions">
         <button type="button" class="right-panel-customization-button" disabled={busy() || !acknowledged()} onClick={() => void run(async () => {
-          await panelExtensionsApi.install(pkg().archive, pkg().digest, pkg().previousDigest)
+          const selected = pkg(), source = selected.source
+          if (source.kind === "zip") await panelExtensionsApi.install(source.archive, selected.digest, selected.previousDigest)
+          else await panelExtensionsApi.installCatalog(selected.manifest.id, selected.digest, selected.previousDigest)
           setPreview(undefined)
         })}>{t("panelExtensions.confirm")}</button>
         <button type="button" class="right-panel-customization-button" disabled={busy()} onClick={() => setPreview(undefined)}>{t("panelExtensions.cancel")}</button>
       </div>
     </div>}</Show>
+    <ExtensionCatalog installed={props.controller.entries} busy={busy} verified={props.controller.verified} inspect={inspectCatalog} />
+    <h3>{t("panelExtensions.catalog.installedTitle")}</h3>
     <For each={props.controller.entries()}>{entry => <div class="panel-extension-row" role="group" aria-label={entry.manifest.name}>
       <span title={`${entry.manifest.id}\n${entry.manifest.author}\n${entry.manifest.repository}\n${entry.digest}`}>{entry.manifest.name} {entry.manifest.version}</span>
       <div class="panel-extension-actions">

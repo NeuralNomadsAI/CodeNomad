@@ -27,3 +27,16 @@ export interface PanelExtensionContext {
   locale: string
   appearance: "light" | "dark"
 }
+
+export interface PanelExtensionCatalogEntry {
+  manifest: Omit<PanelExtensionManifest, "apiVersion" | "permissions"> & { apiVersion: number; permissions: string[] }
+  description: string
+  digest: string
+  release: { tag: string; asset: string }
+  compatible: boolean
+}
+
+export interface PanelExtensionCatalog {
+  source: string
+  entries: PanelExtensionCatalogEntry[]
+}

@@ -1,9 +1,18 @@
 # External right-panel extensions — API 1
 
 CodeNomad panel extensions are independently distributed **UI addons**, not
-OpenCode plugins. Authors publish their own GitHub repositories and release ZIPs.
-Users install the downloaded ZIP from **Customize right panel → Panel extensions**;
-no CodeNomad rebuild or shared OpenCode service restart is involved.
+OpenCode plugins. Open **Customize right panel → Panel extensions → Available
+online** to browse/search the official catalogue, choose an addon, review the
+downloaded package and confirm installation. No manual ZIP download, CodeNomad
+rebuild or shared OpenCode service restart is involved. Manual ZIP installation
+remains available for offline/unlisted packages.
+
+The official index lives in
+[`NeuralNomadsAI/CodeNomad-Extensions`](https://github.com/NeuralNomadsAI/CodeNomad-Extensions).
+That repository may hold **multiple** official addons plus the catalogue. Other
+authors can host addons in their own repositories; the curated catalogue points
+to their exact release assets. Separate means separate from the main CodeNomad
+application repository, not a mandatory repository per addon.
 
 This first distribution contract intentionally exposes only session identity and
 appearance. It does **not** implement #801's gallery or grant transcript/image/file
@@ -80,7 +89,7 @@ are unchanged. The old package remains intact on validation, conflict or storage
 failure. Concurrent mutations compare exact digests. Removal is explicit and
 removes the installed code plus its grants, not sessions or project data.
 
-There is no marketplace, URL installer, silent update, automatic project discovery,
+There is no arbitrary URL installer, silent update, automatic project discovery,
 signature authority or remote-code startup hook. Keep trusted source/releases
 available for audit; never regard a SHA-256 or a GitHub URL alone as proof of trust.
 
@@ -147,14 +156,48 @@ python -m zipfile -l example.session-1.0.0.zip
 ```
 
 Publish this built asset, **not** GitHub's repository source ZIP (which has a parent
-directory and other files). No central repository is required: author-owned repos
-are supported. A curated index can later link to those immutable releases without
-becoming an execution/install authority.
+directory and other files). Author-owned repositories remain supported. Submit a
+catalogue PR to the official repository with the full manifest, plain-text
+description, exact tag/ZIP filename and SHA-256; see its `CONTRIBUTING.md`.
+
+## Online catalogue and download boundary
+
+The backend fetches only the fixed public HTTPS index
+`https://raw.githubusercontent.com/NeuralNomadsAI/CodeNomad-Extensions/main/catalog.json`.
+Opening the manager loads metadata only, not every addon. Display reads coalesce
+and cache for 30 seconds; Refresh bypasses the snapshot. A failed online read never
+disables installed addons or local ZIP installation. The UI shows unsupported
+API/permission entries as incompatible and disables their install action.
+
+Selecting an entry reads a fresh index and downloads that **exact** tagged asset.
+The hash and full ZIP manifest must match the catalogue. Confirmation repeats the
+fresh index/download verification: withdrawal, changed digest/metadata, corrupt
+bytes, a changed installed target or missing consent cannot silently install a
+different package. Updates remain explicit version changes, never automatic.
+
+Index schema 1 is `{ schemaVersion: 1, extensions: [...] }`. Each entry has
+`manifest`, `description`, `digest` and `release: { tag, asset }`; unknown fields
+and duplicate addon IDs are rejected. Limits are 128 entries and 256 KiB UTF-8.
+Packages use the same existing ZIP/storage budgets and disabled-first policy.
+
+Clients submit addon ID/digest, **not a URL**. Repository/tag/asset URLs are derived
+from the validated index. Downloads allow only HTTPS `github.com` and its exact
+public release CDN hosts `release-assets.githubusercontent.com` and
+`objects.githubusercontent.com`, with at most three redirects and a 15-second
+deadline. Credentials, nonstandard ports, arbitrary hosts/protocols, redirected
+catalogues and oversized streamed bodies fail closed. No GitHub token, CodeNomad
+cookie, directory, session content or provider secret is sent upstream.
+
+The reviewed index is the integrity source, not a cryptographic author signature.
+Removing an index entry blocks future online installation, not installed copies
+or explicit local ZIP installation. A compromised approved author/index is not
+made safe by a checksum: user trust, minimal permissions and isolation still apply.
 
 ## Checks
 
 ```sh
 node --import tsx --test packages/server/src/panel-extensions/extension.test.ts
+node --import tsx --test packages/server/src/panel-extensions/catalog.test.ts
 node scripts/test-panel-extension-native.mjs # Windows, isolated Tauri/WebView2
 # from packages/ui:
 node --import tsx --test tests/browser/panel-extensions.test.ts
@@ -162,5 +205,7 @@ node --import tsx --test tests/browser/panel-extensions.test.ts
 
 Server checks cover format/permission/API validation, ZIP bounds/path attacks,
 durable scopes, replacement revocation, concurrent changes and corrupt-state
-preservation. Rendered tests use the real right panel, installer, route handlers
-and event dispatcher to exercise consent, lifecycle, stale reads and frame policy.
+preservation. Catalogue checks cover SSRF/redirect/budget rejection, manifest/hash
+verification, metadata-only discovery and withdrawn selections after warm reads.
+Rendered tests use the real right panel, installer, routes and event dispatcher
+for online browse/search/consent, offline fallback, incompatibility and lifecycle.

@@ -54,3 +54,20 @@
   align-items: center;
   gap: var(--space-xs);
 }
+
+.panel-extension-catalog {
+  margin-block: var(--space-md);
+}
+
+.panel-extension-catalog h3 {
+  margin: 0;
+}
+
+.panel-extension-search {
+  width: 100%;
+  margin-top: var(--space-sm);
+  padding: var(--space-xs);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+}

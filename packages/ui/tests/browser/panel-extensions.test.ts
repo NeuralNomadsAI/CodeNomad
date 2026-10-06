@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { after, before, test } from "node:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
@@ -12,16 +13,29 @@ import { PanelExtensionStore } from "../../../server/src/panel-extensions/store"
 import { readPanelExtensionArchive } from "../../../server/src/panel-extensions/archive"
 import { fixtureArchive, fixtureManifest } from "../../../server/src/panel-extensions/archive-fixture"
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
+import { createPanelExtensionCatalog, PANEL_EXTENSION_CATALOG_URL } from "../../../server/src/panel-extensions/catalog"
 
 const app = Fastify()
 let server: ViteDevServer, browser: Browser, url: string, root: string, store: PanelExtensionStore
 const example = `<style>body { font: 14px system-ui; color: #222; background: #fff; }</style><p id="context"></p><script>
   codenomad.onContext(context => document.querySelector('#context').textContent = context.sessionId + ' · ' + context.locale + ' · ' + context.appearance);
 </script>`
+const onlineArchive = fixtureArchive(example)
+const onlineDigest = createHash("sha256").update(onlineArchive).digest("hex")
+const onlineEntry = { manifest: fixtureManifest, description: "A catalogue example", digest: onlineDigest, release: { tag: "v1.0.0", asset: "example.session-1.0.0.zip" } }
+let catalogEntries = [onlineEntry], catalogOffline = false, archiveRequests = 0
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-browser-"))
   store = new PanelExtensionStore(root)
-  registerPanelExtensionRoutes(app, { store, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
+  const catalog = createPanelExtensionCatalog((async (url: string | URL | Request) => {
+    if (String(url) === PANEL_EXTENSION_CATALOG_URL) {
+      if (catalogOffline) return new Response("Offline", { status: 503 })
+      return new Response(JSON.stringify({ schemaVersion: 1, extensions: catalogEntries }))
+    }
+    archiveRequests++
+    return new Response(new Uint8Array(onlineArchive).buffer)
+  }) as typeof fetch)
+  registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "extension-fixture", configureServer(vite) {
@@ -60,6 +74,64 @@ async function installDirect(html: string) {
   await store.activate(pkg.manifest.id, pkg.digest, "/first", "project", true)
   return pkg
 }
+
+test("online catalogue lists without downloading code; explicit consent installs an addon tab", async () => {
+  const view = await page(), before = archiveRequests
+  try {
+    await view.getByRole("button", { name: "Customize right panel" }).click()
+    const catalogue = view.getByRole("region", { name: "Available online" })
+    await catalogue.getByText("A catalogue example", { exact: true }).waitFor()
+    assert.equal(archiveRequests, before)
+    await catalogue.getByRole("searchbox", { name: "Search extensions" }).fill("no-such-addon")
+    await catalogue.getByText("No matching extensions.").waitFor()
+    await catalogue.getByRole("searchbox", { name: "Search extensions" }).fill("session")
+    await catalogue.getByRole("button", { name: "Install…", exact: true }).click()
+    await view.getByRole("checkbox", { name: "I trust this package and its author" }).waitFor()
+    assert.deepEqual(await store.list("/first"), [])
+    assert.equal(archiveRequests, before + 1)
+    await view.getByRole("checkbox", { name: "I trust this package and its author" }).check()
+    await view.getByRole("button", { name: "Install disabled", exact: true }).click()
+    await catalogue.getByRole("button", { name: "Installed", exact: true }).waitFor()
+    assert.equal(await catalogue.getByRole("button", { name: "Installed", exact: true }).isDisabled(), true)
+    await view.getByRole("checkbox", { name: "This folder", exact: true }).check()
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-a" }).waitFor()
+    assert.equal(archiveRequests, before + 2, "Install re-reads the approved package")
+    await store.remove(fixtureManifest.id, onlineDigest)
+  } finally { await view.close() }
+})
+
+test("withdrawn online selection cannot install after its trust preview was approved", async () => {
+  const view = await page()
+  try {
+    await view.getByRole("button", { name: "Customize right panel" }).click()
+    await view.getByRole("region", { name: "Available online" }).getByRole("button", { name: "Install…", exact: true }).click()
+    await view.getByRole("checkbox", { name: "I trust this package and its author" }).check()
+    catalogEntries = []
+    await view.getByRole("button", { name: "Install disabled", exact: true }).click()
+    await view.getByRole("alert").filter({ hasText: "Extension unavailable" }).waitFor()
+    assert.deepEqual(await store.list("/first"), [])
+  } finally { catalogEntries = [onlineEntry]; await view.close() }
+})
+
+test("incompatible catalogue entries stay unselectable and offline discovery does not block ZIP installation", async () => {
+  catalogEntries = [onlineEntry, { ...onlineEntry, manifest: { ...fixtureManifest, id: "future.example", name: "Future panel", apiVersion: 99 } }]
+  const view = await page(), before = archiveRequests
+  try {
+    await view.getByRole("button", { name: "Customize right panel" }).click()
+    const catalogue = view.getByRole("region", { name: "Available online" })
+    await catalogue.getByRole("button", { name: "Refresh", exact: true }).click()
+    await catalogue.getByRole("button", { name: "Incompatible (API 99)", exact: true }).waitFor()
+    assert.equal(await catalogue.getByRole("button", { name: "Incompatible (API 99)", exact: true }).isDisabled(), true)
+    assert.equal(archiveRequests, before)
+    catalogOffline = true
+    await catalogue.getByRole("button", { name: "Refresh", exact: true }).click()
+    await catalogue.getByRole("alert").filter({ hasText: "Online catalogue unavailable" }).waitFor()
+    assert.equal(await view.getByRole("button", { name: "Install from ZIP…" }).isDisabled(), false)
+    await view.locator('input[type="file"]').setInputFiles({ name: "local.zip", mimeType: "application/zip", buffer: fixtureArchive(example) })
+    await view.getByRole("checkbox", { name: "I trust this package and its author" }).waitFor()
+  } finally { catalogOffline = false; catalogEntries = [onlineEntry]; await view.close() }
+})
 
 test("manual ZIP consent, scoped tab, context switch, revoke, replacement and removal use real routes", async () => {
   const view = await page()

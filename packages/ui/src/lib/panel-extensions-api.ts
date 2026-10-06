@@ -1,4 +1,4 @@
-import type { PanelExtensionManifest, PanelExtensionSummary } from "../../../server/src/api-types"
+import type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionCatalog } from "../../../server/src/api-types"
 import { CODENOMAD_API_BASE } from "./api-base"
 import { authenticatedFetch } from "./auth-recovery"
 
@@ -11,6 +11,13 @@ async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
 }
 const query = (instanceId: string) => `?${new URLSearchParams({ instanceId })}`
 export const panelExtensionsApi = {
+  catalog: (refresh: boolean, signal: AbortSignal) => request<PanelExtensionCatalog>(`/catalog${refresh ? "?refresh=true" : ""}`, { signal }),
+  inspectCatalog: (id: string, digest: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/catalog/inspect", {
+    method: "POST", body: JSON.stringify({ id, digest }),
+  }),
+  installCatalog: (id: string, digest: string, previousDigest?: string) => request("/catalog/install", {
+    method: "POST", body: JSON.stringify({ id, digest, previousDigest, acknowledged: true }),
+  }),
   list: (instanceId: string, signal?: AbortSignal) => request<PanelExtensionSummary[]>(query(instanceId), { signal }),
   inspect: (archiveBase64: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/inspect", {
     method: "POST", body: JSON.stringify({ archiveBase64 }),
