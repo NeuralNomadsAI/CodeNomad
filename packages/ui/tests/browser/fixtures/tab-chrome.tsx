@@ -4,6 +4,7 @@ import InstanceTabs from "../../../src/components/instance-tabs"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import { ThemeProvider } from "../../../src/lib/theme"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import type { AppTabRecord } from "../../../src/stores/app-tabs"
 import type { Instance } from "../../../src/types/instance"
@@ -52,4 +53,4 @@ function Fixture() {
   </>
 }
 
-render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

@@ -7,6 +7,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
 import { SettingsService } from "./settings/service"
@@ -502,6 +503,9 @@ async function main() {
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
+  const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
+    eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
+  })
 
   const httpServer = options.http || nativeParent.available
     ? createHttpServer({
@@ -523,6 +527,7 @@ async function main() {
         remoteProxySessionManager,
         yoloManager,
         permissionReceipts,
+        panelExtensions,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -552,6 +557,7 @@ async function main() {
         remoteProxySessionManager,
         yoloManager,
         permissionReceipts,
+        panelExtensions,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,

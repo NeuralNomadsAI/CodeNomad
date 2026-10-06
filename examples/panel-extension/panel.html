@@ -1,0 +1,18 @@
+<!-- SPDX-License-Identifier: MIT; example code, copyright CodeNomad contributors. -->
+<style>
+  body { margin: 0; padding: 16px; font: 14px system-ui; color: #222; background: #fff; }
+  body[data-appearance="dark"] { color: #eee; background: #171717; }
+  p { overflow-wrap: anywhere; }
+</style>
+<h1 id="title"></h1>
+<p id="session" aria-live="polite"></p>
+<script>
+  codenomad.onContext(context => {
+    document.body.dataset.appearance = context.appearance
+    document.documentElement.lang = context.locale
+    document.documentElement.dir = context.locale === "he" ? "rtl" : "ltr"
+    const french = context.locale === "fr"
+    document.querySelector("#title").textContent = french ? "Session actuelle" : "Current session"
+    document.querySelector("#session").textContent = context.sessionId ?? (french ? "Aucune session" : "No session")
+  })
+</script>

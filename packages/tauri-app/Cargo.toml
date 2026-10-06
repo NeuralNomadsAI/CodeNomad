@@ -1,5 +1,5 @@
 [workspace]
-members = ["src-tauri", "tests/windows-input", "tests/macos-window"]
+members = ["src-tauri", "tests/windows-input", "tests/macos-window", "tests/panel-extension"]
 default-members = ["src-tauri"]
 resolver = "2"
 
