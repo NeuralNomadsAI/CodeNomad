@@ -1,13 +1,32 @@
 # Native-first Missions: assembled-product acceptance
 
+## Current status — 2026-10-07
+
+This document retains the stronger signed-child/product acceptance design and
+dated receipts below. The current delivery specification is
+[`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md), published in open
+[PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866); current-source
+qualification is indexed in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
+The earlier restriction on opening a replacement PR has been superseded by the
+user's explicit publication request. Installation, release and merge remain
+unauthorized for this work.
+
+Native-first task execution, tab-local preferences, explicit task-session policy
+and Location depth are published. Scoped UX and inactive recurrence-core review
+loops close at zero remaining findings. Neither closes this stronger authority
+gate or proves the scheduled product operates with every desktop closed. Current
+Windows production launch qualification refuses the harness Job's forbidden
+breakaway without fallback; the existing full backend/lifetime composition must
+be qualified from an authorized ordinary native parent before activation.
+
 ## Delivery rule
 
 Finish a coherent, homogeneous product before starting the final independent
 gatekeeper review loop. Targeted tests during integration are not that review.
 After assembly, correct and re-review until there are zero findings, then run
 fresh frozen-source core, browser, native transport and packaged-host validation.
-No replacement PR, merge, deployment, real Mission conversion or demo-data
-creation is authorized by this implementation effort.
+No merge, deployment, real Mission conversion or demo-data creation is authorized
+by this implementation effort. PR publication follows the current status above.
 
 Implementation lives only in the `missions-native-subsessions-20261003` experiment.
 The corrected original root implementation and staged tree remain unchanged;

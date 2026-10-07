@@ -9,19 +9,28 @@ unmerged; published source, local corrections and planned recurrence are distinc
 The whole integrated product is not yet accepted. Do not promote the historical
 results below into current-source or installed-app qualification.
 
-- Published head at the start of this update: `cfea513b`; local committed Stop/
-  capacity corrections: `530dc8af` and `bd2a8cee`. Remaining local deliveries include
-  tab-local preferences, task-session policy and the separate Location depth editor.
+- Published head at the start of this update: `cfea513b`; corrections now pushed
+  through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
+  preferences/task-session policy/depth (`972910fe`) and inactive recurrence core
+  (`1a17bbcc`). No installation, service restart or merge accompanies this push.
 - Current focused UX delivery: 240 browser Missions cases and 32 unit/parity cases.
   Independent review then ran 94 browser and 59 unit/backend cases and reproduced
   two actionable findings: stale clean depth after native config/reconnect, and no
   per-playbook task-policy inheritance. Corrections and fresh regression checks are
-  being reviewed; this is not an approval of recurrence or the packaged host.
+  independently closed, including the follow-up in-flight depth race: zero scoped
+  findings remain, five focused cases pass. This is not an approval of recurrence
+  integration or the packaged host.
 - UI/server typechecks pass after moving the depth HTTP snapshot to `api-types.ts`,
   away from the Node implementation dependency chain.
 - Previous changing-source aggregate: server 2,247 pass/0 fail/8 skipped; browser
   711 pass/39 fail/2 skipped. A focused rerun does not erase either receipt. A
   frozen-source aggregate and fresh hosted CI are still required.
+- New complete server aggregate: **2,279 pass / 0 fail / 8 skipped**, no
+  cancellations, 2,287 selected cases. Completed in 1,312 seconds on unchanged
+  execution inputs; only the separately invoked positive-loader qualification
+  fixture changed outside the ordinary `**/*.test.ts` selection. The eight
+  platform/opt-in skips remain skips, not positive native qualification. Receipt:
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115938c56001IqmfdmI8K4DLrV.out`.
 - Three isolated permission-fallback failures were fixture omissions: the dock was
   given neither a registered current conversation nor its identity. With that real
   conversation fixture, all three original copy/page/late-ack scenarios pass. The
@@ -32,6 +41,74 @@ results below into current-source or installed-app qualification.
   resource integrity and detach prototypes are not packaged persistent-launch or
   cold-Location recurrence qualification. New isolated checks must keep those gates
   separate, including fresh environment, restart and no admission replay.
+
+### Current independent recurrence/native receipts
+
+- Unactivated recurrence core: 22 tests and original-probe independent closure,
+  zero remaining scoped findings after correcting no-variant models, an end-of-day
+  DST gap and watch removal/re-add. Stress: 64 KiB config, 64 maximum cursors,
+  30 maximum reference receipts with rollover; 194,067 / 262,144 bytes. This does
+  not qualify a scheduled native admission, a model's publication permissions or
+  an indefinitely repeated one-shot Mission journal.
+- Fresh actual OpenCode 2.0.24 trajectory: eight gates pass with native parallel
+  siblings, real grandchild, native returns observed before business readout and
+  unchanged native subagent contract. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-trajectory-LPKoMj/receipt.json`.
+- Fresh complete native fixture on published `3250150b`: 16 gates pass, no
+  failed gates or recorded failures. Covers exact selection, native declarations,
+  fresh environment, busy/idle readout, outbox restart, targeted recovery, lifecycle,
+  optional cleanup and native transcripts. Its explicit reload/registration remains
+  distinct from unattended cold scheduled wake. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-mXFfsa/receipt.json`.
+- Production Windows qualification: native release build/loader pass; first
+  independent birth refuses `native-parent-job-forbids-breakaway`, parent flags
+  `0x2000`. One attempt, exact owned sentinel preserved and then torn down. No
+  backend/manager/service starts. This records the harness boundary, not successful
+  continuity. Repeat from an authorized ordinary Windows parent before proceeding
+  through cold native wake and packaged Electron/Tauri parity. Current receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/recurring-continuity-native-dNXg3q/qualification.json`.
+- Fourteen actual Tauri cross-host tests pass, including both historical hosted
+  failures. Test-only probe duration/exit diagnostics are added; no production
+  deadline, retry or unknown-owner authority is changed.
+- Hosted run `37597829768` on `3250150b`: runtime minimum/latest, three-platform
+  compatibility, native pruning and Tauri macOS pass. Ordinary UI CI fails because
+  the i18n source scanner still opens the removed Settings component. Windows
+  fails earlier at positive-loader qualification: its temporary directory uses
+  `RUNNER~1`, not the canonical path required by the loader. Both reproduce;
+  actual short-directory alias refuses and canonical genuine artifact loads on
+  pinned Node 24.20.0. Do not weaken the loader or classify this as a continuation
+  pass. Minimal fixture corrections are pushed in `32ee0fc5`: six current
+  i18n/preferences checks and the genuine positive-loader fixture with actual
+  short-directory TEMP on pinned Node 24.20.0 pass. Production loader is unchanged.
+  A fresh hosted result is still required, not inferred from these local passes.
+- Run `37599550532` on `32ee0fc5` passed the corrected UI scanner and genuine
+  Windows loader, then was **cancelled**, not failed, by a body-edit-triggered
+  higher-priority run. The workflow includes `pull_request.edited`. Stop publishing
+  body updates while replacement run `37599765514` completes; do not weaken or
+  remove authorization/event handling to manufacture CI stability.
+- Independent published-head integration review closes at zero findings. Its
+  230 focused checks pass without skips: create/journal/durable 90,
+  authority/catalog/projection 45, resources/guards 59, outcome recovery 25,
+  browser copy 10 and genuine compiled loader 1. This does not close full-product
+  or scheduled/headless acceptance.
+- Fresh server aggregate completed; UI aggregate remains in progress, with input fingerprints retained.
+  The UI run uses an unchanged historical OpenCode 2.0.22 capture for its renderer
+  replay prerequisite, with exact capture digest and explicit renderer-only scope;
+  this is not a fresh native-pipeline qualification. Post-start fingerprints show
+  only two changed source-local fixtures (`i18n/messages/missions.test.ts` and
+  `native-binding-positive.qualification.ts`), neither selected/imported by those
+  aggregate runs. Execution/browser/server aggregate inputs remain unchanged;
+  do not label this as whole-checkout immutability.
+
+### File-size signals (not refactor requirements)
+
+Touched oversized sources: `missions/control.ts` ~1,283, `missions/model.ts` ~827,
+`missions/journal.ts` ~553, `opencode/missions-plugin.ts` ~626,
+`server/http-server.ts` ~2,451, UI `stores/session-api.ts` ~1,995,
+`lib/api-client.ts` ~707, `components/tool-call/renderers/task.tsx` ~577,
+Tauri `preferences_window.rs` ~663 and `client_state/cross_host.rs` ~1,559 lines.
+`packages/ui/tests/browser/mission-control.test.ts` is ~1,150 lines. These are
+existing size signals; no unrelated threshold-only refactor accompanies this work.
 
 ## Historical baseline — 2026-10-02
 

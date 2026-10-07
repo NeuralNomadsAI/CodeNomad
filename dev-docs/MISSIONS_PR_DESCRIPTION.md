@@ -222,21 +222,22 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 
 | Lot | État constaté |
 | --- | --- |
-| Réintroduction, natif, contrôles, bilan et suivi | Dans le head publié `cfea513b` ; revue intégrée encore en cours |
-| Capacité, conflits de création et deadline Stop native | Commits locaux `530dc8af` / `bd2a8cee`, pas encore poussés lors de cette mise à jour |
-| Préférences dans Missions, politique des tâches, profondeur locale et corrections UX | Sources locales ; livraison de l'agent UX et typechecks vérifiés, publication/revue indépendante à suivre |
-| Missions permanentes, programmation et suivi des passages | Noyau durable local implémenté, 22 tests et revue indépendante sans finding restant ; raccordement natif, archivage, réveil froid et UX à terminer |
+| Réintroduction, natif, contrôles, bilan et suivi | Publié ; corrections jusqu'au head `32ee0fc5`, revue des seams d'intégration clôturée sans finding restant dans son périmètre |
+| Capacité, conflits de création et deadline Stop native | `530dc8af` / `bd2a8cee` poussés ; corrections et preuves conservées |
+| Préférences dans Missions, politique des tâches, profondeur locale et corrections UX | Publié dans `972910fe` ; revue indépendante corrigée et clôturée dans ce périmètre, typechecks vérifiés |
+| Missions permanentes, programmation et suivi des passages | Noyau durable publié, non activé (`1a17bbcc`), 22 tests et revue indépendante sans finding restant ; raccordement natif, archivage, réveil froid et UX à terminer |
 | Admission durable hors fenêtre et parité packagée | Fondations présentes ; travail d'intégration/qualification à terminer, sans contournement des protections natives |
 
 ### Preuves actuelles et prochaine boucle
 
-- Suite serveur locale : **2 247 pass, 0 fail, 8 skipped**. Les sources ont évolué
-  pendant ce travail : ce n'est pas une validation finale de source figée.
+- Nouveau run serveur intégral : **2 279 pass, 0 fail, 8 skipped**, terminé sur
+  les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
+  ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
 - Suite navigateur complète exploratoire : **711 pass, 39 fail, 2 skipped**.
   Ce résultat reste enregistré, il n'est pas remplacé par la somme de reruns.
 - Livraison UX sur sources plus récentes : **240 tests Missions navigateur** et
-  **32 tests unitaires/parité** passent selon le rapport de livraison ; une revue
-  indépendante et un aggregate figé restent nécessaires.
+  **32 tests unitaires/parité** passent selon le rapport de livraison ; les revues
+  ciblées sont clôturées, l'aggregate complet reste nécessaire.
 - Typechecks serveur/UI relancés après séparation du contrat HTTP de profondeur :
   passent. Tests natifs isolés de profondeur JSONC, création/autorité HTTP-RPC
   (16 gates OpenCode 2.0.24) et environnement minimum 2.0.7 ont leurs reçus propres.
@@ -244,6 +245,14 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   actionnable restant dans ce périmètre, cinq régressions et probes indépendantes.
   Nouveau parcours natif 2.0.24 : parallélisme, récursion réelle, lecture des retours
   puis résultats métier passent, sans liaison enfant fabriquée.
+- Rerun natif intégral 2.0.24 sur le head publié : **16 gates passent**, zéro
+  échec (catalogue, politique native/indépendante, ENV frais, outbox/recovery sans
+  replay, Play/Pause/Stop, nettoyage opt-in et conservation des transcriptions).
+  Ce test garde son périmètre natif ; il ne qualifie pas le réveil froid récurrent.
+- Revue indépendante des seams d'intégration : **230 contrôles passent**, zéro
+  finding actionnable. Politique figée/autorité, profondeur/CAS, ressources,
+  isolation des outcomes et copie complète enfant sont tracés, sans approbation
+  globale du produit ni activation de la récurrence.
 - Le noyau de récurrence (`recurrence-{contract,clock,store,runner}`) n'est pas
   activé : 22 tests passent, dont modèles sans variante, DST en fin de journée et
   retrait/réajout d'un suivi sans perdre son curseur. La revue indépendante ferme
@@ -253,8 +262,23 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   depuis le harness. Ce refus reste intact, sans fallback. Il faut un parent Windows
   ordinaire autorisé pour poursuivre les preuves de backend, service et fermeture
   desktop ; ce test négatif n'est pas une qualification de continuité.
-- CI du head publié reste en échec. Deux tests Windows cross-host inchangés de `dev`
-  passent dans le diagnostic local, sans preuve suffisante pour expliquer la CI.
+- CI de l'ancien head `cfea513b` reste en échec ; elle n'est pas effacée par les reruns.
+  Les corrections de fixtures/packaging et le vrai loader compilé sont publiés.
+  Les 14 tests Tauri cross-host actuels passent, y compris les deux échecs hébergés ;
+  des diagnostics de timings sont ajoutés uniquement aux tests, sans élargir les
+  délais ou affaiblir la propriété. La nouvelle CI sur `3250150b` passe les trois
+  plateformes de compatibilité, minimum/latest, pruning et Tauri macOS, mais
+  échoue sur deux fixtures : le scanner i18n référence l'ancien composant Settings
+  supprimé ; le loader reçoit un chemin temporaire court `RUNNER~1`, refusé par
+  son contrôle canonique. Les deux échecs sont reproduits localement ; un vrai
+  addon charge via le chemin canonique sur Node 24.20.0 sans affaiblir le loader.
+  Les corrections sont publiées dans `32ee0fc5` : six contrôles i18n/parité et le
+  vrai loader avec TEMP court sur Node 24.20.0 passent, loader produit inchangé.
+  Nouvelle CI requise sur ce commit, les échecs précédents restent conservés.
+- Les manifestes des suites locales montrent uniquement ces deux
+  modifications de fixtures hors de leur sélection ; les sources d'exécution
+  restent inchangées. Le navigateur reste en cours. Il ne s'agit donc pas d'un
+  gel de l'ensemble du dépôt.
 - Reproduire/corriger les échecs actuels, reviewer les seams d'intégration, répéter
   jusqu'à zéro finding actionnable, puis source figée et validation combinée
   navigateur/natif/packaging. Les scénarios sont vérifiés dans des fixtures privées,

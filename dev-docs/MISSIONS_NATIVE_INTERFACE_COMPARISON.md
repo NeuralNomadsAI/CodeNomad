@@ -1,5 +1,13 @@
 # Native Missions interface comparison — native-first architecture selected
 
+> Historical 2026-10-03 comparison and architectural decision. Its private adapter
+> and native 2.0.22 receipts remain evidence for their exact scenarios, not the
+> current product API or a runtime-version allowlist. The selected native-first
+> architecture is now integrated in open PR #866; current contracts and delivery
+> gates are in [`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md) and
+> [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md). Ordinary
+> recurring passage admission and stronger signed-child authority remain distinct.
+
 This is an experiment comparison, not production activation. The preserved
 refactor remains untouched. The integrated candidate's independent native/UI
 repeat passes. Original wrapper W1/W2/W3 corrections independently close at
