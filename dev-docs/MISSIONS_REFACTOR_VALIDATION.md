@@ -206,14 +206,15 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   frozen inputs. No new aggregate outcome is claimed before completion.
   Inputs: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-inputs-20261007.json`;
   complete log: `.../pr866-server-serial-broker-625-20261007.out`.
-- Publication is temporarily blocked: ordinary pushes fail Git LFS lock probing;
+- Publication was temporarily blocked: ordinary pushes failed Git LFS lock probing;
   all four outgoing files are verified **non-LFS/non-lockable**, no LFS objects
-  are pending. A command-only lock-verification override (no persistent config or
-  skipped hook) reaches GitHub but receives **Internal Server Error**. Read-only
-  remote/PR checks retain **`29084987`**, PR open. Local **`01d63a0b`** and its
-  documentation are not yet published; no successful push or updated head is
-  claimed. PR body publication also returns a GraphQL server error; current body
-  update is not acknowledged. The complete ordinary aggregate continues independently.
+  were pending. A command-only lock-verification override (no persistent config or
+  skipped hook) reached GitHub but received **Internal Server Error**. Read-only
+  remote/PR checks retained **`29084987`**, PR open; the body write also returned
+  a GraphQL server error. These failures are preserved. A later bounded push
+  **succeeds through `3b40f9b1`**, publishing **`01d63a0b`** and its scoped evidence.
+  Description reconciliation is separately verified; publication is not aggregate
+  or autonomy acceptance. The complete ordinary aggregate continues independently.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and

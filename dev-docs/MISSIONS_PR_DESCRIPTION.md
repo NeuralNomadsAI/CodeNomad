@@ -253,13 +253,11 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Custody du scan worktree rejeté | Commit local `973d775b` ; stoppe les admissions et attend les lectures déjà admises avant le refus original. 10/10 checks et typecheck, revue sans finding avec deux probes de failure-path ; aucune assertion/délai de production relâché |
 | Admission pending chargée seule | `01d63a0b` : 195 → 130 commandes Git, revalidation fraîche pré/post-RPC et drain des lectures refusées. 26/26, typecheck, revue 6/6 sans finding, expiration réelle 30 s sans RPC/publication. Nouvel aggregate complet en cours ; aucune suppression d'assertion ni hausse de délai |
 
-Publication de cette dernière correction encore locale : le push de `01d63a0b`
-et de sa réconciliation documentaire est refusé par une **Internal Server Error
-GitHub**. Ref distant vérifié à `29084987`, PR toujours ouverte. Aucun fichier
-LFS/verrouillable n'est concerné ; aucun réglage Git persistant changé. Cette
-limite de publication ne remplace ni le receipt local ni le résultat attendu de
-l'aggregate complet. L'édition de description retourne aussi une erreur serveur
-GraphQL ; sa publication n'est pas acquittée.
+Publication Git rétablie : **`01d63a0b`** et les preuves sont poussés jusqu'à
+**`3b40f9b1`**. Les erreurs GitHub Internal Server Error/GraphQL précédentes sont
+conservées ; elles avaient laissé le ref à `29084987`. Aucun fichier LFS/verrouillable
+concerné et aucun réglage Git persistant changé. La description est revalidée
+séparément ; publication ne signifie ni succès de l'aggregate ni autonomie livrée.
 | Focus des actions Mission | Commit local `32c308a1` ; 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Suite complète **sans capture : 758/0/2**, zéro annulation, 760 cas et 2 162 empreintes inchangées |
 
 ### Preuves actuelles et prochaine boucle
