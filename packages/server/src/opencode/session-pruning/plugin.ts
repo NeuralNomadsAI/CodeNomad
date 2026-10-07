@@ -12,6 +12,8 @@ import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInput
 import { readOutlinePreviews } from "./outline-preview"
 import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
+import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadResultSchema } from "./assets-contract"
+import { listSessionAssets, readSessionAsset } from "./assets-store"
 
 export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: {
   ...pruningRpcDefinition.methods,
@@ -20,6 +22,8 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   window: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
   outline: { input: outlineInputSchema, output: outlineResultSchema },
   outlinePreview: { input: outlinePreviewInputSchema, output: outlinePreviewResultSchema },
+  assets: { input: assetsInputSchema, output: assetsResultSchema },
+  assetRead: { input: assetReadInputSchema, output: assetReadResultSchema },
 } })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.
@@ -27,6 +31,10 @@ export default Plugin.define({
   id: "codenomad-session-pruning",
   async setup(ctx) {
     const registration = await ctx.rpc.register(SessionPruningRpc, {
+      assets: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => listSessionAssets(db, scope, input.cursor, call.signal)),
+      assetRead: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readSessionAsset(db, scope, input.target, call.signal)),
       window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,

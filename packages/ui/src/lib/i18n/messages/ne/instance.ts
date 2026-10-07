@@ -1,4 +1,7 @@
 export const instanceMessages = {
+  "panelExtensions.section": "विस्तारहरू",
+  "panelExtensions.assetsConsent": "अनुमति: हालको सत्रका उपकरण परिणामका छवि र संलग्नक, पहिचान, भाषा र रूप पढ्ने। फाइल प्रणाली वा नेटवर्कमा पहुँच छैन।",
+  "panelExtensions.empty": "कुनै विस्तार स्थापित छैन।",
   "panelExtensions.catalog.title": "अनलाइन उपलब्ध",
   "panelExtensions.catalog.search": "विस्तार खोज्नुहोस्",
   "panelExtensions.catalog.loading": "आधिकारिक सूची लोड हुँदैछ…",
@@ -17,8 +20,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "म यो प्याकेज र यसको लेखकलाई विश्वास गर्छु",
   "panelExtensions.confirm": "निष्क्रिय रूपमा स्थापना गर्नुहोस्",
   "panelExtensions.cancel": "रद्द गर्नुहोस्",
-  "panelExtensions.global": "सबै परियोजनाहरू",
-  "panelExtensions.project": "यो फोल्डर",
   "panelExtensions.remove": "हटाउनुहोस्…",
   "panelExtensions.removeWarning": "यो CodeNomad प्रोफाइलबाट विस्तार र यसको सक्रियता सेटिङ हटाउने?",
   "panelExtensions.removeConfirm": "हटाउने पुष्टि गर्नुहोस्",

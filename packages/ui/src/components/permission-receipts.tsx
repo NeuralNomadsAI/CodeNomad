@@ -29,7 +29,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     setFailed(false)
     setBusy(false)
     read = () => {}
-    if (!active || !instanceId || !sessionId) return
+    if (!active || !instanceId || !sessionId || sessionId === "__no_session_draft__") return
 
     const controller = new AbortController()
     let disposed = false

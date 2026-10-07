@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { execFile, execFileSync } from "node:child_process"
 import { promisify } from "node:util"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Fastify from "fastify"
@@ -66,7 +66,9 @@ async function harness() {
   }
   const app = Fastify()
   registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) } })
-  const url = (directories = [root]) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams(directories.map((directory) => ["directories", directory]))}`
+  const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
+    ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
+  ])}`
   return { root, subdirectory, state, manager, connection, app, url, async cleanup() { await app.close(); await rm(root, { recursive: true, force: true }) } }
 }
 
@@ -190,6 +192,23 @@ test("WSL host roots and worktrees are translated before dispatch with exact nat
     const foreignSpelling = await h.app.inject({ url: h.url([hostRootAlias, hostWorktree]) })
     assert.equal(foreignSpelling.statusCode, 503)
     assert.equal(foreignSpelling.body.includes('"locations"'), false)
+    const missingHost = join(h.root, "deleted-wsl-history"), missingService = "/home/fixture/deleted-history"
+    directories.set(missingHost, missingService)
+    directories.set(missingService, missingService)
+    hosts.set(missingService, missingHost)
+    h.state.result = { data: [complete(serviceRoot)] }
+    const excluded = await h.app.inject({ url: h.url([missingHost], [missingHost]) })
+    assert.deepEqual(excluded.json(), { supported: true, directories: [{ directory: missingHost, status: "excluded" }] })
+    assert.deepEqual(h.state.batches.at(-1), [serviceRoot], "WSL exclusions probe the native owned root")
+    const untranslatable = "/home/fixture/untranslatable"
+    const failed = await h.app.inject({ url: h.url([serviceRoot, untranslatable], [untranslatable]) })
+    assert.deepEqual(failed.json().directories.find((entry: any) => entry.directory === untranslatable),
+      { directory: untranslatable, status: "error" }, "a failed WSL host translation cannot exclude history")
+    const unresolved = `${serviceRoot}/deleted-unknown`
+    hosts.set(unresolved, join(h.root, "deleted-unknown"))
+    const ownedHistory = await h.app.inject({ url: h.url([unresolved], [unresolved]) })
+    assert.deepEqual(ownedHistory.json(), { supported: true, directories: [{ directory: unresolved, status: "excluded" }] })
+    assert.deepEqual(h.state.batches.at(-1), [serviceRoot])
   } finally { await h.cleanup() }
 })
 
@@ -222,6 +241,136 @@ test("mixed unowned candidates are rejected without blocking recovery of owned d
     h.state.status = 400
     h.state.result = { _tag: "RpcError", type: "rpc.unavailable", message: "RPC unavailable" }
     assert.deepEqual((await h.app.inject({ url: h.url([h.root, "/foreign"]) })).json(), { supported: false })
+  } finally { await h.cleanup() }
+})
+
+test("deleted optional history is excluded without losing idle subdirectory requests or negotiating fake capability", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "deleted-history")
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+    // resolveOwnedWorktreePath can synthesize a missing child beneath an owned root.
+    h.state.allowed.add(deleted)
+    h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{
+      location: { directory: h.subdirectory }, permissions: [permission], forms: [form],
+    }])] }
+    const response = await h.app.inject({ url: h.url([h.root, deleted, h.subdirectory], [deleted, h.subdirectory]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [
+      [deleted, "excluded"], [h.root, "ok"], [h.subdirectory, "ok"],
+    ])
+    assert.deepEqual(h.state.batches, [[h.root, h.subdirectory]])
+    assert.deepEqual(response.json().directories[2].locations[0].forms, [form])
+    assert.deepEqual(response.json().directories[2].locations[0].permissions, [permission])
+    h.state.result = { data: [complete(h.root)] }
+    const excluded = await h.app.inject({ url: h.url([deleted], [deleted]) })
+    assert.deepEqual(excluded.json(), { supported: true, directories: [{ directory: deleted, status: "excluded" }] })
+    assert.deepEqual(h.state.batches[1], [h.root], "all-excluded batches still validate the loaded-only RPC at the owned root")
+    h.state.status = 400
+    h.state.result = { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" }
+    assert.deepEqual((await h.app.inject({ url: h.url([deleted], [deleted]) })).json(), { supported: false })
+    assert.equal((await h.app.inject({ url: h.url([h.root], [deleted]) })).statusCode, 400)
+  } finally { await h.cleanup() }
+})
+
+test("required deleted paths and optional authorization/identity failures remain non-authoritative errors", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "deleted-history")
+    h.state.allowed.add(deleted)
+    const required = await h.app.inject({ url: h.url([h.root, deleted]) })
+    assert.deepEqual(required.json().directories[0], { directory: deleted, status: "error" })
+    h.state.allowed.delete(deleted)
+    h.manager.getServiceDirectoryForPath = async (_id, directory) => {
+      if (directory === deleted) throw Object.assign(new Error("Access denied"), { code: "EACCES" })
+      return directory
+    }
+    assert.equal((await h.app.inject({ url: h.url([h.root, deleted], [deleted]) })).statusCode, 503)
+    h.manager.getServiceDirectoryForPath = async (_id, directory) => directory
+    const failed = await h.app.inject({ url: h.url([h.root, deleted], [deleted]) })
+    assert.deepEqual(failed.json().directories[0], { directory: deleted, status: "error" }, "missing identity is not an obsolete-history exclusion")
+    assert.deepEqual(h.state.batches, [[h.root], [h.root]])
+  } finally { await h.cleanup() }
+})
+
+test("undefined ownership for an existing optional path never excludes it", async () => {
+  const h = await harness()
+  try {
+    const foreign = join(h.root, "unowned-present")
+    await mkdir(foreign)
+    const response = await h.app.inject({ url: h.url([h.root, foreign], [foreign]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error" })
+    assert.deepEqual(h.state.batches, [[h.root]])
+  } finally { await h.cleanup() }
+})
+
+test("undefined ownership excludes only missing paths with an owned existing ancestor", async () => {
+  const h = await harness()
+  try {
+    const owned = join(h.root, "deleted-parent", "session")
+    const foreign = join(h.root, "..", `${h.root.split(/[\\/]/).at(-1)}-foreign-missing`)
+    const response = await h.app.inject({ url: h.url([h.root, owned, foreign], [owned, foreign]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === owned), { directory: owned, status: "excluded" })
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error" })
+    assert.deepEqual(h.state.batches, [[h.root]])
+    h.state.calls.length = 0
+    assert.equal((await h.app.inject({ url: h.url([foreign], [foreign]) })).statusCode, 403)
+    assert.deepEqual(h.state.calls, [], "missing foreign history cannot negotiate root capability alone")
+  } finally { await h.cleanup() }
+})
+
+test("a missing path through a symlink outside the owned root is not excluded", async () => {
+  const h = await harness()
+  const foreign = await mkdtemp(join(tmpdir(), "codenomad-foreign-"))
+  try {
+    const alias = join(h.root, "escape")
+    await symlink(foreign, alias, process.platform === "win32" ? "junction" : "dir")
+    const missing = join(alias, "deleted-session")
+    // Even if a stale resolver claims this existing alias belongs to the root,
+    // its canonical host path must match the canonical owned ancestor.
+    h.state.allowed.add(alias)
+    const translate = h.manager.getServiceDirectoryForPath
+    h.manager.getServiceDirectoryForPath = async (id, candidate) => candidate === alias ? h.root : translate(id, candidate)
+    const response = await h.app.inject({ url: h.url([h.root, missing], [missing]) })
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === missing), { directory: missing, status: "error" })
+    assert.deepEqual(h.state.batches, [[h.root]])
+  } finally { await h.cleanup(); await rm(foreign, { recursive: true, force: true }) }
+})
+
+test("deleted optional linked worktrees remain fenced after RPC", async () => {
+  for (const unavailable of [false, true]) {
+    const h = await harness()
+    try {
+      const deleted = join(h.root, "removed-linked-worktree")
+      h.state.allowed.add(deleted)
+      h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === deleted ? "linked-identity" : "root-identity"
+      h.state.status = unavailable ? 400 : 200
+      h.state.result = unavailable ? { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" } : { data: [complete(h.root)] }
+      h.state.onFetch = () => { h.state.blockedIdentities.add("linked-identity") }
+      const response = await h.app.inject({ url: h.url([deleted], [deleted]) })
+      assert.equal(response.statusCode, 503, response.body)
+      assert.deepEqual(h.state.batches, [[h.root]])
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "deleted candidates cannot negotiate capability across a blocked fence")
+    } finally { await h.cleanup() }
+  }
+})
+
+test("a synthesized optional deletion becoming live during RPC cannot be excluded", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "historical-session")
+    h.state.allowed.add(deleted)
+    h.state.result = { data: [complete(h.root)] }
+    h.state.onFetch = () => { execFileSync("git", ["-C", h.root, "init", "--quiet", deleted], { windowsHide: true }) }
+    const response = await h.app.inject({ url: h.url([deleted], [deleted]) })
+    assert.equal(response.statusCode, 503, response.body)
+    assert.deepEqual(h.state.batches, [[h.root]], "the capability probe remains at the owned root")
+    observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+    assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "stale exclusions cannot negotiate capability")
   } finally { await h.cleanup() }
 })
 

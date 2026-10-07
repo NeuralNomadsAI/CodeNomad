@@ -1,11 +1,18 @@
-# External right-panel extensions — API 1
+# External right-panel extensions — APIs 1 and 2
 
 CodeNomad panel extensions are independently distributed **UI addons**, not
-OpenCode plugins. Open **Customize right panel → Panel extensions → Available
-online** to browse/search the official catalogue, choose an addon, review the
+OpenCode plugins. Open **Customize right panel → Extensions** to browse/search
+installed addons and the official catalogue together, choose an addon, review the
 downloaded package and confirm installation. No manual ZIP download, CodeNomad
 rebuild or shared OpenCode service restart is involved. Manual ZIP installation
 remains available for offline/unlisted packages.
+
+Extensions is a collapsed-by-default disclosure below a separator in customization.
+It expands to one compact searchable list, deduplicated by addon ID, with install,
+version-change and removal icons, ZIP/refresh actions, metadata on hover/focus,
+and explicit trust/removal confirmations. There are no separate list modes or
+floating manager window. Collapse, popup dismissal, project changes and leaving
+the view dispose the manager; no automatic mutation replay.
 
 The official index lives in
 [`NeuralNomadsAI/CodeNomad-Extensions`](https://github.com/NeuralNomadsAI/CodeNomad-Extensions).
@@ -14,11 +21,12 @@ authors can host addons in their own repositories; the curated catalogue points
 to their exact release assets. Separate means separate from the main CodeNomad
 application repository, not a mandatory repository per addon.
 
-This first distribution contract intentionally exposes only session identity and
-appearance. It does **not** implement #801's gallery or grant transcript/image/file
-reads. The later assets example must add a narrowly authorized, bounded image-read
-capability; importing application stores or opening the generic RPC proxy is not
-an extension API.
+API 1 preserves its session-identity-only contract. API 2 adds the explicit
+`session.assets.read` permission for the independent **MCP Assets** addon (#801).
+It exposes bounded tool-result asset metadata and demand-only embedded bytes from
+the currently displayed session, never prompts, transcript text, arbitrary URLs,
+local files, credentials or a generic RPC proxy. Existing API 1 packages keep
+working without migration or additional permissions.
 
 ## Package layout
 
@@ -35,7 +43,7 @@ There are no install scripts, npm installation, dependency fetching, Node module
 server entrypoints or native binaries. Symlinks, extra files, nested paths,
 duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
 2 MiB ZIP, 4 KiB manifest, 2 MiB uncompressed HTML, 32 installed extensions,
-16 MiB persisted catalogue, 128 explicit folder grants per extension.
+16 MiB persisted catalogue.
 
 ```json
 {
@@ -56,7 +64,8 @@ duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
 - Version: `major.minor.patch`, optionally `-prerelease`. Publish new code under a
   new version; never replace the bytes of an already published release asset.
 - API version: compatibility with the extension host, **not** the exact application
-  version. API 1 extensions work on hosts supporting API 1. An unsupported major
+  version. This host supports API 1 and API 2. API 2 requires exactly
+  `["session.context", "session.assets.read"]`. An unsupported major
   API or unknown permission is rejected, without executing author code.
 - Author, name, license and repository are mandatory. Repository must be an HTTPS
   GitHub repository URL, without credentials/query/fragment. Metadata is a claim,
@@ -66,21 +75,23 @@ duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
   not public compatibility promises. Additive API-1 evolution must preserve old
   packages; breaking changes require a new API major and an explicit migration.
 
-## Installation, updates and scope
+## Installation and updates
 
 Inspection shows the manifest and SHA-256 of the exact ZIP bytes before install.
-The user acknowledges trust; installation starts **disabled**. Enable with either:
-
-- **All projects:** every opened project on this CodeNomad backend/profile.
-- **This folder:** the exact server-owned physical folder opened as the project.
-  It persists across closing/reopening, but does not infer sibling worktrees,
-  ancestor folders, another WSL distribution or a native project-ID family.
-
-Both scopes live under the selected CodeNomad profile's `panel-extensions/`, not
-inside a repository or the OpenCode discovery/database directories. In remote
+The user acknowledges trust; installation starts **disabled**. A single activation
+control, the addon's checkbox in **Customize right panel**, enables it for every
+opened project on this CodeNomad backend/profile. Disabled installed addons remain
+listed there. The Extensions manager has no activation control. Legacy per-window
+addon hide flags are ignored rather than retaining a second gate; Reset changes
+built-in layout only and never grants or revokes addon consent.
+Installation and activation live under the selected profile's `panel-extensions/`,
+not inside a repository or the OpenCode discovery/database directories. In remote
 access, installation affects that **server profile**, not the viewer's device.
 Profiles/channels remain separate; a ZIP can be installed in each desired profile.
-Global grants take precedence; turn off All projects before limiting to folders.
+There is no folder-specific installation or activation. Legacy global grants remain
+enabled; legacy folder-only grants remain disabled rather than broadening consent.
+Installed packages are preserved. Reads do not rewrite storage; the next explicit
+mutation drops obsolete folder grants.
 
 To update, download and inspect a new release ZIP and install it over the same ID.
 Compare the displayed digest with the publisher's checksum through a trusted
@@ -118,6 +129,58 @@ document. Parent window messages are not an RPC dispatcher. Late HTTP results an
 old ports cannot initialize a different session or a reloaded/navigated document.
 
 ## Isolation and limits
+
+### API 2 assets
+
+Use `apiVersion: 2` and the two permissions above. Inspection shows the additional
+current-session asset permission before the trust checkbox. Code replacement still
+revokes activation. The injected context advertises that package's API version.
+API 2 also receives `context.colors` (`background`, `surface`, `text`, `muted`,
+`border`, `focus`) from the current host palette. Palette changes republish context.
+`background` matches the native panel sections (`--surface-secondary`); `surface`
+is the inset base canvas. Apply `background` to the panel document so its
+`color-scheme` cannot substitute a browser-default canvas color.
+
+```js
+const page = await codenomad.assets.list() // or list(page.cursor) for older pages
+// { status: "page", entries: [{ target, name, tool, mime, available }], cursor }
+const image = await codenomad.assets.read(page.entries[0].target)
+// { status: "asset", mime, uri: "data:...;base64,..." }
+const small = await codenomad.assets.read(page.entries[0].target, { thumbnail: true })
+// Raster-only, max 256px on either axis, PNG data URI.
+const stop = codenomad.assets.onChanged(() => { /* refresh displayed metadata */ })
+```
+
+The host owns instance/session/package/digest selectors; the addon supplies only
+a bounded cursor or exact asset target. Each server call checks enabled API 2
+consent and fresh session Location ownership before and after the fixed native RPC.
+The existing presence-owned history bundle validates daemon-storage identity and
+session/project/workspace membership again. There is no mass-loading fallback.
+Reverted, removed or replaced assets are not readable; targets carry the URI digest.
+
+Pages return at most 64 metadata entries, examine at most 32 assistant messages and
+32 MiB of stored JSON per request (16 MiB per message), yielding between messages.
+The newest-first cursor is session/location/undo-bound and fixes the upper sequence;
+refresh includes later output. It is not an immutable snapshot of mutable message
+content. One SQLite step/JSON parse remains synchronous and bounded by those byte
+limits. Read payloads are at most 8 MiB of embedded data URI; remote/local references
+remain listed but unavailable. No URL is fetched and no local file is opened.
+
+The host fences old ports/session transitions, caps each frame at four concurrent
+reads, aborts on unmount/disconnect, and sends coalesced invalidations for tool
+completion, content changes, undo, deletion and reconnect. Thumbnails are derived
+only from authorized embedded raster bytes; no transcript rows mount or change.
+Before host bitmap decoding, PNG/JPEG/GIF/static-WebP headers must admit at most
+8,192 pixels per axis and 4,194,304 source pixels (summed across GIF frames).
+Malformed/ambiguous headers, animated WebP and AVIF have no host thumbnail;
+their metadata and demand-only full preview remain available to the addon.
+The addon keeps one page, lazily requests two visible thumbnails at a time and
+revokes object URLs as images leave the viewport or the page/session changes.
+Click opens a keyboard-dismissable image/text lightbox. Binary or inaccessible
+attachments keep their metadata with an explicit unavailable preview. It does not
+change transcript image visibility or claim to fix transcript scrolling.
+
+### Sandbox
 
 Author code is never imported into the main renderer. It runs in an iframe with
 `sandbox="allow-scripts"`: no same-origin, forms, popup, download or top-navigation
@@ -198,13 +261,17 @@ made safe by a checksum: user trust, minimal permissions and isolation still app
 ```sh
 node --import tsx --test packages/server/src/panel-extensions/extension.test.ts
 node --import tsx --test packages/server/src/panel-extensions/catalog.test.ts
+node --import tsx --test packages/server/src/opencode/session-pruning/assets.test.ts packages/server/src/server/routes/panel-extension-assets.test.ts
 node scripts/test-panel-extension-native.mjs # Windows, isolated Tauri/WebView2
+node scripts/test-panel-extension-native.mjs --api2
+node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
+node scripts/run-session-pruning-native.mjs /absolute/path/to/opencode # isolated CLI/config/database
 # from packages/ui:
 node --import tsx --test tests/browser/panel-extensions.test.ts
 ```
 
 Server checks cover format/permission/API validation, ZIP bounds/path attacks,
-durable scopes, replacement revocation, concurrent changes and corrupt-state
+durable general activation, conservative legacy consent, replacement revocation, concurrent changes and corrupt-state
 preservation. Catalogue checks cover SSRF/redirect/budget rejection, manifest/hash
 verification, metadata-only discovery and withdrawn selections after warm reads.
 Rendered tests use the real right panel, installer, routes and event dispatcher

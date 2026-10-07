@@ -1,4 +1,7 @@
 export const instanceMessages = {
+  "panelExtensions.section": "扩展",
+  "panelExtensions.assetsConsent": "权限：读取当前会话工具结果的图像和附件，以及会话标识、语言和外观。无文件系统或网络访问权限。",
+  "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",
   "panelExtensions.catalog.loading": "正在加载官方目录…",
@@ -17,8 +20,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "我信任此软件包及其作者",
   "panelExtensions.confirm": "安装但不启用",
   "panelExtensions.cancel": "取消",
-  "panelExtensions.global": "所有项目",
-  "panelExtensions.project": "此文件夹",
   "panelExtensions.remove": "移除…",
   "panelExtensions.removeWarning": "从此 CodeNomad 配置中移除扩展及其启用设置？",
   "panelExtensions.removeConfirm": "确认移除",

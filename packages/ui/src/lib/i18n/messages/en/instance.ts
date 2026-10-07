@@ -1,4 +1,7 @@
 export const instanceMessages = {
+  "panelExtensions.section": "Extensions",
+  "panelExtensions.assetsConsent": "Permission: read tool-result images and attachments from the current session, plus its identifier, language and appearance. No filesystem or network access.",
+  "panelExtensions.empty": "No extensions installed.",
   "panelExtensions.catalog.title": "Available online",
   "panelExtensions.catalog.search": "Search extensions",
   "panelExtensions.catalog.loading": "Loading the official catalogue…",
@@ -17,8 +20,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "I trust this package and its author",
   "panelExtensions.confirm": "Install disabled",
   "panelExtensions.cancel": "Cancel",
-  "panelExtensions.global": "All projects",
-  "panelExtensions.project": "This folder",
   "panelExtensions.remove": "Remove…",
   "panelExtensions.removeWarning": "Remove this extension and its activation settings from this CodeNomad profile?",
   "panelExtensions.removeConfirm": "Confirm removal",

@@ -1,4 +1,7 @@
 export const instanceMessages = {
+  "panelExtensions.section": "Extensions",
+  "panelExtensions.assetsConsent": "Permission : lire les images et pièces jointes des résultats d’outils de la session courante, son identifiant, la langue et l’apparence. Aucun accès aux fichiers locaux ni au réseau.",
+  "panelExtensions.empty": "Aucune extension installée.",
   "panelExtensions.catalog.title": "Disponibles en ligne",
   "panelExtensions.catalog.search": "Rechercher des extensions",
   "panelExtensions.catalog.loading": "Chargement du catalogue officiel…",
@@ -17,8 +20,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "Je fais confiance à ce paquet et à son auteur",
   "panelExtensions.confirm": "Installer sans activer",
   "panelExtensions.cancel": "Annuler",
-  "panelExtensions.global": "Tous les projets",
-  "panelExtensions.project": "Ce dossier",
   "panelExtensions.remove": "Supprimer…",
   "panelExtensions.removeWarning": "Supprimer cette extension et ses réglages d’activation de ce profil CodeNomad ?",
   "panelExtensions.removeConfirm": "Confirmer la suppression",

@@ -388,8 +388,9 @@ export const serverApi = {
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
-  getPendingRequests(id: string, directories: string[], signal?: AbortSignal): Promise<WorkspacePendingRequestsResponse> {
+  getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
     const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
+    for (const directory of optionalDirectories) query.append("optionalDirectories", directory)
     return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
   },
   cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {

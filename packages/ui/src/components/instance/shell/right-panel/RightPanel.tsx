@@ -108,6 +108,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  const [extensionsExpanded, setExtensionsExpanded] = createSignal(false)
+  createEffect(() => { props.instanceId; props.isActive(); setRightPanelCustomizationOpen(false) })
+  createEffect(() => { rightPanelCustomizationOpen(); setExtensionsExpanded(false) })
   let customizationTriggerRef: HTMLButtonElement | undefined
   let customizationPopoverRef: HTMLDivElement | undefined
   let savedCustomization = parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY))
@@ -127,7 +130,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     if (!rightPanelCustomizationOpen()) return
-    queueMicrotask(() => customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus())
+    const fitPopover = () => {
+      const popover = customizationPopoverRef
+      if (popover) popover.style.maxHeight = `${Math.max(0, window.innerHeight - popover.getBoundingClientRect().top - 8)}px`
+    }
+    queueMicrotask(() => { fitPopover(); customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus() })
+    window.addEventListener("resize", fitPopover)
     const closeOutside = (event: PointerEvent) => {
       const target = event.target as Node
       if (!customizationTriggerRef?.contains(target) && !customizationPopoverRef?.contains(target)) {
@@ -145,6 +153,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     onCleanup(() => {
       document.removeEventListener("pointerdown", closeOutside)
       document.removeEventListener("keydown", closeOnEscape)
+      window.removeEventListener("resize", fitPopover)
     })
   })
 
@@ -238,10 +247,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     },
   )
 
-  const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().filter(entry => entry.enabled).map(entry => {
+  const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
+  const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
     const id = `extension:${entry.manifest.id}`
     return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
-      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={extensions.verified() && props.isActive() && rightPanelTab() === id}
+      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
         context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
     }] }
   }))
@@ -250,9 +260,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs(),
+      allRightPanelTabs().filter(tab => extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
-      rightPanelCustomization().hiddenTabIds,
+      // Addons have one profile-wide activation, not a second per-window visibility gate.
+      rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
     ),
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
@@ -336,7 +347,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             <For each={orderedRightPanelTabs()}>
               {(tab) => {
                 const label = () => tab.label ?? props.t(tab.labelKey)
-                const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
+                const extension = () => extensionForTab(tab.id)
+                const visible = () => extension()?.enabled ?? (tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id))
                 return (
                   <>
                     <div class="right-panel-customization-row">
@@ -344,13 +356,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         <input
                           type="checkbox"
                           checked={visible()}
-                          disabled={tab.alwaysVisible}
-                          onChange={(event) =>
+                          disabled={tab.alwaysVisible || (Boolean(extension()) && (!extensions.verified() || extensions.activating() || !props.isActive()))}
+                          onChange={(event) => {
+                            const entry = extension()
+                            if (entry) {
+                              const enabled = event.currentTarget.checked
+                              event.currentTarget.checked = entry.enabled
+                              void extensions.activate(entry, enabled)
+                              return
+                            }
                             updateRightPanelCustomization((current) => ({
                               ...current,
                               hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
                             }))
-                          }
+                          }}
                         />
                         <span>{label()}</span>
                       </label>
@@ -405,6 +424,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               </For>
             </Show>
           </div>
+          <Show when={extensions.failed()}><p role="alert">{props.t("panelExtensions.error")}</p></Show>
           <button
             type="button"
             class="right-panel-customization-button mt-2 w-full"
@@ -412,7 +432,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           >
             {props.t("instanceShell.rightPanel.customize.reset")}
           </button>
-          <ExtensionManager instanceId={() => props.instanceId} controller={extensions} />
+          <hr class="panel-extension-divider" />
+          <details class="panel-extension-disclosure" onToggle={event => setExtensionsExpanded(event.currentTarget.open)}>
+            <summary>{props.t("panelExtensions.section")}</summary>
+            <Show when={extensionsExpanded()}><ExtensionManager controller={extensions} /></Show>
+          </details>
         </div>
       </Show>
 

@@ -102,14 +102,14 @@ test("catalogue routes require exact selection and consent, revalidate at instal
     assert.equal((await app.inject("/api/panel-extensions/catalog")).json().entries[0].compatible, true)
     const selection = { id: fixtureManifest.id, digest }
     assert.equal((await app.inject({ method: "POST", url: "/api/panel-extensions/catalog/inspect", payload: selection })).statusCode, 200)
-    assert.deepEqual(await store.list("/repo"), [])
+    assert.deepEqual(await store.list(), [])
     assert.equal((await app.inject({ method: "POST", url: "/api/panel-extensions/catalog/install", payload: selection })).statusCode, 400)
     assert.equal((await app.inject({ method: "POST", url: "/api/panel-extensions/catalog/install", payload: { ...selection, acknowledged: true, url: "http://localhost/secret" } })).statusCode, 400)
     current = index([])
     assert.equal((await app.inject({ method: "POST", url: "/api/panel-extensions/catalog/install", payload: { ...selection, acknowledged: true } })).statusCode, 404)
-    assert.deepEqual(await store.list("/repo"), [])
+    assert.deepEqual(await store.list(), [])
     current = index()
     assert.equal((await app.inject({ method: "POST", url: "/api/panel-extensions/catalog/install", payload: { ...selection, acknowledged: true } })).statusCode, 200)
-    assert.equal((await store.list("/repo"))[0].enabled, false)
+    assert.equal((await store.list())[0].enabled, false)
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })

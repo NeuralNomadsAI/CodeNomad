@@ -201,7 +201,7 @@ function isSupportedPartType(part: unknown): boolean {
 }
 
 function isContentPartType(type: unknown): boolean {
-  return type === "text" || type === "file"
+  return type === "text" || type === "file" || type === "skill"
 }
 
 function isVisibleContentPart(part: ClientPart): boolean {

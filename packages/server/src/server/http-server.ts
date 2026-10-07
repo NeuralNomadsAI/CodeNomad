@@ -39,6 +39,7 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
+import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
@@ -363,6 +364,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
+  if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {

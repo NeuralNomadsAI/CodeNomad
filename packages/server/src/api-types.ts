@@ -105,7 +105,9 @@ export type WorkspacePendingRequestsResponse = { supported: false } | {
     directory: string
     status: "ok"
     locations: WorkspacePendingRequestLocation[]
-  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }>
+  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }
+    // An optional historical hint is outside current ownership; never empty queue authority.
+    | { directory: string; status: "excluded"; locations?: never }>
 }
 
 export interface WorkspaceDeleteResponse {

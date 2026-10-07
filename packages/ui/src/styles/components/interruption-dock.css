@@ -26,6 +26,7 @@
   overscroll-behavior-y: auto;
 }
 .interruption-heading { display: flex; flex: 1; align-items: center; gap: var(--space-sm); min-width: 0; }
+.interruption-dock.is-collapsed.has-origin .interruption-heading { flex-basis: min(100%, 12rem); }
 .interruption-heading > svg { flex-shrink: 0; color: var(--accent-primary); }
 .interruption-heading-copy { min-width: 0; }
 .interruption-dock .window-title { font-weight: var(--font-weight-semibold); }

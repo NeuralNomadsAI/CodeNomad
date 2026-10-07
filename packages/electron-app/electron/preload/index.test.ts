@@ -118,3 +118,21 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   assert.equal(expose(["--codenomad-window-context=preferences"]).getDeveloperMode, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).showTitlebarMenu, undefined)
 })
+
+test("count-only badge bridge is exposed to local and remote main renderers, never Preferences", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  for (const context of ["local", "remote", "preferences"]) {
+    let api: Record<string, Function>
+    const calls: unknown[][] = []
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+        ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+      }),
+      process: { argv: [`--codenomad-window-context=${context}`] },
+    })
+    if (context === "preferences") { assert.equal(api!.setNotificationBadge, undefined); continue }
+    api!.setNotificationBadge(12)
+    assert.deepEqual(calls, [["notifications:setBadge", 12]])
+  }
+})

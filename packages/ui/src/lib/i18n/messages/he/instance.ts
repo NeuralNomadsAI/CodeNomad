@@ -1,4 +1,7 @@
 export const instanceMessages = {
+  "panelExtensions.section": "הרחבות",
+  "panelExtensions.assetsConsent": "הרשאה: קריאת תמונות וקבצים מתוצאות כלים בשיחה הנוכחית, המזהה שלה, השפה והמראה. ללא גישה למערכת הקבצים או לרשת.",
+  "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",
   "panelExtensions.catalog.loading": "טוען את הקטלוג הרשמי…",
@@ -17,8 +20,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "אני סומך על החבילה ועל המחבר שלה",
   "panelExtensions.confirm": "התקנה ללא הפעלה",
   "panelExtensions.cancel": "ביטול",
-  "panelExtensions.global": "כל הפרויקטים",
-  "panelExtensions.project": "תיקייה זו",
   "panelExtensions.remove": "הסרה…",
   "panelExtensions.removeWarning": "להסיר את ההרחבה ואת הגדרות ההפעלה מפרופיל CodeNomad זה?",
   "panelExtensions.removeConfirm": "אישור הסרה",
