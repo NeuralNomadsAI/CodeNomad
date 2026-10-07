@@ -8,6 +8,21 @@ après #673 et son revert #831. Le contrat fonctionnel courant et les lots
 publiés/locaux/à livrer sont dans `MISSIONS_PR_DESCRIPTION.md`. Aucun arrêt du
 daemon partagé ni intervention sur les missions live n'est nécessaire à ces tests.
 
+### Cible imposée — clarification du 7 octobre 2026
+
+Le plugin Missions doit être **entièrement autonome dans le service OpenCode**,
+avec l'interface **et le serveur intermédiaire CodeNomad fermés**. Un backend
+CodeNomad persistant ne satisfait pas cette cible. Voir la demande transmise et
+conservée dans `MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md`.
+
+L'admission, les autorisations, l'environnement/profil, le stockage, le réveil froid
+et la programmation nécessaires doivent s'exécuter côté OpenCode. Les politiques
+de sécurité restent obligatoires ; une API manquante est un contrat à implémenter
+et qualifier, pas une raison de substituer un backend permanent. Les travaux host
+déjà réalisés sont conservés et non activés, avec leurs preuves propres ; leurs
+gates ne sont plus les critères d'acceptation de l'autonomie du plugin. Cette cible
+prime sur les propositions de backend persistant historiques ci-dessous.
+
 ### État actuel : fenêtre, plugin et prochain passage
 
 - `retainMissionWork` garde une registration déjà chargée lorsque du travail actif,
@@ -56,30 +71,24 @@ les constats corrigés ici priment sur leurs anciennes descriptions du code.
   mais lancement indépendant, transport produit et parité packagée restent des
   gates distinctes. Voir `MISSIONS_NATIVE_NODE_IPC.md` pour les compromis.
 
-## Décision recommandée
+## Proposition historique de backend — remplacée par la cible native
 
-Conserver un **plugin natif durable** pour journal, carte, contexte, outils et
-rapports ; rendre le **backend CodeNomad d'autorisation indépendant des fenêtres**
-pour les admissions et contrôles natifs. Réutiliser le backend partagé existant,
-pas créer un interpréteur Mission, une seconde inbox ou un worker de workflow.
+L'étude initiale proposait un backend d'autorisation indépendant des fenêtres,
+parce que les interfaces plugin installées n'exposaient pas tous les contrats
+d'environnement/inbox du client HTTP. L'utilisateur a explicitement rejeté cette
+substitution : ces responsabilités doivent être déplacées dans OpenCode.
 
-Ce choix est réalisable avec les interfaces installées 2.0.21 : le client HTTP
-dispose de `session.environment` et `session.inbox`, le contexte plugin ne les
-expose pas. Une autorisation persistée ne remplace ni la lecture fraîche du profil
-ni les fences de propriété/worktree. Le chemin natif direct actuellement présent
-dans `MissionControl` ne doit donc **jamais** être un fallback headless de production.
+Les modules `host-lifetime/` et `missions/durable-host/` restent des fondations
+conservées, non une solution livrée à cette demande. Le transfert doit réutiliser
+les politiques d'admission et leurs contrôles d'identité/autorisation, sans moteur
+de workflow, seconde inbox ou fallback au seul environnement du daemon. Une
+autorisation persistée ne dispense pas de l'environnement complet ni des fences.
 
-La persistance du backend est une capacité explicite, visible et révocable,
-autorisée lors de Play/adoption. La fermeture du dernier desktop détache ses
-fenêtres et capacités d'automatisation ; elle ne termine pas ce backend tant
-qu'une autorisation de continuité est active. Electron et Tauri doivent utiliser
-la même autorité par profil, y compris après rattachement. Un backend sans fenêtre
-n'a aucune capacité navigateur, screenshot ou action UI.
-
-**Gate préalable :** prototype privé du backend persistant et de son autorité
-unique. Si cette persistance ou ses fences ne sont pas prouvées, offrir journal /
-contexte / rapports durables et admissions explicitement indisponibles. Ne pas
-annoncer une continuité complète en utilisant l'environnement du daemon à défaut.
+**Critère d'acceptation :** fermer les clients et le backend CodeNomad ; le service
+OpenCode seul retrouve les racines autorisées et admet exactement un passage,
+avec son profil, ses permissions et ses identités durables. Redémarrer OpenCode
+et répéter sans réveil manuel ni replay d'effet incertain. Les preuves de lancement
+indépendant d'un backend ne démontrent pas ce parcours.
 
 ## 1. Preuves et limites du contrat natif
 

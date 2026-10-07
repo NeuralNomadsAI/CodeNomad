@@ -9,6 +9,15 @@ unmerged; published source, local corrections and planned recurrence are distinc
 The whole integrated product is not yet accepted. Do not promote the historical
 results below into current-source or installed-app qualification.
 
+**Authoritative target clarification (2026-10-07):** Missions runs autonomously
+inside the OpenCode service with both CodeNomad UI and its intermediary backend
+closed. A persistent CodeNomad backend is not a substitute. The actual user request
+was relayed from the cold-restoration subsession and is preserved in
+`MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md`. Host-lifetime work/receipts below
+remain retained, non-activated, separately scoped evidence, not native-plugin
+autonomy acceptance. Active integration assignments now target native admission,
+profile/environment, authority, storage and cold scheduling in OpenCode.
+
 - Published head at the start of this update: `cfea513b`; corrections now pushed
   through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
   preferences/task-session policy/depth (`972910fe`) and inactive recurrence core
@@ -48,6 +57,64 @@ results below into current-source or installed-app qualification.
   resource integrity and detach prototypes are not packaged persistent-launch or
   cold-Location recurrence qualification. New isolated checks must keep those gates
   separate, including fresh environment, restart and no admission replay.
+
+### Parallel implementation follow-up — local, not desktop-enabled
+
+- `860ed92e` extracts the concrete prepared-creation pipeline used by the ordinary
+  HTTP route and shares physical root/deletion admission with managed roots.
+  **30 focused checks** and server typecheck pass; independent source review finds
+  **0 actionable regressions**. Recurrence preparation reuses that pipeline but
+  still refuses dispatch without a genuine standing grant; creation is not Play
+  or an environment/model send.
+- `ce4b58fd` isolates finite passage journals from the ordinary 20-map/2,000-event
+  project inventory and archives exact settled references into the existing
+  30-receipt history. **72 focused checks** pass. Independent review reproduced
+  three defects, now closed: terminal/reference authorization lacked the result,
+  native-return reports were incorrectly awaiting coordinator notifications, and
+  deletion/cleanup could race archival settlement. The corrected file independently
+  passes **7/7** plus all original probes, with **0 remaining scoped findings**.
+  Physical journals remain retained; bounded disk reclamation and native terminal
+  readers are not implemented or implied.
+- Existing-grant restart restoration is local with independent scoped closure.
+  It requalifies only an accepted running protected grant, with exact fresh native
+  evidence and a persisted genuine daemon-storage identity; it neither adopts nor
+  sends Play. Four findings in the first review have corrections and **23 focused
+  fast passes**: unknown historical identity rebinding, malformed control evidence,
+  losing-attempt lease invalidation and unbounded qualification cancellation.
+  Subsequent review exposed hidden ordinary service acquisition through ownership,
+  event inventory and the actual native authority core/plugin root reader, plus
+  inconsistent canonical Play controls. Those paths now use existing-only
+  authenticated connections and registered-only inventory, with no fallback.
+  The genuine core/plugin probe independently restores `running` / `qualified`
+  with **0 ordinary acquisitions**; **0 remaining scoped findings**. The current
+  first canonical regression passes **1/1** after the final root-reader correction.
+  Previous **40/40** and fast **26/26** checks predate that final correction; fresh
+  complete canonical checks remain required. Earlier
+  **31/31** and **20/20** exploratory checks predate these review corrections and
+  do not qualify the corrected source or native writer replacement.
+- Existing-only workspace observation independently passes **95 focused cases**
+  (service/manager/generation/event ownership/routing), including cold nested reads
+  after cancellation/invalidation with **0 additional discovery/start/provisioning**.
+- Native standing authorization is implemented locally in four new pure modules:
+  **14 focused checks**, including **1,025 finite passages**, exact-key immutable
+  archives and permanent retired-sequence fencing without raising ordinary authority
+  quotas. A fresh independent review is underway. Native signer provisioning,
+  writer exclusion, ledger fencing and actual terminal/effect observation remain
+  integration work; no production proof producer or dispatch is enabled.
+- `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
+  with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
+  consecutive runs and independent **9/9 / 0 findings**. A complete no-capture
+  replacement runs under shell `sh_1163a37f9001cC2EBXji7worPp`; its **2,162 input
+  fingerprints** are in
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-keyed-focus-inputs-20261007.json`.
+- The ordinary-parent production qualifier now includes supervisor/manager/private
+  election/full backend/auth and detach/reattach composition. Compile, loader,
+  syntax and negative Job probes pass, but the positive path remains unexecuted.
+  A new independent review found four qualifier defects and two supporting
+  client/bootstrap defects; corrections are in progress. Do not promote this
+  expanded fixture into native or packaged continuity acceptance.
+- Commits in this subsection are local. The existing hosted run is preserved:
+  no publication or PR-body edit is needed to continue these independent tasks.
 
 ### Current independent recurrence/native receipts
 
@@ -101,6 +168,12 @@ results below into current-source or installed-app qualification.
   preferences does not await i18n import. The remaining failure is the mandatory
   external native capture absent on ordinary CI. Logs retained at
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ci-32ee0fc5-browser-failed.log`.
+- Hosted run `37606296146` on `e56cf0c9` is **cancelled**, not a new test
+  failure, after publication of the independently reviewed native-baseline
+  correction `d2a5fddb`. Other test jobs passed; the interrupted browser step has
+  no complete aggregate receipt. Replacement run `37613611661` targets
+  `d2a5fddb`; it remains pending qualification. Do not infer green CI from the
+  cancelled run or edit the PR body while the replacement is active.
 - Targeted browser-fixture corrections: geometry now waits for the actual French
   worktree label, and a held real French dictionary import verifies English while
   pending, translated text after release and unchanged draft. **11/11** focused
@@ -137,7 +210,13 @@ results below into current-source or installed-app qualification.
   timeouts unchanged. Five fresh original regression runs pass. Independent
   follow-up closes at zero findings, audits the original 2/5 race and runs the
   exact corrected test **1 pass / 0 failures / 0 skips**. No menu/product change.
-  New complete ordinary no-capture run remains pending, with 2,162 input hashes:
+  New complete ordinary no-capture run finishes **757 pass / 1 fail / 2 skipped**,
+  all 760 cases selected, no cancellations, 2,446 seconds. All **2,162 input hashes
+  remain unchanged** at completion. The native emulation regression passes; the
+  sole failure is the keyed overflow-menu focus assertion at
+  `tests/browser/mission-list-item.test.ts:295`, now under separate root-cause
+  investigation. This failed aggregate remains retained; focused reruns do not
+  replace it. Fingerprints:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-native-baseline-inputs-20261007.json`.
   Output:
   `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1160318d1001u5Jia2stdQ6RFK.out`.

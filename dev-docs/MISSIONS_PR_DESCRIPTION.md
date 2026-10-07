@@ -118,7 +118,11 @@ de décision humaine. « Mission ouverte », « agent actif », « input admis �
 
 ## 4. Missions permanentes et programmation
 
-**Exigence demandée : les passages doivent fonctionner avec CodeNomad fermé.**
+**Exigence confirmée : le plugin est autonome dans le service OpenCode, avec
+l'interface ET le serveur intermédiaire CodeNomad fermés.** Le service OpenCode
+reste nécessaire. Maintenir le backend CodeNomad en arrière-plan n'est pas une
+solution de remplacement acceptable. Cette clarification du 7 octobre est conservée
+dans [`MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md`](MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md).
 Une mission laissée active dans le panneau ne satisfait pas cette exigence.
 
 ### Parcours minimal
@@ -149,8 +153,10 @@ une revue ne vaut pas consentement à fusionner.
 - Réutiliser le service **OpenCode2 déjà permanent** et le plugin Missions.
   Fermer la fenêtre n'est ni Pause, ni Stop, ni arrêt du daemon.
 - Porter le déclenchement et son état durable hors de la vue UI. Réutiliser
-  l'admission autorisée existante lorsqu'un environnement frais ou un contrôle
-  de propriété est nécessaire, pas un deuxième moteur de workflow.
+  les politiques d'admission existantes en déplaçant leur exécution et leurs
+  protections dans OpenCode : environnement/profil, propriété, stockage,
+  restauration froide et programmation. Aucun backend CodeNomad permanent ni
+  deuxième moteur de workflow ne doit être requis pour un passage.
 - Un seul passage par mission à la fois ; identités stables avant tout effet.
 - Une publication incertaine est conservée pour réconciliation, jamais republiée
   aveuglément. Une réponse en attente ne crée pas une nouvelle exécution concurrente.
@@ -179,7 +185,7 @@ doit encore être livré et prouvé ; ce sont deux tests différents.
 | Lecture et ergonomie | `MissionControl`, composants `mission-*`, `stores/mission-view-state.ts` |
 | Préférences / profils / briefs réutilisables | `mission-preferences`, `mission-defaults`, `mission-model-library`, comparaison conditionnelle des préférences |
 | Profondeur locale | `opencode/subagent-depth-settings.ts`, route dédiée, `mission-subagent-depth.tsx` |
-| Continuité de l'admission hors fenêtre | fondations `host-lifetime/`, `missions/durable-host/`, `native-host-lifetime/` ; composition à qualifier |
+| Autonomie de l'admission dans OpenCode | migration des politiques actuelles vers le plugin/service natif ; `host-lifetime/` reste un travail conservé distinct, pas la cible d'autonomie |
 
 Le journal natif append-only est la vérité métier reconstruite ; les événements
 signalent une invalidation, puis l'UI relit un snapshot autoritaire. L'activité
@@ -206,7 +212,7 @@ les versions utilisées pour compiler ne sont pas une allowlist du daemon instal
 | Lire | Texte complet par pages bornées, copie de l'original, cible/focus conservés pendant les refreshs |
 | Naviguer | Aucun résultat tardif ne remplace une nouvelle sélection, un lecteur ou une autre conversation |
 | Configurer | Préférences dans Missions, séparation global/nouvelle mission et local/OpenCode, CAS et brouillons conservés |
-| Programmer | Prochain passage clair ; preuve de déclenchement après fermeture réelle de tous les clients |
+| Programmer | Prochain passage clair ; preuve après fermeture réelle de tous les clients ET du backend CodeNomad, service OpenCode seul |
 | Reprendre | Même identité après reconnexion/redémarrage ; ni doublon de coordinateur ni replay incertain |
 | Échouer | Erreur actionnable et état conservé ; inconnu ne devient pas terminé |
 | Touch/étroit/RTL | Actions accessibles, lecteur central utilisable, contrôles compacts, focus et clavier corrects |
@@ -226,7 +232,12 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Capacité, conflits de création et deadline Stop native | `530dc8af` / `bd2a8cee` poussés ; corrections et preuves conservées |
 | Préférences dans Missions, politique des tâches, profondeur locale et corrections UX | Publié dans `972910fe` ; revue indépendante corrigée et clôturée dans ce périmètre, typechecks vérifiés |
 | Missions permanentes, programmation et suivi des passages | Noyau durable publié, non activé (`1a17bbcc`), 22 tests et revue indépendante sans finding restant ; raccordement natif, archivage, réveil froid et UX à terminer |
-| Admission durable hors fenêtre et parité packagée | Fondations présentes ; travail d'intégration/qualification à terminer, sans contournement des protections natives |
+| Autonomie native, backend CodeNomad fermé | Admission/profil/autorité/réveil à porter dans OpenCode ; aucun backend persistant ne remplace ce critère. Fondations host conservées séparément, non activées |
+| Admission de création partagée | Commits locaux `860ed92e` ; 30 checks ciblés, typecheck et revue sans régression trouvée. Préparation récurrente réutilisable, mais aucun déclenchement sans autorisation permanente réelle |
+| Journaux finis et archivage des passages | Commit local `ce4b58fd` ; 72 checks ciblés, trois défauts corrigés et clôturés indépendamment (7/7 plus probes). Les journaux historiques sont conservés, sans garantie de taille disque bornée |
+| Restauration d'une autorisation déjà acceptée | Implémentation locale en revue ; identité du storage natif, contrôles et annulation revalidés, sans nouvelle adoption/Play. Qualification native de remplacement et admission après redémarrage encore à prouver |
+| Autorisation permanente et enfants finis | Quatre modules locaux ; 14 checks, dont 1 025 passages sans accumulation des grants ordinaires. Revue indépendante en cours ; signature/proof/observations natives encore à intégrer |
+| Focus des actions Mission | Commit local `32c308a1` ; reproduction du dernier échec agrégé, 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Nouvelle suite complète sans capture en cours |
 
 ### Preuves actuelles et prochaine boucle
 
