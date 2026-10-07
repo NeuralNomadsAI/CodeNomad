@@ -24,7 +24,6 @@ import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import { usePromptAside } from "./prompt-input/usePromptAside"
 import { usePromptViewport } from "./prompt-input/usePromptViewport"
 import PromptAsideWindow from "./prompt-input/PromptAsideWindow"
-import SkillAttachmentBadges from "./prompt-input/SkillAttachmentBadges"
 import {
   MIN_PROMPT_FIELD_HEIGHT_RATIO,
   MAX_PROMPT_FIELD_HEIGHT_RATIO,
@@ -1020,8 +1019,6 @@ export default function PromptInput(props: PromptInputProps) {
           </div>
         </div>
 
-        <SkillAttachmentBadges instanceId={props.instanceId} sessionId={props.sessionId}
-          disabled={Boolean(props.disabled) || mode() !== "normal"} />
         <div class="prompt-input-footer">
           <div class="prompt-input-footer-context">{props.footerControls}</div>
           <div class="prompt-input-footer-actions">
