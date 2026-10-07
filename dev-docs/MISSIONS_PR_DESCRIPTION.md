@@ -342,6 +342,10 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   Fixture opt-in **`1465793f`**, 2 checks répétés par main ; aucune preuve de
   persistance, autorité ou Scope gracieux. Probe claim inactive/reprise froide
   suivant séparé, pas une activation.
+  Premier probe park/cold clos négatif avant admission sur un séparateur Windows :
+  **37,8 s**, aucun prompt/Job/modèle, cleanup vérifié. Correction revue **6 checks
+  sans admission native** ; un run distinct du candidat figé autorisé, reprise
+  froide encore non qualifiée.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
@@ -350,9 +354,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   claim racine inactive, classée nativement « shutdown » **sans arrêt du daemon**.
   Ce n'est ni un succès ni un reset des dix reprises. Pause/Stop d'un acteur déjà
   inactif, passage fini et reprise froide restent à prouver avant toute activation.
-- Nouvel aggregate navigateur ordinaire lancé après la correction header, sans
-  capture native externe, sur **2 162 inputs figés**. Commande, assertions et délais
-  inchangés ; aucun résultat annoncé avant completion, qualifications natives séparées.
+- Nouvel aggregate navigateur ordinaire terminé après la correction header, sans
+  capture native externe : **757 pass / 1 fail / 2 skipped**, **2 162 inputs inchangés**.
+  Seul échec : clic Copy inline de `render-cost.test.ts` intercepté en mode overflow,
+  délai original 30 s. Diagnostic du chemin réel en cours, sans clic forcé, skip
+  ni hausse de délai ; ancien receipt vert et nouveau receipt en échec conservés.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.

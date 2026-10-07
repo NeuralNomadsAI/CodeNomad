@@ -18,6 +18,14 @@ remain retained, non-activated, separately scoped evidence, not native-plugin
 autonomy acceptance. Active integration assignments now target native admission,
 profile/environment, authority, storage and cold scheduling in OpenCode.
 
+**Latest scoped status:** ordinary server **2,370 pass / 0 fail / 8 skipped**,
+625 inputs unchanged; latest complete no-capture browser **757 pass / 1 fail /
+2 skipped**, 2,162 inputs unchanged. Its sole failure is the render-cost inline
+copy click under action overflow, under root-cause investigation without relaxed
+assertions/deadlines. Native Job process-bound lifetime is committed in `1465793f`;
+inactive-claim cold continuity, protected authority and packaged autonomy remain
+unqualified. Historical results below retain their original scope and failures.
+
 - Published head at the start of this update: `cfea513b`; corrections now pushed
   through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
   preferences/task-session policy/depth (`972910fe`) and inactive recurrence core
@@ -713,6 +721,20 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   contracts to qualify; no retirement runtime proof exists yet. Hook error channel
   is `never`, not an invented typed authorization-denial API. Stock-stop proof
   above does not close this separate lifecycle gate.
+  The first private park/cold probe closes **negative in 37.8 s**, independently
+  verified: a Windows separator comparison fails **before admission**, **0
+  prompts/Jobs/models/interruptions/cold transitions**. Daemon **31196** same-handle
+  exit, watcher **17964** close, sentinel **20984** preservation/close and worker
+  **42472** fork-close/exit **1** are witnessed; parent writes drain, no supervisor
+  exit-handle ACK is invented. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-qc3AkL/receipt.json`,
+  SHA-256 `b797076e473ef6fc4f136c4489a07eb740def45fd783652fa5fae3af7f46d215`.
+  Existing exact-path normalization corrects placement without admitting unrelated
+  roots; independent correction review passes **6 zero-native checks**. Freeze:
+  `.../park-claim-placement-correction-freeze-AMc0z5/manifest.json`.
+  One distinct corrected-source native run is authorized after hash validation;
+  it is not a replay of the old admission (none occurred). No park/cold acceptance
+  is claimed before its receipt and review; the original negative stays unchanged.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
@@ -766,7 +788,14 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   input paths**. Original command/selector and deadlines remain unchanged;
   `NATIVE_MISSION_CAPTURE` and `NATIVE_MISSION_OUTPUT` are absent. This run is
   independent of the passing server aggregate and ongoing native fixtures; no
-  browser outcome is claimed before completion. Inputs:
+  browser outcome was claimed before completion. It now finishes **760 selected /
+  757 pass / 1 fail / 0 cancelled / 2 skipped**, **2,510.86 s**, all **2,162 inputs
+  unchanged**. Sole failure: `render-cost.test.ts:91`, direct inline Copy click
+  intercepted by `.tool-call-header[data-action-overflow=true]`, original **30-second**
+  click timeout. Header startup correction is not the failure. Real overflow/copy
+  root diagnosis is active; no forced click, skip or timeout increase is allowed.
+  Result: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-output-20261007.json`.
+  Inputs:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-inputs-20261007.json`;
   log: `.../pr866-ui-header-complete-20261007.out`;
   job: `sh_11714504d001OxNqANpQB4yJfM`.
