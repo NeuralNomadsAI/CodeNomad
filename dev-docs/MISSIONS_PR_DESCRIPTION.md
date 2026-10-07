@@ -237,9 +237,13 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Autonomie native, backend CodeNomad fermé | Admission/profil/autorité/réveil à porter dans OpenCode ; aucun backend persistant ne remplace ce critère. Fondations host conservées séparément, non activées |
 | Admission de création partagée | Commits locaux `860ed92e` ; 30 checks ciblés, typecheck et revue sans régression trouvée. Préparation récurrente réutilisable, mais aucun déclenchement sans autorisation permanente réelle |
 | Journaux finis et archivage des passages | Commit local `ce4b58fd` ; 72 checks ciblés, trois défauts corrigés et clôturés indépendamment (7/7 plus probes). Les journaux historiques sont conservés, sans garantie de taille disque bornée |
-| Restauration d'une autorisation déjà acceptée | Implémentation locale en revue ; identité du storage natif, contrôles et annulation revalidés, sans nouvelle adoption/Play. Qualification native de remplacement et admission après redémarrage encore à prouver |
-| Autorisation permanente et enfants finis | Quatre modules locaux ; 14 checks, dont 1 025 passages sans accumulation des grants ordinaires. Revue indépendante en cours ; signature/proof/observations natives encore à intégrer |
-| Focus des actions Mission | Commit local `32c308a1` ; reproduction du dernier échec agrégé, 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Nouvelle suite complète sans capture en cours |
+| Restauration d'une autorisation déjà acceptée | Commit local `f6973b96` ; 43/43 checks aux empreintes inchangées, revue clôturée et zéro acquisition ordinaire. Fondation conservée distincte : ne remplace pas l'autonomie native demandée |
+| Autorisation permanente et enfants finis | Commit local `112c0836` ; 17/17 auteur/maître/reviewer, dont 1 025 passages sans accumulation des grants ordinaires. Trois défauts corrigés et clôturés ; proof/observations natives encore à intégrer |
+| Approbation finale de récurrence | Commit local `354acfaa` ; 57/57 checks et typecheck, revue indépendante 40/40 et zéro finding. Le callback final reste strict après préparation ; refus sans effet et pending incertain conservé sans replay |
+| Admission directement dans OpenCode | Commit local `e63c182c` ; 13/13 auteur/maître/reviewer, deux défauts d'approbation corrigés et clôturés. Fixture réelle 2.0.24 du helper haut niveau : ENV et prompt/synthetic admis sans backend ni modification OpenCode. Writer/gate injectés, Location chargée ; autorité native complète et réveil froid encore à prouver |
+| Commit de métadonnées natif | Commit local `6ba741c4` ; transaction réelle OpenCode 2.0.24, rollback après écriture et exclusion par une claim native concurrente. P1 de retrait tardif corrigé et clôturé indépendamment ; ce n'est pas encore un producteur d'autorité permanent |
+| Activation à froid du plugin | Redémarrage privé réel 2.0.24 : une claim enregistrée recharge le plugin sans demande de Location après boot. L'outil est marqué aborted, pas repris ; deux requêtes modèle. Activation prouvée, programmation/continuité encore non qualifiées |
+| Focus des actions Mission | Commit local `32c308a1` ; 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Suite complète **sans capture : 758/0/2**, zéro annulation, 760 cas et 2 162 empreintes inchangées |
 
 ### Preuves actuelles et prochaine boucle
 
@@ -272,8 +276,25 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   maintenant ces dimensions natives avant sa référence ; **5/5 relances passent**,
   sans retirer de champ du contrôle de reset ni changer produit/menu/deadline.
   La revue indépendante clôture cette correction à zéro finding et reproduit
-  **1/1** ; nouveau run complet sans capture lancé sur inputs fingerprintés.
-  Ce run reste en cours, distinct des reruns ciblés et de la CI hébergée.
+   **1/1**. Le run complet suivant sur `d2a5fddb` finit à **757/1/2**, avec les
+   2 162 empreintes inchangées ; le seul échec est le focus d'un menu Mission.
+   Reproduction puis correction `32c308a1` : autofocus d'ouverture réellement
+   attendu et focus inline conservé lors d'une vraie permutation. **9/9** et cinq
+   répétitions, revue indépendante **9/9 / zéro finding**. Le nouveau run complet
+   sans capture après cette correction termine à **758 réussites, 0 échec,
+   2 skips, 0 annulation** sur 760 cas ; les **2 162 empreintes sont inchangées**.
+   Cette preuve renderer/native-fixture Windows ne qualifie pas l'autonomie du
+   plugin et ne remplace pas l'échec hébergé distinct ci-dessous.
+- CI **37613611661** sur `d2a5fddb` : **757/1/2**, zéro annulation. Le seul échec
+  est `header-windows.test.ts:39`, timeout de chargement de la fixture **avant** les
+  assertions de badge, distinct du focus local. Minimum/latest, compatibilité et
+  pruning sur trois OS, Tauri Windows/macOS et les étapes serveur passent ; les
+  étapes Linux Tauri ultérieures et le build sont sautés après l'échec navigateur.
+  Cause reproduite : compilation à froid de la fixture, avant les assertions.
+  Préparation native de Vite testée en isolation : trois chargements **2,10–2,18 s**,
+  mêmes réglages/assertions/délai **15 s**. Le run local aux inputs gelés est
+  terminé ; correction ciblée en cours, avec cache détenu et helper existants.
+  Ce diagnostic ne remplace pas la CI en échec.
 - Livraison UX sur sources plus récentes : **240 tests Missions navigateur** et
   **32 tests unitaires/parité** passent selon le rapport de livraison ; les revues
    ciblées sont clôturées, les aggregates ci-dessus gardent leur périmètre exact.
@@ -299,8 +320,9 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 - Qualification Windows indépendante : build release et vrai loader natif passent,
   puis `native-parent-job-forbids-breakaway` bloque la première naissance hors Job
   depuis le harness. Ce refus reste intact, sans fallback. Il faut un parent Windows
-  ordinaire autorisé pour poursuivre les preuves de backend, service et fermeture
-  desktop ; ce test négatif n'est pas une qualification de continuité.
+   ordinaire autorisé pour poursuivre ce qualifier host conservé séparément.
+   Il ne remplace pas l'autonomie du plugin avec le backend CodeNomad fermé et
+   son test négatif n'est pas une qualification de continuité native.
 - CI de l'ancien head `cfea513b` reste en échec ; elle n'est pas effacée par les reruns.
   Les corrections de fixtures/packaging et le vrai loader compilé sont publiés.
   Les 14 tests Tauri cross-host actuels passent, y compris les deux échecs hébergés ;

@@ -60,6 +60,17 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
 
 ### Parallel implementation follow-up — local, not desktop-enabled
 
+- The paired ordinary desktop bootstrap transport is locally bounded and private:
+  exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
+  deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
+  confirms AuthManager/launcher compatibility without adding dependencies. It
+  reproduces an **Electron stale cookie** installed after generation reset while
+  native installation is pending: navigation denial alone is insufficient. Exact
+  locked Tauri/wry source also queues installation without a generation-aware
+  native receipt. Both require final native-execution/receipt fencing before
+  ordinary bootstrap commit; corrections and during-install regressions are active.
+  Direct-child lifecycle intent wrappers and persistent attachment scaffolding
+  remain separately retained, unactivated, not native-plugin autonomy evidence.
 - `860ed92e` extracts the concrete prepared-creation pipeline used by the ordinary
   HTTP route and shares physical root/deletion admission with managed roots.
   **30 focused checks** and server typecheck pass; independent source review finds
@@ -107,16 +118,110 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   quotas. Independent review reproduced **3 P2 findings**: torn-denial reconciliation
   could deadlock after bookkeeping advanced the revision; reservation headroom
   incorrectly rejected materialized receipts; historical archive reads ignored
-  their committed digest. Corrections and exact regressions are in progress.
+  their committed digest. All three are corrected and independently closed:
+  **17/17** author/main/reviewer tests, reviewer typecheck, original probes and
+  unchanged four-file fingerprints; **0 remaining scoped findings**. Commit:
+  `112c0836`. The exact receipt stress grows **196,596 → 196,938 bytes** without
+  rejecting bookkeeping or raising the 256-KiB ceiling; another reservation is
+  still fenced.
   Native signer provisioning,
   writer exclusion, ledger fencing and actual terminal/effect observation remain
   integration work; no production proof producer or dispatch is enabled.
+- Native service-graph admission is committed in `e63c182c`: an executable
+  daemon-local adapter and high-level Mission reconstruction/environment/send
+  helpers. Independent review reproduced ignored async owner approval and an
+  omitted mutation guard selecting a read default. Both are corrected and closed:
+  **13/13** author/main/reviewer checks, **0 remaining scoped defects**. The final
+  actual private OpenCode **2.0.24** fixture exercises the **high-level helper**,
+  real journal/authority logic, signed adoption/Play, fresh ENV then prompt and
+  synthetic with `resume:true`, **without a CodeNomad backend or upstream edits**.
+  Exact lost-ACK evidence retains one admission without replay. All **9 recorded
+  production source hashes** match in main/reviewer verification. Final receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-yx2mH0/results.json`.
+  Writer trust/exclusion and root-change denial remain **injected**, the Location
+  explicitly warmed. Two provider requests show dispatch activity, not successful
+  model consumption/completion. Shipping entry/build are unchanged; protected
+  native writer qualification, cold wake and production activation remain open.
+  Earlier `QFyvWn` low-level / `GoUGI8` intermediate receipts remain historical.
+- **3/3** entry-lifetime checks pass in author/main: external setup seals out native
+  graph services; plugin Scope survives request cleanup but also leaves a stale
+  retained capability usable after native-map invalidation. Due passages must
+  acquire a fresh scoped native graph and its exact entry token. The checked
+  existing-only caller prototype is not a production graph/writer producer or cold
+  wake proof. Loading one explicitly signed/enrolled root through a demonstrated
+  native acquisition mechanism may be qualified separately; pending-recovery's
+  loaded-only rule is not a prohibition on authorized Mission cold-root wake.
+- Main reproduced a related returned-approval defect in the shared recurrence
+  runner/store/passage/archive paths. Synchronous literal-true checks now cover
+  reservation, native storage preparation, settlement and passage/archive writes.
+  The first **51 focused cases** and server typecheck preceded further exact
+  publication/archive regressions. Independent review reproduced one final
+  raw-callback edge: the runner's
+  `beforeEffect` returned the original guard after validating it, so late false/void
+  could pass through the ordinary creation helper. It now returns the strict
+  guarded wrapper; two regressions cover the final invocation and actual shared
+  creation-effect seam. Final source: **57/57** complete focused cases and server
+  typecheck; independent **2/2** original probes, **40/40** fast aggregate,
+  typecheck and unchanged seven-file fingerprints, **0 actionable findings**.
+  Commit `354acfaa`. Unknown post-admission settlement retains its pending ID.
+- A native transactional metadata commit candidate is implemented locally in
+  `native-authority-provider.ts` (**211 lines**), with an actual private **2.0.24**
+  graph/SqlClient fixture: guarded **BEGIN IMMEDIATE**, exact snapshot/revision
+  checks, readback, rollback after write and two Locations. A second private
+  daemon's **genuine native execution claim** denies acquisition without modifying
+  that claim. Server typecheck passes. CLI/source fingerprints are recorded in
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-oRs9ZJ/results.json`.
+  Enrollment is **injected**; this is **metadata-commit evidence**, not signer
+  authority, permanent writer ownership, whole-database rollback resistance,
+  managed cold autonomy or production activation. Independent review reproduced
+  **1 P1**: authority retired in a microtask after the last caller guard could
+  still commit metadata. The final shared transaction hook must recheck caller
+  authority as well as native fences for both hot publication and parent archive;
+  corrected once in the shared final hook. All **4 actual native retirement
+  cases** roll back: revision **0**, original parent unchanged, next parent absent.
+  The independent original probe now rejects and positive/competing-execution
+  probes still pass; **0 actionable findings** in the frozen adapter scope.
+  Author/reviewer source fingerprints match; final receipts:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-7CMDEy/results.json`
+  and `.../missions-child-environment-fz21n6/results.json`. Commit `6ba741c4`.
+  This closes the metadata adapter P1 only; it does not activate autonomous work.
+- Native-startup qualification uses a read-copied **2.0.24** artifact and genuinely
+  private XDG managed registration, with actual start/restart and preserved sentinel.
+  Persisted ENV nonce/hash reaches each daemon; **Node `--import`/`--require` and
+  Bun `BUN_OPTIONS --preload` record zero loader hits** on this compiled artifact.
+  Bun runtime is **1.4.2**; installed Bun **1.3.14** is not a same-version control.
+  Cold global-plugin zero hits are observations over **2-second windows**, not
+  boot-completion proof. Cleanup and copied/original artifact hashes pass. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-ir3u3e/receipt.json`.
+  This rejects those artifact-specific loader candidates, not all existing native
+  startup mechanisms. No upstream modification, production bootstrap or scheduler
+  is enabled.
+- Actual **2.0.24 native-claim restart** now proves cold plugin activation without
+  post-restart Location demand: one prompt admission, **one tool entry total**,
+  **two model requests** (initial and fresh native restart continuation), original
+  session/message/call identities retained. The claimed Location plugin loads;
+  the idle control has zero setup hits over its **2-second observation window**.
+  Native runner marks the unfinished tool **aborted**, not re-executed; resume count
+  becomes **1** before terminal settlement clears the claim. Exact upstream tag
+  `v2.0.24`, commit `e7a34f09bfd9134dfade5a8ddb843f7030bc9a69`, is read-only source
+  evidence. Inactivity can interrupt active tools, and ephemeral tool progress
+  does not refresh that clock. This is a qualified **cold activation path**, not
+  durable tool continuation or scheduling. Inactivity survival, protected writer,
+  signed-root/profile checks, finite passage/no-replay and unattended relaunch
+  remain open; closing all CodeNomad processes is **not** qualified. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-gYg5gT/receipt.json`.
+  Cleanup/sentinel preservation and original/copied artifact hashes pass. A bounded
+  plugin-lifetime/idle probe follows; no native claims are manufactured or rewritten.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
-  consecutive runs and independent **9/9 / 0 findings**. A complete no-capture
-  replacement runs under shell `sh_1163a37f9001cC2EBXji7worPp`; its **2,162 input
-  fingerprints** are in
+  consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
+  replacement **finishes 758 pass / 0 fail / 2 skipped / 0 cancelled**, all **760
+  selected cases**, under shell `sh_1163a37f9001cC2EBXji7worPp`. All **2,162 input
+  fingerprints remain unchanged** at completion; inputs are in
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-keyed-focus-inputs-20261007.json`.
+  Completion check: `.../pr866-ui-keyed-focus-output-20261007.json`. This is ordinary
+  Windows renderer/native-fixture evidence, not installed-app or autonomous
+  scheduler acceptance, and does not replace the separate hosted CI failure.
 - The ordinary-parent production qualifier now includes supervisor/manager/private
   election/full backend/auth and detach/reattach composition. Compile, loader,
   syntax and negative Job probes pass, but the positive path remains unexecuted.
@@ -129,8 +234,25 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   detach promise; main independently passes **12/12** lifetime correction checks.
   Positive host composition remains unexecuted. Do not promote this
   expanded fixture into native or packaged continuity acceptance.
-- Commits in this subsection are local. The existing hosted run is preserved:
-  no publication or PR-body edit is needed to continue these independent tasks.
+- Commits in this subsection are local. Hosted run **37613611661** has now
+  **completed with failure**, not cancellation, on published `d2a5fddb`: browser
+  **757 pass / 1 fail / 2 skipped / 0 cancelled**. Sole failure is
+  `header-windows.test.ts:39`, `page.goto`'s **15-second load timeout** before
+  shell-badge assertions. It is distinct from the local keyed-focus failure.
+  Minimum/latest runtime contracts, three-platform compatibility/pruning and
+  Tauri Windows/macOS jobs pass; main server/typecheck/build steps pass. Later
+  Linux Tauri steps and build are skipped after the browser failure. Readonly
+  root-cause investigation runs without changing the frozen UI aggregate inputs.
+  That investigation reproduces both fresh-cache startup failures: first fixture
+  compilation and **1,364 unoptimized Lucide imports** stall optimized dependency
+  responses while the document is interactive with an empty root. Actual Vite
+  `transformRequest` then `waitForRequestsIdle` preparation preserves original
+  optimizer settings, readiness and **15-second navigation timeout**: three
+  isolated preparations pass with browser loads **2.10–2.18 s**. The header fixture
+  also needs the existing owned-cache lifecycle rather than checkout-shared cache.
+  The complete Windows aggregate above has now settled with unchanged inputs;
+  the targeted owned-cache/preparation correction can proceed. It will have its
+  own frozen-source checks; diagnosis is not corrected-source hosted acceptance.
 
 ### Current independent recurrence/native receipts
 

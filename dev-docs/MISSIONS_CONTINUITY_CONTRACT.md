@@ -42,12 +42,22 @@ SDK nommé « persistentSchedule » n'est pas une preuve de nécessité d'extens
 - L'admission lit maintenant le profil frais via `settings/admission-environment.ts`
   et prépare l'environnement complet via `workspaces/session-environment.ts`.
   Une lecture UI des settings en cache n'est pas ce chemin d'admission.
+- L'adaptateur local `e63c182c` qualifie aussi cette admission haut niveau dans le
+  vrai graphe natif OpenCode 2.0.24, sans backend CodeNomad ni changement upstream.
+  L'autorité de writer y reste injectée. `6ba741c4` qualifie séparément le commit de
+  métadonnées via la transaction native, pas encore l'autorité permanente complète.
+- Une claim native enregistrée recharge réellement le plugin après redémarrage,
+  sans demande de Location après boot. L'outil interrompu est marqué aborted et
+  une nouvelle continuation modèle démarre ; ce n'est pas une reprise d'outil ni
+  un ordonnanceur qualifié. Les reçus et leurs limites sont dans le journal de
+  validation, sans transformer les observations de deux secondes en preuve globale.
 - La programmation demandée est une autorisation humaine permanente de **passages
   finis**, non un timer choisissant les tâches des agents. Les dépendances,
   sous-agents, inbox et exécutions restent natifs. Un seul passage, un rattrapage
   borné, déduplication durable et non-replay des effets incertains sont requis.
-- Qualification restante : tous les clients fermés, environnement modifié avant
-  échéance, redémarrage backend/service, Location froide sans `agent.list` ou UI,
+- Qualification restante : clients et backend CodeNomad fermés, environnement
+  modifié avant échéance, redémarrage du service dans ce même état, Location froide
+  sans `agent.list` ou UI,
   passage unique et conservation des inputs inconnus. La seule rétention d'un
   plugin chargé ne prouve pas ces scénarios.
 
