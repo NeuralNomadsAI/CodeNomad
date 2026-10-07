@@ -35,7 +35,7 @@ human controls, durable results, and recurring-work foundations in one compact U
 - Responsive layouts support narrow panels, touch, RTL, empty states, and long
   results without duplicating technical content in the panel.
 
-### Durable and recurring work
+### Durable foundations
 
 - Timezone-aware schedules, manual runs, stable passage identities, bounded
   catch-up, and single-passage admission.
@@ -45,18 +45,6 @@ human controls, durable results, and recurring-work foundations in one compact U
   and admission policies.
 - Protected writer, family, checkpoint, and managed-incarnation guards.
 - Native Job admission and process-bound lifetime through OpenCode.
-
-## Current validation
-
-| Scope | Result |
-| --- | --- |
-| Server | **2,370 passed / 0 failed / 8 skipped** |
-| Browser | **761 passed / 1 failed / 2 skipped** |
-| Browser inputs | **2,162 unchanged** |
-| Native Job | Start, running acknowledgement, interruption, inactive execution, and retained root claim observed |
-
-The remaining browser failure is an InterruptionDock fixture startup timeout before
-the test assertions.
 
 ## Main areas
 
@@ -68,5 +56,3 @@ the test assertions.
 
 Detailed validation evidence is kept in
 [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
-
-PR #866 remains open and unmerged.
