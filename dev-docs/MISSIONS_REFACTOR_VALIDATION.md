@@ -379,6 +379,17 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   cleanup watchdogs are armed within **69 minutes**. Outcome remains pending.
   Ack: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-slow-expiry-20261007-a.json`;
   future final receipt: `.../missions-startup-GzOudV/receipt.json`.
+  Independent setup review finds **2 scoped P2 defects** in the new probe only:
+  the supervisor can claim sentinel closure from a kill request without awaiting
+  owned close acknowledgements, and acceptance can attribute generic cancellation/
+  claim clearing to automatic inactivity without mandatory native provenance.
+  Both are reproduced by memory-only negative probes. Correction is active;
+  current running old-source output remains **unqualified**, even if its initial
+  outcome says success. Preserve that receipt unchanged and require separately
+  qualified native event/log provenance and acknowledged cleanup. Automatic
+  Location eviction logs must not be relabeled as an exact execution-interruption
+  reason. No quiet-phase polling, native clock changes, fabricated claims or
+  production authority are involved; initial setup otherwise matches frozen inputs.
   Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
   attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
   resets the count. Whole-execution completion resets it; a tool/step completion
