@@ -118,7 +118,7 @@ export class HostAuthorityAdmissions {
     const bridge = this.bridge
     const readDiscovery = async () => {
       try { return await observeAuthorityRead(bridge.readDiscoveryBoundary(signal), signal) }
-      catch { deny("native-observation-unavailable") }
+      catch { origin?.throwIfAborted(); deny("native-observation-unavailable") }
     }
     const nonce = randomUUID()
     currentFence()
@@ -127,7 +127,7 @@ export class HostAuthorityAdmissions {
     let proof: unknown
     try { proof = await observeAuthorityRead(bridge.handshake({ nonce, descriptor: this.descriptor, binding,
       provisioningGeneration: signer.generation, signerDigest: signer.signerDigest }, signal), signal) }
-    catch { deny("native-observation-unavailable") }
+    catch { origin?.throwIfAborted(); deny("native-observation-unavailable") }
     currentFence()
     let observation: ManagedAuthorityObservation
     try { observation = observationSchema.parse(bridge.verify(proof)) } catch { deny("native-proof-invalid") }

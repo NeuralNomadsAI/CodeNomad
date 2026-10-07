@@ -188,7 +188,7 @@ export class ProtectedHostAuthority implements HostAuthorityRegistry {
     return this.admissions.human(request, before.manifest, async humanFence => {
       const readNative = async () => {
         try { return await this.native!.read(pending.body) }
-        catch { deny("native-observation-unavailable") }
+        catch { signal?.throwIfAborted(); deny("native-observation-unavailable") }
       }
       const first = await readNative()
       humanFence()
