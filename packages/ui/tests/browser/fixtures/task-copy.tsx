@@ -45,6 +45,12 @@ if (scenario) {
     message.content = Array.from({ length: scenario === "overflow" ? 201 : 200 }, (_, index) => ({ ...message.content[0], id: `overflow-${index}` }))
     history[childId] = [message]
   }
+  if (scenario === "text-tail") {
+    history[childId] = [toolMessage(childId, 0), ...Array.from({ length: 200 }, (_, index) => ({
+      id: `child-text-${index}`, type: "assistant", agent: "build", model,
+      time: { created: index + 3, completed: index + 4 }, content: [{ type: "text", text: `Latest text ${index}` }],
+    }))]
+  }
 }
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },

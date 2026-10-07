@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import { OpenCode } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
-import { fetchSessions, refreshSessionRuntimeStatus } from "./session-api.ts"
+import { fetchSessions, refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api.ts"
+import { applyOpenCodeDataEvent } from "./opencode-data.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
 import { beginSessionGenerationAdmission, hydrateSessionGenerationRecovery, sessions, setSessions, setSessionStatus } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -147,6 +149,80 @@ describe("native-outcome recovery through real session stores", () => {
       assert.equal(fixture.current()?.generationRecovery, null)
     } finally { fixture.cleanup() }
   })
+
+  for (const status of [404, 503]) {
+    it(`isolates an outcome HTTP ${status} without clearing failed child state or blocking siblings`, async () => {
+      const id = `recovery-partial-outcome-${status}`
+      const fixture = setup(id, "succeeded")
+      const failed = [
+        { ...fixture.baseline, id: "missing", parentId: "session", status: "working", pendingPermission: false, pendingForm: false, retry: { attempt: 1, message: "Retry", next: 9 } },
+        { ...fixture.baseline, id: "pending", parentId: "missing", pendingPermission: false, pendingForm: false, outcome: "interrupted", generationRecovery: "pending" },
+      ] as Session[]
+      const activeSibling = { ...fixture.baseline, id: "active", parentId: "session" }
+      const native = OpenCode.make({ baseUrl: "http://fixture", fetch: async () => Response.json(status === 404
+        ? { _tag: "SessionNotFoundError", sessionID: "missing", message: "Session not found" }
+        : { error: "Outcome unavailable" }, { status }) })
+      const reads: string[] = []
+      ;(fixture.client.session as any).get = async ({ sessionID }: { sessionID: string }) => {
+        reads.push(sessionID)
+        return sessionID === "session" ? fixture.info : native.session.get({ sessionID })
+      }
+      fixture.client.session.active = async () => ({ active: {} })
+      setSessions(previous => new Map(previous).set(id, new Map([
+        ["session", fixture.baseline], ...failed.map(row => [row.id, row] as const), ["active", activeSibling],
+      ])))
+      try {
+        assert.deepEqual(await refreshSessionRuntimeStatus(id), { active: {} })
+        assert.equal(fixture.current()?.outcome, "succeeded")
+        assert.equal(fixture.current()?.generationRecovery, null)
+        assert.equal(sessions().get(id)?.get("active")?.status, "working")
+        for (const row of failed) assert.equal(sessions().get(id)?.get(row.id), row, "failure is neither idle nor deletion authority")
+        assert.deepEqual(reads.sort(), ["missing", "pending", "session"])
+      } finally { fixture.cleanup() }
+    })
+  }
+
+  it("accepts later active authority even when the historical outcome lookup fails", async () => {
+    const id = "recovery-failed-outcome-restarted"
+    const fixture = setup(id)
+    let reads = 0
+    fixture.client.session.active = async () => ++reads === 1 ? {} : { session: {} }
+    fixture.client.session.get = async () => { throw new Error("Outcome unavailable") }
+    try {
+      await refreshSessionRuntimeStatus(id)
+      assert.equal(reads, 2)
+      assert.equal(fixture.current()?.status, "working")
+      assert.equal(fixture.current()?.generationRecovery, null)
+    } finally { fixture.cleanup() }
+  })
+
+  for (const fence of ["abort", "connection", "deletion"] as const) {
+    it(`preserves the ${fence} fence during a partial outcome refresh`, async () => {
+      const id = `recovery-partial-outcome-${fence}`
+      const fixture = setup(id, "succeeded")
+      const info = deferred<typeof fixture.info>()
+      const started = deferred<void>()
+      const controller = new AbortController()
+      const missing = { ...fixture.baseline, id: "missing", parentId: "session", pendingPermission: false, pendingForm: false }
+      setSessions(previous => new Map(previous).set(id, new Map([["session", fixture.baseline], ["missing", missing]])))
+      ;(fixture.client.session as any).get = async ({ sessionID }: { sessionID: string }) => {
+        if (sessionID === "missing") throw new Error("Missing child")
+        started.resolve()
+        return info.promise
+      }
+      try {
+        const refresh = refreshSessionRuntimeStatus(id, controller.signal)
+        await started.promise
+        if (fence === "abort") controller.abort()
+        else if (fence === "connection") applyOpenCodeDataEvent(id, "/work", { id: "connected", type: "server.connected", created: 3, data: {} } as any)
+        else removeSessionRuntimeState(id, "session")
+        info.resolve(fixture.info)
+        await refresh
+        assert.equal(fixture.current(), fence === "deletion" ? undefined : fixture.baseline)
+        assert.equal(sessions().get(id)?.get("missing"), missing, "a failed child read must not rewrite ancestry or delete descendants")
+      } finally { info.resolve(fixture.info); fixture.cleanup() }
+    })
+  }
 
   it("keeps acknowledged queued input unknown until a new native idle boundary", async () => {
     const id = "recovery-queued-historical-outcome"

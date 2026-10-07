@@ -446,8 +446,13 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     if (Object.prototype.hasOwnProperty.call(active, id)
       || (baseline.status === "idle" && !baseline.generationRecovery)) return []
     return [(async () => {
-      const info = await getRootClient(instanceId).session.get({ sessionID: id }, signal ? { signal } : undefined)
-      return [id, info] as const
+      try {
+        const info = await getRootClient(instanceId).session.get({ sessionID: id }, signal ? { signal } : undefined)
+        return [id, info] as const
+      } catch (error) {
+        if (!signal?.aborted && generationCurrent()) log.warn("Failed to refresh session outcome", { instanceId, sessionId: id, error })
+        return [id, null] as const
+      }
     })()]
   })))
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
@@ -462,6 +467,9 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
       const latest = current.get(id)
       if (!latest) continue
       const info = outcomes.get(id)
+      // A failed outcome read is neither idle nor deletion authority. Preserve
+      // this row unless the later activity read positively observes new work.
+      if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) continue
       const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
       const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
       if (merged) current.set(id, merged)

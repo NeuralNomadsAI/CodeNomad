@@ -446,7 +446,7 @@ export const taskRenderer: ToolRenderer = {
           )}
         </Show>
 
-        <Show when={childToolKeys().length > 0 || legacyItems().length > 0 || stepsTruncated()}>
+        <Show when={childSourceActive() || legacyItems().length > 0 || stepsTruncated()}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>

@@ -75,6 +75,25 @@ test("exactly 200 observed child rows are not render overflow", { timeout: 45_00
   assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), 200)
 }, "limit"))
 
+test("text-only latest child window exposes full-history steps copy without claiming overflow", { timeout: 45_000 }, async () => withPage(async page => {
+  const sections = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-sections').first()
+  const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })
+  await steps.waitFor()
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "0 steps")
+  assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), 0)
+  assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
+  assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).requests.filter((request: any) => request.sessionID === "child").length, 1)
+  await steps.getByRole("button", { name: "Copy tool output" }).click()
+  await page.waitForFunction(() => (window as any).fixture.snapshot().clipboard.length === 1)
+  const state = await page.evaluate(() => (window as any).fixture.snapshot())
+  const copied = JSON.parse(state.clipboard[0])
+  assert.equal(copied.length, 1)
+  assert.equal(copied[0].id, "child-0000-tool")
+  assert.equal(copied[0].state.output, `Untruncated child-0000: ${"長い output\n".repeat(500)}`)
+  assert.equal(state.requests.filter((request: any) => request.ascending && request.sessionID === "child").length, 2)
+  assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
+}, "text-tail"))
+
 test("observed 201 child rows retain capped count and real truncation warning", { timeout: 45_000 }, async () => withPage(async page => {
   const sections = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-sections').first()
   const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })
