@@ -1,5 +1,6 @@
 import { For, createSignal } from "solid-js"
 import { render } from "solid-js/web"
+import { Toaster } from "solid-toast"
 import SessionView from "../../../src/components/session/session-view"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
 import PermissionNotificationBanner from "../../../src/components/permission-notification-banner"
@@ -9,7 +10,8 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
-import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue, syncPendingRequests } from "../../../src/stores/instances"
+import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue, syncPendingRequests, clearReloadableInstanceState, invalidatePendingRequestSync } from "../../../src/stores/instances"
+import { getToastHistory } from "../../../src/lib/notifications"
 import { getFormQueue } from "../../../src/stores/forms"
 import { sessions, setSessions, setActiveSession, activeSessionId, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
@@ -119,6 +121,7 @@ let focusHandled = 0
 function App() {
    const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId) ?? null} />
   return <main style={{ display: "flex", "flex-direction": "column", height: "100vh", width: "100%" }}>
+    <Toaster />
     <PermissionNotificationBanner instanceId={instanceId} onClick={() => focusInterruption(instanceId)} />
      <For each={[activeSessionId().get(instanceId) ?? sessionId]}>{id => <SessionView
       sessionId={id} instanceId={instanceId} instanceFolder="/fixture" activeSessions={sessions().get(instanceId)!}
@@ -133,6 +136,8 @@ const store = messageStoreBus.getOrCreate(instanceId)
   activationFrames, active: setActive, conversationFocus: setConversationFocus, phone: setPhone,
   focusHandled: () => focusHandled,
   replies, windows,
+  notifications: getToastHistory,
+  invalidateRecovery: () => { clearReloadableInstanceState(instanceId); invalidatePendingRequestSync(instanceId) },
   theme: setThemePreference,
   ask: () => emit("form.created", { form: form() }),
   liveAsk: (long = false) => {

@@ -9,7 +9,8 @@ import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 import { deferPendingDiscovery, markLoadedPendingSupported, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
 
 const directorySchema = z.string().min(1).max(4096)
-const querySchema = z.object({ directories: z.union([directorySchema, z.array(directorySchema).min(1).max(64)]) }).strict()
+const directoryListSchema = z.union([directorySchema, z.array(directorySchema).min(1).max(64)])
+const querySchema = z.object({ directories: directoryListSchema, optionalDirectories: directoryListSchema.optional() }).strict()
 const permissionSchema = z.object({
   id: z.string(), sessionID: z.string(), action: z.string(), resources: z.array(z.string()),
   save: z.array(z.string()).optional(), metadata: z.record(z.unknown()).optional(), message: z.string().optional(),
@@ -71,6 +72,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (!connection) return reply.code(503).send({ error: "Pending requests unavailable" })
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
       const submitted = [...new Set(typeof query.data.directories === "string" ? [query.data.directories] : query.data.directories)]
+      const optional = new Set(typeof query.data.optionalDirectories === "string" ? [query.data.optionalDirectories] : query.data.optionalDirectories ?? [])
+      if ([...optional].some((directory) => !submitted.includes(directory))) return reply.code(400).send({ error: "Invalid optional pending request directories" })
       const result: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
       const resolved: Array<{ submitted: string; directory: string; identity: string }> = []
       const bootstrap = manager.getServiceLocation(id)
@@ -87,6 +90,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         const candidates = await Promise.all(submitted.slice(offset, offset + 8).map(async (candidate) => {
           signal.throwIfAborted()
           const directory = await manager.getServiceDirectoryForPath(id, candidate)
+          if (!directory && optional.has(candidate)) {
+            result.directories.push({ directory: candidate, status: "excluded" })
+            return
+          }
           const identity = directory && await manager.getWorktreeIdentityForPath(id, directory)
           const host = directory && await manager.getHostPathForServicePath(id, directory)
           // Containment alone cannot authorize a nested independent clone.
@@ -101,7 +108,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         }))
         resolved.push(...candidates.filter((candidate) => candidate !== undefined))
       }
-      if (!resolved.length) return reply.code(403).send({ error: "Directory does not belong to workspace" })
+      if (!resolved.length && result.directories.some((entry) => entry.status !== "excluded")) return reply.code(403).send({ error: "Directory does not belong to workspace" })
       const assertCurrent = () => {
         signal.throwIfAborted()
         connection.assertCurrent()
@@ -136,7 +143,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       await assertOrigin(bootstrapDirectory)
       await assertCandidates()
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
-      const expected = new Set(resolved.map((entry) => entry.directory))
+      // Even an all-excluded historical batch must negotiate real RPC capability.
+      // The established root is the only bootstrap, never an inactive candidate.
+      const expected = new Set(resolved.length ? resolved.map((entry) => entry.directory) : [root])
       const url = new URL("/api/rpc/codenomad.pending-requests/snapshot", connection.endpoint.url)
       url.searchParams.set("location[directory]", bootstrapDirectory)
       const response = await connection.fetch(url, { method: "POST", signal, redirect: "error",

@@ -102,6 +102,84 @@ test("partial and cold coverage only prune matching known locations; unknown que
   } finally { h.cleanup() }
 })
 
+test("obsolete history can be excluded while valid idle subdirectories still recover questions and permissions", async () => {
+  const h = harness()
+  try {
+    const deleted = "/deleted-temporary-history", subdirectory = `${h.directory}/idle-subdirectory`
+    setSessions((previous) => new Map(previous).set(h.id, new Map([deleted, subdirectory].map((directory, index) => {
+      const session = createClientSession({ id: `history-${index}`, title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
+      return [session.id, session]
+    }))))
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      assert.deepEqual(optional, [deleted, subdirectory])
+      return { supported: true, directories: directories.map((directory) => directory === deleted
+        ? { directory, status: "excluded" as const }
+        : { directory, status: "ok" as const, locations: [{ location: { directory },
+          permissions: directory === subdirectory ? [permission("idle")] : [], forms: directory === subdirectory ? [form("idle")] : [],
+        }] }) }
+    }
+    await syncPendingRequests(h.id)
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["idle"])
+    assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["idle"])
+    assert.equal(sessions().get(h.id)?.size, 2, "excluding a recovery hint never deletes its historical session")
+    assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
+test("known permission/Form authority and active sessions cannot be excluded as obsolete history", async () => {
+  const h = harness()
+  try {
+    const activeDirectory = "/active-session", permissionDirectory = "/known-permission", formDirectory = "/known-form"
+    const active = createClientSession({ id: "active", title: "Active", location: { directory: activeDirectory }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
+    setSessions((previous) => new Map(previous).set(h.id, new Map([[active.id, active]])))
+    addPermissionToQueue(h.id, permission("known"), permissionDirectory)
+    addPendingForm(h.id, form("known"), formDirectory)
+    const draft = getFormQueue(h.id)[0]
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      assert.deepEqual(optional, [])
+      assert.deepEqual(new Set(directories), new Set([h.directory, activeDirectory, permissionDirectory, formDirectory]))
+      return { supported: true, directories: directories.map((directory) => directory === h.directory
+        ? { directory, status: "ok" as const, locations: [emptyLocation(directory)] }
+        : { directory, status: "excluded" as const }) }
+    }
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    assert.equal(getFormQueue(h.id)[0], draft)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known"])
+    assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
+test("history transport failures remain errors and a late known request fences historical exclusion", async () => {
+  const h = harness()
+  try {
+    const directory = "/historical-directory"
+    const session = createClientSession({ id: "history", title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions((previous) => new Map(previous).set(h.id, new Map([[session.id, session]])))
+    serverApi.getPendingRequests = async () => { throw new Error("Temporary transport failure") }
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    const pending = deferred<WorkspacePendingRequestsResponse>()
+    let reads = 0
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      if (++reads === 1) { assert.deepEqual(optional, [directory]); return pending.promise }
+      assert.deepEqual(optional, [])
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "error" as const })) }
+    }
+    const syncing = syncPendingRequests(h.id)
+    await Promise.resolve()
+    addPermissionToQueue(h.id, { ...permission("late"), sessionID: session.id }, directory)
+    pending.resolve({ supported: true, directories: [
+      { directory: h.directory, status: "ok", locations: [emptyLocation(h.directory)] }, { directory, status: "excluded" },
+    ] })
+    await assert.rejects(syncing)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["late"])
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
 test("real SSE background permissions and Forms use cold native authority, not WSL host or realpath aliases", async () => {
   const originalClient = sdkManager.createClient
   try {
@@ -147,7 +225,7 @@ test("real SSE background permissions and Forms use cold native authority, not W
           return { supported: true, directories: [{ directory: host, status: "ok", locations: [emptyLocation(native)] }] }
         }
         await syncPendingRequests(h.id)
-        assert.deepEqual(candidates, [host])
+        assert.deepEqual(candidates, [host, native], "known permissions retain their native recovery candidate until authoritative coverage settles them")
         assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["orphan-alias"])
         assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["orphan-alias"])
         assert.deepEqual(h.calls, [])
