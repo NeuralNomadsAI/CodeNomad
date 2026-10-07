@@ -2,7 +2,7 @@
 
 ## Overview
 
-CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. The official `@opencode/client` dependency pins live in the [server](../packages/server/package.json) and [UI](../packages/ui/package.json) manifests; the runtime CLI is independently managed. See [technical implementation](technical-implementation.md) for concrete API examples and code locations.
+CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. The official `@opencode/client` dependency pins live in the [server](../packages/server/package.json) and [UI](../packages/ui/package.json) manifests; the runtime CLI is independently managed.
 
 ```text
 Desktop host -> CodeNomad server -> one shared OpenCode service
@@ -54,7 +54,7 @@ Yolo state endpoints currently live at `/workspaces/:id/yolo/sessions/:sessionId
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields replace old per-worktree SDK clients.
 
-The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser; heartbeats use `POST /api/client-connections/pong`. The stream is volatile and has no replay guarantee: reconnect must reconcile sessions and pending requests and reread authoritative file/config state. Pending recovery uses the loaded-only broker, not worktree-wide ordinary lists; see [compatibility](OPENCODE_V2_COMPATIBILITY.md). Relay ordering and ownership fences are documented in [event relay ownership](EVENT_RELAY_OWNERSHIP.md).
+The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser; heartbeats use `POST /api/client-connections/pong`. The stream is volatile and has no replay guarantee: reconnect must reconcile sessions and pending requests and reread authoritative file/config state. Pending recovery uses the loaded-only broker, not worktree-wide ordinary lists; see [compatibility](OPENCODE_V2_COMPATIBILITY.md). Relay ordering and ownership fences remain specified in [AGENTS.md](../AGENTS.md).
 
 Current native events include session lifecycle/output events (`session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, `session.tool.*`), background Shell refresh via `shell.created`, `shell.exited`, `shell.deleted`, file invalidation via `filesystem.changed`, and configuration invalidation via `config.updated`.
 
@@ -82,4 +82,4 @@ CodeNomad configuration resolves through `packages/server/src/config/location.ts
 
 ## Implementation Map
 
-See [technical implementation](technical-implementation.md#current-structure). Server entrypoints are `packages/server/src/index.ts` and `server/http-server.ts`; bundled automation provisioning is in `packages/server/src/opencode/automation-plugin.ts`.
+Server entrypoints are `packages/server/src/index.ts` and `server/http-server.ts`; shared-service authority lives in `workspaces/opencode-service.ts` and `workspaces/manager.ts`, event routing in `workspaces/instance-events.ts`, and bundled automation provisioning in `opencode/automation-plugin.ts`. UI native calls use `stores/opencode-client.ts`, `session-api.ts` and `session-actions.ts`; CodeNomad routes use `lib/api-client.ts`. Current integration conventions are in [AGENTS.md](../AGENTS.md).
