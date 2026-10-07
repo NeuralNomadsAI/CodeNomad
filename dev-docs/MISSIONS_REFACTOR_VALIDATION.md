@@ -155,6 +155,36 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-inputs-20261007.json`;
   complete retained log:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-20261007.out`.
+- The remaining broker case's unchanged isolated instrumented run passes in
+  **26.742 s**, still against the original 30-second deadline and eight ownership
+  checks/two Git processes. It executes **195 Git commands**: **65** initial
+  classification (**10.419 s**), **65** pre-RPC validation (**8.407 s**), **65**
+  post-RPC validation (**7.751 s**); one RPC dispatches at **18.826 s**. All reads
+  settle and owned fixture cleanup is confirmed. Windows `execFile` lifetimes
+  (not queue-inclusive) are median **86.6 ms**, p95 **1,035.7 ms**, max **2,352.2 ms**.
+  This does not replace the complete run's failure. The duplicate initial Git
+  filtering supplies only a classification boolean; it is being consolidated
+  into the final authoritative pre-RPC preparation pass, expected **195 → 130**
+  commands. Fresh post-RPC Git identity remains mandatory for supported and
+  declared-unsupported results; normalized mapping/identity withdrawal still
+  fails the whole request, foreign candidates remain errors and all-foreign stays
+  403. The candidate now measures **130 commands: 0 provisional / 65 pre-RPC /
+  65 fresh post-RPC**; unchanged cold case **12.576 s**, one RPC at **6.542 s**,
+  ownership peak **8**, Git worker peak **2**, all reads settled and owned cleanup
+  verified. Author route suite **22/22**, typecheck and diff check pass. Independent
+  committed-contract review confirms no caller needs two distinct pre-RPC Git
+  snapshots. Final review repeats **5/5** focused cases, cold case **15.88 s**, but
+  confirms **one latent P2** in actual old/new route bodies: `Promise.all` can
+  return 503 before admitted peer reads settle, in provisional/pre-RPC preparation
+  and supported/unsupported post-RPC validation. Fix is active at both route-local
+  batch sites: deny publication, drain admitted reads, then rethrow the same first
+  error; never admit a next batch or late RPC. Scoped closure and a fresh aggregate
+  remain required. No cross-RPC identity cache, deadline or worker-limit change.
+  Candidate receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-final-output-20261007.json`;
+  review: `.../pr866-pending-independent-20261007/verification.json`.
+  Original read-only measurement:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-readonly-2rYnY0/summary.json`.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
@@ -326,6 +356,23 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   is not autonomous restart acceptance. Arbitrary-writer exclusion and power-loss
   durability remain unqualified. A narrowly typed public checkpoint/CAS seam is
   next work, independent of the frozen full server aggregate.
+- **`7e38122d`** adds a genuine **synchronous family-current final fence** to the
+  existing `FamilyAuthorityStore`, not a second ownership store. It returns literal
+  `true` only after fresh private physical root/marker observations, original
+  descriptor identity and exact token bytes; absent/same-byte replacement, aliases,
+  malformed/oversized markers and unconfirmed synchronous privacy fail closed.
+  Queued/reentrant operations and release requests fence publication before/after
+  reads; ordinary async assertion/release retries and retained references remain
+  unchanged. The existing native Windows owner/DACL evaluator moves into a shared
+  22-line storage helper with unchanged bounds and host-authority denial behavior.
+  Author and main repeat **16/16** original/new family/private-file tests; server
+  typecheck passes. Actual private 2.0.24 final guard **4** rejects async/queued
+  release with metadata rollback, then commits with genuine default sync privacy.
+  Independent source/caller/evidence review closes **0 findings**, all **8 reviewed
+  hashes unchanged**, without independently rerunning the native fixture. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/family-native-sync-29086334d84247be814f0bd640b82b75/qualification.json`.
+  This closes the concrete family callback interface gap, not public checkpoint
+  CAS, signer provenance, arbitrary-writer exclusion or production autonomy.
 - Native-startup qualification uses a read-copied **2.0.24** artifact and genuinely
   private XDG managed registration, with actual start/restart and preserved sentinel.
   Persisted ENV nonce/hash reaches each daemon; **Node `--import`/`--require` and
@@ -441,6 +488,22 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   The frozen watcher receipt's post-eviction native claim is **non-null, attempt 1**:
   handler/Scope cancellation is not claim settlement. Its additive read-only
   verification does not invent a historical interruption reason.
+- A distinct **native daemon-owned adoption** candidate is source-qualified at
+  exact `e7a34f09bfd9134dfade5a8ddb843f7030bc9a69`: `@opencode/Job.start` consumes an
+  Effect and forks work from the native application-owned Job Scope, not a caller
+  supplied/escaped plugin Scope. Use a nonce-bound ID distinct from Session IDs,
+  which native execution interruption cancels. Shell/subagent recovery kinds must
+  not be fabricated. At due, acquire a fresh short
+  `LocationServiceMap.contextEffect` lease with current placement/authority/profile
+  checks; retained origin RPC/model/tool/Location services are not admissible.
+  Actual ownership/eviction/replacement acquisition/shutdown qualification is
+  being implemented in a separate private fixture. Generic Job effects/deadlines
+  are **not persisted**; native claim recovery is one bootstrap sweep, not a
+  continuous scheduler. Cold wake remains separate; existing native PersistentPty
+  handoff is a possible next contract to qualify, not an ordinary Shell or
+  CodeNomad scheduler substitute. Job source: `packages/core/src/job.ts:178–183,
+  252–297,478–480`, Git blob `771c5a79722effe0ae48d072b95c68f5f03be0ee`.
+  This is source evidence only, not a runtime pass or production activation.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
