@@ -1,5 +1,6 @@
 export const instanceMessages = {
   "panelExtensions.section": "扩展",
+  "panelExtensions.assetsConsent": "权限：读取当前会话工具结果的图像和附件，以及会话标识、语言和外观。无文件系统或网络访问权限。",
   "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",

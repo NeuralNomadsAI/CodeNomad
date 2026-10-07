@@ -1,5 +1,6 @@
 export const instanceMessages = {
   "panelExtensions.section": "Uzantılar",
+  "panelExtensions.assetsConsent": "İzin: geçerli oturumun araç sonuçlarındaki resim ve ekleri, kimliğini, dilini ve görünümünü okuma. Dosya sistemi veya ağ erişimi yok.",
   "panelExtensions.empty": "Yüklü uzantı yok.",
   "panelExtensions.catalog.title": "Çevrimiçi kullanılabilir",
   "panelExtensions.catalog.search": "Uzantı ara",

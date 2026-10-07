@@ -1,5 +1,6 @@
 export const instanceMessages = {
   "panelExtensions.section": "Erweiterungen",
+  "panelExtensions.assetsConsent": "Berechtigung: Bilder und Anhänge aus Werkzeugergebnissen der aktuellen Sitzung sowie Kennung, Sprache und Darstellung lesen. Kein Dateisystem- oder Netzwerkzugriff.",
   "panelExtensions.empty": "Keine Erweiterungen installiert.",
   "panelExtensions.catalog.title": "Online verfügbar",
   "panelExtensions.catalog.search": "Erweiterungen suchen",

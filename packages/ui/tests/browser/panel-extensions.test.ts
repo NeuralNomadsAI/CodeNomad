@@ -14,6 +14,7 @@ import { readPanelExtensionArchive } from "../../../server/src/panel-extensions/
 import { fixtureArchive, fixtureManifest } from "../../../server/src/panel-extensions/archive-fixture"
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { createPanelExtensionCatalog, PANEL_EXTENSION_CATALOG_URL } from "../../../server/src/panel-extensions/catalog"
+import { registerPanelExtensionAssetRoutes } from "../../../server/src/server/routes/panel-extension-assets"
 
 const app = Fastify()
 let server: ViteDevServer, browser: Browser, url: string, root: string, store: PanelExtensionStore
@@ -24,6 +25,7 @@ const onlineArchive = fixtureArchive(example)
 const onlineDigest = createHash("sha256").update(onlineArchive).digest("hex")
 const onlineEntry = { manifest: fixtureManifest, description: "A catalogue example", digest: onlineDigest, release: { tag: "v1.0.0", asset: "example.session-1.0.0.zip" } }
 let catalogEntries = [onlineEntry], catalogOffline = false, archiveRequests = 0
+let assetUri = "", holdAssets: (() => Promise<void>) | undefined, assetReads = 0
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-browser-"))
   store = new PanelExtensionStore(root)
@@ -36,8 +38,17 @@ before(async () => {
     return new Response(new Uint8Array(onlineArchive).buffer)
   }) as typeof fetch)
   registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
+  registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+    ownsLocation: async (id, location) => id === "first" && location.directory === "/first",
+    getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/first" } }) }, rpc: { call: async ({ method, input }: any) => {
+      assetReads++; if (holdAssets) await holdAssets()
+      return { output: method === "assets" ? { status: "page", entries: input.sessionID === "session-a" ? [{ name: "Native image", mime: "image/png", tool: "mcp.paint", available: true,
+        target: { messageID: "m", part: 0, index: 0, digest: "a".repeat(64) } }] : [], cursor: null } : { status: "asset", mime: "image/png", uri: assetUri } }
+    } } }) as any,
+  } })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+    cacheDir: path.join(root, "vite"),
     plugins: [solid(), { name: "extension-fixture", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -49,6 +60,9 @@ before(async () => {
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  const imagePage = await browser.newPage()
+  assetUri = await imagePage.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 500; canvas.height = 300; return canvas.toDataURL("image/png") })
+  await imagePage.close()
 })
 after(async () => { await browser?.close(); await server?.close(); await app.close(); await rm(root, { recursive: true, force: true }) })
 
@@ -330,6 +344,70 @@ test("Extensions is separated, collapsed by default and combines installed/onlin
     await view.evaluate(() => (window as any).extensionFixture.active(false))
     await popup.waitFor({ state: "detached" })
   } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+})
+
+test("API2 grants only current-session asset pages and bounded thumbnails; session switches and revocation fence late reads", async () => {
+  const html = `<p id="result"></p><p id="palette"></p><img id="image"><script>
+    let session;
+    codenomad.onContext(async context => {
+      document.querySelector('#palette').textContent = context.colors.background;
+      if(session === context.sessionId) return; session = context.sessionId;
+      const page = await codenomad.assets.list();
+      document.querySelector('#result').textContent = context.sessionId + ':' + page.entries.length;
+      if(page.entries.length) {window.readThumbnail=async()=>{const asset = await codenomad.assets.read(page.entries[0].target,{thumbnail:true});document.querySelector('#image').src=asset.uri;};await window.readThumbnail();}
+    });
+  </script>`
+  const pkg = await readPanelExtensionArchive(fixtureArchive(html, { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
+  await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+  const view = await page()
+  let release: (() => void) | undefined
+  try {
+    await view.getByRole("tab", { name: "Status", exact: true }).click()
+    await view.locator(".right-panel-accordion-item").first().waitFor()
+    const nativeBackground = await view.locator(".right-panel-accordion-item").first().evaluate(element => getComputedStyle(element).backgroundColor)
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    const frame = view.frameLocator("iframe[title='Session example']")
+    await frame.locator("#result").filter({ hasText: "session-a:1" }).waitFor()
+    await frame.locator("#image[src]").waitFor()
+    await frame.locator("#image").evaluate(async image => { await (image as HTMLImageElement).decode() })
+    assert.ok(await frame.locator("#image").evaluate(image => (image as HTMLImageElement).naturalWidth <= 256 && (image as HTMLImageElement).naturalHeight <= 256))
+    assert.equal(await view.locator("iframe").evaluate(frame => getComputedStyle(frame).backgroundColor), nativeBackground, "Addon canvas matches native panel sections")
+    await view.evaluate(() => document.documentElement.style.setProperty("--surface-secondary", "#123456"))
+    await frame.locator("#palette").filter({ hasText: "#123456" }).waitFor()
+    assert.equal(await view.locator("iframe").evaluate(frame => getComputedStyle(frame).backgroundColor), "rgb(18, 52, 86)")
+    const ordinaryUri = assetUri
+    assetUri = await view.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 8; canvas.height = 800; return canvas.toDataURL("image/png") })
+    await frame.locator("body").evaluate(() => (window as any).readThumbnail())
+    await frame.locator("#image").evaluate(async image => { await (image as HTMLImageElement).decode() })
+    assert.deepEqual(await frame.locator("#image").evaluate(image => [(image as HTMLImageElement).naturalWidth, (image as HTMLImageElement).naturalHeight]), [3, 256], "Tall source keeps its aspect without a 25,600px intermediate")
+    assetUri = await view.evaluate(uri => {
+      const bytes = Uint8Array.from(atob(uri.split(",")[1]), char => char.charCodeAt(0))
+      new DataView(bytes.buffer).setUint32(16, 8193)
+      return "data:image/png;base64," + btoa(String.fromCharCode(...bytes))
+    }, assetUri)
+    await view.evaluate(() => {
+      const decode = window.createImageBitmap
+      ;(window as any).bitmapCalls = 0
+      window.createImageBitmap = ((...args: Parameters<typeof decode>) => { (window as any).bitmapCalls++; return decode(...args) }) as typeof decode
+    })
+    assert.equal(await frame.locator("body").evaluate(async () => { try { await (window as any).readThumbnail(); return false } catch { return true } }), true)
+    assert.equal(await view.evaluate(() => (window as any).bitmapCalls), 0, "Oversized source is rejected before entering a browser decoder")
+    assetUri = ordinaryUri
+    const before = assetReads
+    let started!: () => void
+    const admitted = new Promise<void>(resolve => { started = resolve })
+    holdAssets = () => new Promise<void>(resolve => { release = resolve; started() })
+    await frame.locator("body").evaluate(() => { void (window as any).codenomad.assets.list().catch(() => {}) })
+    await admitted
+    assert.ok(assetReads > before)
+    holdAssets = undefined
+    await view.evaluate(() => (window as any).extensionFixture.session("session-b"))
+    release?.()
+    await frame.locator("#result").filter({ hasText: "session-b:0" }).waitFor()
+    assert.equal(await frame.locator("#image").getAttribute("src"), null, "Previous session pixels are not retained")
+    await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
+    await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
+  } finally { holdAssets = undefined; release?.(); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("inline management and keyboard tooltips work inside the real temporary drawer", async () => {

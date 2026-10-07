@@ -3,6 +3,7 @@ import type { PanelExtensionContext, PanelExtensionSummary } from "../../../../s
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
 import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
+import { useAssetsChannel } from "./assets-channel"
 
 export function ExtensionPanel(props: {
   entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext
@@ -19,11 +20,23 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   let authenticated = false
   const handshake = crypto.randomUUID()
   const controller = new AbortController()
+  const receiveAssets = props.entry.manifest.apiVersion === 2 ? useAssetsChannel({ instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest,
+    sessionId: () => props.context.sessionId, send: value => { if (!disposed && authenticated) port?.postMessage(value) } }) : () => {}
   void panelExtensionsApi.panel(props.instanceId, props.entry.manifest.id, props.entry.digest, controller.signal).then(result => {
-    if (!disposed) setDocument(panelExtensionDocument(result.html, handshake))
+    if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, props.entry.manifest.apiVersion))
   }).catch(() => { if (!disposed) setFailed(true) })
-  const publish = () => { const context = { ...props.context }; if (authenticated) port?.postMessage({ type: "context", context }) }
+  const publish = () => {
+    const style = getComputedStyle(globalThis.document.documentElement)
+    const colors = Object.fromEntries(Object.entries({ background: "--surface-secondary", surface: "--surface-base", text: "--text-primary",
+      muted: "--text-muted", border: "--border-base", focus: "--focus-ring-color" }).map(([key, token]) => [key, style.getPropertyValue(token).trim()]))
+    const context = { ...props.context, apiVersion: props.entry.manifest.apiVersion,
+      ...(props.entry.manifest.apiVersion === 2 ? { colors } : {}) }
+    if (authenticated) port?.postMessage({ type: "context", context })
+  }
   createEffect(publish)
+  const palette = new MutationObserver(publish)
+  palette.observe(globalThis.document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-color-scheme"] })
+  onCleanup(() => palette.disconnect())
   onCleanup(() => { disposed = true; controller.abort(); port?.close() })
   const loaded = () => {
     // Never reconnect the capability channel after self-navigation/reload.
@@ -33,6 +46,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     port = channel.port1
     port.onmessage = event => {
       if (!disposed && !authenticated && event.data?.type === "ready" && event.data.handshake === handshake) { authenticated = true; publish() }
+      else if (!disposed && authenticated && props.entry.manifest.apiVersion === 2) void receiveAssets(event.data)
     }
     frame?.contentWindow?.postMessage({ type: "codenomad:init" }, "*", [channel.port2])
   }

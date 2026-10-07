@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 import { z } from "zod"
-import { ManifestSchema, PanelExtensionError, readPanelExtensionArchive } from "./archive"
-import { PANEL_EXTENSION_API_VERSION, PANEL_EXTENSION_LIMITS, type PanelExtensionCatalog } from "./contract"
+import { ManifestFields, ManifestSchema, PanelExtensionError, readPanelExtensionArchive } from "./archive"
+import { PANEL_EXTENSION_LIMITS, type PanelExtensionCatalog } from "./contract"
 
 export const PANEL_EXTENSION_CATALOG_URL = "https://raw.githubusercontent.com/NeuralNomadsAI/CodeNomad-Extensions/main/catalog.json"
 const CatalogSchema = z.object({ schemaVersion: z.literal(1), extensions: z.array(z.object({
-  manifest: ManifestSchema.extend({ apiVersion: z.number().int().min(1).max(100), permissions: z.array(z.string().min(1).max(80)).max(8) }),
+  manifest: ManifestFields.extend({ apiVersion: z.number().int().min(1).max(100), permissions: z.array(z.string().min(1).max(80)).max(8) }).strict(),
   description: z.string().trim().min(1).max(600),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
   release: z.object({ tag: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/),
@@ -22,7 +22,7 @@ export function createPanelExtensionCatalog(fetcher: typeof globalThis.fetch = g
       const parsed = CatalogSchema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)))
       if (new Set(parsed.extensions.map(entry => entry.manifest.id)).size !== parsed.extensions.length) throw new PanelExtensionError("invalid")
       return { source: PANEL_EXTENSION_CATALOG_URL, entries: parsed.extensions.map(entry => ({ ...entry,
-        compatible: entry.manifest.apiVersion === PANEL_EXTENSION_API_VERSION && isDeepStrictEqual(entry.manifest.permissions, ["session.context"]),
+        compatible: ManifestSchema.safeParse(entry.manifest).success,
       })) }
     } catch (error) { throw error instanceof PanelExtensionError ? error : new PanelExtensionError("unavailable") }
   }
