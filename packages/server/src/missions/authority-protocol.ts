@@ -3,6 +3,7 @@ import { z } from "zod"
 import { controlOperationID } from "./receipt-identity"
 import type { MissionLifecycleOperation } from "./lifecycle-model"
 import { missionProfilesInputSchema } from "./playbook-profiles"
+import { missionTaskModeInputSchema } from "./task-execution-mode"
 
 export const MISSION_AUTHORITY_POLICY = "codenomad.missions.authority/signed-v1"
 export const AUTHORITY_MAX_BYTES = 128 * 1024
@@ -34,6 +35,7 @@ export const authorityIntentSchema = z.discriminatedUnion("method", [
     objective: z.string().min(1).max(20_000), notes: z.string().max(20_000).optional(),
     template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]), prepared: z.literal(true),
     profiles: missionProfilesInputSchema,
+    taskMode: missionTaskModeInputSchema.optional(),
   }).strict() }).strict(),
   header.extend({ method: z.literal("update"), payload: z.object({
     objective: z.string().min(1).max(20_000), notes: z.string().max(20_000).optional(),

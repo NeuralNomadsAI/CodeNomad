@@ -65,6 +65,47 @@ async function guidance(page: Page) {
   if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click()
   return page.locator(".mission-guidance:not(.mission-question)")
 }
+for (const mode of ["direction", "briefing"] as const) {
+  test(`${mode} preparation survives session.status display revalidation without replay or profile changes`, async () => {
+    const { page, writes, values, errors } = await setup()
+    let releaseHydration!: () => void, hydrationStarted!: () => void, releaseDisplay!: () => void, displayStarted!: () => void
+    const hydrationHold = new Promise<void>(resolve => { releaseHydration = resolve }), hydrationReached = new Promise<void>(resolve => { hydrationStarted = resolve })
+    const displayHold = new Promise<void>(resolve => { releaseDisplay = resolve }), displayReached = new Promise<void>(resolve => { displayStarted = resolve })
+    try {
+      await page.route("**/instance/api/session/ses_A", async route => {
+        hydrationStarted(); await hydrationHold
+        return route.fulfill({ json: { data: { id: "ses_A", projectID: "project", title: "A", slug: "A", version: "1",
+          agent: "build", model: { id: "native", providerID: "native" }, location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
+      })
+      const form = mode === "direction" ? await guidance(page) : page.locator(".mission-briefing")
+      if (mode === "direction") await form.getByLabel("Your instruction", { exact: true }).fill("Keep this admitted direction through display refresh")
+      await form.getByRole("button", { name: mode === "direction" ? "Send to coordinator" : "Make a status check", exact: true }).click()
+      await hydrationReached
+      await page.route("**/api/workspaces/fixture/missions", async route => {
+        displayStarted(); await displayHold
+        return route.fulfill({ json: { available: true, projectID: "project", missions: values, generatedAt: 1, discardedEvents: 0 } })
+      })
+      await page.evaluate(async () => {
+        const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
+        serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "session.status", id: "display-status", created: 1,
+          location: { directory: "/fixture" }, data: { sessionID: "ses_A", status: { type: "idle" } } } }])
+      })
+      await displayReached
+      releaseDisplay()
+      await page.waitForFunction(async () => {
+        const path = "/src/stores/missions.ts", { missionStore } = await import(path)
+        return missionStore.state("fixture").status === "ready"
+      })
+      releaseHydration()
+      await form.getByText(mode === "direction" ? "Sent to the coordinator conversation. Being sent does not confirm it has been acted on."
+        : "Request sent. Waiting for the coordinator to publish the briefing; sending is not a response.", { exact: true }).waitFor()
+      assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 1)
+      assert.ok(!writes.some(write => /\/session\/[^/]+\/(agent|model)$|\/missions(?:\/|$)/.test(write.path)))
+      assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
+      assert.deepEqual(errors, [])
+    } finally { releaseHydration(); releaseDisplay(); await page.close() }
+  })
+}
 test("orientation starts collapsed and an explicit task direction reaches only its coordinator", async () => {
   const { page, writes, values, errors } = await setup()
   try {

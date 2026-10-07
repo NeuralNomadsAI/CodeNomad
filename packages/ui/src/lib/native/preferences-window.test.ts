@@ -15,6 +15,7 @@ describe("native Preferences requests", () => {
       location: { directory: "/repo", workspaceID: "worktree-1" },
     })
     assert.equal(normalizeNativePreferencesRequest("workspace"), null)
+    assert.equal(normalizeNativePreferencesRequest("missions"), null, "Mission preferences live in the Missions panel")
   })
 
   it("reads initial section and provider context from the native URL", () => {

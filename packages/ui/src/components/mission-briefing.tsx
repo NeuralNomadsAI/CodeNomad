@@ -34,14 +34,19 @@ export function MissionBriefing(props: {
     const original = { requestID: crypto.randomUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
     const current = () => viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
+      && missionBriefingRequest(key)?.requestID === original.requestID
       && instances().get(instanceId)?.client === owner && getOpenCodeInstanceGeneration(instanceId) === generation
     setMissionBriefingRequest(key, original)
     const language = locale()
     const result = await sendMissionCoordinatorMessage({ instanceId, mission, current,
       text: fresh => missionBriefingRequestText(fresh, original.requestID, language),
-      onSending: () => setMissionBriefingRequest(key, { ...original, state: "sending" }),
+      onSending: () => {
+        const latest = missionBriefingRequest(key)
+        if (latest?.requestID === original.requestID) setMissionBriefingRequest(key, { ...latest, state: "sending" })
+      },
     })
-    setMissionBriefingRequest(key, { ...missionBriefingRequest(key), ...original, ...result })
+    const latest = missionBriefingRequest(key)
+    if (latest?.requestID === original.requestID) setMissionBriefingRequest(key, { ...latest, ...result })
   }
   return <section class="mission-briefing" aria-label={t("missions.briefing.title")}>
     <header><h3>{t("missions.briefing.title")}</h3><div class="window-actions">

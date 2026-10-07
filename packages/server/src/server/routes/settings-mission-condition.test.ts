@@ -242,4 +242,24 @@ describe("PATCH owner conditional=missions-v1", () => {
     assert.deepEqual(f.disk().app.keep, [3])
     assert.equal(f.events(), 3)
   })
+
+  it("accepts taskMode only inside mission defaults and preserves unrelated preference fields with CAS", async t => {
+    const original = { coordinator: { agent: "general" }, future: { keep: true } }
+    const f = await fixture(t, { missionProfileDefaults: original, unrelated: { keep: "yes" } })
+    let expected: unknown = original
+    for (const taskMode of ["native", "independent"] as const) {
+      const response = await f.app.inject({ method: "PATCH", url, payload: body({ missionProfileDefaults: { taskMode } },
+        [{ key: "missionProfileDefaults", present: true, value: expected }]) })
+      assert.equal(response.statusCode, 200)
+      expected = { ...original, taskMode }
+      assert.deepEqual(f.disk().ui.settings, { missionProfileDefaults: expected, unrelated: { keep: "yes" } })
+    }
+    const before = f.bytes()
+    assert.equal((await f.app.inject({ method: "PATCH", url, payload: body({ missionProfileDefaults: { taskMode: "native" } },
+      [{ key: "missionProfileDefaults", present: true, value: original }]) })).statusCode, 409)
+    assert.equal((await f.app.inject({ method: "PATCH", url, payload: body({ taskMode: "native" },
+      [{ key: "taskMode", present: false }]) })).statusCode, 400)
+    assert.equal(f.bytes(), before)
+    assert.equal(f.events(), 2)
+  })
 })

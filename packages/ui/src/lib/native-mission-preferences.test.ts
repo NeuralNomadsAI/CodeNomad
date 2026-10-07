@@ -5,7 +5,7 @@ import { PREFERENCES_SECTIONS, createPreferencesUrl, requirePreferencesRequest, 
 import { normalizeNativePreferencesRequest, readPreferencesRequestFromUrl } from "./native/preferences-window"
 import type { SettingsSectionId } from "../stores/settings-screen"
 
-const missionSection: SettingsSectionId = "missions"
+const providersSection: SettingsSectionId = "providers"
 
 function sourceSections(path: string, declaration: RegExp): string[] {
   const source = readFileSync(new URL(path, import.meta.url), "utf8")
@@ -14,46 +14,47 @@ function sourceSections(path: string, declaration: RegExp): string[] {
   return [...block.matchAll(/"([a-z-]+)"/g)].map(match => match[1])
 }
 
-describe("Missions native Preferences parity", () => {
+describe("Native Preferences section parity", () => {
   it("keeps renderer, Electron, Tauri and the Settings union on the exact same allowlist", () => {
     const renderer = sourceSections("./native/preferences-window.ts", /const sections = new Set<SettingsSectionId>\(\[([\s\S]*?)\]\)/)
     const tauri = sourceSections("../../../tauri-app/src-tauri/src/preferences_window.rs", /const SECTIONS: &\[&str\] = &\[([\s\S]*?)\];/)
     const settings = sourceSections("../stores/settings-screen.ts", /export type SettingsSectionId =([\s\S]*?)(?=\nconst |\nexport )/)
     const expected = [...PREFERENCES_SECTIONS].sort()
-    assert.ok(expected.includes(missionSection))
+    assert.ok(expected.includes(providersSection))
+    assert.ok(!renderer.includes("missions") && !settings.includes("missions"), "Mission preferences belong inside Missions")
     for (const [name, sections] of Object.entries({ renderer, tauri, settings })) {
       assert.equal(new Set(sections).size, sections.length, `${name} has no duplicate sections`)
-      assert.deepEqual(sections.sort(), expected, `${name} matches Electron, including Missions`)
+      assert.deepEqual(sections.sort(), expected, `${name} matches Electron`)
     }
   })
 
-  it("accepts a Missions request and preserves its owned window/location context in both TypeScript hosts", () => {
+  it("accepts a Providers request and preserves its owned window/location context in both TypeScript hosts", () => {
     const context = {
       instanceId: "workspace-1", scrollTop: 128,
       location: { directory: "D:/CodeNomad/project", workspaceID: "worktree-1" },
     }
-    assert.equal(requirePreferencesSection(missionSection), missionSection)
-    assert.deepEqual(normalizeNativePreferencesRequest(missionSection), { section: missionSection })
-    const nativeRequest = requirePreferencesRequest(missionSection, context)
-    assert.deepEqual(nativeRequest, { section: missionSection, ...context })
+    assert.equal(requirePreferencesSection(providersSection), providersSection)
+    assert.deepEqual(normalizeNativePreferencesRequest(providersSection), { section: providersSection })
+    const nativeRequest = requirePreferencesRequest(providersSection, context)
+    assert.deepEqual(nativeRequest, { section: providersSection, ...context })
     assert.deepEqual(normalizeNativePreferencesRequest(nativeRequest), nativeRequest)
   })
 
-  it("round-trips the Missions section through the Preferences URL without dropping existing query data", () => {
-    const url = createPreferencesUrl("https://localhost:3000/app?keep=yes", missionSection)
+  it("round-trips the Providers section through the Preferences URL without dropping existing query data", () => {
+    const url = createPreferencesUrl("https://localhost:3000/app?keep=yes", providersSection)
     assert.equal(url.searchParams.get("keep"), "yes")
-    assert.deepEqual(readPreferencesRequestFromUrl(url.toString()), { section: missionSection })
+    assert.deepEqual(readPreferencesRequestFromUrl(url.toString()), { section: providersSection })
     url.searchParams.set("preferencesInstanceId", "workspace-1")
     url.searchParams.set("preferencesDirectory", "D:/CodeNomad/project")
     url.searchParams.set("preferencesWorkspaceId", "worktree-1")
     assert.deepEqual(readPreferencesRequestFromUrl(url.toString()), {
-      section: missionSection, instanceId: "workspace-1",
+      section: providersSection, instanceId: "workspace-1",
       location: { directory: "D:/CodeNomad/project", workspaceID: "worktree-1" },
     })
   })
 
   it("does not broaden the native allowlist to arbitrary Mission-like sections", () => {
-    for (const section of ["mission", "Missions", "missions/admin", "workspace", ""]) {
+    for (const section of ["missions", "mission", "Missions", "missions/admin", "workspace", ""]) {
       assert.throws(() => requirePreferencesSection(section), /Invalid preferences section/)
       assert.equal(normalizeNativePreferencesRequest(section), null)
       assert.equal(normalizeNativePreferencesRequest({ section }), null)

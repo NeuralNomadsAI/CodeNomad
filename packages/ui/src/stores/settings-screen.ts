@@ -7,7 +7,6 @@ import { confirmSettingsDiscard } from "./settings-dirty-guard"
 export type SettingsSectionId =
   | "general"
   | "chat"
-  | "missions"
   | "notifications"
   | "speech"
   | "remote"

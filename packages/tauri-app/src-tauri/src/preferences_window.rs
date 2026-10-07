@@ -22,7 +22,6 @@ const SECTIONS: &[&str] = &[
     "providers",
     "sidecars",
     "config-files",
-    "missions",
     "advanced",
     "info",
 ];

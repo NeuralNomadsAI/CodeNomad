@@ -267,3 +267,50 @@ test("seen exact response remains acknowledged when a later briefing supersedes 
     assert.equal(prompts(writes).length, 1)
   } finally { await page.close() }
 })
+
+test("an early A briefing and late admission acknowledgements never attach A's receipt to newer request B", async () => {
+  const { page, values, errors, refresh } = await setup()
+  const sent: any[] = []
+  let releaseA!: () => void, releaseB!: () => void, reachedA!: () => void, reachedB!: () => void
+  const holdA = new Promise<void>(resolve => { releaseA = resolve }), holdB = new Promise<void>(resolve => { releaseB = resolve })
+  const startedA = new Promise<void>(resolve => { reachedA = resolve }), startedB = new Promise<void>(resolve => { reachedB = resolve })
+  const request = () => page.evaluate(async () => {
+    const path = "/src/stores/mission-briefing-request.ts", { missionBriefingRequest } = await import(path)
+    return missionBriefingRequest(JSON.stringify(["fixture", "/fixture", "project", "project", "A", "ses_A"]))
+  })
+  try {
+    await page.route("**/session/ses_A/prompt", async route => {
+      const body = route.request().postDataJSON(), index = sent.length
+      sent.push(body)
+      ;(index ? reachedB : reachedA)()
+      await (index ? holdB : holdA)
+      return route.fulfill({ json: { data: { id: body.id } } })
+    })
+    const ask = briefing(page).getByRole("button", { name: "Faire le point", exact: true })
+    await ask.click(); await startedA
+    assert.equal(sent.length, 1)
+    const idA = /Request ID: ([^\n]+)/.exec(sent[0].text)![1]
+    publish(values[0], idA); await refresh()
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".mission-briefing .window-text-button")!.disabled)
+    await ask.click()
+    const idB = (await request())!.requestID
+    assert.notEqual(idB, idA)
+    const postB = page.waitForRequest(request => request.url().endsWith("/prompt"))
+    releaseA()
+    await postB; await startedB
+    assert.equal(/Request ID: ([^\n]+)/.exec(sent[1].text)![1], idB)
+    assert.equal((await request())?.requestID, idB)
+    assert.equal((await request())?.briefingId, undefined)
+    assert.equal(await ask.isDisabled(), true)
+    releaseB()
+    await briefing(page).getByText(/Demande envoyée/).waitFor()
+    assert.equal((await request())?.requestID, idB)
+    assert.equal((await request())?.briefingId, undefined)
+    assert.equal(await ask.isDisabled(), true)
+    publish(values[0], idB); await refresh()
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".mission-briefing .window-text-button")!.disabled)
+    assert.equal((await request())?.briefingId, values[0].briefing!.id)
+    assert.equal(sent.length, 2, "neither result causes an automatic replay")
+    assert.deepEqual(errors, [])
+  } finally { releaseA(); releaseB(); await page.close() }
+})

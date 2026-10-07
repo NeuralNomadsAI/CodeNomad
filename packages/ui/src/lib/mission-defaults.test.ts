@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { missionDefaultsFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
+import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
 
 const coordinator = { agent: "general", model: { providerID: "openai", id: "coordinator", variant: "high" } }
 const specialist = { agent: "explore", model: { providerID: "openai", id: "specialist", variant: "low" } }
@@ -65,6 +65,14 @@ describe("mission profile default normalization", () => {
 })
 
 describe("mission defaults for future creation", () => {
+  it("resolves explicit task policy per scenario without inventing a global helper ban", () => {
+    const defaults: MissionProfileDefault[] = [{ template: "custom", profiles: {}, taskMode: "independent" }, { template: "wayfinder", profiles: {}, taskMode: "native" }]
+    assert.deepEqual(normalizeMissionDefaults(defaults), defaults)
+    assert.equal(missionTaskModeFor([], "custom"), "native")
+    assert.equal(missionTaskModeFor(defaults, "pocock-fix-bug"), "independent")
+    assert.equal(missionTaskModeFor(defaults, "wayfinder"), "native")
+    for (const taskMode of [null, "automatic", 0, true]) assert.deepEqual(normalizeMissionDefaults([{ template: "custom", profiles: {}, taskMode }]), [])
+  })
   it("returns no profile when there are no applicable selectors", () => {
     assert.equal(missionDefaultsFor([], "custom"), undefined)
     assert.equal(missionDefaultsFor([{ template: "custom", profiles: {} }], "wayfinder"), undefined)

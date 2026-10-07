@@ -51,11 +51,11 @@
 .mission-list-item-overflow .mission-list-inline { position: absolute; inset-block-start: 0; inset-inline-end: 0; visibility: hidden; pointer-events: none; }
 .mission-list-item-overflow .mission-list-overflow { position: relative; visibility: visible; pointer-events: auto; }
 .mission-list-feedback { color: var(--text-muted); font-size: var(--font-size-xs); }
-.mission-list-item-compact { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
-.mission-list-item-compact .mission-list-text { flex: 1 1 5em; min-width: 5em; width: 0; height: 1.4em; -webkit-line-clamp: 1; }
-.mission-list-item-compact .mission-list-footer { flex: 0 1 auto; max-width: calc(100% - 5em - var(--space-sm)); }
+.mission-list-item-compact { display: grid; grid-template-columns: minmax(5em, 1fr) minmax(0, max-content); align-items: center; gap: var(--space-sm); }
+.mission-list-item-compact .mission-list-text { min-width: 5em; height: 1.4em; -webkit-line-clamp: 1; }
+.mission-list-item-compact .mission-list-footer { max-width: none; }
 .mission-list-item-compact .mission-list-status { flex: 0 1 auto; }
-.mission-list-item-compact .mission-list-feedback { flex-basis: 100%; }
+.mission-list-item-compact .mission-list-feedback { grid-column: 1 / -1; }
 .mission-list-item:is([data-status="active"], [data-status="running"], [data-status="ready"]) .mission-list-status { color: var(--accent-primary); }
 .mission-list-item:is([data-status="completed"], [data-status="succeeded"]) .mission-list-status { color: var(--status-success); }
 .mission-list-item:is([data-status="blocked"], [data-status="needs-input"], [data-status="paused"], [data-status="form"], [data-status="permission"]) .mission-list-status { color: var(--status-warning); }

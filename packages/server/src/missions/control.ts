@@ -27,10 +27,10 @@ import { MissionControlError, MissionCreateNoEffectError } from "./control-error
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
-import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, type TaskContractReference } from "./task-declaration"
+import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, validateMissionTaskMode, type TaskContractReference } from "./task-declaration"
 import { parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
 import { hasUnsettledNativeExecution } from "./native-call-observation"
-import { sameExecutionMode } from "./task-execution-mode"
+import { parseMissionTaskMode, sameExecutionMode, type MissionTaskMode } from "./task-execution-mode"
 import { coordinatorReadout } from "./coordinator-readout"
 import { briefingSourcesExist, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
@@ -73,7 +73,7 @@ export class MissionControl {
     now?: () => number
     changed?: (missionID: string, revision: number) => Promise<void>
     validateExecution?: (input: MissionDelegateInput, coordinatorID: string) => Promise<void>
-    validateProfiles?: (profiles: MissionProfiles | undefined, directory: string) => Promise<void>
+    validateProfiles?: (profiles: MissionProfiles | undefined, directory: string, taskMode: MissionTaskMode) => Promise<void>
     transport?: MissionInputTransport
     createManagedRoot?: MissionManagedRootCreation
     isActive?: () => boolean
@@ -133,6 +133,7 @@ export class MissionControl {
 
   private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
     input = structuredClone(input)
+    input.taskMode = parseMissionTaskMode(input.taskMode)
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${input.requestID}`, 24)}`
@@ -147,6 +148,7 @@ export class MissionControl {
       if (existingEvent.type !== "mission.created" || existingEvent.objective !== input.objective
         || existingEvent.notes !== input.notes || existingEvent.template !== input.template || Boolean(existingEvent.prepared) !== Boolean(input.prepared)
         || !sameMissionProfiles(existingEvent.profiles, input.profiles)
+        || (existingEvent.taskMode ?? "native") !== input.taskMode
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         // Healthy original creation evidence rejects the changed request before
         // coordinator lookup/creation, profile writes or journal publication.
@@ -162,7 +164,7 @@ export class MissionControl {
     // coordinator creation nor publication has been attempted by this invocation.
     if (snapshot.missions.length >= MISSION_MAX_MISSIONS) throw new MissionCreateNoEffectError(input.requestID, missionID)
     await this.journal.assertCanAppend()
-    try { await this.options.validateProfiles?.(input.profiles, input.expectedCoordinatorLocation?.directory ?? this.options.project.location.directory) }
+    try { await this.options.validateProfiles?.(input.profiles, input.expectedCoordinatorLocation?.directory ?? this.options.project.location.directory, input.taskMode) }
     catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
 
     let coordinator: NativeMissionSession
@@ -214,6 +216,7 @@ export class MissionControl {
       objective: input.objective,
       notes: input.notes,
       template: input.template,
+      taskMode: input.taskMode,
       ...(input.profiles === undefined ? {} : { profiles: input.profiles }),
       requestID: input.requestID,
       ...(input.prepared === undefined ? {} : { prepared: input.prepared }),
@@ -374,6 +377,7 @@ export class MissionControl {
         blockedBy: task.blockedBy, actorSessionId: undefined, replacedByTaskKey: undefined, executionMode: task.executionMode })),
     ]
     for (const item of input.addTasks) {
+      validateMissionTaskMode(mission, item.executionMode)
       if (current.has(item.taskKey) || addKeys.has(item.taskKey)) throw new MissionControlError(`Task key already exists: ${item.taskKey}`, "task-conflict")
       addKeys.add(item.taskKey)
       if (item.replacesTaskKey !== undefined && (!retired.has(item.replacesTaskKey) || retired.get(item.replacesTaskKey) !== item.taskKey)) {
@@ -472,6 +476,7 @@ export class MissionControl {
       let mission = this.selectMission(snapshot, sessionID, input.missionID)
       if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
       this.assertCoordinator(mission, sessionID)
+      validateMissionTaskMode(mission, input.executionMode)
       input = { ...input, execution: input.execution ?? structuredClone(mission.profiles?.roles?.[input.role]) }
       const coordinator = await this.ownedRootSession(sessionID)
       const coordinatorActor = mission.actors.find(actor => actor.sessionId === sessionID)
@@ -531,13 +536,15 @@ export class MissionControl {
     const caller = await this.ownedRootSession(sessionID)
     let snapshot = await this.snapshot()
     if (input.start) {
+      input.start.taskMode = parseMissionTaskMode(input.start.taskMode)
       try { input.start.profiles = parseMissionProfiles(input.start.profiles); validateMissionProfiles(input.start.template, input.start.profiles) }
       catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
       const missionID = `msn_${stableToken(`${this.options.project.id}\0${sessionID}\0${operationID}`, 24)}`
       const replay = snapshot.missions.find((mission) => mission.id === missionID)
       if (replay) {
         if (replay.template !== input.start.template || replay.objective !== input.start.objective
-          || replay.notes !== input.start.notes || !sameMissionProfiles(replay.profiles, input.start.profiles)) {
+          || replay.notes !== input.start.notes || !sameMissionProfiles(replay.profiles, input.start.profiles)
+          || (replay.taskMode ?? "native") !== input.start.taskMode) {
           throw new MissionControlError("Creation request ID was already used with a different mission", "request-conflict")
         }
         return this.inspection(replay, sessionID)
@@ -547,7 +554,7 @@ export class MissionControl {
       if (snapshot.missions.length >= MISSION_MAX_MISSIONS) {
         throw new MissionControlError("Project mission limit reached", "mission-limit")
       }
-      try { await this.options.validateProfiles?.(input.start.profiles, caller.location.directory) }
+      try { await this.options.validateProfiles?.(input.start.profiles, caller.location.directory, input.start.taskMode) }
       catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(caller.location, fresh.location) || !matchesExecution(input.start.profiles?.coordinator, fresh)) {
@@ -563,6 +570,7 @@ export class MissionControl {
         objective: input.start.objective,
         notes: input.start.notes,
         template: input.start.template,
+        taskMode: input.start.taskMode,
         ...(input.start.profiles === undefined ? {} : { profiles: input.start.profiles }),
         coordinator: {
           sessionID,
@@ -595,6 +603,7 @@ export class MissionControl {
     let mission = this.selectMission(snapshot, sessionID, input.missionID)
     if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
     this.assertCoordinator(mission, sessionID)
+    validateMissionTaskMode(mission, input.executionMode)
     input = { ...input, execution: input.execution ?? structuredClone(mission.profiles?.roles?.[input.role]) }
     if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
     if (mission.control?.pending.length) throw new MissionControlError("Native mission control is pending", "control-pending")
@@ -1163,7 +1172,7 @@ export class MissionControl {
       mission,
       actor: mission.actors.find((candidate) => candidate.sessionId === sessionID) ?? null,
       templates: missionRecipeCatalog(),
-      playbook: getMissionRecipe(mission.template),
+      playbook: getMissionRecipe(mission.template, mission.taskMode),
     }
   }
 

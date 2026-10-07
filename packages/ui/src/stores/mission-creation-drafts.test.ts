@@ -40,4 +40,6 @@ test("logical retry identity includes profiles and variant but not role insertio
     { ...profiles, roles: { ...profiles.roles, "review-spec": { model: { providerID: "p", id: "m", variant: "low" } } } },
   ]) assert.notEqual(original, missionCreationPayloadIdentity({ ...base, profiles: other }))
   assert.notEqual(missionCreationPayloadIdentity(base), missionCreationPayloadIdentity({ ...base, profiles: {} }))
+  assert.notEqual(missionCreationPayloadIdentity(base), missionCreationPayloadIdentity({ ...base, taskMode: "native" }))
+  assert.notEqual(missionCreationPayloadIdentity({ ...base, taskMode: "native" }), missionCreationPayloadIdentity({ ...base, taskMode: "independent" }))
 })

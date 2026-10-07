@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
+import type { MissionTaskMode } from "../lib/mission-defaults"
 import { useI18n } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { instances } from "../stores/instances"
@@ -13,6 +14,7 @@ import { changeMissionProfile, changeProfileModel, legalProfileAgents, missionPr
 export function MissionProfileControls(props: {
   instanceId: string; directory?: string; template: MissionTemplateId
   profiles?: MissionProfiles; disabled: boolean; active: () => boolean
+  taskMode?: MissionTaskMode
   onChange: (profiles: MissionProfiles | undefined) => void
 }) {
   const { t } = useI18n()
@@ -67,7 +69,7 @@ export function MissionProfileControls(props: {
   }
   const row = (role: string) => {
     const selected = () => selection(role)
-    const availableAgents = () => legalProfileAgents(agents(), role === "coordinator" ? "coordinator" : "native")
+    const availableAgents = () => legalProfileAgents(agents(), role === "coordinator" ? "coordinator" : props.taskMode ?? "native")
     const selectedModel = () => models().find(model => modelSelectionKey(model) === modelSelectionKey(selected()?.model))
     const label = () => t(`missions.control.profiles.role.${role}`)
     return <fieldset class="mission-profile-row" disabled={props.disabled}>
@@ -75,21 +77,21 @@ export function MissionProfileControls(props: {
       <label>{t("missions.control.execution.agent")}
         <select aria-label={`${label()} · ${t("missions.control.execution.agent")}`} value={selected()?.agent ?? ""}
           onChange={event => update(role, { ...selected(), agent: event.currentTarget.value || undefined })}>
-          <option value="">{t("missions.control.execution.nativeDefault")}</option>
+          <option value="" selected={!selected()?.agent}>{t("missions.control.execution.nativeDefault")}</option>
           <Show when={selected()?.agent && !availableAgents().some(agent => agent.id === selected()?.agent)}>
-            <option value={selected()?.agent}>{selected()?.agent} · {t("missions.control.profiles.unavailable")}</option>
+            <option value={selected()?.agent} selected>{selected()?.agent} · {t("missions.control.profiles.unavailable")}</option>
           </Show>
-          <For each={availableAgents()}>{agent => <option value={agent.id}>{agent.id}</option>}</For>
+          <For each={availableAgents()}>{agent => <option value={agent.id} selected={agent.id === selected()?.agent}>{agent.id}</option>}</For>
         </select>
       </label>
       <label>{t("missions.control.execution.model")}
         <select aria-label={`${label()} · ${t("missions.control.execution.model")}`} value={modelSelectionKey(selected()?.model)}
           onChange={event => update(role, changeProfileModel(selected(), event.currentTarget.value, models()))}>
-          <option value="">{t("missions.control.execution.nativeDefault")}</option>
+          <option value="" selected={!selected()?.model}>{t("missions.control.execution.nativeDefault")}</option>
           <Show when={selected()?.model && !selectedModel()}>
-            <option value={modelSelectionKey(selected()?.model)}>{selected()?.model?.providerID}/{selected()?.model?.id} · {t("missions.control.profiles.unavailable")}</option>
+            <option value={modelSelectionKey(selected()?.model)} selected>{selected()?.model?.providerID}/{selected()?.model?.id} · {t("missions.control.profiles.unavailable")}</option>
           </Show>
-          <For each={models()}>{model => <option value={modelSelectionKey(model)}>{model.providerID}/{model.id}</option>}</For>
+          <For each={models()}>{model => <option value={modelSelectionKey(model)} selected={modelSelectionKey(model) === modelSelectionKey(selected()?.model)}>{model.providerID}/{model.id}</option>}</For>
         </select>
       </label>
       <label>{t("missions.control.execution.variant")}
@@ -100,21 +102,20 @@ export function MissionProfileControls(props: {
             const { variant: _variant, ...base } = model
             update(role, { ...selected(), model: { ...base, ...(event.currentTarget.value ? { variant: event.currentTarget.value } : {}) } })
           }}>
-          <option value="">{t("missions.control.execution.nativeDefault")}</option>
+          <option value="" selected={!selected()?.model?.variant}>{t("missions.control.execution.nativeDefault")}</option>
           <Show when={selected()?.model?.variant && !selectedModel()?.variants.some(variant => variant.id === selected()?.model?.variant)}>
-            <option value={selected()?.model?.variant}>{selected()?.model?.variant} · {t("missions.control.profiles.unavailable")}</option>
+            <option value={selected()?.model?.variant} selected>{selected()?.model?.variant} · {t("missions.control.profiles.unavailable")}</option>
           </Show>
-          <For each={selectedModel()?.variants ?? []}>{variant => <option value={variant.id}>{variant.id}</option>}</For>
+          <For each={selectedModel()?.variants ?? []}>{variant => <option value={variant.id} selected={variant.id === selected()?.model?.variant}>{variant.id}</option>}</For>
         </select>
       </label>
     </fieldset>
   }
   return <section class="mission-profiles" aria-label={t("missions.control.profiles.title")}>
-    <h4>{t("missions.control.profiles.title")}</h4>
-    <p>{t("missions.control.profiles.detail")}</p>
+    <h4 title={t("missions.taskMode.hint")} aria-description={t("missions.taskMode.hint")}>{t("missions.control.profiles.title")}</h4>
     {row("coordinator")}
     <Show when={props.template === "pocock-fix-bug"}>
-      <p>{t("missions.control.profiles.pocock")}</p>
+      <span class="sr-only">{t("missions.control.profiles.pocock")}</span>
       <For each={missionProfileRoles["pocock-fix-bug"].slice(0, 3)}>{row}</For>
     </Show>
     <details class="mission-profile-optional"><summary>{t("missions.control.profiles.optional")}</summary>

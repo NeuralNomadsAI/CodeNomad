@@ -1,4 +1,6 @@
 .mission-control {
+  container-type: inline-size;
+  container-name: mission-panel;
   min-height: 100%;
   padding: var(--space-sm);
   color: var(--text-primary);
@@ -8,11 +10,17 @@
 .mission-control-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-md);
-  padding: 0 var(--space-xs) var(--space-sm);
-  border-bottom: 1px solid var(--border-base);
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 0 0 var(--space-sm);
 }
+
+.mission-control-actions { width: 100%; justify-content: space-between; }
+.mission-control-create { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target-size-compact); padding-inline: var(--space-xs) var(--space-sm); font-size: var(--font-size-sm); color: var(--text-primary); }
+.mission-control-create:hover:not(:disabled) { background: var(--surface-hover-overlay); color: var(--accent-primary); }
+.mission-control-create:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-control-create:disabled { opacity: .35; }
+.mission-control-preferences { border-block-start: 1px solid var(--border-base); }
 
 .mission-control-icon-button {
   display: inline-flex;
@@ -43,12 +51,12 @@
 
 .mission-control-state {
   display: flex;
-  min-height: 280px;
+  min-height: 180px;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: var(--space-sm);
-  padding: var(--space-xl);
+  padding: var(--space-md);
   text-align: center;
   color: var(--text-secondary);
 }

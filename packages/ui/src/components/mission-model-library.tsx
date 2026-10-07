@@ -5,10 +5,11 @@ import { useConfig } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 
-export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles">
+export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles" | "taskMode">
 
 export function MissionModelLibrary(props: {
   disabled?: boolean
+  active?: () => boolean
   draft?: () => MissionModelBrief
   onUse?: (model: UserMissionModel) => void
 }) {
@@ -19,7 +20,7 @@ export function MissionModelLibrary(props: {
   const [reconciliationPending, setReconciliationPending] = createSignal(false)
   let alive = true
   onCleanup(() => { alive = false })
-  const disabled = () => props.disabled || pending() || !config.missionModelsValid()
+  const disabled = () => props.disabled || !(props.active?.() ?? true) || pending() || !config.missionModelsValid()
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
   const save = async () => {
     if (disabled() || !props.draft || !name().trim()) return
@@ -51,7 +52,7 @@ export function MissionModelLibrary(props: {
     finally { if (alive) setPending(false) }
   }
   const reload = async () => {
-    if (pending()) return
+    if (pending() || !(props.active?.() ?? true)) return
     setPending(true); setFailed(false); setReconciliationPending(false)
     try { await config.reloadMissionPreferences() } catch { if (alive) setFailed(true) }
     finally { if (alive) setPending(false) }
@@ -69,9 +70,7 @@ export function MissionModelLibrary(props: {
     finally { if (alive) setPending(false) }
   }
   return <section class="mission-model-library" aria-label={t("missions.models.title")}>
-    <h4>{t("missions.models.title")}</h4>
-    <p>{t("missions.models.hint")}</p>
-    <button type="button" class="window-action" disabled={pending()} onClick={() => void reload()}>{t("missions.models.reload")}</button>
+    <h4 title={t("missions.models.hint")} aria-description={t("missions.models.hint")}>{t("missions.models.title")}</h4>
     <Show when={config.isUiConfigLoaded() && !config.missionModelsValid()}><p role="alert">{t("missions.models.invalid")}</p>
       <button type="button" class="window-action" disabled={pending() || props.disabled} onClick={() => void reset()}>{t("missions.models.reset")}</button></Show>
     <label>{t("missions.models.select")}<select aria-label={t("missions.models.select")} value={selected()} disabled={disabled()}
@@ -85,6 +84,7 @@ export function MissionModelLibrary(props: {
         if (!disabled() && model) props.onUse?.(parseMissionModel(model))
       }}>{t("missions.models.use")}</button></Show>
       <button type="button" class="window-action" disabled={disabled() || !selection()} onClick={() => void remove()}>{t("missions.models.remove")}</button>
+      <button type="button" class="window-action" aria-label={t("missions.models.reload")} title={t("missions.models.reload")} disabled={pending() || !(props.active?.() ?? true)} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
     </div>
     <Show when={props.draft}>
       <label>{t("missions.models.name")}<input aria-label={t("missions.models.name")} value={name()} maxLength={80} disabled={disabled()} onInput={event => setName(event.currentTarget.value)} /></label>

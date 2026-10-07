@@ -42,6 +42,7 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     })
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await page.locator(".mission-control").waitFor({ state: "attached" })
     assert.equal(await page.locator(".mission-control").count(), 1, "Missions is mounted, not unmounted to simulate hiding")
     assert.deepEqual(await call(page, "demanded"), [])
     await call(page, "event", "session.status")

@@ -44,6 +44,8 @@ import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { WebSearchSettings } from "../opencode/websearch-settings"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
+import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
+import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -319,6 +321,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
+  registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   const accounts = new ProviderAccountsService(deps.settings)
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })

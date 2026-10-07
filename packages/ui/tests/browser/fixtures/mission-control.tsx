@@ -4,12 +4,14 @@ import MissionControl from "../../../src/components/instance/shell/right-panel/t
 import { MissionReader } from "../../../src/components/mission-reader"
 import { missionProjectView } from "../../../src/stores/mission-view-state"
 import { initializeClientState, flushClientState } from "../../../src/stores/client-state"
-import { ConfigProvider } from "../../../src/stores/preferences"
+import { ConfigProvider, useConfig } from "../../../src/stores/preferences"
+import AlertDialog from "../../../src/components/alert-dialog"
+import { getRootClient } from "../../../src/stores/opencode-client"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
-import { addInstance } from "../../../src/stores/instances"
+import { addInstance, updateInstance } from "../../../src/stores/instances"
 import { activeSessionId, setSessions } from "../../../src/stores/session-state"
 import { missionStore } from "../../../src/stores/missions"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
@@ -18,7 +20,9 @@ import "../../../src/index.css"
 await initializeClientState()
 function Fixture() {
   const { t } = useI18n()
+  const config = useConfig()
   const [mounted, setMounted] = createSignal(true)
+  const [active, setActive] = createSignal(true)
   const [panelWidth, setPanelWidth] = createSignal("min(370px, 100vw)")
   applyColorScheme(normalizeColorScheme("classic"))
   ;(window as any).missionFixture = {
@@ -26,6 +30,11 @@ function Fixture() {
     refresh: () => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "rpc.codenomad.missions.changed" } }]),
     mount: setMounted,
     panelWidth: setPanelWidth,
+    active: setActive,
+    loaded: config.isUiConfigLoaded,
+    text: t,
+    connectCatalog: () => addInstance({ id: "fixture", folder: "fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: getRootClient("fixture") }),
+    directory: (folder: string) => updateInstance("fixture", { folder }),
     selectedSession: () => activeSessionId().get("fixture"),
     snapshot: () => missionStore.state("fixture"),
     seedCoordinators: (ids: string[]) => setSessions(previous => new Map(previous).set("fixture", new Map(ids.map(id => [id, {
@@ -48,7 +57,8 @@ function Fixture() {
     <main class="mission-transcript-surface" style={{ "min-width": 0, overflow: "hidden" }}><p>Chat fixture</p>
       <Show when={missionProjectView("fixture").reader}><MissionReader instanceId="fixture" scope="fixture" /></Show>
     </main>
-    <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId="fixture" activeSessionId={() => "ses_fixture"} t={t} /></Show></aside>
+    <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId="fixture" activeSessionId={() => "ses_fixture"} isActive={active} t={t} /></Show></aside>
+    <AlertDialog />
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)

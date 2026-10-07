@@ -1,5 +1,6 @@
 import { executionSchema } from "./execution"
 import { missionProfilesSchema } from "./playbook-profiles"
+import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
 import { missionCleanupSchema } from "./cleanup-projection"
@@ -57,6 +58,7 @@ const mission = {
     notes: { type: "string" },
     template: { type: "string", enum: ["custom", "pocock-fix-bug", "wayfinder"] },
     profiles: missionProfilesSchema,
+    taskMode: missionTaskModeSchema,
     status: { type: "string", enum: ["active", "completed", "failed", "stopped"] },
     runState: { type: "string", enum: ["prepared", "running", "paused", "stopped"] },
     control: lifecycleOperationSchema,
@@ -216,6 +218,7 @@ export const CODENOMAD_MISSIONS_RPC = {
           expectedCoordinatorLocation: location,
           prepared: { type: "boolean" },
           profiles: missionProfilesSchema,
+          taskMode: missionTaskModeSchema,
         }, required: ["requestID", "objective", "template"], additionalProperties: false,
       },
       output: mutationMissionResult,

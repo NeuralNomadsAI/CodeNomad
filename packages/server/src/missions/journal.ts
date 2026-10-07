@@ -23,6 +23,7 @@ import { parseExecutionMode } from "./task-execution-mode"
 import { hasInvalidReportNotificationHistory, parseNativeBinding, parseNativeCall } from "./native-report-provenance"
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { parseMissionProfiles, validateMissionProfiles } from "./playbook-profiles"
+import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
 import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
@@ -240,6 +241,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         || !text(input.coordinator.title, MAX_SHORT_TEXT)) return undefined
       if (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT)) return undefined
       if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
+      if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
       let profiles
       try { profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, profiles) }
       catch { return undefined }
@@ -250,6 +252,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         objective: input.objective,
         notes: input.notes as string | undefined,
         template: input.template,
+        ...(input.taskMode === undefined ? {} : { taskMode: missionTaskModeInputSchema.parse(input.taskMode) }),
         ...(profiles === undefined ? {} : { profiles }),
         coordinator: {
           sessionID: input.coordinator.sessionID,

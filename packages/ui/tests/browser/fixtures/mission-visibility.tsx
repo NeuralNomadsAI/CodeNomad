@@ -5,6 +5,7 @@ import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/sh
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import { ThemeProvider } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
 import { missionStore } from "../../../src/stores/missions"
 import type { Instance } from "../../../src/types/instance"
@@ -32,4 +33,4 @@ function Fixture() {
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
   </div>
 }
-render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

@@ -1,6 +1,7 @@
 import { executionSchema, parseExecution, sameExecution, type MissionExecution } from "./execution"
 import type { MissionTemplateId } from "./model"
 import { z } from "zod"
+import type { MissionTaskMode } from "./task-execution-mode"
 
 /** Creation-time requests, not proof of a mutable session's current profile. */
 export interface MissionProfiles {
@@ -88,13 +89,13 @@ export function sameMissionProfiles(left?: MissionProfiles, right?: MissionProfi
 export function validateMissionProfileCatalog(profiles: MissionProfiles | undefined, catalog: {
   agents: readonly { id: string; mode: string; hidden?: boolean }[]
   models: readonly { providerID: string; id: string; variants: readonly string[] }[]
-}): void {
+}, taskMode: MissionTaskMode = "native"): void {
   if (!profiles || (!profiles.coordinator && !Object.keys(profiles.roles ?? {}).length)) return
   const validate = (execution: MissionExecution, child: boolean) => {
     if (execution.agent !== undefined) {
       const agent = catalog.agents.find(agent => agent.id === execution.agent && !agent.hidden)
       if (!agent || !(child ? ["subagent", "all"] : ["primary", "all"]).includes(agent.mode)) {
-        throw new Error(child ? "Choose a visible subagent/all agent for a native task profile" : "Choose a visible primary/all coordinator agent")
+        throw new Error(child ? "Choose a visible subagent/all agent for a native task profile" : "Choose a visible primary/all agent for a coordinator or independent task profile")
       }
     }
     if (execution.model) {
@@ -105,5 +106,5 @@ export function validateMissionProfileCatalog(profiles: MissionProfiles | undefi
     }
   }
   if (profiles.coordinator) validate(profiles.coordinator, false)
-  for (const execution of Object.values(profiles.roles ?? {})) validate(execution, true)
+  for (const execution of Object.values(profiles.roles ?? {})) validate(execution, taskMode === "native")
 }

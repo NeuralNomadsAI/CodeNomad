@@ -1,7 +1,7 @@
 import { createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import { MissionEditor, type MissionEditorAction } from "../../../src/components/mission-editor"
-import { MissionsSettingsSection } from "../../../src/components/settings/missions-settings-section"
+import { MissionPreferences } from "../../../src/components/mission-preferences"
 import AlertDialog from "../../../src/components/alert-dialog"
 import { ConfigProvider, useConfig } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
@@ -25,7 +25,7 @@ function Fixture() {
   return <main style={{ width: "390px", height: "100vh", overflow: "auto" }}>
     <Show when={view() === "create"}><MissionEditor instanceId="fixture" viewDirectory="/fixture" projectID="project"
       action={action} active={active} onSaved={() => setView("closed")} onCancel={() => setView("closed")} /></Show>
-    <Show when={view() === "settings"}><MissionsSettingsSection instanceId="fixture" location={{ directory: "/fixture" }} /></Show>
+    <Show when={view() === "settings"}><MissionPreferences instanceId="fixture" directory="/fixture" active={active} /></Show>
     <AlertDialog />
   </main>
 }

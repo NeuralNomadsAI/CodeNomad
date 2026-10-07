@@ -67,7 +67,7 @@ function manager(options: {
   return { calls, value: value as never }
 }
 
-function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean } = {}) {
+function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const value = {
     get: (id: string) => id === "workspace-1" ? { id } : undefined,
@@ -95,6 +95,7 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
             const id = `msn_${stableToken(`project-1\0${input.requestID}`, 24)}`
             const sessionID = input.coordinatorSessionID ?? `ses_${stableToken(`${id}\0coordinator`, 26)}`
             return { mission: { id, projectID: "project-1", coordinatorSessionId: sessionID,
+              ...(options.dropTaskMode ? {} : { taskMode: input.taskMode }),
               ...(input.profiles === undefined || options.dropProfiles ? {} : { profiles: structuredClone(input.profiles) }),
               actors: [{ sessionId: sessionID, kind: "coordinator", location: input.expectedCoordinatorLocation }] } }
           },
@@ -214,9 +215,9 @@ test("brokers typed mission create, update and delete only at authorized project
   } })
   assert.equal(create.statusCode, 200)
   assert.deepEqual(create.json(), { mission: { id: `msn_${stableToken("project-1\0create-1", 24)}`, projectID: "project-1",
-    coordinatorSessionId: "ses_existing", actors: [{ sessionId: "ses_existing", kind: "coordinator", location: { directory: "/owned/repo" } }] } })
+    taskMode: "native", coordinatorSessionId: "ses_existing", actors: [{ sessionId: "ses_existing", kind: "coordinator", location: { directory: "/owned/repo" } }] } })
   assert.deepEqual(fake.calls.find((call) => call.method === "create")?.value, {
-    input: { prepared: true, requestID: "create-1", objective: "Ship it", template: "wayfinder", coordinatorSessionID: "ses_existing", expectedCoordinatorLocation: { directory: "/owned/repo" } },
+    input: { prepared: true, requestID: "create-1", objective: "Ship it", template: "wayfinder", taskMode: "native", coordinatorSessionID: "ses_existing", expectedCoordinatorLocation: { directory: "/owned/repo" } },
     rpcOptions: { location: { directory: "/owned/repo" } },
   })
   const update = await app.inject({ method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1", payload: {
@@ -357,4 +358,25 @@ test("malformed and wrong-playbook profiles refuse before creation dispatch", as
     }
     assert.equal(fake.calls.length, 0)
   } finally { await app.close() }
+})
+
+test("creation forwards both task policies; dropping independent mode retains an uncertain hold", async t => {
+  for (const taskMode of ["native", "independent"] as const) for (const dropTaskMode of [false, true]) {
+    const fake = mutationManager({ dropTaskMode }), app = Fastify({ logger: false })
+    t.after(() => app.close())
+    registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
+    const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
+      payload: { objective: "Task policy", template: "custom", requestId: "mode-exact", taskMode } })
+    const uncertain = dropTaskMode && taskMode === "independent"
+    assert.equal(response.statusCode, uncertain ? 409 : 200)
+    assert.equal((fake.calls.find(call => call.method === "create")!.value as { input: { taskMode: string } }).input.taskMode, taskMode)
+    if (uncertain) assert.equal(response.json().code, "creation-uncertain")
+  }
+  const fake = mutationManager(), app = Fastify({ logger: false }); t.after(() => app.close())
+  registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
+  for (const taskMode of [null, "root", false, {}]) {
+    assert.equal((await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
+      payload: { objective: "Invalid policy", template: "custom", requestId: "bad-mode", taskMode } })).statusCode, 400)
+  }
+  assert.equal(fake.calls.length, 0)
 })

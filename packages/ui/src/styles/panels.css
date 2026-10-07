@@ -23,6 +23,7 @@
 @import "./panels/mission-briefing.css";
 @import "./panels/mission-execution.css";
 @import "./panels/mission-reader.css";
+@import "./panels/mission-preferences.css";
 @import "./panels/mission-cleanup.css";
 @import "./panels/panel-extensions.css";
 @import "./panels/control-hover.css";

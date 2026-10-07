@@ -17,7 +17,7 @@ export function MissionDefaultInheritanceControls(props: {
 }) {
   const { t } = useI18n()
   const selection = (role: string) => role === "coordinator" ? props.profiles?.coordinator : props.profiles?.roles?.[role]
-  return <div class="mission-default-inheritance"><p>{t("missions.defaults.inheritanceHint")}</p>
+  return <div class="mission-default-inheritance" title={t("missions.defaults.inheritanceHint")} aria-description={t("missions.defaults.inheritanceHint")}>
     <For each={["coordinator", ...missionProfileRoles[props.template]]}>{role => {
       const mode = () => selection(role) === undefined ? "inherit" : selection(role)?.agent || selection(role)?.model ? "selected" : "native"
       return <label>{t(`missions.control.profiles.role.${role}`)}<select aria-label={t("missions.defaults.inheritanceLabel", { role: t(`missions.control.profiles.role.${role}`) })}

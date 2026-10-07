@@ -1,5 +1,6 @@
 import { parseMissionProfiles, validateMissionProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
+import type { MissionTaskMode } from "./mission-defaults"
 
 /** A reusable user brief, not an AI model or a saved execution. */
 export interface UserMissionModel {
@@ -10,10 +11,11 @@ export interface UserMissionModel {
   notes: string
   template: MissionTemplateId
   profiles?: MissionProfiles
+  taskMode?: MissionTaskMode
 }
 
 export const MAX_MISSION_MODELS = 20
-const fields = ["version", "id", "name", "objective", "notes", "template", "profiles"]
+const fields = ["version", "id", "name", "objective", "notes", "template", "profiles", "taskMode"]
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export function parseMissionModel(input: unknown): UserMissionModel {
@@ -24,12 +26,13 @@ export function parseMissionModel(input: unknown): UserMissionModel {
     || typeof value.name !== "string" || !value.name.trim() || value.name.length > 80
     || typeof value.objective !== "string" || !value.objective.trim() || value.objective.length > 20_000
     || typeof value.notes !== "string" || value.notes.length > 20_000
-    || !["custom", "pocock-fix-bug", "wayfinder"].includes(value.template as string)) throw new Error("Invalid mission model")
+    || !["custom", "pocock-fix-bug", "wayfinder"].includes(value.template as string)
+    || (value.taskMode !== undefined && !["native", "independent"].includes(value.taskMode as string))) throw new Error("Invalid mission model")
   const template = value.template as MissionTemplateId
   const profiles = parseMissionProfiles(value.profiles)
   validateMissionProfiles(template, profiles)
   return { version: 1, id: value.id, name: value.name.trim(), objective: value.objective.trim(), notes: value.notes, template,
-    ...(profiles === undefined ? {} : { profiles }) }
+    ...(profiles === undefined ? {} : { profiles }), ...(value.taskMode === undefined ? {} : { taskMode: value.taskMode as MissionTaskMode }) }
 }
 
 /** Invalid/oversized documents never become execution inputs. Arrays replace in JSON Merge Patch. */

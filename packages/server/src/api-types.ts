@@ -362,6 +362,14 @@ export interface PluginControlLocation {
   workspaceID?: string
 }
 
+export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
+export interface SubagentDepthSnapshot {
+  location: PluginControlLocation
+  capability: SubagentDepthCapability | null
+  effectiveDepth: number | null
+  project: { path: string; depth: number | null; expectation: string } | null
+}
+
 export type PluginRuntimeSource =
   | { type: "builtin" }
   | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }

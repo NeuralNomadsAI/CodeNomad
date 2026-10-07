@@ -1,0 +1,41 @@
+.mission-preferences { padding: 0 var(--space-xs) var(--space-sm); font-size: var(--font-size-sm); }
+.mission-preferences > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs); margin-block-end: var(--space-sm); }
+.mission-preferences h4, .mission-model-library h4, .mission-profiles h4 { margin: 0; font-size: var(--font-size-sm); font-weight: 600; }
+.mission-preferences > header > span, .mission-preferences-dirty { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-profile-summary { color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.mission-preferences p { margin-block: var(--space-xs); overflow-wrap: anywhere; }
+.mission-preferences label, .mission-model-library label { display: grid; gap: var(--space-xs); min-width: 0; margin-block: var(--space-sm); }
+.mission-preferences-scope { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+.mission-preferences select, .mission-model-library select, .mission-model-library input { width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs); color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0; font-size: var(--font-size-sm); text-overflow: ellipsis; }
+.mission-preferences select:focus-visible, .mission-model-library select:focus-visible, .mission-model-library input:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-preferences-actions { display: flex; flex-wrap: nowrap; gap: var(--space-xs); margin-block: var(--space-sm); }
+.mission-preferences-actions > button { flex: 1; min-width: 0; padding-inline: var(--space-xs); }
+.mission-model-library { border-block-start: 1px solid var(--border-base); padding-block-start: var(--space-sm); margin-block-start: var(--space-sm); }
+.mission-model-library .window-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-model-library .window-action { min-height: var(--touch-target-size-compact); }
+.mission-profiles { margin-block: var(--space-sm); }
+.mission-profile-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-xs); border: 0; padding: 0; margin: var(--space-sm) 0; min-width: 0; }
+.mission-profile-row legend { padding: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
+.mission-profile-row label { min-width: 0; margin: var(--space-xs) 0; font-size: var(--font-size-xs); }
+.mission-profile-row select { min-width: 0; padding: var(--space-xs); min-height: var(--touch-target-size-compact); text-overflow: ellipsis; }
+.mission-profile-optional { margin-block: var(--space-sm); }
+.mission-profile-optional > summary { cursor: pointer; font-size: var(--font-size-sm); color: var(--text-secondary); min-height: var(--touch-target-size-compact); align-content: center; }
+.mission-profile-optional > summary:focus-visible { outline: 1px solid var(--focus-ring-color); }
+.mission-default-inheritance { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
+.mission-default-inheritance label { font-size: var(--font-size-xs); }
+.mission-delegation { border: 0; border-block-start: 1px solid var(--border-base); padding: var(--space-xs) 0 0; margin-block: var(--space-sm); min-width: 0; }
+.mission-delegation legend { font-size: var(--font-size-sm); font-weight: 600; padding-inline: 0 var(--space-xs); }
+.mission-delegation label { grid-template-columns: auto minmax(0, 1fr); align-items: center; font-size: var(--font-size-xs); }
+.mission-delegation select { padding: var(--space-xs); min-height: var(--touch-target-size-compact); font-size: var(--font-size-sm); }
+.mission-depth { border-block-start: 1px solid var(--border-base); margin-block-start: var(--space-sm); padding-block-start: var(--space-sm); }
+.mission-depth > header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-depth > header > span, .mission-depth-effective, .mission-depth-path { font-size: var(--font-size-xs); color: var(--text-secondary); }
+.mission-depth-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-block: var(--space-xs); }
+.mission-depth input { width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0; padding: var(--space-xs); }
+.mission-depth .window-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-control > .mission-disclosure:has(.mission-flow) > h3 .mission-disclosure-trigger { color: var(--text-primary); font-weight: 600; }
+@container mission-panel (max-width: 340px) {
+  .mission-profile-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mission-profile-row > label:nth-of-type(2) { grid-column: 1 / -1; grid-row: 2; }
+  .mission-profile-row > label:nth-of-type(3) { grid-column: 2; grid-row: 1; }
+}

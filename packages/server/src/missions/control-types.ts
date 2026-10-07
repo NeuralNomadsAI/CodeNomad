@@ -1,6 +1,6 @@
 import type { SessionMetadata } from "@opencode/client"
 import type { MissionExecution } from "./execution"
-import type { MissionTaskExecutionMode } from "./task-execution-mode"
+import type { MissionTaskExecutionMode, MissionTaskMode } from "./task-execution-mode"
 import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, MissionTemplateId, MissionNativeBinding } from "./model"
 import type { TaskContractReference } from "./task-declaration"
 import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
@@ -60,6 +60,7 @@ export interface MissionStartInput {
   template: MissionTemplateId
   notes?: string
   profiles?: MissionProfiles
+  taskMode?: MissionTaskMode
 }
 
 export interface MissionInspectInput {

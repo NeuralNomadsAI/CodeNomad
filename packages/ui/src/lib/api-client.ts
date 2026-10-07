@@ -367,6 +367,12 @@ export const serverApi = {
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
   },
+  getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
+  },
+  setSubagentDepth(instanceId: string, payload: { location: { directory: string }; depth: number | null; expectation: string }): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth`, { method: "PUT", body: JSON.stringify(payload) })
+  },
   setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
     return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
       method: "PATCH",
@@ -613,7 +619,7 @@ export const serverApi = {
   fetchMissions(instanceId: string): Promise<MissionListResponse> {
     return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
   },
-  createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+  createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
     return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
   },

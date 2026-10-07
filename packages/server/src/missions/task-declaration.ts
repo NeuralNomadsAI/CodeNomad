@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { MissionDeclareInput } from "./control-types"
 import { MissionControlError } from "./control-error"
 import { parseExecution } from "./execution"
-import type { MissionTask } from "./model"
+import type { MissionMap, MissionTask } from "./model"
 import { parseExecutionMode } from "./task-execution-mode"
 
 const taskKey = z.string().regex(/^[a-z0-9][a-z0-9._-]{1,63}$/)
@@ -33,6 +33,13 @@ export function normalizeTaskDeclaration(raw: unknown): MissionDeclareInput {
     : parseExecutionMode(input.executionMode)
   if (!executionMode) throw new MissionControlError("Invalid task execution mode", "invalid-contract")
   return { ...input, executionMode, blockedBy: [...new Set(input.blockedBy)].sort() }
+}
+
+/** Mission task policy never disables native helpers or grants root admission. */
+export function validateMissionTaskMode(mission: Pick<MissionMap, "taskMode">, mode?: MissionTask["executionMode"]): void {
+  if (mission.taskMode === "independent" && parseExecutionMode(mode)?.kind !== "independent") {
+    throw new MissionControlError("This mission requires explicit independent task execution with a concrete reason and explanation", "invalid-contract")
+  }
 }
 
 type PlannedTask = Pick<MissionTask, "key" | "blockedBy" | "executionMode" | "status">

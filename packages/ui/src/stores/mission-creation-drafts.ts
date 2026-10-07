@@ -1,6 +1,7 @@
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import type { MissionTaskMode } from "../lib/mission-defaults"
 
 export interface UncertainMissionCreation {
   requestId: string
@@ -9,6 +10,7 @@ export interface UncertainMissionCreation {
   template: MissionMap["template"]
   directory?: string
   profiles?: MissionProfiles
+  taskMode?: MissionTaskMode
 }
 
 // Window-memory only, not native settlement authority or restart persistence.
@@ -46,7 +48,7 @@ export function missionCreationPayloadIdentity(operation: Omit<UncertainMissionC
   const execution = (value?: MissionExecution) => value === undefined ? null : [value.agent ?? null,
     value.model ? [value.model.providerID, value.model.id, value.model.variant ?? null] : null]
   const profiles = operation.profiles
-  return JSON.stringify([operation.objective, operation.notes, operation.template, operation.directory ?? null,
+  return JSON.stringify([operation.objective, operation.notes, operation.template, operation.directory ?? null, operation.taskMode ?? null,
     profiles === undefined ? null : [execution(profiles.coordinator), profiles.roles === undefined ? null
       : Object.keys(profiles.roles).sort().map(role => [role, execution(profiles.roles![role])])]])
 }

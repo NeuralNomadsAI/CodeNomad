@@ -13,6 +13,7 @@ import { requestAdmission } from "../request-admission"
 import { stableToken } from "../../missions/journal"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
 import { missionProfilesInputSchema, sameMissionProfiles, validateMissionProfiles } from "../../missions/playbook-profiles"
+import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -27,6 +28,7 @@ const CreateSchema = z.object({
   template: z.enum(["custom", "wayfinder", "pocock-fix-bug"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: RequestID,
   profiles: missionProfilesInputSchema,
+  taskMode: missionTaskModeInputSchema.default("native"),
 }).strict()
 const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
@@ -127,6 +129,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
         objective: parsed.data.objective,
         ...(parsed.data.notes === undefined ? {} : { notes: parsed.data.notes }),
         template: parsed.data.template,
+        taskMode: parsed.data.taskMode,
         ...(parsed.data.profiles === undefined ? {} : { profiles: parsed.data.profiles }),
         ...(parsed.data.coordinatorSessionId ? { coordinatorSessionID: parsed.data.coordinatorSessionId } : {}),
         expectedCoordinatorLocation: locations.at(-1)!,
@@ -150,7 +153,8 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       if (result.mission?.id !== missionID || result.mission.projectID !== setup.projectID
         || result.mission.coordinatorSessionId !== sessionID || !coordinator
         || !sameLocation(coordinator.location, input.expectedCoordinatorLocation)
-        || !sameMissionProfiles(result.mission.profiles, input.profiles)) throw new MissionCreationHoldError("creation-uncertain")
+        || !sameMissionProfiles(result.mission.profiles, input.profiles)
+        || (result.mission.taskMode ?? "native") !== input.taskMode) throw new MissionCreationHoldError("creation-uncertain")
       admission.settled()
       await admission.assertCurrent()
       return { mission: result.mission }

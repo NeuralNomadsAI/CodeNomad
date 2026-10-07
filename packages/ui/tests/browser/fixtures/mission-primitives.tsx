@@ -5,6 +5,7 @@ import { MissionReader } from "../../../src/components/mission-reader"
 import { getMarkdownTextForRender } from "../../../src/components/markdown"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import { ThemeProvider } from "../../../src/lib/theme"
 import { initializeClientState } from "../../../src/stores/client-state"
 import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { missionStore } from "../../../src/stores/missions"
@@ -38,4 +39,4 @@ function Fixture() {
     <output id="default-budget" style={{ position: "absolute", bottom: "0", width: "300px", height: "50px", overflow: "auto", "overflow-wrap": "anywhere" }}>{getMarkdownTextForRender("x".repeat(11000) + "TAIL_PROOF")}</output>
   </div>
 }
-render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

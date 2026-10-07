@@ -24,7 +24,7 @@ import { MissionNotificationOutbox } from "../missions/notification-outbox"
 import { MISSION_RPC_REJECTION, missionMutationStatus } from "../missions/rpc-errors"
 import { readLocationRef } from "./compatibility/location"
 import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../missions/native-wire-schema"
-import { parseExecutionMode } from "../missions/task-execution-mode"
+import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
 import { buildAssignmentPrompt } from "../missions/recipes"
@@ -150,8 +150,8 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     transport,
     createManagedRoot,
     authorizeNativeReport: policy?.authorizeNativeReport,
-    validateProfiles: async (profiles, directory) => {
-      if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory))
+    validateProfiles: async (profiles, directory, taskMode) => {
+      if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory), taskMode)
     },
     validateExecution: async (input, coordinatorID) => {
       const session = await context.session.get({ sessionID: input.targetSessionID ?? coordinatorID })
@@ -334,6 +334,7 @@ const inspectSchema = {
         template: { type: "string", enum: ["custom", "pocock-fix-bug", "wayfinder"] },
         notes: { type: "string", maxLength: 20_000 },
         profiles: missionProfilesSchema,
+        taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omitted defaults to native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
       },
       required: ["objective", "template"],
       additionalProperties: false,
@@ -351,7 +352,7 @@ const delegateSchema = {
     brief: { type: "string", minLength: 1, maxLength: 20_000 },
     role: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$" },
     execution: { ...executionSchema, description: "Native agent/model selection, independent of role. Native children use subagent/all profiles; independent roots use primary/all. Existing actors must match; never switch a busy session." },
-    executionMode: { ...taskExecutionModeSchema, description: "Omit for a native task under the coordinator. Native parent/reuse task references are explicit; independent roots require a bounded reason and explanation." },
+    executionMode: { ...taskExecutionModeSchema, description: "Omit for a native task under the coordinator in native-mode missions. Independent-mode missions require kind independent and a concrete reason/explanation; the persisted user-selected policy may justify reason playbook. Native parent/reuse references are explicit. This does not authorize new roots or bypass helper permissions/depth." },
     blockedBy: { type: "array", maxItems: 24, items: { type: "string" } },
     targetSessionID: { type: "string", description: "Independent mode only: existing owned root to reuse. Native exact-child continuation belongs to the native subagent call, not this declaration." },
     delivery: { type: "string", enum: ["queue", "steer"], description: "Independent mode only: root assignment inbox delivery." },
@@ -389,6 +390,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput {
     start: {
       objective: requiredText(start.objective, "start.objective", 20_000),
       template,
+      taskMode: parseMissionTaskMode(start.taskMode),
       notes: optionalText(start.notes, "start.notes", 20_000),
       ...(start.profiles === undefined ? {} : { profiles: parseMissionProfiles(start.profiles) }),
     },
@@ -450,6 +452,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
     objective: requiredText(value.objective, "objective", 20_000),
     notes: optionalBodyText(value.notes, "notes", 20_000),
     template,
+    taskMode: parseMissionTaskMode(value.taskMode),
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
     coordinatorSessionID: optionalText(value.coordinatorSessionID, "coordinatorSessionID", 240),
     ...(value.expectedCoordinatorLocation === undefined ? {} : { expectedCoordinatorLocation: readLocationRef(value.expectedCoordinatorLocation) }),

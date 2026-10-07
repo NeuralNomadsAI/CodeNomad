@@ -163,6 +163,7 @@ export interface MissionMap {
   notes?: string
   template: MissionTemplateId
   profiles?: import("./playbook-profiles").MissionProfiles
+  taskMode?: import("./task-execution-mode").MissionTaskMode
   status: MissionStatus
   runState?: MissionRunState
   control?: MissionLifecycleOperation
@@ -238,6 +239,7 @@ export interface MissionCreatedEvent extends MissionEventBase {
   notes?: string
   template: MissionTemplateId
   profiles?: import("./playbook-profiles").MissionProfiles
+  taskMode?: import("./task-execution-mode").MissionTaskMode
   coordinator: {
     sessionID: string
     title: string
@@ -800,6 +802,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     notes,
     ...(briefing ? { briefing } : {}),
     template: created.template,
+    taskMode: created.taskMode ?? "native",
     ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
     status,
     ...lifecycle,

@@ -11,12 +11,12 @@ import { copyMissionProfiles, missionCreationPayloadIdentity, retainUncertainMis
 import { MissionProfileControls } from "./mission-profile-controls"
 import { profilesForTemplate } from "./mission-profile-controls-data"
 import { useConfig } from "../stores/preferences"
-import { missionDefaultsFor, normalizeMissionDefaults } from "../lib/mission-defaults"
+import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
 import type { MissionProfileDefault } from "../lib/mission-defaults"
 import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { MissionModelLibrary } from "./mission-model-library"
 import { MissionProfileSummary } from "./mission-profile-summary"
-import { openSettings } from "../stores/settings-screen"
+import { MissionTaskModeControls } from "./mission-task-mode-controls"
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionMap }
 
@@ -25,6 +25,7 @@ export function MissionEditor(props: {
   active?: () => boolean
   captureOperation?: () => (() => boolean)
   onSaved: (mission?: MissionMap) => void; onCancel: () => void
+  onOpenPreferences?: () => void
 }) {
   const { t } = useI18n()
   const config = useConfig()
@@ -40,6 +41,8 @@ export function MissionEditor(props: {
   const [template, setTemplate] = createSignal<MissionMap["template"]>(held?.template ?? "custom")
   const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(held ? copyMissionProfiles(held.profiles) : undefined)
   const [customProfiles, setCustomProfiles] = createSignal(Boolean(held))
+  const [taskMode, setTaskMode] = createSignal<MissionTaskMode | undefined>(held ? held.taskMode : "native")
+  const [customTaskMode, setCustomTaskMode] = createSignal(Boolean(held))
   const [defaults, setDefaults] = createSignal<MissionProfileDefault[]>([])
   const [defaultsReady, setDefaultsReady] = createSignal(kind !== "create" || Boolean(held))
   const [defaultsRefreshing, setDefaultsRefreshing] = createSignal(false)
@@ -53,7 +56,7 @@ export function MissionEditor(props: {
   createEffect(() => {
     if (defaultsReady() || !config.isUiConfigLoaded() || !config.missionDefaultsValid()) return
     const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
-    setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setDefaultsReady(true)
+    setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template())); setDefaultsReady(true)
   })
   const [uncertain, setUncertain] = createSignal(Boolean(held))
   const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
@@ -71,7 +74,7 @@ export function MissionEditor(props: {
       if (!current()) return
       if (!config.missionDefaultsValid()) throw new Error("Invalid mission defaults")
       const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
-      setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setCustomProfiles(false); setDefaultsReady(true)
+      setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template())); setCustomProfiles(false); setCustomTaskMode(false); setDefaultsReady(true)
     } catch { if (current()) setDefaultsFailed(true) }
     finally { if (current()) setDefaultsRefreshing(false) }
   }
@@ -85,6 +88,7 @@ export function MissionEditor(props: {
     if (existingHold) {
       setObjective(existingHold.objective); setNotes(existingHold.notes); setTemplate(existingHold.template)
       setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
+      setTaskMode(existingHold.taskMode); setCustomTaskMode(true)
       setSelectedModel(submittedMissionModel(existingHold.requestId)); setUncertain(true); return
     }
     const origin = identity(), directory = props.directory, instanceId = props.instanceId
@@ -92,6 +96,7 @@ export function MissionEditor(props: {
     const operationCurrent = props.captureOperation?.() ?? (() => true)
     const current = () => viewCurrent() && operationCurrent() && props.action === action
     const fields = { objective: objective().trim(), notes: notes(), template: template(),
+      ...(kind === "create" && taskMode() !== undefined ? { taskMode: taskMode() } : {}),
       ...(kind === "create" && profiles() !== undefined ? { profiles: copyMissionProfiles(profiles()) } : {}) }
     const payload = kind === "create" ? missionCreationPayloadIdentity({ ...fields, directory })
       : JSON.stringify(kind === "delete" ? { deleteManagedSessions: deleteManagedSessions() } : fields)
@@ -157,7 +162,6 @@ export function MissionEditor(props: {
   return <form class="mission-editor window-shell" onSubmit={save} aria-label={t(`missions.control.${kind}`)}>
     <header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header>
     <div class="window-body">
-      <Show when={kind === "edit"}><p>{t("missions.control.guidance.editHint")}</p></Show>
       <Show when={kind !== "delete"} fallback={<>
         <p>{t("missions.control.delete.detail")}</p>
         <label class="mission-delete-sessions"><input type="checkbox" checked={deleteManagedSessions()} disabled={pending() || deleteAttempted()}
@@ -172,40 +176,45 @@ export function MissionEditor(props: {
         <Show when={kind === "create"}>
           <details class="mission-profile-optional" onToggle={event => setModelDetailsOpen(event.currentTarget.open)}>
           <summary>{t("missions.models.title")}</summary>
-          <Show when={modelDetailsOpen()}>
+          <div hidden={!modelDetailsOpen()}>
           <MissionModelLibrary disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)}
-            draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}) })}
+            active={() => modelDetailsOpen() && (props.active?.() ?? true)}
+            draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })}
             onUse={model => {
               setObjective(model.objective); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
               setCustomProfiles(model.profiles !== undefined)
+              setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
               setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
             }} />
-          </Show></details>
+          </div></details>
           <Show when={selectedModel()}>{model => <p>{t("missions.models.current", { name: model().name })}</p>}</Show>
           <label>{t("missions.control.template")}
             <select aria-label={t("missions.control.template")} value={template()} disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()} onChange={e => {
               const next = e.currentTarget.value as MissionMap["template"]
               setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
+              if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
             }}>
               <For each={["custom", "wayfinder", "pocock-fix-bug"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
             </select>
           </label>
+          <MissionTaskModeControls value={taskMode() ?? "native"} disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()}
+            onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
           <MissionProfileSummary template={template()} profiles={profiles()} />
           <Show when={!defaultsReady()}><p role={config.uiConfigLoadFailed() ? "alert" : "status"}>{t(config.uiConfigLoadFailed() ? "missions.defaults.unavailable" : "missions.defaults.loading")}</p>
             <button type="button" class="window-action" disabled={defaultsRefreshing() || uncertain()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.reload")}</button></Show>
           <Show when={config.isUiConfigLoaded() && !config.missionDefaultsValid()}><p role="alert">{t("missions.defaults.invalid")}</p></Show>
           <Show when={defaultsFailed()}><p role="alert">{t("missions.defaults.unavailable")}</p></Show>
           <details class="mission-profile-optional" onToggle={event => setProfileDetailsOpen(event.currentTarget.open)}><summary>{t("missions.defaults.creation")}</summary>
-          <p>{t("missions.defaults.hint")}</p>
-          <button type="button" class="window-text-button" onClick={() => void openSettings("missions")}>{t("missions.defaults.manage")}</button>
+          <Show when={props.onOpenPreferences}><button type="button" class="window-text-button" title={t("missions.defaults.hint")} onClick={props.onOpenPreferences}>{t("missions.defaults.manage")}</button></Show>
           <Show when={profileDetailsOpen()}>
-           <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
+            <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
+              taskMode={taskMode()}
               disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()} active={() => profileDetailsOpen() && (props.active?.() ?? true)}
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
           </Show>
           <button type="button" class="window-action" disabled={pending() || defaultsRefreshing() || uncertain()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
           </details>
-          <p>{t("missions.control.create.detail")}</p>
+          <p class="mission-editor-start-hint">{t("missions.control.create.detail")}</p>
         </Show>
       </Show>
       <Show when={uncertain()} fallback={<Show when={error()}><p role="alert">{error()}</p></Show>}><p role="alert">{t("missions.control.creation.uncertain")}</p></Show>

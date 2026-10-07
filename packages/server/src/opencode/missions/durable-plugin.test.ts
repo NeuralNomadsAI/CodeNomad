@@ -30,6 +30,37 @@ type Tool = { name: string; input: unknown; execute(input: unknown, context: { s
 const independent = { executionMode: { kind: "independent" as const, reason: "existing-root" as const,
   explanation: "Qualify the explicit independent-root authority path" } }
 
+test("independent mission policy retains durable new-root denial and native helper permissions", async t => {
+  const f = fixture()
+  const { mission } = await f.base.create({ requestID: "independent-policy", objective: "Independent tasks", template: "custom",
+    coordinatorSessionID: "ses_coordinator", prepared: true, taskMode: "independent" })
+  const dispose = await setupDurableMissionsPlugin(f.context, f.host); t.after(dispose)
+  await f.provision()
+  await f.intent(await f.body("adopt", mission.id))
+  await f.intent(await f.body("lifecycle", mission.id))
+  const task = { missionID: mission.id, taskKey: "independent-work", title: "Work", brief: "Bounded", role: "specialist" }
+  const before = await f.journal.events(), sends = f.admitted.length
+  await assert.rejects(f.tool("delegate", task), /requires explicit independent/)
+  await assert.rejects(f.tool("delegate", { ...task, executionMode: { kind: "native", parentTaskKey: null } }), /requires explicit independent/)
+  await assert.rejects(f.tool("delegate", { ...task, executionMode: { kind: "independent", reason: "playbook",
+    explanation: "The user selected independent mission tasks." } }), /policy-unqualified/)
+  assert.deepEqual(await f.journal.events(), before)
+  assert.equal(f.counts.nativeCreates, 0)
+  assert.equal(f.admitted.length, sends)
+  const event = { sessionID: "ses_coordinator", system: [] as Array<{ type: "text"; text: string }>,
+    tools: { subagent: { native: true }, mission_delegate: {} } }
+  await f.hooks[0](event)
+  assert.deepEqual(event.tools.subagent, { native: true }, "mission policy never removes ordinary native helper tools")
+  assert.match(event.system[0].text, /native permissions and depth/)
+  const result = await f.tool("delegate", { ...task, ...independent, targetSessionID: "ses_actor" })
+  assert.equal(result.disposition, "dispatched")
+  assert.equal(result.mission.taskMode, "independent")
+  assert.equal(result.mission.tasks[0].executionMode.kind, "independent")
+  assert.equal(f.counts.nativeCreates, 0)
+  assert.equal(f.counts.nativePrompts, 0)
+  assert.equal(f.admitted.length, sends + 1, "existing authorized root uses the original fenced transport")
+})
+
 function fixture() {
   const storage = new NativeStorage()
   const location = { directory: "/owned/native-project", project: { id: "project-durable", canonical: "/owned/native-project" } }
@@ -292,6 +323,26 @@ test("signed deterministic create is prepared-only; schema rejects driver method
   assert.equal(schema.safeParse({ ...f.signed(creation), publicKey: "input supplied" }).success, false)
   assert.equal(schema.safeParse(f.signed({ ...creation, method: "invoke" } as never)).success, false)
   assert.equal(f.counts.nativePrompts, 0); assert.equal(f.counts.nativeSynthetics, 0)
+})
+
+test("signed human creation preserves both policies and rejects a changed policy under the original request identity", async t => {
+  for (const taskMode of ["native", "independent"] as const) {
+    const f = fixture(), dispose = await setupDurableMissionsPlugin(f.context, f.host); t.after(dispose)
+    await f.provision()
+    const requestID = `signed-mode-${taskMode}`, missionID = `msn_${stableToken(`${f.location.project.id}\0${requestID}`, 24)}`
+    const creation = await f.body("create", missionID, { requestID, payload: { objective: "User-selected task policy",
+      template: "custom", prepared: true, taskMode } })
+    assert.equal((await f.intent(creation)).receipt.completion.outcome, "applied")
+    const before = await f.journal.events()
+    assert.equal((await f.journal.snapshot()).missions[0].taskMode, taskMode)
+    assert.equal((await f.intent(creation)).receipt.completion.outcome, "applied")
+    if (creation.method !== "create") assert.fail("Expected create intent")
+    await assert.rejects(f.intent({ ...creation, payload: { ...creation.payload,
+      taskMode: taskMode === "native" ? "independent" : "native" } }), (error: any) => error.code === "request-conflict")
+    assert.deepEqual(await f.journal.events(), before)
+    assert.equal(f.counts.nativeCreates, 0)
+    assert.equal(f.admitted.length, 0)
+  }
 })
 
 test("real native lifecycle uses reserved authority transport without nested-lock deadlock; grants gate tools and reports", async t => {

@@ -7,7 +7,7 @@ import type { MissionMap } from "../missions/model"
 
 test("validates the compact mission tool contracts", () => {
   assert.deepEqual(parseInspectInput({ start: { objective: "Fix it", template: "pocock-fix-bug" } }), {
-    start: { objective: "Fix it", template: "pocock-fix-bug", notes: undefined },
+    start: { objective: "Fix it", template: "pocock-fix-bug", notes: undefined, taskMode: "native" },
     missionID: undefined,
   })
   assert.deepEqual(parseDelegateInput({ taskKey: "review-spec", title: "Review", brief: "Check spec", role: "review-spec" }), {

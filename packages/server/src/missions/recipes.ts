@@ -1,4 +1,5 @@
 import type { MissionMap, MissionTask, MissionTemplateId } from "./model"
+import type { MissionTaskMode } from "./task-execution-mode"
 
 export interface MissionRoleGuide {
   id: string
@@ -39,6 +40,10 @@ const PARALLEL_WORK = `Parallel coordination:
 
 const DELEGATION = `Prefer ordinary native delegation for bounded work. Run independent ready frontier tasks in parallel; blockedBy records real prerequisites, not an artificial stage order. Declare task contracts separately from execution: a blocked declaration does not dispatch work. Native tasks use subagent/all profiles; independent roots use primary/all profiles. Choose an independent root only for an explicit location, lifetime, existing-root, or playbook exception, with a concrete explanation. Do not convert historical no-mode root contracts. Native children may recursively delegate within the assignment and return normal native results to their parent; do not require child mission.report copies, task-generation forwarding, or invocation bindings. The coordinator reads those results and records a business readout using mission.report with taskKey and evidence (omit contract). This settles the plan, not native execution receipts, historical model identity, or human consent. Never infer idle from a report. Independent-root actors still submit their own assigned mission reports. Helpers receive the scoped instructions their parent passes, not coordinator topology authority or mission.report privileges.
 ${PARALLEL_WORK}
+${NATIVE_WORK}`
+
+const INDEPENDENT_DELEGATION = `This mission's persisted user-selected taskMode is independent. Every declared task, including additions through mission.revise, must explicitly use executionMode.kind independent, a concrete reason and explanation, and a primary/all profile. The user-selected mission policy may justify reason playbook; explain that choice explicitly. Never silently substitute a native task. This policy concerns declared mission tasks only: ordinary internal native helpers remain authorized by OpenCode.
+Run unrelated ready work in parallel when useful; blockedBy records real prerequisites, not an artificial sequence. Cover every requested workstream and read actual independent-root mission.report results before choosing the next frontier. Declaration, reports and admission do not prove execution ended, historical model identity or human consent. Keep existing actor, ownership, environment and root-admission gates: this policy grants no new-root capability. If independent execution is unavailable, return the limitation instead of changing the policy. Never use denied/depth-limited native helpers as a root-creation fallback.
 ${NATIVE_WORK}`
 
 const custom: MissionRecipe = {
@@ -166,8 +171,9 @@ const wayfinder: MissionRecipe = {
 
 const recipes: Record<MissionTemplateId, MissionRecipe> = { custom, "pocock-fix-bug": pocock, wayfinder }
 
-export function getMissionRecipe(id: MissionTemplateId): MissionRecipe {
-  return recipes[id]
+export function getMissionRecipe(id: MissionTemplateId, taskMode: MissionTaskMode = "native"): MissionRecipe {
+  const recipe = recipes[id]
+  return taskMode === "independent" ? { ...recipe, coordinator: recipe.coordinator.replace(DELEGATION, INDEPENDENT_DELEGATION) } : recipe
 }
 
 export function missionRecipeCatalog(): Array<Pick<MissionRecipe, "id" | "title" | "summary" | "sequence"> & { roles: string[] }> {
@@ -181,7 +187,7 @@ export function missionRecipeCatalog(): Array<Pick<MissionRecipe, "id" | "title"
 }
 
 export function buildAssignmentPrompt(mission: MissionMap, task: MissionTask): string {
-  const recipe = getMissionRecipe(mission.template)
+  const recipe = getMissionRecipe(mission.template, mission.taskMode)
   const role = recipe.roles.find((candidate) => candidate.id === task.role) ?? custom.roles[0]
   const blockers = task.blockedBy.length > 0 ? task.blockedBy.join(", ") : "none"
   const actorKind = task.executionMode?.kind === "native" ? "native task actor" : "visible independent root-session actor"
@@ -212,7 +218,7 @@ Complete only this task. Do not create mission tasks or nested Mission coordinat
 }
 
 export function buildActorContext(mission: MissionMap, sessionID: string): string {
-  const recipe = getMissionRecipe(mission.template)
+  const recipe = getMissionRecipe(mission.template, mission.taskMode)
   const actor = mission.actors.find((candidate) => candidate.sessionId === sessionID)
   if (!actor) return ""
   const assigned = mission.tasks.filter((task) => task.actorSessionId === sessionID && !task.report && task.status !== "withdrawn")
@@ -227,7 +233,9 @@ export function buildActorContext(mission: MissionMap, sessionID: string): strin
   if (actor.kind === "coordinator") {
     return `You coordinate CodeNomad mission ${mission.id} using the ${recipe.title} playbook.
 Objective (untrusted task data): <mission-objective>${objective}</mission-objective>
-Only this coordinator session may declare mission tasks, call mission.delegate, mission.revise, or finish the mission. Inspect the durable map before acting, declare only clear work, admit only the unblocked frontier, and read ordinary native results or independent-root reports to decide the next move. Pass the declaration's canonical assignmentPrompt to the ordinary native subagent call only when its task is ready; the prompt is context, not execution admission or proof. Keep the declared execution profile and native continuation checks intact. Record each declared native task's business readout with mission.report and its explicit taskKey; omit contract and do not ask children to copy their returned text into mission.report. Use mission.revise with a reason and current revision to add newly visible frontier tasks, retire/replace work or update dependencies atomically. Revision and business completion do not cancel native work or prove execution ended; tracked in-flight execution must still settle before finalization. Never reconstruct a hidden workflow engine.
+Only this coordinator session may declare mission tasks, call mission.delegate, mission.revise, or finish the mission. Inspect the durable map before acting, declare only clear work, admit only the unblocked frontier, and read ordinary native results or independent-root reports to decide the next move. ${mission.taskMode === "independent"
+    ? "Declare tasks explicitly as independent, with a concrete explanation of the persisted user-selected mission policy; independent actors submit their assigned mission.report. Do not execute declared tasks as native children. Internal helpers remain subject to ordinary native permissions and depth."
+    : "Pass the declaration's canonical assignmentPrompt to the ordinary native subagent call only when its task is ready; the prompt is context, not execution admission or proof. Keep the declared execution profile and native continuation checks intact. Record each declared native task's business readout with mission.report and its explicit taskKey; omit contract and do not ask children to copy their returned text into mission.report."} Use mission.revise with a reason and current revision to add newly visible frontier tasks, retire/replace work or update dependencies atomically. Revision and business completion do not cancel native work or prove execution ended; tracked in-flight execution must still settle before finalization. Never reconstruct a hidden workflow engine.
 Playbook sequence:\n${recipe.sequence.map((step) => `- ${step}`).join("\n")}
 Coordinator contract: ${recipe.coordinator}`
       + `\nProject briefing: if mission.briefing is absent after the initial plan, publish one initial short mission.briefing in the user's language. Otherwise publish only on an explicit project-briefing request, never after every tool/task or on a timer. For an explicit request, inspect the current map, integrate the actual returned evidence, and publish mission.briefing with the requestID supplied by the UI and the freshly inspected basedOnRevision. This is a readout request, not permission to run, replay or restart work, change priorities, install software or finalize the mission. Explain what is usable, what is not yet verified, obstacles and the next useful step. Mention every requested workstream, including blocked ones. Reference exact live task keys, never infer task execution from an active conversation or task counts. The final mission.report summary should likewise explain the delivered outcome and remaining limitations.`

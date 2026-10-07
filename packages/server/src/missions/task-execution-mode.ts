@@ -1,3 +1,13 @@
+import { z } from "zod"
+
+/** Creation-time policy for declared tasks, not ordinary internal native helpers. */
+export type MissionTaskMode = "native" | "independent"
+export const missionTaskModeInputSchema = z.enum(["native", "independent"])
+export const missionTaskModeSchema = { type: "string", enum: ["native", "independent"] } as const
+export function parseMissionTaskMode(input: unknown): MissionTaskMode {
+  return missionTaskModeInputSchema.parse(input === undefined ? "native" : input)
+}
+
 /** Business execution choice, separate from the agent/model selection. */
 export type MissionTaskExecutionMode =
   | { kind: "native"; parentTaskKey: string | null; reuseFromTaskKey?: string }

@@ -9,7 +9,7 @@ import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
 import { sessionPreviews, showSessionChat } from "../../../../../stores/session-previews"
-import { forgetMissionView, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
+import { forgetMissionView, missionDisclosureOpen, setMissionDisclosureOpen, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { MissionDisclosure } from "../../../../mission-disclosure"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
 import { MissionWork } from "../../../../mission-work"
@@ -25,6 +25,7 @@ import { MissionLifecycleControls } from "../../../../mission-lifecycle-controls
 import { MissionActors } from "../../../../mission-actors"
 import { createMissionRecoveryAction } from "../../../../mission-recovery-button"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
+import { MissionPreferences } from "../../../../mission-preferences"
 import { createMissionViewFence } from "../../../../../lib/mission-view-fence"
 
 interface MissionControlProps {
@@ -42,6 +43,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const [editor, setEditor] = createSignal<MissionEditorAction & { current: () => boolean }>()
   const [navigationError, setNavigationError] = createSignal(false)
   const state = () => missionStore.state(props.instanceId)
+  // Cached display revalidation is not a view/ownership transition. Message
+  // admission still performs its own fresh authoritative mission read.
+  const messagingDisabled = () => Boolean(editor()) || !["ready", "loading"].includes(state().status)
   const missions = () => state().missions
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
   const includesSession = (value: MissionMap, id: string) => value.coordinatorSessionId === id
@@ -56,6 +60,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     setEditor({ ...action, current: captureView() })
   }
   const closeEditor = () => { intent++; setEditor(undefined) }
+  const preferencesScope = () => `preferences:${scope()}`
+  const preferencesActive = () => (props.isActive?.() ?? true) && missionDisclosureOpen(preferencesScope(), "preferences", false)
+  let preferencesSection: HTMLDivElement | undefined
+  const openPreferences = () => {
+    setMissionDisclosureOpen(preferencesScope(), "preferences", true)
+    queueMicrotask(() => {
+      preferencesSection?.scrollIntoView({ block: "nearest" })
+      preferencesSection?.querySelector<HTMLButtonElement>(".mission-disclosure-trigger")?.focus({ preventScroll: true })
+    })
+  }
 
   const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
     preview: sessionPreviews().get(scope()), reader: missionProjectView(scope()).reader })
@@ -186,9 +200,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     <section class="mission-control" aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
         <div class="mission-control-actions">
-        <button type="button" class="mission-control-icon-button" disabled={state().status === "unavailable" || Boolean(editor())}
+        <button type="button" class="mission-control-create" disabled={state().status === "unavailable" || Boolean(editor())}
           aria-label={props.t("missions.control.create")} title={props.t("missions.control.create")}
-          onClick={() => openEditor({ kind: "create" })}><Plus class="h-4 w-4" aria-hidden="true" /></button>
+          onClick={() => openEditor({ kind: "create" })}><Plus class="h-4 w-4" aria-hidden="true" />{props.t("missions.control.create")}</button>
         <button
           type="button"
           class="mission-control-icon-button"
@@ -213,7 +227,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           completionCurrent = () => origin() && operation === intent
           return completionCurrent
         }}
-        onCancel={closeEditor}
+        onCancel={closeEditor} onOpenPreferences={openPreferences}
         onSaved={saved => {
           if (!completionCurrent() || editor() !== action) return
           const instanceId = props.instanceId, current = completionCurrent
@@ -247,7 +261,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             onAction={() => void missionStore.refresh(props.instanceId)}
           />
         </Match>
-        <Match when={state().status === "ready" && missions().length === 0}>
+        <Match when={state().status === "ready" && missions().length === 0 && !editor()}>
           <StateMessage
             icon={<Flag class="h-5 w-5" />}
             title={props.t("missions.control.empty.title")}
@@ -299,7 +313,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 }} />
                 <MissionBriefing instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
                   reading={isReading({ missionId: selected().id, kind: "overview" })}
-                 disabled={Boolean(editor()) || state().status !== "ready"}
+                 disabled={messagingDisabled()}
                  onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
                  onReadOverview={() => void read({ missionId: selected().id, kind: "overview" })} />
                 <MissionProgress mission={selected()} activity={state().activity?.missions.find(value => value.missionId === selected().id)?.actors}
@@ -320,10 +334,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                /></Show>
                 <Show when={selected().status === "active"}>
                   <MissionGuidance instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
-                   mode="question" disabled={Boolean(editor()) || state().status !== "ready"}
+                    mode="question" disabled={messagingDisabled()}
                    onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)} />
                  <MissionGuidance instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
-                    disabled={Boolean(editor()) || state().status !== "ready"} />
+                     disabled={messagingDisabled()} />
                 </Show>
                 <MissionDisclosure missionId={selected().id} name="details" defaultOpen={false} title={props.t("missions.control.task.details")}>
                  <MissionActivity mission={selected()} onRead={readReport} reading={report => {
@@ -354,6 +368,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
         disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} />
+      <div ref={preferencesSection} class="mission-control-preferences">
+        <MissionDisclosure missionId={preferencesScope()} name="preferences" defaultOpen={false}
+          title={props.t("missions.preferences.title")} description={props.t("missions.defaults.hint")}>
+          <MissionPreferences instanceId={props.instanceId} directory={directory()} active={preferencesActive} />
+        </MissionDisclosure>
+      </div>
     </section>
   )
 }

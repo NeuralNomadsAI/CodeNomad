@@ -20,6 +20,11 @@ const templateRoles = {
 } as const
 
 describe("strict reusable Mission model records", () => {
+  it("preserves a selected task policy in a reusable brief and rejects invented modes", () => {
+    assert.equal(parseMissionModel(model(1, { taskMode: "independent" })).taskMode, "independent")
+    assert.equal(parseMissionModel(model()).taskMode, undefined)
+    assert.throws(() => parseMissionModel({ ...model(), taskMode: "automatic" }))
+  })
   it("trims name and objective, preserves notes verbatim and leaves the input unchanged", () => {
     const input = model(1, { name: "  My investigation  ", objective: "\n  Investigate this task \n", notes: "  Keep this spacing\n" })
     const snapshot = structuredClone(input)
