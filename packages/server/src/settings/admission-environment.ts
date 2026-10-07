@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import { constants } from "node:fs"
+import path from "node:path"
 import { TextDecoder } from "node:util"
 import { parseDocument } from "yaml"
 import type { ConfigLocation } from "../config/location"
@@ -45,13 +46,13 @@ async function readConfigEnvironment(filePath: string, signal: AbortSignal): Pro
   signal.throwIfAborted()
   // Nonblocking open lets us reject FIFOs/devices rather than waiting for a writer.
   // O_NONBLOCK is ignored for regular files and on Windows.
-  const handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NONBLOCK).catch(error => {
+  const handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NONBLOCK).catch(async error => {
     // A missing canonical document is the normal empty-profile default. Do not
     // resurrect a cached document, state.yaml, JSON backup or another profile.
-    if (error?.code === "ENOENT" && !signal.aborted) return undefined
+    if (error?.code === "ENOENT" && await isAbsentDocument(filePath, signal)) return undefined
     throw error
   })
-  if (!handle) return {}
+  if (!handle) { signal.throwIfAborted(); return {} }
   try {
     signal.throwIfAborted()
     const stat = await handle.stat()
@@ -89,5 +90,22 @@ async function readConfigEnvironment(filePath: string, signal: AbortSignal): Pro
     return Object.fromEntries(entries) as Record<string, string>
   } finally {
     await handle.close()
+  }
+}
+
+async function isAbsentDocument(filePath: string, signal: AbortSignal): Promise<boolean> {
+  let current = filePath
+  for (;;) {
+    signal.throwIfAborted()
+    const stat = await fs.lstat(current).catch(error => {
+      if (error?.code !== "ENOENT") throw error
+      return undefined
+    })
+    // Existing documents (including dangling links) are not empty profiles.
+    // Resolve the nearest existing ancestor so dangling parent links fail too.
+    if (stat) return current !== filePath && (await fs.stat(current)).isDirectory()
+    const parent = path.dirname(current)
+    if (parent === current) return false
+    current = parent
   }
 }

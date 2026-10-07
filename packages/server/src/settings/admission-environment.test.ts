@@ -75,6 +75,25 @@ test("directory, YAML and legacy JSON location inputs use the resolved canonical
   }
 })
 
+test("dangling config links and linked ancestors refuse admission instead of dropping overrides", async t => {
+  const { root, location, settings, logs } = await fixture(t)
+  await fs.unlink(location.configYamlPath)
+  try {
+    await fs.symlink(path.join(root, "missing.yaml"), location.configYamlPath, "file")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error
+    t.skip("Creating file symlinks requires Windows privilege")
+    return
+  }
+  await unavailable(settings.readEnvironmentForAdmission())
+  await fs.unlink(location.configYamlPath)
+  const parent = path.join(root, "linked-parent")
+  await fs.symlink(path.join(root, "missing-directory"), parent, process.platform === "win32" ? "junction" : "dir")
+  await unavailable(readAdmissionEnvironment({ configYamlPath: path.join(parent, "config.yaml") }))
+  assert.deepEqual(await readAdmissionEnvironment({ configYamlPath: path.join(root, "absent-parent", "config.yaml") }), {})
+  assert.deepEqual(logs, [])
+})
+
 test("successful reads return independent snapshots and reflect persisted preferences patches", async t => {
   const { settings } = await fixture(t)
   settings.mergePatchOwner("config", "server", { environmentVariables: { PROFILE_VALUE: "patched", EMPTY: "" } })
