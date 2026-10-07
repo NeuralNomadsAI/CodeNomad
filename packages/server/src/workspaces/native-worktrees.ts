@@ -98,9 +98,20 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
       head: annotation.head,
     })
   }
-  await Promise.all(Array.from({ length: Math.min(8, native.length) }, async () => {
-    for (const entry of pending) await inspect(entry)
-  }))
+  let failed = false
+  const scans = Array.from({ length: Math.min(8, native.length) }, async () => {
+    for (const entry of pending) {
+      if (failed) return
+      try { await inspect(entry) }
+      catch (error) { failed = true; throw error }
+    }
+  })
+  try { await Promise.all(scans) }
+  catch (error) {
+    // Keep custody of admitted reads until their filesystem/Git work has settled.
+    await Promise.allSettled(scans)
+    throw error
+  }
   if (!worktrees.some(entry => entry.kind === "root")) throw new Error("Native worktree inventory is missing the opened checkout")
   return {
     isGitRepo,
