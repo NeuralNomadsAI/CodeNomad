@@ -310,6 +310,100 @@ test("native client skips an expired first call and returns the live call's corr
   } finally { clearTimeout(deadline); controller.abort(); await closeServer(server) }
 })
 
+test("backend shutdown immediately revokes unused AuthManager proofs without revoking established cookies", { timeout: 15_000 }, async () => {
+  const root = await privateRoot()
+  const code = `
+    import { createServer } from 'node:http';
+    import { AuthManager } from ${JSON.stringify(moduleUrl("../auth/manager.ts"))};
+    import { BootstrapProofs } from ${JSON.stringify(moduleUrl("./bootstrap.ts"))};
+    import { installBackendHostLifetime } from ${JSON.stringify(moduleUrl("./backend.ts"))};
+    const logger = { child(){return this}, debug(){}, warn(){}, info(){} };
+    const auth = new AuthManager({configPath:${JSON.stringify(path.join(root, "config.yaml"))},username:'private',generateToken:true},logger);
+    let guard;
+    const server = createServer(async (req,res) => {
+      const chunks=[]; for await(const chunk of req) chunks.push(chunk);
+      if(req.url==='/begin') {guard.beginShutdown();res.end('{}');return}
+      if(req.url==='/status') {res.end(JSON.stringify({authenticated:!!auth.getSessionFromHeaders(req.headers)}));return}
+      const accepted=auth.consumeBootstrapToken(JSON.parse(Buffer.concat(chunks).toString()).token);
+      if(accepted) {const session=auth.createSession('private');auth.setSessionCookie({header:(key,value)=>res.setHeader(key,value)},session.id)}
+      res.end(JSON.stringify({accepted}));
+    });
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    guard=installBackendHostLifetime(new BootstrapProofs(auth),'http://127.0.0.1:'+server.address().port);
+    process.stdin.on('data',chunk=>{if(chunk.toString().includes('codenomad:shutdown')) {
+      guard.beginShutdown();server.close(()=>{guard.close();process.stdout.write('CODENOMAD_SHUTDOWN_STATUS:complete\\n',()=>process.exit(0))});server.closeAllConnections();
+    }});
+  `
+  const backend = new BackendProcess({ file: process.execPath, args: ["--import", "tsx", "--input-type=module", "-e", code],
+    cwd: process.cwd(), env: { ...process.env, HOME: root, USERPROFILE: root, LOCALAPPDATA: root } }, async () => { throw new Error("no native requests") })
+  try {
+    const { origin } = await backend.ready
+    const consumed = await backend.request("proof", "consumed") as string
+    const outstanding = await backend.request("proof", "outstanding") as string
+    const consume = (token: string) => fetch(`${origin}/consume`, { method: "POST", body: JSON.stringify({ token }), signal: AbortSignal.timeout(3_000) })
+    const response = await consume(consumed)
+    assert.equal((await response.json()).accepted, true)
+    const cookie = response.headers.get("set-cookie")!.split(";")[0]
+    await (await fetch(`${origin}/begin`, { signal: AbortSignal.timeout(3_000) })).arrayBuffer()
+    assert.equal((await (await consume(outstanding)).json()).accepted, false, "revocation precedes slow backend cleanup")
+    assert.equal((await (await fetch(`${origin}/status`, { headers: { cookie }, signal: AbortSignal.timeout(3_000) })).json()).authenticated, true)
+    await assert.rejects(backend.request("proof", "during-shutdown"), /bootstrap-unavailable/)
+    await backend.stop()
+  } finally {
+    if (backend.child.exitCode === null && backend.child.signalCode === null) backend.child.kill()
+    await waitExit(backend.child)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+for (const outcome of ["ACK", "failure", "malformed ACK"] as const) test(`detach shares one pending and settled ${outcome} without replay`, { timeout: 5_000 }, async () => {
+  const success = outcome === "ACK"
+  let sends = 0, acknowledge: (() => void) | undefined
+  const received = new Promise<void>(resolve => {
+    acknowledge = resolve
+  })
+  let response: import("node:http").ServerResponse | undefined
+  const server = createServer(async (request, res) => {
+    await readBody(request); sends++; response = res; acknowledge!()
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address(); assert.ok(address && typeof address !== "string")
+  const origin = `http://127.0.0.1:${address.port}`, generation = randomUUID()
+  const scope = canonicalScope("stable", path.join(temporaryRoot, "detach-only.yaml"), temporaryRoot, temporaryRoot)
+  const registration: Registration = { v: 1, scope, generation, owner: { pid: process.pid, startIdentity: "client-only" },
+    backend: { pid: process.pid, startIdentity: "client-only" }, origin, controlOrigin: origin }
+  const client = new HostLifetimeClient(registration, "d".repeat(64), { generation, managerPid: process.pid, backendPid: process.pid,
+    origin, windowId: generation, capability: "a".repeat(64), bootstrapProof: "unused" })
+  try {
+    const first = client.detach(), second = client.detach()
+    assert.equal(first, second)
+    const results = Promise.allSettled([first, second])
+    let settled = false; void results.then(() => { settled = true })
+    await received; assert.equal(settled, false)
+    response!.writeHead(outcome === "failure" ? 503 : 200).end(JSON.stringify(success ? { detached: true }
+      : outcome === "malformed ACK" ? { detached: false } : { code: "detach-rejected" }))
+    for (const result of await results) assert.equal(result.status, success ? "fulfilled" : "rejected")
+    assert.equal(client.detach(), first, "settled failures and successes keep their original promise")
+    if (success) await client.detach()
+    else await assert.rejects(client.detach(), outcome === "failure" ? /detach-rejected/ : /host-detach-unconfirmed/)
+    assert.equal(sends, 1)
+  } finally { await closeServer(server) }
+})
+
+test("detach retains a synchronous transport-validation failure as one Promise", async () => {
+  const generation = randomUUID(), origin = "https://127.0.0.1:1"
+  const scope = canonicalScope("stable", path.join(temporaryRoot, "invalid-detach.yaml"), temporaryRoot, temporaryRoot)
+  const registration: Registration = { v: 1, scope, generation, owner: { pid: process.pid, startIdentity: "client-only" },
+    backend: { pid: process.pid, startIdentity: "client-only" }, origin, controlOrigin: origin }
+  const client = new HostLifetimeClient(registration, "d".repeat(64), { generation, managerPid: process.pid, backendPid: process.pid,
+    origin, windowId: generation, capability: "a".repeat(64), bootstrapProof: "unused" })
+  const first = client.detach()
+  assert.equal(client.detach(), first)
+  await assert.rejects(first, /invalid-local-origin/)
+  assert.equal(client.detach(), first)
+  await assert.rejects(client.detach(), /invalid-local-origin/)
+})
+
 test("every present falsy registration/owner and malformed owner field refuses attach/election without altering bytes", { timeout: 10_000 }, async () => {
   const root = await privateRoot()
   const malformed = ["null", "false", "0", '""']

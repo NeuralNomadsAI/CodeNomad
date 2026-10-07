@@ -16,6 +16,7 @@ export interface AttachOptions {
 }
 export class HostLifetimeClient {
   private closed = false
+  private detachment?: Promise<void>
   private polling = false
   constructor(private readonly registration: Registration, private readonly secret: string, readonly attachment: Attachment) {}
   private request<T>(route: string, body: unknown): Promise<T> {
@@ -24,10 +25,16 @@ export class HostLifetimeClient {
   status(): Promise<{ generation: string; backendPid: number; automationAvailable: false | "attached-window" }> {
     return this.request("/status", {})
   }
-  async detach(): Promise<void> {
-    if (this.closed) return
-    this.closed = true
-    await this.request("/detach", this.windowBody())
+  detach(): Promise<void> {
+    if (!this.detachment) {
+      // Fence local polling immediately, but retain the actual ACK/failure for
+      // every observer. An uncertain detach is never replayed or called success.
+      this.closed = true
+      this.detachment = Promise.resolve().then(() => this.request<{ detached: true }>("/detach", this.windowBody())).then(result => {
+        if (result?.detached !== true) throw new HostError("host-detach-unconfirmed")
+      })
+    }
+    return this.detachment
   }
   stopAuthority(): Promise<{ stopped: true }> { return this.request("/stop", { intent: "stop-profile-backend" }) }
   /** Native desktop only. Abort/detach fences replies; no UI cookie is involved. */

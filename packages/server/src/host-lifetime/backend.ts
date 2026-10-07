@@ -52,7 +52,7 @@ export function installBackendHostLifetime(proofs: BootstrapProofs, origin: stri
   process.on("message", onMessage)
   process.send!({ host: 1, ready: true, origin: localOrigin(origin) })
   return {
-    beginShutdown() { accepting = false; guard.beginShutdown() },
+    beginShutdown() { accepting = false; proofs.revokeAll(); guard.beginShutdown() },
     close() { accepting = false; proofs.revokeAll(); process.off("message", onMessage); guard.close() },
   }
 }
