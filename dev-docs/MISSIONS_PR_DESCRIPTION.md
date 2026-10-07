@@ -360,8 +360,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   inactif, passage fini et reprise froide restent à prouver avant toute activation.
 - Nouvel aggregate navigateur ordinaire terminé après la correction header, sans
   capture native externe : **757 pass / 1 fail / 2 skipped**, **2 162 inputs inchangés**.
-  Seul échec : clic Copy inline de `render-cost.test.ts` intercepté en mode overflow,
-  délai original 30 s. Diagnostic du chemin réel en cours, sans clic forcé, skip
+  Seul échec : clic Copy inline de `render-cost.test.ts` intercepté, délai original
+  30 s. Le flag action-overflow est une éligibilité de menu, pas un overflow mesuré.
+  **26/26 ciblés passent**, cause non reproduite ; 4 probes molette/Escape ne
+  démontrent aucun autoscroll. Capture limitée à l'état de la page lors d'un échec
+  en préparation, sans changer l'interaction. Aucun patch spéculatif, clic forcé, skip
   ni hausse de délai ; ancien receipt vert et nouveau receipt en échec conservés.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;

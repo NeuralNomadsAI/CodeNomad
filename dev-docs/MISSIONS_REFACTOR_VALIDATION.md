@@ -21,7 +21,7 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
 **Latest scoped status:** ordinary server **2,370 pass / 0 fail / 8 skipped**,
 625 inputs unchanged; latest complete no-capture browser **757 pass / 1 fail /
 2 skipped**, 2,162 inputs unchanged. Its sole failure is the render-cost inline
-copy click under action overflow, under root-cause investigation without relaxed
+copy hit-testing, under root-cause investigation without relaxed
 assertions/deadlines. Native Job process-bound lifetime is committed in `1465793f`;
 inactive-claim cold continuity, protected authority and packaged autonomy remain
 unqualified. Historical results below retain their original scope and failures.
@@ -805,14 +805,35 @@ unqualified. Historical results below retain their original scope and failures.
   browser outcome was claimed before completion. It now finishes **760 selected /
   757 pass / 1 fail / 0 cancelled / 2 skipped**, **2,510.86 s**, all **2,162 inputs
   unchanged**. Sole failure: `render-cost.test.ts:91`, direct inline Copy click
-  intercepted by `.tool-call-header[data-action-overflow=true]`, original **30-second**
-  click timeout. Header startup correction is not the failure. Real overflow/copy
+  intercepted by a header with `data-action-overflow=true` but
+  `data-content-overflow=false`, original **30-second** click timeout. The former
+  flag denotes menu eligibility, **not measured overflow**. Header startup
+  correction is not the failure. Real copy/hover
   root diagnosis is active; no forced click, skip or timeout increase is allowed.
   Result: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-output-20261007.json`.
   Inputs:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-inputs-20261007.json`;
   log: `.../pr866-ui-header-complete-20261007.out`;
   job: `sh_11714504d001OxNqANpQB4yJfM`.
+  Unchanged focused render-cost/task-copy files pass **26/26**; no source edit or
+  root-cause conclusion follows. A viewport-only probe at **1100/512/390/240 px**
+  retains the fixture's fixed **1000 px main / 952 px header**, measured overflow
+  false and pointer-accessible Copy; resize-back preserves mounted shell/scroller,
+  disclosure and scroll position. Private caches close/remove successfully.
+  Receipts: `.../pr866-render-cost-negative-output-20261007.json` and
+  `.../pr866-render-responsive-output-20261007.json`.
+  Fine-pointer CSS hides Copy hit-testing until parent hover/focus. The middle-
+  gesture/autoscroll hypothesis is **not reproduced**: **4 fresh samples (2 original /
+  2 Escape-only)** preserve original assertions/deadlines and pass. Routing prevents
+  middle pointerdown before compatibility mousedown; capture and all-scroll cursor
+  clear on release, Copy remains accessible through focus-within, Escape changes
+  no measured state. Same scroller/scrollTop survive. Receipt:
+  `.../pr866-render-middle-output-20261007.json`.
+  The missing fact is the failed page's hover/focus/capture state. Minimal bounded
+  **failure-only diagnostic capture** is being prepared without changing actions,
+  assertions, deadlines or production CSS, and must preserve the originating error.
+  No Escape patch or inferred responsive-menu fix is applied. The complete failed
+  aggregate remains unsuperseded.
 
 ### Current independent recurrence/native receipts
 
