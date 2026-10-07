@@ -7,8 +7,10 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
   const [entries, setEntries] = createSignal<PanelExtensionSummary[]>([])
   const [failed, setFailed] = createSignal(false)
   const [verified, setVerified] = createSignal(false)
+  const [activating, setActivating] = createSignal(false)
   let generation = 0, controller: AbortController | undefined
   let connected = true
+  let disposed = false
   const clear = () => { generation++; controller?.abort(); setVerified(false) }
   const refresh = async () => {
     clear()
@@ -20,6 +22,17 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
       if (current === generation && id === instanceId() && active()) { setEntries(entries); setFailed(false); setVerified(true) }
     } catch { if (current === generation && active()) { setEntries([]); setFailed(true) } }
   }
+  const activate = async (entry: PanelExtensionSummary, enabled: boolean) => {
+    if (disposed || activating() || !verified() || !active() || !connected) return
+    const id = instanceId()
+    const current = () => !disposed && id === instanceId() && active() && connected
+    setActivating(true); setFailed(false)
+    try {
+      await panelExtensionsApi.activate(entry.manifest.id, entry.digest, enabled)
+      if (current()) await refresh()
+    } catch { if (current()) { await refresh(); if (current()) setFailed(true) } }
+    finally { if (!disposed) setActivating(false) }
+  }
   createEffect(() => { instanceId(); active(); setEntries([]); void refresh() })
   onCleanup(serverEvents.on("storage.stateChanged", event => {
     if ("owner" in event && event.owner === "panelExtensions") void refresh()
@@ -28,7 +41,7 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
     connected = status === "connected"
     if (!connected) clear(); else void refresh()
   }))
-  onCleanup(clear)
-  return { entries, failed, verified, refresh }
+  onCleanup(() => { disposed = true; clear() })
+  return { entries, failed, verified, refresh, activating, activate }
 }
 export type PanelExtensionsController = ReturnType<typeof usePanelExtensions>

@@ -12,43 +12,36 @@
   background: var(--surface-base);
 }
 
-.panel-extension-launch {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-top: var(--space-sm);
+.right-panel-customization-popover {
+  max-height: calc(100dvh - 4rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.panel-extension-window {
-  position: fixed;
-  z-index: 70;
-  inset-block-start: 12dvh;
-  inset-inline-end: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  width: min(38rem, calc(100vw - 2 * var(--space-md)));
-  max-height: min(32rem, 80dvh);
+.panel-extension-divider {
+  margin-block: var(--space-sm);
+  border: 0;
+  border-block-start: 1px solid var(--border-divider);
+}
+
+.panel-extension-disclosure > summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  padding-block: var(--space-xs);
 }
 
 .panel-extension-manager {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  margin-top: var(--space-sm);
   font-size: var(--font-size-sm);
-}
-
-.panel-extension-manager .window-action[aria-pressed="true"] {
   color: var(--text-primary);
-  border-color: var(--accent-primary);
-  background: var(--selection-neutral-bg);
 }
-
-.panel-extension-zip { margin-inline-start: auto; }
-.panel-extension-manager .window-toolbar { flex-wrap: wrap; }
 
 .panel-extension-search-row,
-.panel-extension-row,
+.panel-extension-row-actions,
 .panel-extension-actions {
   display: flex;
   align-items: center;
@@ -66,8 +59,11 @@
   border: 1px solid var(--border-base);
 }
 
-.panel-extension-row,
-.panel-extension-installed-row {
+.panel-extension-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-xs);
   min-height: var(--control-height);
   border-bottom: 1px solid var(--border-divider);
 }
@@ -80,8 +76,7 @@
   white-space: nowrap;
 }
 
-.panel-extension-name small,
-.panel-extension-installed-header {
+.panel-extension-name small {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
@@ -90,17 +85,6 @@
 .panel-extension-name:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .panel-extension-tooltip { white-space: pre-line; overflow-wrap: anywhere; }
 
-.panel-extension-installed-header,
-.panel-extension-installed-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 5rem var(--control-height-sm);
-  align-items: center;
-  column-gap: var(--space-sm);
-}
-
-.panel-extension-installed-header { padding-bottom: var(--space-xs); }
-.panel-extension-installed-header span:not(:first-child) { text-align: center; overflow-wrap: anywhere; }
-.panel-extension-installed-row input { justify-self: center; }
 .panel-extension-removal { grid-column: 1 / -1; padding-block: var(--space-sm); }
 .panel-extension-actions { flex-wrap: wrap; margin-top: var(--space-sm); }
 .panel-extension-empty { margin: var(--space-sm) 0; color: var(--text-muted); }
