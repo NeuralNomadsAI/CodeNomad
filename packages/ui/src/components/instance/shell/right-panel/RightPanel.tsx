@@ -8,8 +8,7 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
-import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
-import { Settings2 } from "lucide-solid"
+import { ArrowRight, Settings2 } from "lucide-solid"
 import TabScroll from "../../../tab-scroll"
 
 import type { Instance } from "../../../../types/instance"
@@ -31,8 +30,6 @@ import {
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
 import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
-import { loadRightPanelPluginManifests, type RightPanelPluginLoadError } from "./plugin-manifest"
-import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 import { useI18n } from "../../../../lib/i18n"
 import { useTheme } from "../../../../lib/theme"
@@ -188,14 +185,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     moveTab(String(draggable.id), String(droppable.id))
   }
 
-  const openRightPanelTab = (tabId: string) => {
-    updateRightPanelCustomization((current) => ({
-      ...current,
-      hiddenTabIds: current.hiddenTabIds.filter((id) => id !== tabId),
-    }))
-    setRightPanelTab(tabId)
-  }
-
   const handleTabKeyDown = (event: KeyboardEvent, currentTabId: string) => {
     const tabs = visibleRightPanelTabs()
     const index = tabs.findIndex((tab) => tab.id === currentTabId)
@@ -213,37 +202,24 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
   }
 
-  const rightPanelPluginRuntime = loadRightPanelPluginManifests(
-    [
-      createCoreRightPanelRuntime({
-        isActive: props.isActive,
-        t: props.t,
-        instanceId: props.instanceId,
-        get instance() { return props.instance },
-        activeSessionId: props.activeSessionId,
-        activeSession: props.activeSession,
-        isPhoneLayout: props.isPhoneLayout,
-        rightDrawerWidth: props.rightDrawerWidth,
-        rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
-        promptInputApi: props.promptInputApi,
-        rightPanelTab,
-        expandedItems: rightPanelExpandedItems,
-        onExpandedItemsChange: handleAccordionChange,
-        customization: rightPanelCustomization,
-        onCustomizationChange: updateRightPanelCustomization,
-        extraStatusSections: () => extraStatusSections(),
-      }),
-      ...RIGHT_PANEL_PLUGIN_MANIFESTS,
-    ],
-    {
-      instanceId: props.instanceId,
-      t: props.t,
-      activeSessionId: props.activeSessionId,
-      isTabActive: (tabId) => rightPanelTab() === tabId,
-      openTab: openRightPanelTab,
-      reportAttention: () => undefined,
-    },
-  )
+  const coreModule = createCoreRightPanelRuntime({
+    isActive: props.isActive,
+    t: props.t,
+    instanceId: props.instanceId,
+    get instance() { return props.instance },
+    activeSessionId: props.activeSessionId,
+    activeSession: props.activeSession,
+    isPhoneLayout: props.isPhoneLayout,
+    rightDrawerWidth: props.rightDrawerWidth,
+    rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
+    promptInputApi: props.promptInputApi,
+    rightPanelTab,
+    expandedItems: rightPanelExpandedItems,
+    onExpandedItemsChange: handleAccordionChange,
+    customization: rightPanelCustomization,
+    onCustomizationChange: updateRightPanelCustomization,
+    extraStatusSections: () => extraStatusSections(),
+  })
 
   const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
   const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
@@ -253,8 +229,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
     }] }
   }))
-  const rightPanelModules = createMemo(() => [...rightPanelPluginRuntime.modules, ...externalModules()])
-  const rightPanelPluginErrors = createMemo(() => rightPanelPluginRuntime.errors)
+  const rightPanelModules = createMemo(() => [coreModule, ...externalModules()])
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
@@ -296,7 +271,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               title={props.t("instanceShell.rightDrawer.toggle.close")}
               onClick={props.onCloseRightDrawer}
             >
-              <ArrowForwardIcon fontSize="small" />
+              <ArrowRight size={20} aria-hidden="true" />
             </IconButton>
             <IconButton
               ref={customizationTriggerRef}
@@ -408,19 +383,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               }}
             </For>
 
-            <Show when={rightPanelPluginErrors().length > 0}>
-              <For each={rightPanelPluginErrors()}>
-                {(error: RightPanelPluginLoadError) => (
-                  <div class="right-panel-customization-row">
-                    <span class="right-panel-customization-label">
-                      {props.t("instanceShell.rightPanel.customize.moduleUnavailable", {
-                        module: error.displayNameKey ? props.t(error.displayNameKey) : error.pluginId,
-                      })}
-                    </span>
-                  </div>
-                )}
-              </For>
-            </Show>
           </div>
           <Show when={extensions.failed()}><p role="alert">{props.t("panelExtensions.error")}</p></Show>
           <button

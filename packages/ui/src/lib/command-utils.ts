@@ -1,7 +1,5 @@
-import type { Command } from "./commands"
 import type { CommandInfo } from "@opencode/client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { activeSessionId, executeCustomCommand } from "../stores/sessions"
 import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 
@@ -26,42 +24,4 @@ export async function promptForCommandArguments(command: CommandInfo): Promise<s
     })
     return null
   }
-}
-
-function formatCommandLabel(name: string): string {
-  if (!name) return ""
-  return name.charAt(0).toUpperCase() + name.slice(1)
-}
-
-export function buildCustomCommandEntries(instanceId: string, commands: CommandInfo[]): Command[] {
-  return commands.map((cmd) => ({
-    id: `custom:${instanceId}:${cmd.name}`,
-    label: formatCommandLabel(cmd.name),
-    description: () => cmd.description ?? tGlobal("commands.custom.entries.descriptionFallback"),
-    category: "Custom Commands",
-    keywords: [cmd.name, ...(cmd.description ? cmd.description.split(/\s+/).filter(Boolean) : [])],
-    action: async () => {
-      const sessionId = activeSessionId().get(instanceId)
-      if (!sessionId || sessionId === "info") {
-        showAlertDialog(tGlobal("commands.custom.sessionRequired.message"), {
-          title: tGlobal("commands.custom.sessionRequired.title"),
-          variant: "warning",
-        })
-        return
-      }
-      try {
-        const args = await promptForCommandArguments(cmd)
-        if (args === null) {
-          return
-        }
-        await executeCustomCommand(instanceId, sessionId, cmd.name, args)
-      } catch (error) {
-        log.error("Failed to run custom command", error)
-        showAlertDialog(tGlobal("commands.custom.runFailed.message"), {
-          title: tGlobal("commands.custom.runFailed.title"),
-          variant: "error",
-        })
-      }
-    },
-  }))
 }

@@ -23,10 +23,11 @@ test("native images survive normalization without entering copy, local search or
     assert.deepEqual(state.content, content)
     assert.equal(state.content?.filter(isToolImageContent).length, 1)
     const chrome = defaultRenderer.getOutputChrome!({ toolState: () => state } as ToolRendererContext)
+    const copyText = chrome?.getCopyText?.() ?? chrome?.copyText
     const search = defaultRenderer.getSearchText!({ toolCall: part, toolState: state, toolName: "mcp_image" })
     const speech = buildToolSpeechText({ title: "Image tool", state, t: key => key })
-    for (const text of [chrome?.copyText ?? "", search.join(" "), speech]) assert.ok(!text.includes("base64"))
-    assert.equal(chrome?.copyText, content.length === 1 ? undefined : "Generated image")
+    for (const text of [copyText ?? "", search.join(" "), speech]) assert.ok(!text.includes("base64"))
+    assert.equal(copyText, content.length === 1 ? undefined : "Generated image")
   }
 })
 

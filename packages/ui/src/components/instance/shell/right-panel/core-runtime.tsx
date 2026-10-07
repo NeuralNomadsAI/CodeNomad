@@ -9,7 +9,7 @@ import { closeFilePreview, openFilePreview, type FilePreviewTarget } from "../..
 import { showSessionChat } from "../../../../stores/session-previews"
 import { useGitChanges } from "./useGitChanges"
 import { useGitHistory } from "./useGitHistory"
-import { createCoreRightPanelManifest } from "./core-plugin"
+import { createCoreRightPanelModule } from "./core-plugin"
 import { useWorkspaceTree } from "./useWorkspaceTree"
 import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
 import { readStoredEnum } from "../storage"
@@ -76,7 +76,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
     openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory(), serviceDirectory: worktree()?.serviceDirectory })
   }
   onCleanup(() => closeFilePreview(options.instanceId))
-  return createCoreRightPanelManifest({
+  return createCoreRightPanelModule({
     renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} mode={mode()} onModeChange={setMode}
       instanceId={options.instanceId} worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
       branch={worktree()?.branch ?? null} onWorktreeChange={value => {

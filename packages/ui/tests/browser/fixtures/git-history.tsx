@@ -133,7 +133,7 @@ function Prototype() {
     rightPanelTab: () => "files", expandedItems: () => [], onExpandedItemsChange() {},
     customization: () => parseRightPanelCustomization(null), onCustomizationChange() {}, extraStatusSections: () => [],
   })
-  const tab = runtime.create({ instanceId: id, t, activeSessionId: () => sessionId, isTabActive: () => true, openTab() {} }).tabs!.find(tab => tab.id === "files")!
+  const tab = runtime.tabs!.find(tab => tab.id === "files")!
   ;(window as any).fixture = { calls, setActive, close: () => closeFilePreview(id), target: () => getFilePreview(id),
     invalidate: () => invalidateFilesystemCaches(id),
     switchSession: (value: string) => { setSelectedSession(value); if (SessionView) setActiveSession(id, value) },
