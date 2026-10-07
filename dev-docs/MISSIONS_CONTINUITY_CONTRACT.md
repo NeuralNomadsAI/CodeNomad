@@ -1,13 +1,40 @@
 # Missions : contrat de continuité et d'autorisation
 
-Étude initiale : 2026-10-01. Mise à jour : 2026-10-02. Contrat cible,
+Étude initiale : 2026-10-01. État réconcilié : 2026-10-07. Contrat cible,
 **partiellement implémenté, non qualifié pour activation desktop**. L'état des
 preuves et des gates est consigné dans `MISSIONS_REFACTOR_VALIDATION.md`.
-La refonte locale reste non publiée ; aucun arrêt/restart du runtime partagé ni
-intervention sur les missions de #824. La PR #673 a été fusionnée, puis annulée
-par le revert #831 sur demande explicite de l'utilisateur. Ces opérations dans
-un worktree séparé n'ont pas publié ni supprimé la refonte locale. La prochaine PR
-sera une réintroduction complète, pas un follow-up dépendant de #673.
+La réintroduction est ouverte dans [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
+après #673 et son revert #831. Le contrat fonctionnel courant et les lots
+publiés/locaux/à livrer sont dans `MISSIONS_PR_DESCRIPTION.md`. Aucun arrêt du
+daemon partagé ni intervention sur les missions live n'est nécessaire à ces tests.
+
+### État actuel : fenêtre, plugin et prochain passage
+
+- `retainMissionWork` garde une registration déjà chargée lorsque du travail actif,
+  des notifications/contrôles non réglés ou une lecture incertaine subsistent.
+  `followPresence` ne crée pas une registration froide sans présence backend.
+  Les outils d'un travail retenu ne disparaissent donc pas simplement après 15 s.
+- Fermer le dernier desktop appelle encore l'arrêt du backend sur les chemins
+  Electron/Tauri actuels. Le daemon OpenCode, lui, demeure externe et n'est pas
+  arrêté. Cette distinction n'est pas une admission autonome pour demain.
+- Le superviseur Windows indépendant, le service starter et le backend complet
+  existent dans `native-host-lifetime/` et `host-lifetime/`. Leur absence ne doit
+  pas être invoquée pour créer un deuxième service. Les ressources packagées
+  gardent `persistentLaunch: disabled` jusqu'à la qualification de leur composition.
+- L'admission lit maintenant le profil frais via `settings/admission-environment.ts`
+  et prépare l'environnement complet via `workspaces/session-environment.ts`.
+  Une lecture UI des settings en cache n'est pas ce chemin d'admission.
+- La programmation demandée est une autorisation humaine permanente de **passages
+  finis**, non un timer choisissant les tâches des agents. Les dépendances,
+  sous-agents, inbox et exécutions restent natifs. Un seul passage, un rattrapage
+  borné, déduplication durable et non-replay des effets incertains sont requis.
+- Qualification restante : tous les clients fermés, environnement modifié avant
+  échéance, redémarrage backend/service, Location froide sans `agent.list` ou UI,
+  passage unique et conservation des inputs inconnus. La seule rétention d'un
+  plugin chargé ne prouve pas ces scénarios.
+
+Les tableaux détaillés ci-dessous conservent leurs preuves historiques datées ;
+les constats corrigés ici priment sur leurs anciennes descriptions du code.
 
 ### Simplifications autorisées
 
@@ -68,7 +95,7 @@ Niveaux : **C** = code/déclaration installée ; **D** = documentation publiée 
 | Filesystem / lecture des settings CodeNomad | C : aucun domaine filesystem/config dans `plugin.d.ts:25-53` | Aucun accès typé permettant de reproduire la politique execution-host |
 | Events subscribe | C : `.../event.d.ts` ; D : guide RPC, abonnements live-only | Invalidation puis read autoritaire ; pas de journal durable d'événements publics |
 | Identité du caller RPC | C : `.../rpc.d.ts:5-8`, seulement signal/error | Un input `profileID`, `sessionID` ou `approved:true` n'authentifie pas un utilisateur |
-| Outils capturés par un tour | D : guide plugins, snapshot exécutable stable | Notre `assertActive()` peut encore les refuser ; disparition de lease actuelle retire effectivement Missions |
+| Outils capturés par un tour | D : guide plugins, snapshot exécutable stable | `assertActive()` refuse une registration disposée ; retention de travail protège une registration existante, pas un chargement froid |
 | Enfants natifs | D : guide tools, outil `subagent`, foreground/background | Pas de parentID dans session.create public ; pas d'enfant créé par simple renommage d'un root |
 
 Le guide publié présente notamment `session.remove` dans le contexte plugin,
@@ -131,8 +158,9 @@ Une snapshot contenant des variables figées est explicitement rejetée.
    Le journal, l'inspection, le contexte et l'écriture de preuves des admissions
    existantes ne suivent plus une lease desktop ; les nouvelles admissions oui,
    au sens d'une autorité durable valide, **pas** d'une présence de fenêtre.
-3. Le coordinateur modèle choisit les tâches et transitions. Aucun event, timer
-   de silence, redémarrage ou reconnection ne choisit/dispatch une nouvelle tâche.
+3. Le coordinateur modèle choisit les tâches et transitions. Une échéance
+   explicitement autorisée peut ouvrir un passage fini, mais aucun timer de
+   silence, event ou reconnexion ne choisit ou dispatch une tâche métier à sa place.
 4. Chaque prompt/synthetic Mission, Play et reprise ciblée reçoit un environnement
    complet fraîchement construit côté execution-host avant admission. Erreur =
    aucun send ; pas de cache « déjà appliqué », fallback ou replay alternatif.
@@ -211,8 +239,9 @@ implicite de runState et pas une réussite.
 
 ## 5. Pipeline d'admission unique, desktop et headless
 
-Appel seulement depuis une intention explicite modèle/humaine, ou la livraison
-d'un rapport **déjà enregistré**. Le caller fournit un identifiant d'intention,
+Appel seulement depuis une intention explicite modèle/humaine, une échéance
+liée à une programmation humaine durable valide, ou la livraison d'un rapport
+**déjà enregistré**. Le caller fournit un identifiant d'intention,
 pas une URL, un profil, des variables ou un prompt libre de substitution.
 
 1. Le plugin tient l'exclusion mutation projet pour préparer l'intention durable

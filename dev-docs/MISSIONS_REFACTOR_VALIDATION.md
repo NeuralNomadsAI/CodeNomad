@@ -1,15 +1,49 @@
 # Missions refactor: integration qualification record
 
-2026-10-02. The original `feat/missions-durable-continuity` worktree remains
-preserved. Current work continues in `build/tauri-integrated-20261002-1841-b62f`,
-based on `dev` at `394482f97f743af555599cc172080b4e63e8b4b7`; the integration
-and refactor remain uncommitted/unpublished.
-**The whole refactor is NOT accepted.** PR #673 was merged at the user's explicit
+## Current delivery index — 2026-10-07
+
+The reintroduction is open in [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
+on `missions-native-subsessions-20261003`. Its feature-first delivery contract is
+[`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md). It remains open and
+unmerged; published source, local corrections and planned recurrence are distinct.
+The whole integrated product is not yet accepted. Do not promote the historical
+results below into current-source or installed-app qualification.
+
+- Published head at the start of this update: `cfea513b`; local committed Stop/
+  capacity corrections: `530dc8af` and `bd2a8cee`. Remaining local deliveries include
+  tab-local preferences, task-session policy and the separate Location depth editor.
+- Current focused UX delivery: 240 browser Missions cases and 32 unit/parity cases.
+  Independent review then ran 94 browser and 59 unit/backend cases and reproduced
+  two actionable findings: stale clean depth after native config/reconnect, and no
+  per-playbook task-policy inheritance. Corrections and fresh regression checks are
+  being reviewed; this is not an approval of recurrence or the packaged host.
+- UI/server typechecks pass after moving the depth HTTP snapshot to `api-types.ts`,
+  away from the Node implementation dependency chain.
+- Previous changing-source aggregate: server 2,247 pass/0 fail/8 skipped; browser
+  711 pass/39 fail/2 skipped. A focused rerun does not erase either receipt. A
+  frozen-source aggregate and fresh hosted CI are still required.
+- Three isolated permission-fallback failures were fixture omissions: the dock was
+  given neither a registered current conversation nor its identity. With that real
+  conversation fixture, all three original copy/page/late-ack scenarios pass. The
+  product's explicit external-request expansion and approval review guards remain.
+  File-search retry passes independently; both fixtures now use private Vite caches
+  and native close/dispose acknowledgements rather than mutable checkout caches.
+- The Windows lifetime supervisor/service starter/full backend are implemented;
+  resource integrity and detach prototypes are not packaged persistent-launch or
+  cold-Location recurrence qualification. New isolated checks must keep those gates
+  separate, including fresh environment, restart and no admission replay.
+
+## Historical baseline — 2026-10-02
+
+The original `feat/missions-durable-continuity` and
+`build/tauri-integrated-20261002-1841-b62f` candidates were preserved. The following
+records describe that baseline and subsequent dated corrections, not a claim that
+the current branch is still unpublished. PR #673 was merged at the user's explicit
 request (`c11847880588c287a4a4dfbc3881f35f92a9415d`), then reverted by PR #831
 (`d8f91188536caf49034b1e32f791cd59347e33d4`) after the user identified a wrong-session
 request and explicitly authorized an immediate admin revert. The revert was prepared
-in a separate worktree; local refactor sources remain intact. No replacement PR is
-open yet; its prepared description is `MISSIONS_PR_DESCRIPTION.md`. The isolated
+in a separate worktree; local refactor sources remained intact. At that point no
+replacement PR was open; #866 is now the delivery surface. The isolated
 integration preserves #792/#829/#830/#793, including the 2.0.22 parent-creation guard.
 Performance #824 is separate; these results neither validate nor supersede its worktree.
 

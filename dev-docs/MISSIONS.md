@@ -1,6 +1,15 @@
 # CodeNomad Missions / Session Mesh
 
-Missions are a thin coordination plane over native OpenCode V2 sessions. They intentionally do not provide a YAML workflow language, general interpreter, scheduler, or hidden worker runtime.
+Missions coordinate native OpenCode V2 work through a durable project map,
+dependency-aware tasks, human controls and readable results. OpenCode owns execution;
+Missions gives the user a coherent way to specify, follow and reuse that work.
+
+The current delivery contract and review index are
+[`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md), published in
+[PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866). That contract includes
+permanent recurring missions with CodeNomad closed, and distinguishes implemented
+source from work still to deliver. Historical experiment/validation documents are
+dated evidence, not permanent product restrictions or current release approval.
 
 ## Ownership
 
@@ -12,7 +21,13 @@ Missions are a thin coordination plane over native OpenCode V2 sessions. They in
 | Checkout isolation and Git policy | Existing CodeNomad worktree/Git modules |
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
-The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, `mission.report` and `mission.briefing`. The coordinator is the sole topology writer. Specialists receive one bounded assignment and report through a correlated synthetic inbox item. Delegation uses native `queue` delivery and `resume: true`, so a busy actor keeps the work in its durable inbox while an idle actor can begin immediately.
+The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
+`mission.report` and `mission.briefing`. The coordinator is the topology writer.
+Native task declaration returns the canonical assignment for ordinary OpenCode
+subagent calls; it does not create another execution queue. Native helpers return
+through their actual parent; the coordinator records the declared task's business
+readout without requiring duplicate reports from every descendant. Explicit
+independent actors retain correlated report notifications and native queue delivery.
 
 ## Durability and recovery
 
@@ -149,7 +164,8 @@ isolated HTTP responses; they never send instructions to a user's live Mission.
 
 ### Defaults, reusable briefs and separate executions
 
-Settings → Missions owns the global requested coordinator/task profiles. The
+The initially collapsed Preferences section at the bottom of the Missions tab
+owns the global requested coordinator/task profiles, rather than general Settings. The
 all-scenarios selection supplies the baseline; scenario-specific choices override it.
 The creation form waits for preferences before freezing its initial choices,
 shows the requested choices and keeps individual overrides collapsed. Opening a
@@ -172,11 +188,11 @@ alter a replay. Schema versions here are not a durable history of brief revision
 There is no scheduler or GitHub-specific trigger in this iteration. A saved PR
 review brief can describe repository scope, candidate selection, freshness and
 human validation before publication; it does not grant publication authority or
-implement deduplication by itself. Date/recurrence/event automation remains gated
-on qualified host continuity, explicit activation, bounded overlap/missed-run
-policy, revision-scoped idempotency and publication safeguards. Continuing an
-existing native background task is not proof that a future mission can launch
-while CodeNomad is closed.
+implement deduplication by itself. Date/recurrence/event automation is part of the
+new delivery contract, with explicit activation, bounded overlap/missed-run policy,
+stable passage identity and publication safeguards. Continuing existing native
+background work and starting tomorrow's scheduled passage are separate acceptance
+tests; both must work without an open CodeNomad window.
 
 ### User-journey regression checks
 
@@ -293,7 +309,30 @@ Mission snapshots expose the latest 50 plan changes (`history`, with `historyTru
 
 The notification recovery regression removes the private bridge before a report, proves the report was durably saved despite admission failure, restores the bridge with and without a plugin restart, and requires a provider turn containing that report without another report call or human prompt. It also checks that an explicit replay after acknowledgement retains a single correlated native message and does not cause another wake-up.
 
-## Native execution selection (2.0.11)
+## Native execution and new-mission policy
+
+`taskMode` is the new-mission task-session policy: omitted/`native` keeps native
+delegation as the default; `independent` requires explicit independent task
+contracts, including additions through plan revision. The policy is stored with
+creation, native RPC and the journal; uncertain creation retains its original
+selection. It does not change old missions or disable ordinary internal helpers.
+Explicit independent work still uses owned root admission, not a fallback after a
+denied native call. The durable composition's root capability remains its own gate.
+
+Requested coordinator profiles use visible `primary/all` agents. Task profiles use
+`subagent/all` in native mode and `primary/all` in independent mode. Models must
+be enabled and tool-capable, with exact provider/model/variant identity. Roles,
+requested defaults, actual Session selection and historical invocation profiles
+are distinct facts.
+
+The depth editor uses the authenticated connected runtime's declared
+`experimental.subagent_depth` integer contract, not a version allowlist. It reads
+effective native documents and edits only the selected owned Location's local
+JSONC layer. Saving compares the original full file/target expectation and
+preserves comments, sibling fields and WSL atomic-write protections. Removing the
+override restores inheritance. Missing effective/default data remains unknown;
+zero is displayed as a number, not guessed to mean disabled. No automatic reload,
+restart, permission edit or mutation replay is introduced.
 
 Activity and targeted recovery share `missions/native-session-family.ts`: a root's
 bounded native descendant inventory (32 maximum) must have consistent parent,
@@ -322,17 +361,37 @@ Use actual catalog IDs. New actors support visible `primary`/`all` agents and en
 
 An existing actor must already match the requested selection. Missions never uses `switchAgent`/`switchModel` to repurpose a busy actor: those APIs alter subsequent turns, not a single queued assignment. Native queues do not freeze a per-assignment model; external client changes after admission remain possible.
 
-Durable actors remain root sessions. `session.create` does not expose child creation, and subagent-only profiles belong to the native `subagent` tool. Use native subagents for bounded child work, not as durable mission-map actors. Root actors use native agent/project permission rules; they do not inherit a coordinator's child-session permission state.
+The historical root-only actor restriction from #673 is no longer the product
+architecture. OpenCode owns native child birth and actual ancestry; Missions
+records declarations and business readouts separately. Native execution bindings
+with stronger signed invocation authority have their own qualified composition;
+ordinary native work does not invent such proof. Independent roots use their
+native agent/project permissions and do not inherit a coordinator's child rules.
 
 ## Mission Centre presentation
 
-The mission index is a bounded vertical list at the top level of the Missions tab, with two-line objectives, semantic state colors and inline reader/coordinator/edit/delete icons. A compact toolbar supplies create and refresh. Thin separators divide mission rows and top-level sections. Work comes first and initially opens; Reports, Conversations and History initially collapse, with live attention between Work and Reports when relevant. Explicit saved disclosure choices still take precedence. The work section keeps all tasks in stable dependency order, including completed and retired work. Its measured rail draws only declared `blockedBy` edges, with separate side lanes so an edge never passes through an unrelated task node. Expanding details or resizing updates the geometry.
+The mission index is a bounded vertical list with two-line objectives, semantic
+state colors and inline reader/coordinator/edit/delete icons. A compact toolbar
+supplies create and refresh. The selected mission puts genuine native requests
+and the dated briefing before its initially open Work graph. Reports, Conversations
+and non-empty Plan changes sit under initially collapsed Technical details.
+Preferences stays initially collapsed at the bottom, including empty/error states.
+Explicit per-window disclosure choices take precedence. Work retains completed
+and retired tasks in stable dependency order; its measured rail draws only declared
+`blockedBy` edges, never inferred native ancestry or paths through unrelated nodes.
 
 The panel is a navigation surface: one-line excerpts and a shared eye action open individual objectives, briefs, reports or plan changes in the reader above the transcript. Evidence, next steps, artifacts and full text remain in that reader. Task details retain dependency navigation, replacement lineage and native execution comparison. Counts are secondary; actor/history sections initially collapse and attention appears only when there is a live request or recorded blockage. Native layout identities still preserve explicit disclosure, selection and reader gestures across refresh/remount.
 
 ## Distribution and environment
 
-Desktop backends provision the content-addressed Missions bundle through `DesktopPluginLifecycle`, using the authenticated daemon's `config.get` discovery root. Backend leases live outside that watched root. Tools, context hooks and the sole typed snapshot RPC follow backend presence. No files are installed in the user's project. The old repository-local plugin entry is removed; `.opencode/checks/` still checks the published V2 plugin contract.
+Desktop backends provision the content-addressed Missions bundle through
+`DesktopPluginLifecycle`, using the authenticated daemon's `config.get` discovery
+root. Backend leases live outside that watched root. Tools, context hooks and typed
+RPC initially register through backend presence. `retainMissionWork` preserves
+registered Missions while active/unsettled work, receipts or uncertain storage
+remain, including after lease loss. This retains native work, but does not replace
+the owning backend's fresh admission checks for subsequent protected sends. No
+project-local files are installed; `.opencode/checks/` checks the native contract.
 
 Assignment prompts and report synthetics use a narrow authenticated loopback bridge mode. The owning backend reconciles the persisted task/report via `codenomad.missions.snapshot`, validates complete native session ownership and selection, acquires the worktree mutation fence, and applies the current full profile environment before admission. Native environment errors are redacted and fail closed. No environment data travels through the UI or plugin. Multiple owning backends are rejected rather than choosing a profile arbitrarily.
 
@@ -345,8 +404,13 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
 ## Safety limits
 
 - One native project per mission.
-- Root sessions only; child sessions and foreign projects are rejected.
-- At most 8 actors, 96 tasks, 20 missions, and 2,000 stored events in one project view.
+- Coordinator and independent actor admission require exact owned roots; native
+  descendant observation/reporting uses its separate ancestry/provenance contract.
+  Foreign projects are rejected; a graph edge never grants session authority.
+- At most 8 actors, 96 tasks, 20 live maps, and 2,000 stored journal entries per
+  project under the current bounded model. Tombstones retain evidence and consume
+  journal storage, not live-map capacity. Recurring passage retention needs its
+  own bounded history strategy rather than exhausting this one-shot task budget.
 - Existing root actors may be reused, but an actor cannot join two active missions.
 - Dependency tasks are mapped as blocked and are never auto-dispatched.
 - Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. Pocock's completed-role evidence gates still apply; retirement cannot satisfy a gate.
