@@ -422,7 +422,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       </Show>
 
       <Show when={extensionsOpen()}>
-        <ExtensionWindow id={extensionsWindowId} instanceId={() => props.instanceId} controller={extensions}
+        <ExtensionWindow id={extensionsWindowId} controller={extensions}
           onClose={() => setExtensionsOpen(false)} returnFocus={() => customizationTriggerRef} />
       </Show>
 

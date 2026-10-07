@@ -19,8 +19,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "אני סומך על החבילה ועל המחבר שלה",
   "panelExtensions.confirm": "התקנה ללא הפעלה",
   "panelExtensions.cancel": "ביטול",
-  "panelExtensions.global": "כל הפרויקטים",
-  "panelExtensions.project": "תיקייה זו",
   "panelExtensions.remove": "הסרה…",
   "panelExtensions.removeWarning": "להסיר את ההרחבה ואת הגדרות ההפעלה מפרופיל CodeNomad זה?",
   "panelExtensions.removeConfirm": "אישור הסרה",

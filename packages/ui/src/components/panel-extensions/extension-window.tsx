@@ -3,10 +3,9 @@ import WindowCloseButton from "../window-close-button"
 import { useI18n } from "../../lib/i18n"
 import { ExtensionManager } from "./extension-manager"
 import type { PanelExtensionsController } from "./use-panel-extensions"
-import type { Accessor } from "solid-js"
 
 export function ExtensionWindow(props: {
-  id: string; instanceId: Accessor<string>; controller: PanelExtensionsController
+  id: string; controller: PanelExtensionsController
   onClose: () => void; returnFocus: () => HTMLElement | undefined
 }) {
   const { t } = useI18n()
@@ -16,6 +15,6 @@ export function ExtensionWindow(props: {
       <h2 class="window-title">{t("panelExtensions.title")}</h2>
       <WindowCloseButton label={t("window.controls.close")} onClose={props.onClose} />
     </div>
-    <ExtensionManager instanceId={props.instanceId} controller={props.controller} />
+    <ExtensionManager controller={props.controller} />
   </DismissibleWindow>
 }

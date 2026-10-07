@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { FileArchive, Trash2 } from "lucide-solid"
 import type { PanelExtensionManifest, PanelExtensionCatalogEntry } from "../../../../server/src/api-types"
 import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
@@ -8,7 +8,7 @@ import type { PanelExtensionsController } from "./use-panel-extensions"
 import { ExtensionCatalog } from "./extension-catalog"
 import { ExtensionName } from "./extension-name"
 
-export function ExtensionManager(props: { instanceId: Accessor<string>; controller: PanelExtensionsController }) {
+export function ExtensionManager(props: { controller: PanelExtensionsController }) {
   const { t } = useI18n()
   const [busy, setBusy] = createSignal(false), [failed, setFailed] = createSignal(false), [acknowledged, setAcknowledged] = createSignal(false)
   const [preview, setPreview] = createSignal<{ manifest: PanelExtensionManifest; digest: string;
@@ -74,16 +74,14 @@ export function ExtensionManager(props: { instanceId: Accessor<string>; controll
         <div class="panel-extension-installed">
           <Show when={props.controller.entries().length} fallback={<p class="panel-extension-empty">{t("panelExtensions.empty")}</p>}>
             <div class="panel-extension-installed-header">
-              <span /> <span>{t("panelExtensions.global")}</span><span>{t("panelExtensions.project")}</span><span />
+              <span /> <span>{t("settings.common.enabled")}</span><span />
             </div>
           </Show>
           <For each={props.controller.entries()}>{entry => <div class="panel-extension-installed-row" role="group" aria-label={entry.manifest.name}>
             <ExtensionName name={entry.manifest.name} version={entry.manifest.version}
               details={`${entry.manifest.id}\n${entry.manifest.author}\n${entry.manifest.repository}\n${entry.digest}`} />
-            <input type="checkbox" aria-label={t("panelExtensions.global")} checked={entry.global} disabled={busy() || !props.controller.verified()}
-              onChange={event => { const enabled = event.currentTarget.checked; void run(() => panelExtensionsApi.activate(props.instanceId(), entry.manifest.id, entry.digest, "global", enabled)) }} />
-            <input type="checkbox" aria-label={t("panelExtensions.project")} checked={entry.project} disabled={busy() || entry.global || !props.controller.verified()}
-              onChange={event => { const enabled = event.currentTarget.checked; void run(() => panelExtensionsApi.activate(props.instanceId(), entry.manifest.id, entry.digest, "project", enabled)) }} />
+            <input type="checkbox" aria-label={t("settings.common.enabled")} checked={entry.enabled} disabled={busy() || !props.controller.verified()}
+              onChange={event => { const enabled = event.currentTarget.checked; void run(() => panelExtensionsApi.activate(entry.manifest.id, entry.digest, enabled)) }} />
             <button type="button" class="window-icon-button" title={t("panelExtensions.remove")} aria-label={t("panelExtensions.remove")} disabled={busy()}
               onClick={() => setRemoval({ id: entry.manifest.id, digest: entry.digest })}><Trash2 /></button>
             <Show when={removal()?.id === entry.manifest.id && removal()?.digest === entry.digest}>

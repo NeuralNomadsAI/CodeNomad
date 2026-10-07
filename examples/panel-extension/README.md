@@ -14,8 +14,8 @@ python -c "import hashlib,pathlib; p=pathlib.Path('example.session-1.0.0.zip'); 
 ```
 
 Publish both files as assets of release `v1.0.0` on your repository. Users download
-the ZIP, inspect/install it through the right-panel customization surface, then
-enable it for All projects or This folder. GitHub's source-code ZIP is not the
+the ZIP, inspect/install it through Customize right panel → Extensions…, then
+enable it generally for their CodeNomad profile. GitHub's source-code ZIP is not the
 installable package. New code requires a new release/version and explicit trust;
 activation is revoked on replacement.
 

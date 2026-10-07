@@ -40,7 +40,7 @@ There are no install scripts, npm installation, dependency fetching, Node module
 server entrypoints or native binaries. Symlinks, extra files, nested paths,
 duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
 2 MiB ZIP, 4 KiB manifest, 2 MiB uncompressed HTML, 32 installed extensions,
-16 MiB persisted catalogue, 128 explicit folder grants per extension.
+16 MiB persisted catalogue.
 
 ```json
 {
@@ -71,21 +71,19 @@ duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
   not public compatibility promises. Additive API-1 evolution must preserve old
   packages; breaking changes require a new API major and an explicit migration.
 
-## Installation, updates and scope
+## Installation and updates
 
 Inspection shows the manifest and SHA-256 of the exact ZIP bytes before install.
-The user acknowledges trust; installation starts **disabled**. Enable with either:
-
-- **All projects:** every opened project on this CodeNomad backend/profile.
-- **This folder:** the exact server-owned physical folder opened as the project.
-  It persists across closing/reopening, but does not infer sibling worktrees,
-  ancestor folders, another WSL distribution or a native project-ID family.
-
-Both scopes live under the selected CodeNomad profile's `panel-extensions/`, not
-inside a repository or the OpenCode discovery/database directories. In remote
+The user acknowledges trust; installation starts **disabled**. A single activation
+control enables it for every opened project on this CodeNomad backend/profile.
+Installation and activation live under the selected profile's `panel-extensions/`,
+not inside a repository or the OpenCode discovery/database directories. In remote
 access, installation affects that **server profile**, not the viewer's device.
 Profiles/channels remain separate; a ZIP can be installed in each desired profile.
-Global grants take precedence; turn off All projects before limiting to folders.
+There is no folder-specific installation or activation. Legacy global grants remain
+enabled; legacy folder-only grants remain disabled rather than broadening consent.
+Installed packages are preserved. Reads do not rewrite storage; the next explicit
+mutation drops obsolete folder grants.
 
 To update, download and inspect a new release ZIP and install it over the same ID.
 Compare the displayed digest with the publisher's checksum through a trusted
@@ -209,7 +207,7 @@ node --import tsx --test tests/browser/panel-extensions.test.ts
 ```
 
 Server checks cover format/permission/API validation, ZIP bounds/path attacks,
-durable scopes, replacement revocation, concurrent changes and corrupt-state
+durable general activation, conservative legacy consent, replacement revocation, concurrent changes and corrupt-state
 preservation. Catalogue checks cover SSRF/redirect/budget rejection, manifest/hash
 verification, metadata-only discovery and withdrawn selections after warm reads.
 Rendered tests use the real right panel, installer, routes and event dispatcher

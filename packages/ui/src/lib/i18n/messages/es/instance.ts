@@ -19,8 +19,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "Confío en este paquete y en su autor",
   "panelExtensions.confirm": "Instalar desactivada",
   "panelExtensions.cancel": "Cancelar",
-  "panelExtensions.global": "Todos los proyectos",
-  "panelExtensions.project": "Esta carpeta",
   "panelExtensions.remove": "Eliminar…",
   "panelExtensions.removeWarning": "¿Eliminar esta extensión y sus ajustes de activación de este perfil de CodeNomad?",
   "panelExtensions.removeConfirm": "Confirmar eliminación",

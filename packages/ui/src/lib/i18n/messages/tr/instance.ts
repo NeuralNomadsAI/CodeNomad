@@ -19,8 +19,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "Bu pakete ve yazarına güveniyorum",
   "panelExtensions.confirm": "Devre dışı yükle",
   "panelExtensions.cancel": "İptal",
-  "panelExtensions.global": "Tüm projeler",
-  "panelExtensions.project": "Bu klasör",
   "panelExtensions.remove": "Kaldır…",
   "panelExtensions.removeWarning": "Bu uzantı ve etkinleştirme ayarları bu CodeNomad profilinden kaldırılsın mı?",
   "panelExtensions.removeConfirm": "Kaldırmayı onayla",

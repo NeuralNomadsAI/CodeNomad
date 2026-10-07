@@ -93,7 +93,7 @@
 .panel-extension-installed-header,
 .panel-extension-installed-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 5rem 5rem var(--control-height-sm);
+  grid-template-columns: minmax(0, 1fr) 5rem var(--control-height-sm);
   align-items: center;
   column-gap: var(--space-sm);
 }

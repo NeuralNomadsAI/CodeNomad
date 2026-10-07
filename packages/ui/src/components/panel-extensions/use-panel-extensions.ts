@@ -16,7 +16,7 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
     const current = generation, id = instanceId()
     controller = new AbortController()
     try {
-      const entries = await panelExtensionsApi.list(id, controller.signal)
+      const entries = await panelExtensionsApi.list(controller.signal)
       if (current === generation && id === instanceId() && active()) { setEntries(entries); setFailed(false); setVerified(true) }
     } catch { if (current === generation && active()) { setEntries([]); setFailed(true) } }
   }

@@ -84,7 +84,7 @@ async function openManager(view: Page, drawer = false) {
 async function installDirect(html: string) {
   const pkg = await readPanelExtensionArchive(fixtureArchive(html))
   await store.install(pkg)
-  await store.activate(pkg.manifest.id, pkg.digest, "/first", "project", true)
+  await store.activate(pkg.manifest.id, pkg.digest, true)
   return pkg
 }
 
@@ -101,13 +101,13 @@ test("online catalogue lists without downloading code; explicit consent installs
     await catalogue.getByRole("searchbox", { name: "Search extensions" }).fill("session")
     await catalogue.getByRole("button", { name: "Install…", exact: true }).click()
     await view.getByRole("checkbox", { name: "I trust this package and its author" }).waitFor()
-    assert.deepEqual(await store.list("/first"), [])
+    assert.deepEqual(await store.list(), [])
     assert.equal(archiveRequests, before + 1)
     await view.getByRole("checkbox", { name: "I trust this package and its author" }).check()
     await view.getByRole("button", { name: "Install disabled", exact: true }).click()
-    await view.getByRole("checkbox", { name: "This folder", exact: true }).waitFor()
+    await view.getByRole("checkbox", { name: "Enabled", exact: true }).waitFor()
     assert.equal(await view.getByRole("button", { name: "Installed extensions", exact: true }).getAttribute("aria-pressed"), "true")
-    await view.getByRole("checkbox", { name: "This folder", exact: true }).check()
+    await view.getByRole("checkbox", { name: "Enabled", exact: true }).check()
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-a" }).waitFor()
     assert.equal(archiveRequests, before + 2, "Install re-reads the approved package")
@@ -124,7 +124,7 @@ test("withdrawn online selection cannot install after its trust preview was appr
     catalogEntries = []
     await view.getByRole("button", { name: "Install disabled", exact: true }).click()
     await view.getByRole("alert").filter({ hasText: "Extension unavailable" }).waitFor()
-    assert.deepEqual(await store.list("/first"), [])
+    assert.deepEqual(await store.list(), [])
   } finally { catalogEntries = [onlineEntry]; await view.close() }
 })
 
@@ -147,7 +147,7 @@ test("incompatible catalogue entries stay unselectable and offline discovery doe
   } finally { catalogOffline = false; catalogEntries = [onlineEntry]; await view.close() }
 })
 
-test("manual ZIP consent, scoped tab, context switch, revoke, replacement and removal use real routes", async () => {
+test("manual ZIP consent, general activation across projects, context switch, revoke, replacement and removal use real routes", async () => {
   const view = await page()
   try {
     await openManager(view)
@@ -157,32 +157,34 @@ test("manual ZIP consent, scoped tab, context switch, revoke, replacement and re
     assert.equal(await view.getByRole("button", { name: "Install disabled" }).isDisabled(), true)
     await view.getByRole("checkbox", { name: "I trust this package and its author" }).check()
     await view.getByRole("button", { name: "Install disabled" }).click()
-    await view.getByRole("checkbox", { name: "This folder", exact: true }).waitFor()
+    await view.getByRole("checkbox", { name: "Enabled", exact: true }).waitFor()
+    assert.equal(await view.getByRole("checkbox").count(), 1, "Only one general activation control")
     assert.equal(await view.getByRole("tab", { name: "Session example", exact: true }).count(), 0)
-    await view.getByRole("checkbox", { name: "This folder", exact: true }).check()
+    await view.getByRole("checkbox", { name: "Enabled", exact: true }).check()
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-a" }).waitFor()
     await view.evaluate(() => (window as any).extensionFixture.session("session-b"))
     await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-b" }).waitFor()
     await view.screenshot({ path: path.join(root, "extension-panel.png") })
     await view.evaluate(() => (window as any).extensionFixture.instance("second"))
-    await view.getByRole("tab", { name: "Session example", exact: true }).waitFor({ state: "detached" })
-    assert.equal(await view.locator("iframe").count(), 0)
+    await view.getByRole("dialog").waitFor({ state: "detached" })
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-b" }).waitFor()
     await view.evaluate(() => (window as any).extensionFixture.instance("first"))
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     await view.locator('iframe[title="Session example"]').waitFor()
-    const entry = (await store.list("/first"))[0]
-    await store.activate(entry.manifest.id, entry.digest, "/first", "project", false); await changed(view)
+    const entry = (await store.list())[0]
+    await store.activate(entry.manifest.id, entry.digest, false); await changed(view)
     await view.locator('iframe[title="Session example"]').waitFor({ state: "detached" })
-    await store.activate(entry.manifest.id, entry.digest, "/first", "global", true); await changed(view)
+    await store.activate(entry.manifest.id, entry.digest, true); await changed(view)
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     await view.locator('iframe[title="Session example"]').waitFor()
     const replacement = await readPanelExtensionArchive(fixtureArchive(example, { version: "1.1.0" }))
     await store.install(replacement, entry.digest); await changed(view)
     await view.locator('iframe[title="Session example"]').waitFor({ state: "detached" })
-    assert.equal((await store.list("/second"))[0].enabled, false)
+    assert.equal((await store.list())[0].enabled, false)
     await store.remove(entry.manifest.id, replacement.digest); await changed(view)
-    assert.deepEqual(await store.list("/first"), [])
+    assert.deepEqual(await store.list(), [])
   } finally { await view.close() }
 })
 
@@ -197,11 +199,11 @@ test("removal consent cannot follow a package replaced by another window", async
     await store.install(replacement, first.digest); await changed(view)
     await view.getByText("Session example 1.1.0", { exact: true }).waitFor()
     assert.equal(await view.getByRole("button", { name: "Confirm removal", exact: true }).count(), 0)
-    assert.equal((await store.list("/first"))[0].digest, replacement.digest)
+    assert.equal((await store.list())[0].digest, replacement.digest)
     await view.getByRole("button", { name: "Remove…", exact: true }).click()
     await view.getByRole("button", { name: "Confirm removal", exact: true }).click()
     await view.getByRole("button", { name: "Remove…", exact: true }).waitFor({ state: "detached" })
-    assert.deepEqual(await store.list("/first"), [])
+    assert.deepEqual(await store.list(), [])
   } finally { await view.close() }
 })
 
@@ -277,7 +279,7 @@ test("extension window and keyboard tooltips remain above the real temporary dra
   } finally { await view.close() }
 })
 
-test("localized managers keep actions reachable and scope columns aligned at narrow dark widths", async () => {
+test("localized managers keep actions reachable and activation aligned at narrow dark widths", async () => {
   const pkg = await installDirect(example)
   try {
     for (const locale of ["fr-FR", "he-IL", "ja-JP", "es-ES"]) {
@@ -300,11 +302,10 @@ test("localized managers keep actions reachable and scope columns aligned at nar
           assert.equal(await dialog.locator(".window-body").evaluate(element => element.scrollWidth <= element.clientWidth), true)
           const row = dialog.locator(".panel-extension-installed-row")
           assert.ok((await row.boundingBox())!.height <= 44)
-          for (let scope = 0; scope < 2; scope++) {
-            const heading = (await dialog.locator(".panel-extension-installed-header span").nth(scope + 1).boundingBox())!
-            const checkbox = (await row.getByRole("checkbox").nth(scope).boundingBox())!
-            assert.ok(Math.abs(heading.x + heading.width / 2 - checkbox.x - checkbox.width / 2) < 1, `${locale} ${width}: scope column ${scope} aligned`)
-          }
+          assert.equal(await row.getByRole("checkbox").count(), 1)
+          const heading = (await dialog.locator(".panel-extension-installed-header span").nth(1).boundingBox())!
+          const checkbox = (await row.getByRole("checkbox").boundingBox())!
+          assert.ok(Math.abs(heading.x + heading.width / 2 - checkbox.x - checkbox.width / 2) < 1, `${locale} ${width}: activation column aligned`)
           for (const button of await dialog.locator(".window-toolbar button").all()) {
             const bounds = (await button.boundingBox())!
             assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, `${locale} ${width}: toolbar action inside viewport`)
