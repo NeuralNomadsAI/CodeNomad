@@ -93,7 +93,9 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   assertions). Receipt:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-concurrency2-output-20261007.json`.
   Concurrency 2 is demonstrably insufficient on this machine; serial full validation
-  follows correction/review without relaxing any admission deadline.
+  follows correction/review without relaxing any admission deadline. Its later
+  completed result below also fails the same 64-directory deadline: concurrency
+  alone is not a demonstrated sufficient fix.
 - Separate durable diagnosis reproduces a real cancellation defect in
   `host-authority/qualification.ts` discovery/handshake error handling and
   `host-authority/store.ts` receipt-read error handling: caller cancellation can
@@ -135,13 +137,23 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   repository keeps its 30-second test bound and all production deadlines unchanged.
   No original test cleanup or ownership assertion is weakened. Evidence:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-bounded-review-git-custody2-order.out`.
-- Corrected-source **full serial server aggregate** is running after these two
+- Corrected-source **full serial server aggregate** completed after these two
   independently closed fixes, with **623 original/current source/helper inputs
-  frozen** at `973d775b`. Opt-in actual native `.test.mjs` fixtures are not selected
-  by the aggregate. No failed historical receipt is replaced, and no current pass
-  is claimed before completion. Inputs:
+  frozen** at `973d775b`, all **623 unchanged**: **2,366 selected / 2,357 pass /
+  1 fail / 0 cancelled / 8 skipped**, **1,991.31 s**. New cancellation/custody
+  regressions account for four additional selected cases; all original cases remain.
+  Sole failure: the 64-directory pending recovery returns non-authoritative 503
+  after **31.06 s** against its unchanged **30 s** admission deadline. Thus a serial
+  test-file cap alone is not sufficient under the actual concurrent native-fixture
+  workload. No product deadline, assertion or ownership check is relaxed. The
+  pending broker's real pre/post-RPC Git ownership read phases are being diagnosed
+  for a minimal safe consolidation; no completed identity authority cache or
+  mass-loading fallback is authorized. Opt-in actual native `.test.mjs` fixtures
+  are not selected by the aggregate. Neither prior failed receipt is replaced.
+  Result: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-output-20261007.json`.
+  Inputs:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-inputs-20261007.json`;
-  complete log custody:
+  complete retained log:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-20261007.out`.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute

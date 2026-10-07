@@ -265,9 +265,12 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   Git. Correction minimale d'annulation **`7d292121`**, 10/10 checks et revue clôturée.
   Le diagnostic Git reproduit la libération prématurée d'un scan rejeté alors
   qu'une lecture déjà admise continue ; correction au seam partagé **`973d775b`**,
-  pas un retry de suppression. Validation complète série en cours sur **623 inputs
-  figés**, sans augmenter les délais ni retirer les assertions ; pas encore de
-  résultat annoncé.
+  pas un retry de suppression. Validation complète série terminée : **2 366 cas /
+  2 357 pass / 1 fail / 0 annulé / 8 skipped**, **623 inputs inchangés**. Seul reste
+  le cas des 64 dossiers à **31,06 s** pour un délai d'admission toujours **30 s**.
+  Une limite série ne suffit donc pas à elle seule ; diagnostic des lectures Git
+  pré/post-RPC, sans augmenter le délai, retirer les assertions ou ajouter de cache
+  d'autorité/fallback de chargement massif. Ces trois aggregates en échec sont conservés.
 - Probe natif d'inactivité réel lancé : **63 minutes** sans polling, prompt ou
   keepalive ; résultat attendu, **non qualifiant** tant que deux défauts du probe
   ne sont pas clôturés : acquittement réel du nettoyage et provenance native
