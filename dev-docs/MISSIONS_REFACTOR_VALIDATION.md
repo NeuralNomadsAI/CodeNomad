@@ -553,12 +553,18 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   The minimal admitted-work drain is now frozen before final publication/
   disconnect; **13 existing + 5 targeted checks pass**, **0 CLI/native admissions**,
   first errors sticky and deadline receipts monotonic. Final independent closure
-  remains required. Freeze:
+  passes **19/19**, **0 remaining findings**, including the original held-read
+  reproducer; all owned children close, **0 held gates/watchers/CLI/native
+  admissions**. First-error **code** remains sticky; error-object identity is not
+  exposed and is not claimed. Review:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-supervisor-independent-final-20261007/verification.json`.
+  Freeze:
   `C:/Users/Admin/AppData/Local/Temp/opencode/slow-supervisor-p2-final-73LvsH/freeze.json`.
   Current first-v4 disposition records all **7 known PIDs OS-dead** and no matching
   controller command line, but its original controller PID was not recorded; this
-  supplies **no historical close ACK**. No second native lineage is authorized
-  before independent closure; the first attempt remains unqualified.
+  supplies **no historical close ACK**. Those source checks authorize no native
+  acceptance. One fresh bounded cleanup-only lineage is now authorized on unchanged
+  hashes; acceptance awaits its actual role ACKs. The first attempt remains unqualified.
   Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
   attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
   resets the count. Whole-execution completion resets it; a tool/step completion
@@ -649,6 +655,20 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   authorized after exact hash verification, no park probe. Review:
   `.../job-stock-stop-p2-custody-freeze-we0emD/independent-review.json`.
   Original failures/ACK gaps and all 12 baseline source hashes remain preserved.
+  The exact corrected candidate subsequently passes in **57.8 s**, unchanged
+  before/after execution: **2 Jobs / 1 acquisition / 1 marker**, **0 prompts/models/
+  Job.cancel calls**. Daemon **41732** has a same-handle exit, watcher **42420**
+  closes; sentinel **38660** is preserved/closed, worker **24164** fork-closes with
+  exit **0**. Supervisor writes complete for this run, but no separate supervisor
+  exit-handle ACK is supplied. Finalizer stays **null**, authority/persistence and
+  graceful Scope cancellation unqualified. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-S3UY5U/receipt.json`,
+  SHA-256 `eba3d4bbba86ddb0434e0803008f246670acb53a8384affd1507d64d3ac15a8c`.
+  Independent review verifies **12 sources / 12 baseline files / 10 fingerprints /
+  15 evidence hashes**; main repeats **2/2 artifact-free entry/custody checks** and
+  verifies unchanged hashes. Qualified opt-in fixture committed **`1465793f`**.
+  The next healthy-context inactive-claim/cold-reentry probe uses new files only;
+  its scope does not include Pause/Stop, full standing authority or production wake.
 - Cold-entry scrutiny rejects a specific bootstrap hypothesis: retained
   `missions-startup-JQzXFg/receipt.json` is a **claim-timer** receipt, not an
   independent global-plugin startup. Its restart module/setup hits follow genuine
@@ -679,7 +699,20 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   does not prove Pause/Stop/revocation. Actual healthy-Location self-parking, native
   Job adoption acknowledgement, cold recovery and genuine finite completion remain
   untested; no fabricated events/counters, model waiting loop or success receipt
-  may replace them. Qualification waits for current Job custody closure first.
+  may replace them. Job custody is now settled separately; the healthy-context
+  inactive-claim/cold-reentry probe is authorized but has no acceptance receipt yet.
+  Separate source review identifies a message-free **private** Core resume path,
+  and a public hook `ctx.session.interrupt({sessionID,resume:false})` that records
+  actual native **user** interruption without self-joining; direct interruption
+  afterward can fence primary dispatch and native settlement releases the claim.
+  No public resume/Stop API is inferred. Retirement must first durably fence the
+  exact authority generation and cancel its exact adopted Job, then validate
+  ownership/placement/environment and unrelated pending work before any guarded
+  resume. Empty wake/repurposed compaction inputs/fabricated success are forbidden.
+  HTTP RPC application-service context and package/tag access remain private
+  contracts to qualify; no retirement runtime proof exists yet. Hook error channel
+  is `never`, not an invented typed authorization-denial API. Stock-stop proof
+  above does not close this separate lifecycle gate.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture

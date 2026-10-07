@@ -315,9 +315,10 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   L'essai court suivant a les ACKs natifs mais pas la fermeture complète du
   superviseur ; il reste **non qualifié**. Revue : **un P2** reproduit, validation
   asynchrone d'ACK encore en vol lors de la déconnexion IPC. Aucune seconde admission
-  native avant clôture indépendante. Correctif figé : **13 + 5 checks**, sans CLI/admission native ; revue
-  finale en cours. Résidus connus de l'essai précédent morts, sans inventer l'ACK
-  historique absent.
+  native pendant la revue. Correctif figé : **13 + 5 checks**, puis revue finale
+  **19/19 sans finding**, sans CLI/admission native. Un seul nouvel essai court
+  autorisé, qualification en attente de ses ACKs réels. Résidus connus de l'essai
+  précédent morts, sans inventer l'ACK historique absent.
 - Un propriétaire natif distinct est identifié dans la source exacte : `Job.start`
   adopte le travail dans le Scope du daemon, sans emprunter celui du plugin. Probe
   réel d'éviction/acquisition fraîche/shutdown en préparation. La persistance après
@@ -336,8 +337,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   Nouveau run stock-stop : **49,8 s**, **2 Jobs / 1 acquisition fraîche / 1 marqueur
   due**, sans prompt/modèle ni Job.cancel, ACKs daemon/sentinel/worker observés.
   Revue accepte cette portée liée au processus, **finalizer null**. Correction de
-  custody revue avec 2 checks ajoutée ensuite : source corrigée encore à exécuter
-  nativement, aucune preuve de persistance ou Scope gracieux.
+  custody revue avec 2 checks ajoutée ensuite ; candidat corrigé exécuté en
+  **57,8 s**, mêmes comptes/ACKs, sources inchangées, revue indépendante clôturée.
+  Fixture opt-in **`1465793f`**, 2 checks répétés par main ; aucune preuve de
+  persistance, autorité ou Scope gracieux. Probe claim inactive/reprise froide
+  suivant séparé, pas une activation.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
