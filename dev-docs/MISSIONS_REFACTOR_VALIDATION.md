@@ -87,18 +87,28 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   authenticated connections and registered-only inventory, with no fallback.
   The genuine core/plugin probe independently restores `running` / `qualified`
   with **0 ordinary acquisitions**; **0 remaining scoped findings**. The current
-  first canonical regression passes **1/1** after the final root-reader correction.
-  Previous **40/40** and fast **26/26** checks predate that final correction; fresh
-  complete canonical checks remain required. Earlier
+  complete canonical/file/core/plugin run passes **43/43**, no skips or
+  cancellations, after the final root-reader correction. All **17 recorded input
+  fingerprints remain unchanged** at completion. Receipt:
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1163bc8ed001YbqLcAQWY0nx2N.out`.
+  Commit: `f6973b96`. Previous **40/40** and fast **26/26** checks predate that
+  final correction and remain historical. Earlier
   **31/31** and **20/20** exploratory checks predate these review corrections and
   do not qualify the corrected source or native writer replacement.
 - Existing-only workspace observation independently passes **95 focused cases**
   (service/manager/generation/event ownership/routing), including cold nested reads
   after cancellation/invalidation with **0 additional discovery/start/provisioning**.
+  Main independently reruns **70 selected cases** with no failure or skip;
+  commit `64105006`. Oversized touched sources: `workspaces/manager.ts` about
+  1,274 lines; `manager.test.ts` about 1,010 lines, retained without unrelated refactor.
 - Native standing authorization is implemented locally in four new pure modules:
   **14 focused checks**, including **1,025 finite passages**, exact-key immutable
   archives and permanent retired-sequence fencing without raising ordinary authority
-  quotas. A fresh independent review is underway. Native signer provisioning,
+  quotas. Independent review reproduced **3 P2 findings**: torn-denial reconciliation
+  could deadlock after bookkeeping advanced the revision; reservation headroom
+  incorrectly rejected materialized receipts; historical archive reads ignored
+  their committed digest. Corrections and exact regressions are in progress.
+  Native signer provisioning,
   writer exclusion, ledger fencing and actual terminal/effect observation remain
   integration work; no production proof producer or dispatch is enabled.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
@@ -110,8 +120,14 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
 - The ordinary-parent production qualifier now includes supervisor/manager/private
   election/full backend/auth and detach/reattach composition. Compile, loader,
   syntax and negative Job probes pass, but the positive path remains unexecuted.
-  A new independent review found four qualifier defects and two supporting
-  client/bootstrap defects; corrections are in progress. Do not promote this
+  Independent review found four qualifier defects and two supporting
+  client/bootstrap defects; all six corrections are now independently closed with
+  **0 remaining scoped findings**. Reviewer checks: **2 owner-control** and **4
+  isolated in-process probes**. Author checks: **18 server**, **2 cancellation**,
+  native exit-code regression, restrictive-parent refusal and private Cargo compile.
+  Separate `a605a070` preserves immediate proof revocation/cookies and one retained
+  detach promise; main independently passes **12/12** lifetime correction checks.
+  Positive host composition remains unexecuted. Do not promote this
   expanded fixture into native or packaged continuity acceptance.
 - Commits in this subsection are local. The existing hosted run is preserved:
   no publication or PR-body edit is needed to continue these independent tasks.

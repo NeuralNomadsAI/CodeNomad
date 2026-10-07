@@ -64,6 +64,8 @@
 
 ## Coding Principles
 
+- The user explicitly forbids modifying OpenCode for Missions autonomy. Use and qualify existing native service/plugin mechanisms; do not infer an upstream-extension requirement from the absence of a named scheduling API or replace the target with a persistent CodeNomad backend.
+
 - Missions autonomy target is explicitly native: the OpenCode service/plugin must run authorized work and scheduled passages with both the CodeNomad UI and intermediary backend closed. A persistent CodeNomad backend is not a substitute. Move admission, profile/environment, authority, storage and cold scheduling into OpenCode without weakening existing protections. Retain existing host-lifetime work as separately scoped, non-activated work; its qualification is not native-plugin autonomy acceptance. See `dev-docs/MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md` and the superseding target in `dev-docs/MISSIONS_CONTINUITY_CONTRACT.md`.
 
 - Missions ships through `DesktopPluginLifecycle("missions")` and backend presence, with project-scoped native storage. Keep roles independent of native execution IDs. Persist explicit agent/model/variant selections and never switch a busy actor for a queued task. Mission prompt/report admission uses the authenticated desktop bridge, authoritative typed snapshot, ownership/connection/worktree fences and per-send profile environment. See `dev-docs/MISSIONS.md`; validate with the isolated `scripts/test-missions-native.mjs` fixture.

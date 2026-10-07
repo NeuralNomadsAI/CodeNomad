@@ -123,6 +123,8 @@ l'interface ET le serveur intermédiaire CodeNomad fermés.** Le service OpenCod
 reste nécessaire. Maintenir le backend CodeNomad en arrière-plan n'est pas une
 solution de remplacement acceptable. Cette clarification du 7 octobre est conservée
 dans [`MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md`](MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md).
+**Aucune modification d'OpenCode n'est autorisée** : utiliser les mécanismes natifs
+existants et vérifier leur composition, sans imposer une extension upstream.
 Une mission laissée active dans le panneau ne satisfait pas cette exigence.
 
 ### Parcours minimal

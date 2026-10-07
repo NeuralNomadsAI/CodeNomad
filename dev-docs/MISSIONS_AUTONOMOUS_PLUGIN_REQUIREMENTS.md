@@ -25,6 +25,10 @@ maître et de conserver cette exigence pour éviter qu'elle se perde.
   restauration à froid et programmation.
 - La persistance du serveur CodeNomad en arrière-plan n'est **pas** la solution
   demandée ni un remplacement acceptable de cette cible.
+- Clarification transmise ensuite à la session maître : **aucune modification
+  d'OpenCode**. L'autonomie doit utiliser les mécanismes existants du service et
+  du plugin ; l'absence d'une API nommée « scheduler » ne démontre pas qu'une
+  extension upstream soit nécessaire.
 
 ## Protections et coordination
 

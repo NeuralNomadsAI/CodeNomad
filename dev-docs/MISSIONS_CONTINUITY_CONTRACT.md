@@ -22,6 +22,9 @@ et qualifier, pas une raison de substituer un backend permanent. Les travaux hos
 déjà réalisés sont conservés et non activés, avec leurs preuves propres ; leurs
 gates ne sont plus les critères d'acceptation de l'autonomie du plugin. Cette cible
 prime sur les propositions de backend persistant historiques ci-dessous.
+L'utilisateur interdit également de modifier OpenCode. L'intégration doit exploiter
+les mécanismes existants du service/plugin et les qualifier ; l'absence d'un domaine
+SDK nommé « persistentSchedule » n'est pas une preuve de nécessité d'extension.
 
 ### État actuel : fenêtre, plugin et prochain passage
 
