@@ -13,12 +13,16 @@ the execution lifecycle; CodeNomad provides the planning, authority, control, an
 reading experience.
 
 ## 1. Create a Mission
-### Mission types
-Users can start from:
+### Mission template
+The template defines how the Mission structures its work:
 - **Custom** for a free-form objective;
 - **Pocock** for difficult bug fixing with diagnosis, implementation, independent
   review, and fresh validation;
 - **Wayfinder** for exploration, bounded decisions, and parallel frontier work.
+### Execution mode
+The execution mode defines when the Mission runs:
+- **One-time** for a single objective and completion lifecycle;
+- **Recurring** for permanent instructions executed as finite scheduled passages.
 Each Mission records:
 - an objective;
 - optional working notes;
@@ -26,7 +30,7 @@ Each Mission records:
 - role-specific task profiles;
 - a task-session policy;
 - project and Location identity;
-- one-time or recurring execution mode.
+- the selected execution mode.
 Creation presents the effective choices before execution. **Play** is an explicit
 human action and freezes the accepted creation inputs.
 ### Profiles
