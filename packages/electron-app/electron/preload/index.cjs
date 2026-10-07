@@ -58,6 +58,7 @@ const localElectronAPI = {
   requestMicrophoneAccess: () => ipcRenderer.invoke("media:requestMicrophoneAccess"),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  setNotificationBadge: (count) => ipcRenderer.invoke("notifications:setBadge", count),
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
   openPreferences: (section, context, toggle, resume) => ipcRenderer.invoke("preferences:open", section, context, Boolean(toggle), Boolean(resume)),
   minimizeWindow: () => ipcRenderer.invoke("preferences:minimize"),
@@ -87,6 +88,7 @@ const remoteElectronAPI = {
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
+  setNotificationBadge: localElectronAPI.setNotificationBadge,
 }
 
 const preferencesElectronAPI = {

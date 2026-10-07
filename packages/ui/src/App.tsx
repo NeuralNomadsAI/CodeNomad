@@ -34,6 +34,7 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import { startNotificationIconBadge } from "./lib/notification-icon-badge"
 import {
   claimNativeBrowserOpen,
   onNativeBrowserOpen,
@@ -125,6 +126,7 @@ async function withForegroundRefreshTimeout<T>(
 }
 
 const App: Component = () => {
+  onMount(() => onCleanup(startNotificationIconBadge()))
   useAppSessionRestore()
   const { t } = useI18n()
   const {

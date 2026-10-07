@@ -14,6 +14,7 @@ mod local_windows;
 mod managed_node;
 mod native_request;
 mod native_service_start;
+mod notification_badge;
 mod preferences_window;
 mod shutdown;
 mod view_menu;
@@ -1643,6 +1644,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
@@ -1668,6 +1670,7 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
+                notification_badge::page_started(&webview.app_handle(), webview);
                 webview
                     .app_handle()
                     .state::<AppState>()
@@ -1743,6 +1746,7 @@ fn main() {
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
+            notification_badge::notification_badge_set,
             needs_local_certificate_install,
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
@@ -1994,6 +1998,7 @@ fn main() {
                     .state::<AppState>()
                     .browser_controller
                     .remove_window(&app_handle, &label);
+                notification_badge::remove_window(&app_handle, &label);
                 if let Ok(window_id) = identity::local_window_id(&label) {
                     app_handle
                         .state::<local_windows::LocalWindows>()

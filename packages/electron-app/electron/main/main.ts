@@ -13,6 +13,7 @@ import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
 import { setupCliIPC } from "./ipc"
+import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
 import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
@@ -136,6 +137,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     for (const origin of resolveConfiguredRendererOrigins(backendUrl, app.isPackaged, [process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL])) origins.add(origin)
     return [...origins]
   }
+  const bindNotificationBadge = setupNotificationBadgeIPC(ipcMain,
+    sender => registry.resolve(sender)?.window ?? remoteWindows.resolve(sender), getAllowedOrigins,
+    (count, windows) => {
+      if (process.platform !== "win32") { app.setBadgeCount(count); return }
+      const icon = count ? nativeImage.createFromBitmap(notificationBadgeBitmap(count), { width: 32, height: 32 }) : null
+      for (const window of windows) window.setOverlayIcon(icon, count ? String(count) : "")
+    })
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
@@ -248,6 +256,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
     const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [] }
     registry.add(record)
+    bindNotificationBadge(window)
     bindClientState(window)
     lifecycle.attach(record)
     installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : setWindowZoomLevel(window, level))
@@ -449,6 +458,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea)
       installWindowZoomInput(window, (level) => setWindowZoomLevel(window, level))
       remoteWindows.register(payload.id, window, payload.proxySessionId)
+      bindNotificationBadge(window)
       if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
         .filter((candidate) => candidate.webContents.session === remoteSession)
         .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
