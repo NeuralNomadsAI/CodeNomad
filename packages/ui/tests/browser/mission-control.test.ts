@@ -63,6 +63,11 @@ const missionRows = (page: Page) => page.locator(".mission-control-index > .miss
 const taskRow = (page: Page, key: string) => page.locator(`.mission-route-task[data-task-key="${key}"] > .mission-list-item`)
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
+async function localizedPreferences(page: Page, name: string) {
+  const preferences = page.getByRole("button", { name, exact: true })
+  await preferences.waitFor()
+  return preferences
+}
 async function openTechnicalDetails(page: Page) {
   const details = page.locator(".mission-control > .mission-disclosure").filter({ has: page.getByRole("button", { name: "Technical details", exact: true }) }).getByRole("button", { name: "Technical details", exact: true })
   if (await details.getAttribute("aria-expanded") !== "true") await details.click()
@@ -167,7 +172,7 @@ test("empty Missions exposes collapsed preferences and narrow localized controls
       await page.goto(url); await fixtureCall(page, "panelWidth", "280px")
       await page.waitForFunction(() => (window as any).missionFixture.loaded())
       await page.waitForFunction(language => document.documentElement.lang === language, locale.split("-")[0])
-      const preferences = page.getByRole("button", { name: await fixtureText(page, "missions.preferences.title"), exact: true })
+      const preferences = await localizedPreferences(page, locale === "fr-FR" ? "Préférences" : "העדפות")
       assert.equal(await preferences.getAttribute("aria-expanded"), "false")
       await page.screenshot({ path: screenshotPath(`mission-empty-${locale}`) })
       await preferences.click()
@@ -184,6 +189,64 @@ test("empty Missions exposes collapsed preferences and narrow localized controls
       await page.screenshot({ path: screenshotPath(`mission-create-${locale}-280`) })
     } finally { await page.close() }
   }
+})
+
+for (const failBeforeRelease of [false, true]) test(`localized Missions preferences wait for a held French dictionary, not only config and document language${failBeforeRelease ? " · failure cleanup" : ""}`, { timeout: 30_000 }, async () => {
+  const page = await browser.newPage({ locale: "fr-FR", viewport: { width: 1000, height: 850 } })
+  const requested = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+  const originatingError = new Error("Assertion failed before dictionary release")
+  let selected = false, handlerSettled = false, closedBeforeHandler = false
+  let routeFailed = false, routeFailure: unknown
+  page.on("close", () => { closedBeforeHandler = !handlerSettled })
+  const run = async () => {
+    let failed = false, failure: unknown
+    try {
+      await setup(page)
+      await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+      await page.route("**/messages/fr/index.ts*", async route => {
+        requested.resolve()
+        try {
+          await release.promise
+          // Give the failure path an admitted, bounded continuation to drain before closing.
+          if (failBeforeRelease) await new Promise(resolve => setTimeout(resolve, 50))
+          await route.continue()
+        } catch (error) { routeFailed = true; routeFailure = error }
+        finally { handlerSettled = true }
+      })
+      await page.goto(url); await fixtureCall(page, "panelWidth", "280px")
+      await requested.promise
+      await page.waitForFunction(() => (window as any).missionFixture.loaded() && document.documentElement.lang === "fr")
+      assert.equal(await fixtureText(page, "missions.preferences.title"), "Preferences")
+      if (failBeforeRelease) throw originatingError
+      const ready = localizedPreferences(page, "Préférences").then(preferences => { selected = true; return preferences })
+      void ready.catch(() => {}) // Page closure still handles a failed assertion before release.
+      // A read-only round trip lets a missing readiness wait settle while the import remains held.
+      await page.evaluate(() => document.documentElement.lang)
+      assert.equal(selected, false)
+      release.resolve()
+      const preferences = await ready
+      assert.equal(await fixtureText(page, "missions.preferences.title"), "Préférences")
+      assert.equal(await preferences.getAttribute("aria-expanded"), "false")
+      await preferences.click()
+      assert.equal(await preferences.getAttribute("aria-expanded"), "true")
+      await preferences.click()
+      assert.equal(await preferences.getAttribute("aria-expanded"), "false")
+    } catch (error) { failed = true; failure = error }
+    finally {
+      release.resolve()
+      try { await page.unrouteAll({ behavior: "wait" }); if (routeFailed) throw routeFailure }
+      catch (error) { if (!failed) { failed = true; failure = error } }
+      try { await page.close() }
+      catch (error) { if (!failed) { failed = true; failure = error } }
+    }
+    if (failed) throw failure
+  }
+  if (failBeforeRelease) await assert.rejects(run(), error => error === originatingError)
+  else await run()
+  assert.equal(handlerSettled, true)
+  assert.equal(routeFailed, false)
+  assert.equal(closedBeforeHandler, false)
+  assert.equal(page.isClosed(), true)
 })
 
 test("Delegation depth reads only on demand, keeps its original Location draft and saves zero/inherit without native reload or global preference writes", async () => {
