@@ -113,6 +113,28 @@ test("an empty bounded scan page keeps pagination reachable until a receipt is f
   } finally { await page.close() }
 })
 
+test("drafts never request permission receipts and resume when a real session is selected", async () => {
+  const page = await browser.newPage()
+  try {
+    const requests: Route[] = []
+    const errors = await prepare(page, route => {
+      requests.push(route)
+      return fulfill(route, [])
+    })
+    await page.goto(`${url}?direct`)
+    await waitRequests(requests, 1)
+    await page.evaluate(() => (window as any).receiptFixture.select({ instanceId: "receipt-instance", sessionId: "__no_session_draft__" }))
+    await page.waitForTimeout(50)
+    await page.evaluate(() => (window as any).receiptFixture.reconnect())
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 1)
+    await page.evaluate(() => (window as any).receiptFixture.select({ instanceId: "receipt-instance", sessionId: "session-a" }))
+    await waitRequests(requests, 2)
+    assert.ok(requests.every(request => !request.request().url().includes("__no_session_draft__")))
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("event bursts reconcile authoritatively with a trailing read, retry preserves snapshots, and stale routes cannot publish", async () => {
   const page = await browser.newPage()
   try {
