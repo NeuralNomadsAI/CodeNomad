@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { createHash } from "node:crypto"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -16,6 +17,7 @@ import type { NativeMissionCapture } from "./fixtures/native-mission-integration
 let browser: Browser, server: ViteDevServer, url: string, capture: NativeMissionCapture
 let current: NativeMissionCapture["frames"][number]
 let outputDirectory: string
+let captureSha256: string
 const requests: string[] = []
 const requiredLabels = ["initial", "investigate-reported", "implemented", "verified", "finished"]
 const capturedMission = (frame: NativeMissionCapture["frames"][number]) => {
@@ -36,7 +38,9 @@ function capturedSessions(frame: NativeMissionCapture["frames"][number]) {
 
 before(async () => {
   assert(process.env.NATIVE_MISSION_CAPTURE && path.isAbsolute(process.env.NATIVE_MISSION_CAPTURE), "Set NATIVE_MISSION_CAPTURE to the absolute capture.json from the private native run")
-  capture = JSON.parse(await readFile(process.env.NATIVE_MISSION_CAPTURE, "utf8")) as NativeMissionCapture
+  const captureBytes = await readFile(process.env.NATIVE_MISSION_CAPTURE)
+  captureSha256 = createHash("sha256").update(captureBytes).digest("hex")
+  capture = JSON.parse(captureBytes.toString("utf8")) as NativeMissionCapture
   assert.equal(capture.version, 1); assert.equal(capture.transport, "captured-native-fixture")
   assert.equal(typeof capture.rootID, "string"); assert(capture.rootID)
   assert(Array.isArray(capture.frames)); assert.equal(new Set(capture.frames.map(frame => frame.label)).size, capture.frames.length)
@@ -181,16 +185,20 @@ test("captured actual-native mission frames render dependencies, reports and exa
       await page.screenshot({ path: path.join(outputDirectory, `${label}.png`), fullPage: true })
     }
     const finalMission = capturedMission(capture.frames.find(frame => frame.label === "finished")!)
+    await page.getByRole("button", { name: "Technical details", exact: true }).click()
     await page.getByRole("button", { name: "Reports", exact: true }).click()
     for (const report of finalMission.reports) {
-      const row = page.locator(".mission-report-list > .mission-list-item").filter({ has: page.locator(".mission-list-text", { hasText: report.summary }) })
+      const row = page.locator(".mission-advances > li > .mission-list-item").filter({ has: page.getByTitle(report.summary, { exact: true }) })
       await clickMissionAction(row, "Read in chat area")
       await page.waitForFunction(reportID => window.nativeMissionIntegration.snapshot().reader?.itemId === reportID, report.id)
       const articles = page.locator(".mission-reader article")
       await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Summary", exact: true }) }), report.summary)
       if (report.evidence.length) await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Evidence", exact: true }) }), report.evidence.join("\n\n"))
       if (report.next.length) await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Recommended next moves", exact: true }) }), report.next.join("\n\n"))
-      if (report.artifact !== undefined) await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Structured report", exact: true }) }), JSON.stringify(report.artifact, null, 2), true)
+      if (report.artifact !== undefined) {
+        await page.locator(".mission-report-technical > summary").click()
+        await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Structured report", exact: true }) }), JSON.stringify(report.artifact, null, 2), true)
+      }
       await page.screenshot({ path: path.join(outputDirectory, `report-${report.taskKey}.png`), fullPage: true })
       await page.getByRole("button", { name: "Back to chat", exact: true }).click()
     }
@@ -201,7 +209,11 @@ test("captured actual-native mission frames render dependencies, reports and exa
     if (await actorsTrigger.getAttribute("aria-expanded") !== "true") await actorsTrigger.click()
     for (const actor of finalMission.actors) {
       const actorRow = actors.locator(`.mission-conversation-node[data-session-id="${actor.sessionId}"] > .mission-activity-actor > .mission-list-item`)
-      await clickMissionAction(actorRow, `Open ${actor.title}`)
+      await actorRow.waitFor()
+      if (actor.sessionId === finalMission.coordinatorSessionId) {
+        assert.equal(await actorRow.getByRole("button", { name: `Open ${actor.title}`, exact: true }).count(), 0, "coordinator link lives once in the mission index")
+        await clickMissionAction(page.locator(".mission-control-index > .mission-list-item"), "Open coordinator")
+      } else await clickMissionAction(actorRow, `Open ${actor.title}`)
       assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, actor.sessionId)
     }
     const inventory = capturedSessions(capture.frames.find(frame => frame.label === "finished")!)
@@ -224,7 +236,8 @@ test("captured actual-native mission frames render dependencies, reports and exa
     await page.screenshot({ path: path.join(outputDirectory, "failure.png"), fullPage: true }).catch(() => {})
     observations.push({ failure: String(error) }); throw error
   } finally {
-    await writeFile(path.join(outputDirectory, "browser-report.json"), JSON.stringify({ transport: capture.transport, capturePath: process.env.NATIVE_MISSION_CAPTURE,
+    await writeFile(path.join(outputDirectory, "browser-report.json"), JSON.stringify({ transport: capture.transport, capturePath: process.env.NATIVE_MISSION_CAPTURE, captureSha256,
+      qualification: "current-renderer-replay-only; does not execute or qualify the current native pipeline",
       publisher: "serverEvents.dispatchBatch -> missions.ts + sse-manager -> sessions.ts", sessionProjection: "fetchSessions -> toClientSessionV2",
       omitted: "Live SSE/authenticated desktop bridge and active-session inventory (not captured); navigation uses native store callbacks, not a rebuilt session tree",
       labels: capture.frames.map(frame => frame.label), observations, errors, externalRequests, requests }, null, 2))

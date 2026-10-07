@@ -7,6 +7,7 @@ import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance, addPermissionToQueue, removePermissionFromQueue } from "../../../src/stores/instances"
 import type { PermissionRequest } from "../../../src/types/permission"
+import { setSessions } from "../../../src/stores/session-state"
 import "../../../src/index.css"
 
 const instanceId = "permission-fallback"
@@ -18,10 +19,14 @@ const client: any = { permission: { reply: async (reply: unknown) => { replies.p
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${instanceId}/instance`, status: "ready", client })
+setSessions(previous => new Map(previous).set(instanceId, new Map([["session", {
+  id: "session", instanceId, parentId: null, title: "Current conversation", status: "idle",
+  location: { directory: "/repo" }, time: { created: 1, updated: 1 },
+} as any]])))
 addPermissionToQueue(instanceId, current)
 const [open, setOpen] = createSignal(true)
 render(() => <ConfigProvider><I18nProvider>
-  <Show when={open()}><InterruptionDock instanceId={instanceId} /></Show>
+  <Show when={open()}><InterruptionDock instanceId={instanceId} sessionId="session" /></Show>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   diff,

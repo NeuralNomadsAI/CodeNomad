@@ -871,7 +871,9 @@ fn process_start_identity(pid: u32) -> Option<String> {
 
 #[cfg(any(target_os = "macos", windows))]
 fn command_value(command: &str, args: &[&str]) -> Option<String> {
-    for _ in 0..2 {
+    for _attempt in 0..2 {
+        #[cfg(test)]
+        let probe_started = Instant::now();
         let mut command = Command::new(command);
         command
             .args(args)
@@ -883,6 +885,11 @@ fn command_value(command: &str, args: &[&str]) -> Option<String> {
             command.creation_flags(0x08000000);
         }
         let Ok(mut child) = command.spawn() else {
+            #[cfg(test)]
+            eprintln!(
+                "cross-host identity attempt={_attempt} spawn=failed elapsed_ms={}",
+                probe_started.elapsed().as_millis()
+            );
             continue;
         };
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -899,6 +906,13 @@ fn command_value(command: &str, args: &[&str]) -> Option<String> {
                 }
             }
         };
+        #[cfg(test)]
+        eprintln!(
+            "cross-host identity attempt={_attempt} settled={} code={:?} elapsed_ms={}",
+            status.is_some(),
+            status.and_then(|value| value.code()),
+            probe_started.elapsed().as_millis()
+        );
         if status.is_some_and(|status| status.success()) {
             let mut value = String::new();
             use std::io::Read;
