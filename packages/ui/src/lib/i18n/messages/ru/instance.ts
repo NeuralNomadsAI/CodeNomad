@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "Расширения…",
+  "panelExtensions.empty": "Нет установленных расширений.",
   "panelExtensions.catalog.title": "Доступны онлайн",
   "panelExtensions.catalog.search": "Поиск расширений",
   "panelExtensions.catalog.loading": "Загрузка официального каталога…",
@@ -17,8 +19,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "Я доверяю этому пакету и его автору",
   "panelExtensions.confirm": "Установить без активации",
   "panelExtensions.cancel": "Отмена",
-  "panelExtensions.global": "Все проекты",
-  "panelExtensions.project": "Эта папка",
   "panelExtensions.remove": "Удалить…",
   "panelExtensions.removeWarning": "Удалить расширение и настройки активации из этого профиля CodeNomad?",
   "panelExtensions.removeConfirm": "Подтвердить удаление",

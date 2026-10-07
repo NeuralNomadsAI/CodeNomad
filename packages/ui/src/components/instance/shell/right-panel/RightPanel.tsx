@@ -9,7 +9,7 @@ import {
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
 import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
-import { Settings2 } from "lucide-solid"
+import { Settings2, ArrowUpRight } from "lucide-solid"
 import TabScroll from "../../../tab-scroll"
 
 import type { Instance } from "../../../../types/instance"
@@ -37,7 +37,7 @@ import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 import { useI18n } from "../../../../lib/i18n"
 import { useTheme } from "../../../../lib/theme"
 import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
-import { ExtensionManager } from "../../../panel-extensions/extension-manager"
+import { ExtensionWindow } from "../../../panel-extensions/extension-window"
 import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
 import type { RightPanelModule } from "./registry"
 
@@ -108,6 +108,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  const [extensionsOpen, setExtensionsOpen] = createSignal(false)
+  const extensionsWindowId = `panel-extensions-${createUniqueId()}`
+  createEffect(() => { props.instanceId; props.isActive(); setExtensionsOpen(false) })
   let customizationTriggerRef: HTMLButtonElement | undefined
   let customizationPopoverRef: HTMLDivElement | undefined
   let savedCustomization = parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY))
@@ -410,8 +413,17 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           >
             {props.t("instanceShell.rightPanel.customize.reset")}
           </button>
-          <ExtensionManager instanceId={() => props.instanceId} controller={extensions} />
+          <button type="button" class="right-panel-customization-button panel-extension-launch icon-toggle"
+            aria-expanded={extensionsOpen()} aria-controls={extensionsWindowId}
+            onClick={() => { setRightPanelCustomizationOpen(false); setExtensionsOpen(true) }}>
+            <span>{props.t("panelExtensions.manage")}</span><ArrowUpRight size={14} />
+          </button>
         </div>
+      </Show>
+
+      <Show when={extensionsOpen()}>
+        <ExtensionWindow id={extensionsWindowId} controller={extensions}
+          onClose={() => setExtensionsOpen(false)} returnFocus={() => customizationTriggerRef} />
       </Show>
 
       <div class="flex-1 overflow-y-auto">

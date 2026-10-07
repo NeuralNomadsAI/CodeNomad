@@ -6,7 +6,9 @@ import { ManifestSchema, PanelExtensionError, type PanelExtensionPackage } from 
 import { PANEL_EXTENSION_LIMITS, type PanelExtensionSummary } from "./contract"
 
 const RecordSchema = z.object({ manifest: ManifestSchema, html: z.string().max(PANEL_EXTENSION_LIMITS.htmlBytes),
-  digest: z.string().regex(/^[a-f0-9]{64}$/), global: z.boolean(), projects: z.array(z.string().min(1).max(4096)).max(128) }).strict()
+  digest: z.string().regex(/^[a-f0-9]{64}$/), global: z.boolean(),
+  // Read old folder grants without broadening consent; discard them on the next explicit write.
+  projects: z.array(z.string().min(1).max(4096)).max(128).optional() }).strict().transform(({ projects: _projects, ...record }) => record)
 const StoreSchema = z.object({ version: z.literal(1), records: z.array(RecordSchema).max(PANEL_EXTENSION_LIMITS.installed) }).strict()
 type Stored = z.infer<typeof RecordSchema>
 
@@ -14,9 +16,9 @@ export class PanelExtensionStore {
   private tail: Promise<unknown> = Promise.resolve()
   constructor(private readonly directory: string, private readonly changed: () => void = () => {}) {}
 
-  async list(project: string): Promise<PanelExtensionSummary[]> {
+  async list(): Promise<PanelExtensionSummary[]> {
     return this.serialize(async () => (await this.read()).map(record => ({ manifest: record.manifest, digest: record.digest,
-      global: record.global, project: record.projects.includes(project), enabled: record.global || record.projects.includes(project) })))
+      enabled: record.global })))
   }
 
   install(pkg: PanelExtensionPackage, previousDigest?: string): Promise<void> {
@@ -25,16 +27,15 @@ export class PanelExtensionStore {
       if (previous?.digest !== previousDigest) throw new PanelExtensionError("conflict")
       if (previous?.digest === pkg.digest) return records
       // Replacing code revokes every grant, even if its declared permissions are unchanged.
-      return [...records.filter(record => record !== previous), { ...pkg, global: false, projects: [] }]
+      return [...records.filter(record => record !== previous), { ...pkg, global: false }]
     })
   }
 
-  activate(id: string, digest: string, project: string, scope: "global" | "project", enabled: boolean): Promise<void> {
+  activate(id: string, digest: string, enabled: boolean): Promise<void> {
     return this.mutate(records => records.map(record => {
       if (record.manifest.id !== id) return record
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
-      return scope === "global" ? { ...record, global: enabled } : { ...record,
-        projects: enabled ? [...new Set([...record.projects, project])] : record.projects.filter(value => value !== project) }
+      return { ...record, global: enabled }
     }), id)
   }
 
@@ -46,12 +47,12 @@ export class PanelExtensionStore {
     }), id)
   }
 
-  async panel(id: string, digest: string, project: string): Promise<string> {
+  async panel(id: string, digest: string): Promise<string> {
     return this.serialize(async () => {
       const record = (await this.read()).find(record => record.manifest.id === id)
       if (!record) throw new PanelExtensionError("missing")
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
-      if (!record.global && !record.projects.includes(project)) throw new PanelExtensionError("disabled")
+      if (!record.global) throw new PanelExtensionError("disabled")
       return record.html
     })
   }

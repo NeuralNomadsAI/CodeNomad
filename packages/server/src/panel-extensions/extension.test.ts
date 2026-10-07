@@ -30,31 +30,31 @@ test("ZIP contract is bounded and rejects unsupported APIs, paths, links, duplic
   await assert.rejects(readPanelExtensionArchive(Buffer.alloc(PANEL_EXTENSION_LIMITS.archiveBytes + 1)), { code: "limit" })
 })
 
-test("install, scoped consent, restart, replacement revocation and concurrent edits preserve authoritative state", async () => {
+test("install, general activation, restart, replacement revocation and concurrent edits preserve authoritative state", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-extension-"))
   try {
     let changes = 0
     const store = new PanelExtensionStore(directory, () => changes++)
     const first = await readPanelExtensionArchive(fixtureArchive())
     await store.install(first)
-    assert.equal((await store.list("/repo"))[0].enabled, false)
-    await assert.rejects(store.panel(first.manifest.id, first.digest, "/repo"), { code: "disabled" })
+    assert.equal((await store.list())[0].enabled, false)
+    await assert.rejects(store.panel(first.manifest.id, first.digest), { code: "disabled" })
     await Promise.all([
-      store.activate(first.manifest.id, first.digest, "/repo", "project", true),
-      store.activate(first.manifest.id, first.digest, "/second", "project", true),
+      store.activate(first.manifest.id, first.digest, true),
+      store.activate(first.manifest.id, first.digest, true),
     ])
-    assert.equal((await new PanelExtensionStore(directory).list("/repo"))[0].enabled, true)
-    assert.equal((await store.list("/repo/sibling"))[0].enabled, false)
-    assert.equal(await store.panel(first.manifest.id, first.digest, "/second"), first.html)
-    await store.activate(first.manifest.id, first.digest, "/repo", "global", true)
-    assert.equal((await store.list("/unrelated"))[0].enabled, true)
+    assert.equal((await new PanelExtensionStore(directory).list())[0].enabled, true)
+    assert.equal(await store.panel(first.manifest.id, first.digest), first.html)
+    await store.activate(first.manifest.id, first.digest, false)
+    await assert.rejects(store.panel(first.manifest.id, first.digest), { code: "disabled" })
+    await store.activate(first.manifest.id, first.digest, true)
     const second = await readPanelExtensionArchive(fixtureArchive("<p>Updated</p>", { version: "1.1.0" }))
     await assert.rejects(store.install(second), { code: "conflict" })
     await store.install(second, first.digest)
-    assert.equal((await store.list("/repo"))[0].enabled, false)
-    await assert.rejects(store.activate(first.manifest.id, first.digest, "/repo", "global", true), { code: "conflict" })
+    assert.equal((await store.list())[0].enabled, false)
+    await assert.rejects(store.activate(first.manifest.id, first.digest, true), { code: "conflict" })
     await store.remove(second.manifest.id, second.digest)
-    assert.deepEqual(await store.list("/repo"), [])
+    assert.deepEqual(await store.list(), [])
     assert.ok(changes >= 6)
     await writeFile(path.join(directory, "installed.json"), "corrupt")
     await assert.rejects(store.install(first), { code: "unavailable" })
@@ -62,7 +62,7 @@ test("install, scoped consent, restart, replacement revocation and concurrent ed
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
-test("typed routes demand consent, digest and owned folder; exports contain no executable HTML", async () => {
+test("typed general routes demand consent/digest; panel reads still require an owned instance", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-route-"))
   const app = Fastify()
   const workspace = { id: "owned", path: "/owned" } as any
@@ -76,14 +76,18 @@ test("typed routes demand consent, digest and owned folder; exports contain no e
     assert.equal((await app.inject({ method: "POST", url: "/api/panel-extensions", payload: { archiveBase64, digest, acknowledged: true } })).statusCode, 200)
     const panel = `/api/panel-extensions/${fixtureManifest.id}/panel?instanceId=owned&digest=${digest}`
     assert.equal((await app.inject(panel)).statusCode, 403)
-    assert.equal((await app.inject({ method: "PATCH", url: `/api/panel-extensions/${fixtureManifest.id}?instanceId=foreign`,
-      payload: { digest, scope: "project", enabled: true } })).statusCode, 404)
-    assert.equal((await app.inject({ method: "PATCH", url: `/api/panel-extensions/${fixtureManifest.id}?instanceId=owned`,
-      payload: { digest, scope: "project", enabled: true, directory: "/foreign" } })).statusCode, 400)
-    assert.equal((await app.inject({ method: "PATCH", url: `/api/panel-extensions/${fixtureManifest.id}?instanceId=owned`,
-      payload: { digest, scope: "project", enabled: true } })).statusCode, 200)
+    const activation = `/api/panel-extensions/${fixtureManifest.id}`
+    for (const extra of [{ scope: "project" }, { scope: "global" }, { directory: "/foreign" }]) {
+      assert.equal((await app.inject({ method: "PATCH", url: activation,
+        payload: { digest, enabled: true, ...extra } })).statusCode, 400)
+    }
+    assert.equal((await app.inject({ method: "PATCH", url: `${activation}?instanceId=owned`,
+      payload: { digest, enabled: true } })).statusCode, 400)
+    assert.equal((await app.inject({ method: "PATCH", url: activation,
+      payload: { digest, enabled: true } })).statusCode, 200)
+    assert.equal((await app.inject(panel.replace("instanceId=owned", "instanceId=foreign"))).statusCode, 404)
     assert.equal((await app.inject(panel)).json().html, "<p>Example</p>")
-    const catalogue = await app.inject("/api/panel-extensions?instanceId=owned")
+    const catalogue = await app.inject("/api/panel-extensions")
     assert.equal(catalogue.headers["cache-control"], "no-store")
     assert.equal(catalogue.body.includes("<p>Example"), false)
     assert.equal((await app.inject("/api/panel-extensions?instanceId=owned&directory=/foreign")).statusCode, 400)
@@ -91,4 +95,24 @@ test("typed routes demand consent, digest and owned folder; exports contain no e
     assert.equal(invalid.statusCode, 400)
     assert.equal(invalid.body.includes("secret-not"), false)
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("legacy folder-only grants never become general consent; global grants and packages survive", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-legacy-"))
+  try {
+    const pkg = await readPanelExtensionArchive(fixtureArchive())
+    const file = path.join(directory, "installed.json")
+    const store = new PanelExtensionStore(directory)
+    for (const global of [false, true]) {
+      const legacy = JSON.stringify({ version: 1, records: [{ ...pkg, global, projects: ["/repo"] }] })
+      await writeFile(file, legacy)
+      assert.deepEqual(await store.list(), [{ manifest: pkg.manifest, digest: pkg.digest, enabled: global }])
+      if (global) assert.equal(await store.panel(pkg.manifest.id, pkg.digest), pkg.html)
+      else await assert.rejects(store.panel(pkg.manifest.id, pkg.digest), { code: "disabled" })
+      assert.equal(await readFile(file, "utf8"), legacy, "Display reads do not rewrite storage")
+      await store.activate(pkg.manifest.id, pkg.digest, global)
+      assert.equal("projects" in JSON.parse(await readFile(file, "utf8")).records[0], false)
+      assert.equal((await new PanelExtensionStore(directory).list())[0].enabled, global)
+    }
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })

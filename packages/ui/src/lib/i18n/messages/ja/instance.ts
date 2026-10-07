@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "拡張機能…",
+  "panelExtensions.empty": "インストール済みの拡張機能はありません。",
   "panelExtensions.catalog.title": "オンラインで利用可能",
   "panelExtensions.catalog.search": "拡張機能を検索",
   "panelExtensions.catalog.loading": "公式カタログを読み込み中…",
@@ -17,8 +19,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "このパッケージと作者を信頼します",
   "panelExtensions.confirm": "無効のままインストール",
   "panelExtensions.cancel": "キャンセル",
-  "panelExtensions.global": "すべてのプロジェクト",
-  "panelExtensions.project": "このフォルダー",
   "panelExtensions.remove": "削除…",
   "panelExtensions.removeWarning": "この CodeNomad プロファイルから拡張機能と有効化設定を削除しますか？",
   "panelExtensions.removeConfirm": "削除を確認",

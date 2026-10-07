@@ -9,7 +9,6 @@ async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   if (!response.ok) throw new Error("Panel extension request failed")
   return response.json()
 }
-const query = (instanceId: string) => `?${new URLSearchParams({ instanceId })}`
 export const panelExtensionsApi = {
   catalog: (refresh: boolean, signal: AbortSignal) => request<PanelExtensionCatalog>(`/catalog${refresh ? "?refresh=true" : ""}`, { signal }),
   inspectCatalog: (id: string, digest: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/catalog/inspect", {
@@ -18,15 +17,15 @@ export const panelExtensionsApi = {
   installCatalog: (id: string, digest: string, previousDigest?: string) => request("/catalog/install", {
     method: "POST", body: JSON.stringify({ id, digest, previousDigest, acknowledged: true }),
   }),
-  list: (instanceId: string, signal?: AbortSignal) => request<PanelExtensionSummary[]>(query(instanceId), { signal }),
+  list: (signal?: AbortSignal) => request<PanelExtensionSummary[]>("", { signal }),
   inspect: (archiveBase64: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/inspect", {
     method: "POST", body: JSON.stringify({ archiveBase64 }),
   }),
   install: (archiveBase64: string, digest: string, previousDigest?: string) => request("", {
     method: "POST", body: JSON.stringify({ archiveBase64, digest, previousDigest, acknowledged: true }),
   }),
-  activate: (instanceId: string, id: string, digest: string, scope: "global" | "project", enabled: boolean) =>
-    request(`/${encodeURIComponent(id)}${query(instanceId)}`, { method: "PATCH", body: JSON.stringify({ digest, scope, enabled }) }),
+  activate: (id: string, digest: string, enabled: boolean) =>
+    request(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ digest, enabled }) }),
   remove: (id: string, digest: string) => request(`/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ digest }) }),
   panel: (instanceId: string, id: string, digest: string, signal: AbortSignal) =>
     request<{ html: string }>(`/${encodeURIComponent(id)}/panel?${new URLSearchParams({ instanceId, digest })}`, { signal }),

@@ -16,8 +16,6 @@ export interface PanelExtensionManifest {
 export interface PanelExtensionSummary {
   manifest: PanelExtensionManifest
   digest: string
-  global: boolean
-  project: boolean
   enabled: boolean
 }
 

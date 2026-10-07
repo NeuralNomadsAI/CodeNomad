@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "Erweiterungen…",
+  "panelExtensions.empty": "Keine Erweiterungen installiert.",
   "panelExtensions.catalog.title": "Online verfügbar",
   "panelExtensions.catalog.search": "Erweiterungen suchen",
   "panelExtensions.catalog.loading": "Offizieller Katalog wird geladen…",
@@ -17,8 +19,6 @@ export const instanceMessages = {
   "panelExtensions.trust": "Ich vertraue diesem Paket und seinem Autor",
   "panelExtensions.confirm": "Deaktiviert installieren",
   "panelExtensions.cancel": "Abbrechen",
-  "panelExtensions.global": "Alle Projekte",
-  "panelExtensions.project": "Dieser Ordner",
   "panelExtensions.remove": "Entfernen…",
   "panelExtensions.removeWarning": "Diese Erweiterung und ihre Aktivierungseinstellungen aus diesem CodeNomad-Profil entfernen?",
   "panelExtensions.removeConfirm": "Entfernen bestätigen",
