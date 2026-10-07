@@ -2,8 +2,8 @@
 
 > Historical experiment handoff (2026-10-03). Its named Mission and desktop
 > captures are evidence from that run, not today's live frontier or authorization
-> to relaunch/change them. Current delivery is open PR #866 and
-> [`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md); dated qualification
+> to relaunch/change them. The target is the description of
+> [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866); dated qualification
 > is indexed in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
 > Retained already-admitted work after closing a window does not prove a scheduled
 > next-day passage or cold-Location recovery. Those remain required delivery gates.

@@ -3,9 +3,9 @@
 ## Current delivery index — 2026-10-08
 
 The reintroduction is open in [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
-on `missions-native-subsessions-20261003`. Its feature-first delivery contract is
-[`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md). It remains open and
-unmerged; published source, local corrections and planned recurrence are distinct.
+on `missions-native-subsessions-20261003`. Its description is the target product
+contract. The PR remains open and unmerged; published source, local corrections
+and planned recurrence are distinct.
 The whole integrated product is not yet accepted. Do not promote the historical
 results below into current-source or installed-app qualification.
 

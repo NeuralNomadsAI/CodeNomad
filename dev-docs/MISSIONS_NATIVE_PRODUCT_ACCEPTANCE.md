@@ -3,8 +3,7 @@
 ## Current status — 2026-10-07
 
 This document retains the stronger signed-child/product acceptance design and
-dated receipts below. The current delivery specification is
-[`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md), published in open
+dated receipts below. The target specification is the description of open
 [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866); current-source
 qualification is indexed in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
 The earlier restriction on opening a replacement PR has been superseded by the

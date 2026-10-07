@@ -4,8 +4,8 @@
 **partiellement implémenté, non qualifié pour activation desktop**. L'état des
 preuves et des gates est consigné dans `MISSIONS_REFACTOR_VALIDATION.md`.
 La réintroduction est ouverte dans [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
-après #673 et son revert #831. Le contrat fonctionnel courant et les lots
-publiés/locaux/à livrer sont dans `MISSIONS_PR_DESCRIPTION.md`. Aucun arrêt du
+après #673 et son revert #831. Sa description fait foi pour la cible produit ;
+les lots publiés/locaux/à livrer sont suivis dans `MISSIONS_REFACTOR_VALIDATION.md`. Aucun arrêt du
 daemon partagé ni intervention sur les missions live n'est nécessaire à ces tests.
 
 ### Cible imposée — clarification du 7 octobre 2026
