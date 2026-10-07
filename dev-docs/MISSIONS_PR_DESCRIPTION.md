@@ -379,6 +379,19 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   distincts : Preferences introuvable après 15 s et navigation `ERR_NO_BUFFER_SPACE`.
   Copy passe ici, sans résoudre sa cause précédente ; diagnostics séparés, tous
   les receipts en échec conservés, aucun retry/skip/délai relâché.
+  Navigation ciblée : **25/25 passent**, 1 364 ressources par page mais seulement
+  **7 sockets ouverts max** ; aucun épuisement démontré. Capture failure-only des
+  requêtes/sockets de fixture en préparation, origine de `ERR_NO_BUFFER_SPACE`
+  encore inconnue.
+  Preferences : course de fixture reproduite, locator anglais conservé après
+  chargement français. Wait du bouton attendu + régression d'import tenu,
+  **22/22 + typecheck**, aucun délai/assertion relâché ; revue valide le wait mais
+  garde **un P2** de cleanup : drainer le handler d'import avant fermeture de page.
+  Capture navigation : **24/24**, 23 corps originaux inchangés, fault réel
+  `ERR_EMPTY_RESPONSE` distinct de l'ancien `NO_BUFFER_SPACE`, erreur originale et
+  cleanup préservés. Revue **24/24 sans finding**, commit **`9fab2293`** ; pas un
+  correctif réseau. Les sinks factices bloqués ne prouvent pas la fin de vraies
+  écritures FS annulées ; limite explicitement conservée.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.

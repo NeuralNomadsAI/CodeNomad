@@ -877,6 +877,51 @@ unqualified. Historical results below retain their original scope and failures.
   Disjoint diagnosis preserves both new failures and the previous aggregate;
   no retry, skip, forced action or increased deadline is applied. Result:
   `.../pr866-ui-diagnostic-complete-output-20261007.json`.
+  Navigation diagnosis leaves root **unknown**, with no retries or repository
+  changes: **1/1 + 23/23 + 1/1** fresh cases pass. Each page observes **1,364
+  uncached Lucide resources**, peak queued/outstanding requests **1,450**; the
+  whole file accepts only **161 connections**, maximum **7 open sockets**. Request
+  fan-out is not proven socket exhaustion. All **25 contexts** close, server
+  sockets/unfinished responses drain and three caches disappear after shutdown;
+  some CDP terminals are absent before context detachment, so full browser-body
+  drainage is not independently asserted. Vite's port-0 default resolves to the
+  actual listening 5173; no bind-collision cause is demonstrated. Chromium's
+  `WSAENOBUFS` mapping explains the category, not the failed operation/resource.
+  Report: `C:/Users/Admin/AppData/Local/Temp/opencode/mission-navigation-network-20261007/result.md`.
+  Bounded failure-only owned-request/socket capture and original-error-preserving
+  setup cleanup are approved next diagnostic work, not a root fix or network retry.
+  Preferences diagnosis **reproduces a fixture race** twice without request
+  failures: config/document language is ready while `fixtureText` still yields
+  English `Preferences`, then the dictionary changes the DOM to `Préférences` and
+  the captured English locator expires at the unchanged 15-second deadline.
+  Only `mission-control.test.ts` changes: wait for the expected localized button
+  plus one held-French-import regression; original actions/assertions/deadlines
+  remain. Author **22/22**, UI typecheck/diff check pass; removing only the readiness
+  wait fails the regression. Independent review validates the locale fix and repeats
+  **22/22**, but withholds closure for **one P2** in the new held-import test:
+  gate release can precede page close while its admitted handler is still pending.
+  Minimal release → native owned-route drain → close correction is in progress,
+  preserving the primary error through cleanup failures. Review:
+  `.../pr866-mission-control-independent-20261007/verification.json`.
+  Receipt: `.../pr866-mission-control-final-output-20261007.json`.
+  Touched-test size warning: **1,187 lines**, no size-only refactor is performed.
+  Navigation failure-only capture is also prepared in `mission-navigation.test.ts`
+  (**300 lines**): **24/24** author checks, all **23 original bodies byte-identical**,
+  plus one real document socket-close custody check with two subcases. That fault
+  produces **`ERR_EMPTY_RESPONSE`**, **not NO_BUFFER_SPACE**. Logger/writer throws
+  and stalls preserve the exact original navigation Error; held gates settle before
+  owned page/context close. JSON is bounded to **32 KiB / 16 packets / 2 seconds**;
+  client phase/cache explicitly remain unknown. Owned server sockets/responses
+  drain and cache absence is verified. Independent source/actual Chromium review
+  closes **0 scoped findings**, repeats **24/24 in 49.2 s** with unchanged hashes
+  and originals, verifies gate-before-close and optimizer shutdown/cache removal.
+  **Proof limit:** no-effect stalled promises do not prove real aborted filesystem
+  writes settled; optional local diagnostic files may be partial/later-settling.
+  Commit **`9fab2293`** is diagnostics/setup-error custody only, not acceptance of
+  the historical resource failure. Review:
+  `.../mission-navigation-custody-20261007/independent-review/review.md`.
+  Evidence:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-navigation-custody-20261007/`.
   Inputs/log:
   `.../pr866-ui-diagnostic-complete-inputs-20261007.json` and
   `.../pr866-ui-diagnostic-complete-20261007.out`;
