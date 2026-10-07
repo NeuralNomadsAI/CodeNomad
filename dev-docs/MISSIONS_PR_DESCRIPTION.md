@@ -385,13 +385,18 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   encore inconnue.
   Preferences : course de fixture reproduite, locator anglais conservé après
   chargement français. Wait du bouton attendu + régression d'import tenu,
-  **22/22 + typecheck**, aucun délai/assertion relâché ; revue valide le wait mais
-  garde **un P2** de cleanup : drainer le handler d'import avant fermeture de page.
+  **22/22 + typecheck**, aucun délai/assertion relâché ; revue initiale garde un P2
+  de cleanup. Drain natif corrigé puis clôturé **23/23 + 1 check, 0 finding**,
+  erreur originale préservée, 6 browsers/caches fermés, aucun handler tenu.
+  Commit **`7407d303`** ; test à surveiller **1 213 lignes**, pas de refactor de taille.
   Capture navigation : **24/24**, 23 corps originaux inchangés, fault réel
   `ERR_EMPTY_RESPONSE` distinct de l'ancien `NO_BUFFER_SPACE`, erreur originale et
   cleanup préservés. Revue **24/24 sans finding**, commit **`9fab2293`** ; pas un
   correctif réseau. Les sinks factices bloqués ne prouvent pas la fin de vraies
   écritures FS annulées ; limite explicitement conservée.
+  Nouvel aggregate complet lancé après les deux clôtures : **2 162 inputs figés**,
+  seuls ces deux tests changés, **764 cas attendus** (+3 checks, aucun original retiré).
+  Sans capture native externe ni délai/action changé ; aucun résultat avant completion.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.

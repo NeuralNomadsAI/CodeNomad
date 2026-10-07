@@ -900,11 +900,21 @@ unqualified. Historical results below retain their original scope and failures.
   wait fails the regression. Independent review validates the locale fix and repeats
   **22/22**, but withholds closure for **one P2** in the new held-import test:
   gate release can precede page close while its admitted handler is still pending.
-  Minimal release → native owned-route drain → close correction is in progress,
-  preserving the primary error through cleanup failures. Review:
+  Initial review:
   `.../pr866-mission-control-independent-20261007/verification.json`.
   Receipt: `.../pr866-mission-control-final-output-20261007.json`.
-  Touched-test size warning: **1,187 lines**, no size-only refactor is performed.
+  The release → native `unrouteAll({behavior:"wait"})` → close correction then
+  closes that **P2 with 0 remaining scoped findings**, **23/23 independent cases
+  + 1/1 secondary-error check**. Removing only the locale wait and only native
+  route drainage produces **one expected failure each**. The actual failure-path
+  probe observes handler settlement while the page is open, before closure;
+  secondary cleanup failures preserve the exact initiating Error object. Handler
+  errors fail closed. All **11 frozen inputs unchanged**, **6 browsers / 6 caches
+  closed/removed**, **0 held routes**. Main verifies hashes and UI typecheck.
+  Commit **`7407d303`** changes only this test; all **21 original cases**, actions,
+  assertions and deadlines remain, with two new held-import cases. Final review:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-mission-control-p2-independent-20261007/verification.json`.
+  Touched-test size warning: **1,213 lines**, no size-only refactor is performed.
   Navigation failure-only capture is also prepared in `mission-navigation.test.ts`
   (**300 lines**): **24/24** author checks, all **23 original bodies byte-identical**,
   plus one real document socket-close custody check with two subcases. That fault
@@ -922,7 +932,16 @@ unqualified. Historical results below retain their original scope and failures.
   `.../mission-navigation-custody-20261007/independent-review/review.md`.
   Evidence:
   `C:/Users/Admin/AppData/Local/Temp/opencode/mission-navigation-custody-20261007/`.
-  Inputs/log:
+  One fresh full ordinary **no-capture** aggregate is running at **`7407d303`**
+  after both independent closures. All **2,162 prior input paths** are frozen;
+  only the two reviewed test inputs changed since `82c7644e`. **764 selected cases
+  expected**: +2 held-French-import cases and +1 navigation custody case, no original
+  removal. Original command, assertions and deadlines remain; both external native
+  capture variables are absent. No outcome is claimed before completion. Inputs:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-localized-complete-inputs-20261007.json`;
+  log: `.../pr866-ui-localized-complete-20261007.out`;
+  job: `sh_117a205a7001O2qz65PqXBWjI8`.
+  Earlier failed aggregate inputs/log:
   `.../pr866-ui-diagnostic-complete-inputs-20261007.json` and
   `.../pr866-ui-diagnostic-complete-20261007.out`;
   job `sh_1175ae07e0017YiAg4Muj2zW5n`.
