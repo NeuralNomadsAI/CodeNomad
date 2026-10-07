@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { writeFile } from "node:fs/promises"
+import { stat, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { chromium, type Browser, type Page } from "playwright"
+import { chromium, type Browser, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
@@ -13,13 +13,35 @@ import { clickMissionAction } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
+const ownedHTTP = { listeningAt: 0, closedAt: 0, accepted: 0, open: 0, peak: 0, requests: 0, unfinished: 0, finished: 0, closedResponses: 0,
+  documentArrivals: 0, firstDocumentArrivalAt: 0, lastDocumentArrivalAt: 0 }
+let closeDocumentForCustodyCheck = false, failedSetupHeld: Promise<void> | undefined
+let setupEvidenceWriter = writeFile, setupFailureLogger: (line: string) => unknown = line => console.log(line)
 before(async () => {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
     plugins: [solid(), shutdown.plugin, { name: "mission-navigation", configureServer(s) { s.middlewares.use("/mission-navigation", async (_req, res) => {
+      if (closeDocumentForCustodyCheck) { res.destroy(); return }
       res.setHeader("Content-Type", "text/html")
       res.end(await s.transformIndexHtml("/mission-navigation", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-navigation.tsx"></script></body></html>'))
     }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  server.httpServer!.on("listening", () => { ownedHTTP.listeningAt = Date.now() })
+  server.httpServer!.on("close", () => { ownedHTTP.closedAt = Date.now() })
+  server.httpServer!.on("connection", socket => {
+    ownedHTTP.accepted++; ownedHTTP.open++; ownedHTTP.peak = Math.max(ownedHTTP.peak, ownedHTTP.open)
+    socket.once("close", () => { ownedHTTP.open-- })
+  })
+  // Prepend: Connect mutates req.url while routing; observe the actual arrival first.
+  server.httpServer!.prependListener("request", (request, response) => {
+    ownedHTTP.requests++; ownedHTTP.unfinished++
+    if (request.url?.split("?")[0] === "/mission-navigation") {
+      ownedHTTP.documentArrivals++; ownedHTTP.lastDocumentArrivalAt = Date.now()
+      ownedHTTP.firstDocumentArrivalAt ||= ownedHTTP.lastDocumentArrivalAt
+    }
+    let finished = false
+    response.once("finish", () => { finished = true; ownedHTTP.finished++; ownedHTTP.unfinished-- })
+    response.once("close", () => { if (!finished) { ownedHTTP.closedResponses++; ownedHTTP.unfinished-- } })
+  })
   shutdown.own(server); await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-navigation`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -36,9 +58,55 @@ function gate() {
   const promise = new Promise<void>(resolve => { release = resolve })
   return { promise, release }
 }
+function ownedRequest(value: string) {
+  let target: URL
+  try { target = new URL(value) } catch { return undefined }
+  const origin = new URL(url).origin
+  if (target.origin !== origin) return undefined
+  const pathname = target.pathname.slice(0, 256)
+  const category = pathname === "/mission-navigation" ? "document" : pathname.includes("lucide-solid") ? "lucide"
+    : pathname.startsWith("/api/") ? "api" : pathname.includes("/deps/") ? "optimized" : "other"
+  return { origin, path: pathname, category }
+}
+async function reportSetupFailure(record: { droppedPackets: number; failures: unknown[] } & Record<string, unknown>) {
+  let line = JSON.stringify(record)
+  if (Buffer.byteLength(line) > 32_768) line = JSON.stringify({ kind: "mission-navigation-setup-failure", droppedSnapshot: true, droppedPackets: record.droppedPackets + record.failures.length })
+  const abort = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const sinks = [Promise.resolve().then(() => setupFailureLogger(line))]
+    if (process.env.CODENOMAD_NAVIGATION_EVIDENCE) sinks.push(Promise.resolve().then(() => setupEvidenceWriter(
+      path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE!, `setup-failure-${Date.now()}.json`), line, { signal: abort.signal })))
+    await Promise.race([Promise.allSettled(sinks), new Promise<void>(resolve => {
+      timer = setTimeout(() => { abort.abort(); resolve() }, 2000)
+    })])
+  } finally { clearTimeout(timer); abort.abort() }
+}
 async function setup(missing = false) {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = [], networkErrors: string[] = [], requests: string[] = []
   const held = gate(), reached = gate(), completed = gate()
+  const traffic = Object.fromEntries(["document", "lucide", "api", "optimized", "other"].map(category =>
+    [category, { started: 0, current: 0, peak: 0, finished: 0, failed: 0 }]))
+  const failures: { at: number; origin: string; path: string; type: string; error: string }[] = []
+  let droppedPackets = 0, outstanding = 0, peakOutstanding = 0, ignoredNonOwned = 0, navigationStartedAt = 0, documentBaseline = 0
+  page.on("request", request => {
+    const own = ownedRequest(request.url())
+    if (!own) { ignoredNonOwned++; return }
+    const count = traffic[own.category]; count.started++; count.current++; count.peak = Math.max(count.peak, count.current)
+    outstanding++; peakOutstanding = Math.max(peakOutstanding, outstanding)
+  })
+  const terminal = (request: Request, failed: boolean) => {
+    const own = ownedRequest(request.url())
+    if (!own) return
+    const count = traffic[own.category]; count.current--; count[failed ? "failed" : "finished"]++; outstanding--
+    if (failed) {
+      if (failures.length === 16) { failures.shift(); droppedPackets++ }
+      failures.push({ at: Date.now(), origin: own.origin, path: own.path, type: request.resourceType().slice(0, 32),
+        error: request.failure()?.errorText?.match(/^(?:net::)?ERR_[A-Z_]+$/)?.[0].slice(0, 128) ?? "unknown" })
+    }
+  }
+  page.on("requestfinished", request => terminal(request, false))
+  page.on("requestfailed", request => terminal(request, true))
   page.on("pageerror", error => errors.push(error.message))
   page.on("requestfailed", request => networkErrors.push(`${request.url()} ${request.failure()?.errorText}`))
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
@@ -59,11 +127,25 @@ async function setup(missing = false) {
     return route.fulfill({ json: {} })
   })
   try {
+    navigationStartedAt = Date.now(); documentBaseline = ownedHTTP.documentArrivals
     await page.goto(url)
     await page.getByRole("button", { name: "Objective A", exact: true }).waitFor()
   } catch (error) {
-    if (process.env.CODENOMAD_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests }, null, 2))
-    held.release(); await page.close(); throw error
+    failedSetupHeld = held.promise
+    try {
+      const errorLine = String(error).split("\n")[0].slice(0, 1024).replace(/https?:\/\/[^\s]+/g, value => {
+        const own = ownedRequest(value); return own ? `${own.origin}${own.path}` : "[non-owned URL]"
+      })
+      await reportSetupFailure({ kind: "mission-navigation-setup-failure", error: errorLine, at: Date.now(), navigationStartedAt,
+        origin: new URL(url).origin, path: "/mission-navigation", browser: browser.version().slice(0, 64), ownedContexts: browser.contexts().length,
+        traffic, outstanding, peakOutstanding, ignoredNonOwned, failures, droppedPackets, diagnosticBudgetMs: 2000,
+        clientPhase: "unknown; no CDP capture", cache: "unknown", requestCountsAreNotSockets: true,
+        server: { ...ownedHTTP, port: (server.httpServer!.address() as { port: number } | null)?.port ?? null,
+          listening: server.httpServer!.listening, documentArrivalsSinceGoto: ownedHTTP.documentArrivals - documentBaseline,
+          arrivalCorrelation: "time window only; no arrival does not prove no OS connect" }, intentionalDocumentFault: closeDocumentForCustodyCheck })
+    } catch { /* Diagnostics must never replace the actual setup error. */ }
+    finally { held.release(); try { await page.close() } catch { /* Preserve original error even if cleanup fails. */ } failedSetupHeld = undefined }
+    throw error
   }
   return { page, held, reached, completed, errors, networkErrors, requests }
 }
@@ -157,4 +239,62 @@ test("stale missing-coordinator error cannot overwrite a newer reader", async ()
     assert.deepEqual(await page.evaluate(() => window.missionNavigation.snapshot()), before)
     assert.equal(await page.getByRole("alert").count(), 0); assert.deepEqual(errors, [])
   } finally { held.release(); await page.close() }
+})
+
+test("actual document failure preserves setup error and owned cleanup when evidence throws or stalls", async () => {
+  const newPage = browser.newPage, writer = setupEvidenceWriter, logger = setupFailureLogger
+  const evidence = process.env.CODENOMAD_NAVIGATION_EVIDENCE
+  try {
+    closeDocumentForCustodyCheck = true
+    process.env.CODENOMAD_NAVIGATION_EVIDENCE = server.config.cacheDir // Injected writer never writes to this owned path.
+    for (const mode of ["throw", "timeout"] as const) {
+      let actualError: unknown, captured = "", writes = 0, contextClosed = false, gateReleasedBeforeClose = false, errorAt = 0, closeAt = 0
+      let ownedPage!: Page
+      browser.newPage = async options => {
+        ownedPage = await newPage.call(browser, options)
+        ownedPage.context().once("close", () => { contextClosed = true })
+        const goto = ownedPage.goto.bind(ownedPage), close = ownedPage.close.bind(ownedPage)
+        ownedPage.goto = async (target, options) => {
+          assert.equal(target, url); assert.equal(options, undefined)
+          try { return await goto(target, options) } catch (error) { actualError = error; errorAt = Date.now(); throw error }
+        }
+        ownedPage.close = async options => {
+          closeAt = Date.now(); failedSetupHeld!.then(() => { gateReleasedBeforeClose = true }); await Promise.resolve()
+          assert.equal(gateReleasedBeforeClose, true, "held route gate settles before native page/context close")
+          return close(options)
+        }
+        return ownedPage
+      }
+      setupEvidenceWriter = async () => { writes++; if (mode === "throw") throw new Error("controlled evidence write failure"); await new Promise<void>(() => {}) }
+      setupFailureLogger = line => { captured = line; if (mode === "throw") throw new Error("controlled logger failure"); return new Promise<void>(() => {}) }
+      await assert.rejects(setup(), error => error === actualError)
+      assert.match(String(actualError), /net::ERR_(EMPTY_RESPONSE|CONNECTION_RESET|CONNECTION_CLOSED)/)
+      assert.equal(writes, 1); assert.equal(ownedPage.isClosed(), true); assert.equal(contextClosed, true)
+      assert.equal(browser.contexts().length, 0); assert.equal(gateReleasedBeforeClose, true)
+      assert.ok(closeAt - errorAt < 3000, "both diagnostic sinks share one 2s budget")
+      if (mode === "timeout") assert.ok(closeAt - errorAt >= 1900, "actually exercised the diagnostic timeout")
+      assert.ok(Buffer.byteLength(captured) <= 32_768)
+      const packet = JSON.parse(captured)
+      assert.equal(packet.kind, "mission-navigation-setup-failure"); assert.equal(packet.intentionalDocumentFault, true)
+      assert.ok(packet.server.documentArrivalsSinceGoto > 0); assert.ok(packet.server.lastDocumentArrivalAt >= packet.navigationStartedAt)
+      assert.equal(packet.traffic.document.failed, 1); assert.equal(packet.outstanding, 0)
+      assert.ok(packet.failures.length > 0 && packet.failures.length <= 16); assert.equal(packet.droppedPackets, 0)
+      for (const failure of packet.failures) {
+        assert.equal(failure.origin, new URL(url).origin); assert.equal(failure.path, "/mission-navigation")
+        assert.ok(failure.path.length <= 256); assert.match(failure.error, /^(?:net::)?ERR_[A-Z_]+$/)
+      }
+      assert.equal(ownedHTTP.open, 0); assert.equal(ownedHTTP.unfinished, 0)
+      console.log(captured) // Actual injected transport failure receipt, not a success snapshot.
+    }
+  } finally {
+    closeDocumentForCustodyCheck = false; browser.newPage = newPage; setupEvidenceWriter = writer; setupFailureLogger = logger
+    if (evidence === undefined) delete process.env.CODENOMAD_NAVIGATION_EVIDENCE
+    else process.env.CODENOMAD_NAVIGATION_EVIDENCE = evidence
+  }
+})
+after(async () => {
+  assert.equal(ownedHTTP.open, 0); assert.equal(ownedHTTP.unfinished, 0)
+  assert.equal(ownedHTTP.requests, ownedHTTP.finished + ownedHTTP.closedResponses)
+  assert.ok(ownedHTTP.closedAt >= ownedHTTP.listeningAt)
+  await assert.rejects(stat(server.config.cacheDir), { code: "ENOENT" })
 })
