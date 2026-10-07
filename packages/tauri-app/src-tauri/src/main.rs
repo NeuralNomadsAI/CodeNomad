@@ -21,6 +21,8 @@ mod shutdown;
 mod view_menu;
 mod window_constraints;
 mod window_zoom;
+#[cfg(windows)]
+mod windows_browser_accelerators;
 mod windows_update;
 mod workspace_open;
 
@@ -1021,6 +1023,8 @@ fn open_remote_window_locked(
         }
     };
 
+    #[cfg(windows)]
+    windows_browser_accelerators::bind(window.as_ref());
     notification_badge::bind_webview(window.as_ref(), badge_binding);
     window_constraints::register(&window.as_ref().window(), 1.0);
     #[cfg(windows)]
