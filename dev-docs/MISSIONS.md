@@ -194,6 +194,16 @@ stable passage identity and publication safeguards. Continuing existing native
 background work and starting tomorrow's scheduled passage are separate acceptance
 tests; both must work without an open CodeNomad window.
 
+The unactivated core is implemented in `missions/recurrence-{contract,clock,store,runner}.ts`
+with native durable JSON, stable passage/message identities, one in-flight passage,
+latest missed-run catch-up and exact terminal/rejection receipts. Twenty-two tests
+and an independent follow-up cover DST gaps/folds, optional native variants, watch
+removal/re-add, damaged storage and lost acknowledgements. It retains 30 reference
+receipts and up to 64 remembered conversation cursors, without deleting native
+transcripts or silently resetting deduplication. This core is not a scheduler
+activation or closed-desktop qualification; owned admission, archive composition,
+cold wake and packaged host integration still need delivery.
+
 ### User-journey regression checks
 
 Run real Solid/HTTP fixtures, never a user's live mission, for these questions:

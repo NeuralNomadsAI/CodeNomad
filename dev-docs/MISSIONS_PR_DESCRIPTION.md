@@ -225,7 +225,7 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Réintroduction, natif, contrôles, bilan et suivi | Dans le head publié `cfea513b` ; revue intégrée encore en cours |
 | Capacité, conflits de création et deadline Stop native | Commits locaux `530dc8af` / `bd2a8cee`, pas encore poussés lors de cette mise à jour |
 | Préférences dans Missions, politique des tâches, profondeur locale et corrections UX | Sources locales ; livraison de l'agent UX et typechecks vérifiés, publication/revue indépendante à suivre |
-| Missions permanentes, programmation et suivi des passages | Cahier des charges ci-dessus ; implémentation et qualification à réaliser |
+| Missions permanentes, programmation et suivi des passages | Noyau durable local implémenté, 22 tests et revue indépendante sans finding restant ; raccordement natif, archivage, réveil froid et UX à terminer |
 | Admission durable hors fenêtre et parité packagée | Fondations présentes ; travail d'intégration/qualification à terminer, sans contournement des protections natives |
 
 ### Preuves actuelles et prochaine boucle
@@ -240,6 +240,19 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 - Typechecks serveur/UI relancés après séparation du contrat HTTP de profondeur :
   passent. Tests natifs isolés de profondeur JSONC, création/autorité HTTP-RPC
   (16 gates OpenCode 2.0.24) et environnement minimum 2.0.7 ont leurs reçus propres.
+- Boucle de revue UX : trois défauts reproduits puis corrigés ; zéro finding
+  actionnable restant dans ce périmètre, cinq régressions et probes indépendantes.
+  Nouveau parcours natif 2.0.24 : parallélisme, récursion réelle, lecture des retours
+  puis résultats métier passent, sans liaison enfant fabriquée.
+- Le noyau de récurrence (`recurrence-{contract,clock,store,runner}`) n'est pas
+  activé : 22 tests passent, dont modèles sans variante, DST en fin de journée et
+  retrait/réajout d'un suivi sans perdre son curseur. La revue indépendante ferme
+  les trois défauts initiaux ; stockage borné testé à 194 067 / 262 144 octets.
+- Qualification Windows indépendante : build release et vrai loader natif passent,
+  puis `native-parent-job-forbids-breakaway` bloque la première naissance hors Job
+  depuis le harness. Ce refus reste intact, sans fallback. Il faut un parent Windows
+  ordinaire autorisé pour poursuivre les preuves de backend, service et fermeture
+  desktop ; ce test négatif n'est pas une qualification de continuité.
 - CI du head publié reste en échec. Deux tests Windows cross-host inchangés de `dev`
   passent dans le diagnostic local, sans preuve suffisante pour expliquer la CI.
 - Reproduire/corriger les échecs actuels, reviewer les seams d'intégration, répéter
