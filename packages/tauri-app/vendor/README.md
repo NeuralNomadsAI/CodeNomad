@@ -16,8 +16,7 @@ procedure. Tao 0.34.6 holds `KEY_EVENT_BUILDERS`, `LAYOUT_CACHE` or the IME wind
 state across peeking, causing same-thread mutex deadlocks. The upstream fix moves
 the peeks before those locks and passes the results into the handlers.
 
-The recorded CodeNomad dump matches this exact path. See
-`dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for diagnosis and validation. Do not
+The recorded CodeNomad dump matches this exact path. Do not
 replace non-reentrant mutexes with recursive locks or silently drop nested input.
 
 The Windows native regression uses a hidden Tao window and cross-thread sent
@@ -48,7 +47,7 @@ Run `node scripts/test-tauri-macos-window.mjs --baseline` in a graphical macOS
 session. The isolated native fixture checks that getters generate no geometry
 events, including reads during geometry capture, and exercises maximize/restore,
 fixed-size and decorated windows. Its original-crate negative control reproduces
-the feedback loop. See `dev-docs/TAURI_MACOS_STARTUP.md` for real application tests.
+the feedback loop.
 
 Remove the override only after both native backports are available in the
 resolved supported release and both native regressions pass.
