@@ -249,9 +249,18 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   privé est désormais une qualification explicitement invoquée ; aucune assertion
   retirée, aucun skip ajouté. Sans capture : échec obligatoire. Avec la capture
   auditée : **1/1**, digest inchangé, zéro requête externe. L'aggregate ordinaire
-  perd ce seul cas externe et gagne la régression de chargement ; nouveau run
-  ordinaire sans capture lancé avec 2 162 inputs fingerprintés, nouvelle CI à
-  obtenir après publication. Ces exécutions n'ont pas encore de résultat final.
+  perd ce seul cas externe et gagne la régression de chargement. La revue
+  indépendante clôture ces corrections sans finding restant ; elle vérifie aussi
+  la conservation de l'erreur initiale et le nettoyage après import retenu.
+- Run ordinaire sans capture sur `e56cf0c9` : **757 pass, 1 fail, 2 skipped**, les
+  2 162 inputs restent identiques. Le seul échec est la référence Electron prise
+  avant l'application de sa géométrie native : renderer 911 px alors que le contenu
+  natif est déjà 885 px, reproduit dans deux lancements sur cinq. La fixture attend
+  maintenant ces dimensions natives avant sa référence ; **5/5 relances passent**,
+  sans retirer de champ du contrôle de reset ni changer produit/menu/deadline.
+  La revue indépendante clôture cette correction à zéro finding et reproduit
+  **1/1** ; nouveau run complet sans capture lancé sur inputs fingerprintés.
+  Ce run reste en cours, distinct des reruns ciblés et de la CI hébergée.
 - Livraison UX sur sources plus récentes : **240 tests Missions navigateur** et
   **32 tests unitaires/parité** passent selon le rapport de livraison ; les revues
    ciblées sont clôturées, les aggregates ci-dessus gardent leur périmètre exact.

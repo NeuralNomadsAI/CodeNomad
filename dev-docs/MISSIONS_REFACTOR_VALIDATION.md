@@ -116,12 +116,36 @@ results below into current-source or installed-app qualification.
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-explicit-replay-004c6d9142324c318649b7496b55d448/browser-report.json`.
   Ordinary discovery loses only this external case and adds one held-import
   regression; another complete no-capture aggregate and hosted result are required.
-- Complete ordinary browser rerun is launched without `NATIVE_MISSION_CAPTURE`
-  or `NATIVE_MISSION_OUTPUT`. Its 2,162 input fingerprints are retained at
+- Complete ordinary browser rerun on `e56cf0c9` without `NATIVE_MISSION_CAPTURE`
+  or `NATIVE_MISSION_OUTPUT` finishes **757 pass / 1 fail / 2 skipped**, all 760
+  cases selected, no cancellations, 2,373 seconds. Its 2,162 input fingerprints
+  are unchanged at completion and retained at
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-no-capture-inputs-20261007.json`.
   Output is
   `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115db55ce001fui5txnQWs9XS7.out`.
-  Result is pending; do not infer it from focused checks or the older aggregate.
+  Its sole failure is native Electron emulation reset compared against a stale
+  initial renderer viewport (height 911 vs 885), not missing capture or the
+  translated composer checks. Preserve this failed aggregate.
+- Native geometry probe reproduces the initial reference race in two of five
+  fresh launches: `getContentBounds()` already returns 1084x885 with the menu
+  visible while the pre-emulation renderer remains 1084x911. Every final reset
+  agrees with the unchanged native content dimensions. Exact production emulation
+  module and original fixture used; no product or menu edits. Probe:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-emulation-geometry-probe.log`.
+  The fixture now reads `getContentSize()` and waits for matching renderer size
+  before taking its initial reference. Complete reset equality remains strict,
+  timeouts unchanged. Five fresh original regression runs pass. Independent
+  follow-up closes at zero findings, audits the original 2/5 race and runs the
+  exact corrected test **1 pass / 0 failures / 0 skips**. No menu/product change.
+  New complete ordinary no-capture run remains pending, with 2,162 input hashes:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-native-baseline-inputs-20261007.json`.
+  Output:
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1160318d1001u5Jia2stdQ6RFK.out`.
+- Independent review of the earlier French/capture seam closes at zero findings.
+  Its held-import callback and injected pre-release assertion failure use a
+  private Vite cache: eventual French/draft retention and error/owned cleanup pass.
+  Explicit missing capture independently refuses before browser launch, with no
+  skip. Reviewer probes used Node 25.2.1, not pinned-runtime certification.
 - Independent published-head integration review closes at zero findings. Its
   230 focused checks pass without skips: create/journal/durable 90,
   authority/catalog/projection 45, resources/guards 59, outcome recovery 25,
