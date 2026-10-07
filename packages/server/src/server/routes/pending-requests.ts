@@ -51,6 +51,15 @@ const unavailableSchema = z.object({
 }).strict()
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
+async function drainOwnershipReads<T>(reads: Promise<T>[]): Promise<T[]> {
+  try { return await Promise.all(reads) }
+  catch (error) {
+    // Keep custody of this batch's admitted reads before returning the first failure.
+    await Promise.allSettled(reads)
+    throw error
+  }
+}
+
 export interface PendingRequestsRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation">
   worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked">
@@ -73,6 +82,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       const submitted = [...new Set(typeof query.data.directories === "string" ? [query.data.directories] : query.data.directories)]
       const result: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
       const resolved: Array<{ submitted: string; directory: string; identity: string }> = []
+      const provisional: typeof resolved = []
       const bootstrap = manager.getServiceLocation(id)
       const style = manager.getServicePathStyle(id)
       const nativePath = style === "win32" ? path.win32 : style === "posix" ? path.posix : undefined
@@ -81,27 +91,22 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (!bootstrap || bootstrap.workspaceID !== undefined || !root || !rootIdentity || !nativePath?.isAbsolute(bootstrap.directory)
         || await manager.getServiceDirectoryForPath(id, bootstrap.directory) !== root) throw new Error("Pending bootstrap unavailable")
       const bootstrapDirectory = bootstrap.directory
-      let common: Promise<string> | undefined
       // ponytail: eight ownership checks at a time keep bounded Windows Git reads inside the request deadline.
       for (let offset = 0; offset < submitted.length; offset += 8) {
-        const candidates = await Promise.all(submitted.slice(offset, offset + 8).map(async (candidate) => {
+        const candidates = await drainOwnershipReads(submitted.slice(offset, offset + 8).map(async (candidate) => {
           signal.throwIfAborted()
           const directory = await manager.getServiceDirectoryForPath(id, candidate)
           const identity = directory && await manager.getWorktreeIdentityForPath(id, directory)
           const host = directory && await manager.getHostPathForServicePath(id, directory)
-          // Containment alone cannot authorize a nested independent clone.
-          const sameRepository = directory === root || Boolean(host && await Promise.all([
-            common ??= readGitCommonDirectory(workspace.path), readGitCommonDirectory(host),
-          ]).then(([left, right]) => left === right, () => false))
-          if (!directory || !identity || !host || !sameRepository) {
+          if (!directory || !identity || !host) {
             result.directories.push({ directory: candidate, status: "error" })
             return
           }
           return { submitted: candidate, directory, identity }
         }))
-        resolved.push(...candidates.filter((candidate) => candidate !== undefined))
+        provisional.push(...candidates.filter((candidate) => candidate !== undefined))
       }
-      if (!resolved.length) return reply.code(403).send({ error: "Directory does not belong to workspace" })
+      if (!provisional.length) return reply.code(403).send({ error: "Directory does not belong to workspace" })
       const assertCurrent = () => {
         signal.throwIfAborted()
         connection.assertCurrent()
@@ -118,23 +123,39 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           || await manager.getWorktreeIdentityForPath(id, bootstrapDirectory) !== rootIdentity) throw new Error("Invalid pending origin")
         assertCurrent()
       }
-      const assertCandidates = async () => {
-        const currentCommon = resolved.some((candidate) => candidate.directory !== root) ? await readGitCommonDirectory(workspace.path) : undefined
-        for (let offset = 0; offset < resolved.length; offset += 8) {
-          await Promise.all(resolved.slice(offset, offset + 8).map(async (candidate) => {
+      const assertCandidates = async (classify = false) => {
+        const candidates = classify ? provisional : resolved
+        const currentCommon = candidates.some((candidate) => candidate.directory !== root)
+          ? await readGitCommonDirectory(workspace.path).catch(error => { if (!classify) throw error; return undefined }) : undefined
+        for (let offset = 0; offset < candidates.length; offset += 8) {
+          const checked = await drainOwnershipReads(candidates.slice(offset, offset + 8).map(async (candidate) => {
+            signal.throwIfAborted()
             if (await manager.getServiceDirectoryForPath(id, candidate.submitted) !== candidate.directory
               || await manager.getWorktreeIdentityForPath(id, candidate.directory) !== candidate.identity) throw new Error("Pending directory ownership changed")
             if (candidate.directory !== root) {
               const host = await manager.getHostPathForServicePath(id, candidate.directory)
-              if (!host || await readGitCommonDirectory(host) !== currentCommon) throw new Error("Pending repository ownership changed")
+              if (!host) throw new Error("Pending directory ownership changed")
+              // Containment alone cannot authorize a nested independent clone. Classify
+              // once immediately before RPC; after RPC every accepted identity is fresh.
+              const sameRepository = await readGitCommonDirectory(host).then(common => currentCommon !== undefined && common === currentCommon,
+                error => { if (!classify) throw error; return false })
+              if (!sameRepository) {
+                if (!classify) throw new Error("Pending repository ownership changed")
+                result.directories.push({ directory: candidate.submitted, status: "error" })
+                return
+              }
             }
             assertCurrent()
+            return candidate
           }))
+          if (classify) resolved.push(...checked.filter((candidate) => candidate !== undefined))
+          assertCurrent()
         }
       }
       assertCurrent()
+      await assertCandidates(true)
+      if (!resolved.length) return reply.code(403).send({ error: "Directory does not belong to workspace" })
       await assertOrigin(bootstrapDirectory)
-      await assertCandidates()
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
       const expected = new Set(resolved.map((entry) => entry.directory))
       const url = new URL("/api/rpc/codenomad.pending-requests/snapshot", connection.endpoint.url)
