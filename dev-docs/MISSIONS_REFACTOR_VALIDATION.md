@@ -34,7 +34,7 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
 - Previous changing-source aggregate: server 2,247 pass/0 fail/8 skipped; browser
   711 pass/39 fail/2 skipped. A focused rerun does not erase either receipt. A
   frozen-input aggregates below and hosted CI remain separately scoped receipts.
-- New complete server aggregate: **2,279 pass / 0 fail / 8 skipped**, no
+- Earlier complete server aggregate: **2,279 pass / 0 fail / 8 skipped**, no
   cancellations, 2,287 selected cases. Completed in 1,312 seconds on unchanged
   execution inputs; only the separately invoked positive-loader qualification
   fixture changed outside the ordinary `**/*.test.ts` selection. The eight
@@ -60,6 +60,56 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
 
 ### Parallel implementation follow-up — local, not desktop-enabled
 
+- Fresh complete Windows server aggregate after the native/recurrence corrections:
+  **2,362 selected / 2,335 pass / 16 fail / 3 cancelled / 8 skipped**, completed
+  under `sh_1167074b3001FeCeovcmqsfwkz`. All **619 frozen existing server/helper
+  inputs remain unchanged**. Final fingerprint/count receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-native-approval-output-20261007.json`.
+  Failures include private owner/readiness, durable native-observation setup,
+  installer fixture readiness, pending recovery, WSL timing, event ownership and
+  three Mission-input cases. This failed aggregate is retained, not overwritten
+  by isolated rerun totals. Diagnosis runs in disjoint bounded groups without
+  relaxing ownership or deadlines. Original Mission-input file subsequently passes
+  **11/11** at test-file concurrency **1**, unchanged source/assertions. Source
+  tracing shows the two missing-rejection cases depend on an instruction-write
+  hook; expiry of the advisory Git probe can prevent that hook from running,
+  while final session/connection fences still run. Resource-pressure reproduction
+  and complete bounded-concurrency validation
+  remain separate open work, not an inferred aggregate pass.
+- Bounded original process/deadline diagnosis reproduces resource pressure:
+  **57/57** checks across six files at concurrency **1**, **56/57** at concurrency
+  **2**. The 64-directory pending recovery still expires at **31.5 s** against its
+  unchanged **30 s** admission budget at concurrency 2, versus **23.3 s** serially.
+  A diagnostic pair records **230 Git-worker requests**, peak **9 submitted**,
+  maximum queue-inclusive latency **4.06 s**, with zero unsettled requests. Node's
+  default on this machine permits **31 concurrent test files**; each file owns
+  its separate bounded Git-worker budget. No production timeout/ownership bypass
+  is justified. The proposed aggregate concurrency **1** orchestration cap is not
+  yet applied. The complete concurrency-2 comparison now finishes **2,351 pass /
+  3 fail / 0 cancelled / 8 skipped**, still **2,362 selected**, with all **619
+  original inputs unchanged**. Remaining failures: caller cancellation masked at
+  private handshake; 64-directory pending recovery's unchanged 30-second deadline;
+  and a Git worktree-config fixture's owned-root teardown `EPERM` (not its ownership
+  assertions). Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-concurrency2-output-20261007.json`.
+  Concurrency 2 is demonstrably insufficient on this machine; serial full validation
+  follows correction/review without relaxing any admission deadline.
+- Separate durable diagnosis reproduces a real cancellation defect in
+  `host-authority/qualification.ts` discovery/handshake error handling and
+  `host-authority/store.ts` receipt-read error handling: caller cancellation can
+  become opaque `native-observation-unavailable`. A handshake probe fails in
+  **4.48 ms**, not on expiry. The correction must preserve the originating signal
+  reason while keeping unrelated/native timeout errors opaque; original pending
+  denial and already admitted effects must not be rolled back or replayed.
+  Prototype-only propagation passes **2/2** with exact protected/native bytes
+  unchanged. Original isolated admission checks pass **1/1** then **2/2**;
+  cancellation remains **1 pass / 1 fail** and the original 15-second human queue
+  check passes at **14.13 s**. These do not explain all aggregate setup errors or
+  replace either failed aggregate. After the concurrency-2 run completed unchanged,
+  the three original-signal catch checks and an 84-line regression were applied.
+  Temp-before/after tests show **0/3 → 3/3**, covering **20 cancellation/redaction
+  cases**; original combined checks and independent review are ongoing. Evidence:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-cancellation-diagnostic-output-20261007.json`.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
@@ -68,7 +118,23 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   native installation is pending: navigation denial alone is insufficient. Exact
   locked Tauri/wry source also queues installation without a generation-aware
   native receipt. Both require final native-execution/receipt fencing before
-  ordinary bootstrap commit; corrections and during-install regressions are active.
+  ordinary bootstrap commit. The paired correction is committed in **`1f0954da`**:
+  Electron serializes installation,
+  native readback and exact stale cleanup across resets, with failed cleanup fencing
+  successors. Tauri checks at main-thread execution and requires same-webview
+  readback before publishing `local_access`; unknown receipts remain fenced.
+  Author **22 Node / 14 Rust checks** and Electron typecheck pass; main repeats
+  **22/22** Node checks and Electron typecheck. Rust evidence
+  includes mocks and real isolated AuthManager routes, **not packaged native cookie
+  transport**. Independent final-boundary review closes the stale cookie and
+  queued-execution defects and reproduces one macOS Wry IPv4 readback defect:
+  its URL filter hides cookies at `127.0.0.1` and can falsely acknowledge stale
+  cleanup. Same-webview unfiltered `cookies()` now supplies readback while exact
+  name/domain/path/value checks remain strict. The persisted regression closes
+  that defect, independently **1/1**, with **0 remaining scoped findings** and
+  locked macOS/Windows/Linux reader callers verified. Packaged macOS transport
+  remains unqualified. The 24-line auth-only
+  fixture separates ordinary bootstrap tests from retained lifetime composition.
   Direct-child lifecycle intent wrappers and persistent attachment scaffolding
   remain separately retained, unactivated, not native-plugin autonomy evidence.
 - `860ed92e` extracts the concrete prepared-creation pipeline used by the ordinary
@@ -185,6 +251,18 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-7CMDEy/results.json`
   and `.../missions-child-environment-fz21n6/results.json`. Commit `6ba741c4`.
   This closes the metadata adapter P1 only; it does not activate autonomous work.
+- **`65dd66a4`** supplies a separate exact-incarnation native managed-owner seam:
+  actual Global/ServerInfo/Database graph, private managed registration and config,
+  process start/executable identity and native storage challenge. Trusted enrollment
+  is explicitly provisioned, never adopted by an observation. Real private 2.0.24
+  proves positive metadata commit, **7 after-write rollbacks**, missing-enrollment
+  refusal and denial of a standalone process sharing the same DB. Managed restart
+  keeps DB/enrollment but safely refuses stale ownership. All **8 source hashes**
+  match; server typecheck and independent review close with **0 actionable findings**.
+  Receipt: `C:/Users/Admin/AppData/Local/missions-managed-owner-YUXUFw/fixture/results.json`.
+  Permanent arbitrary-writer exclusion, independently protected rollback checkpoint
+  and positive restart requalification remain separate gates. A protected signer/
+  checkpoint candidate is being composed outside DB; none is production-enabled.
 - Native-startup qualification uses a read-copied **2.0.24** artifact and genuinely
   private XDG managed registration, with actual start/restart and preserved sentinel.
   Persisted ENV nonce/hash reaches each daemon; **Node `--import`/`--require` and
@@ -212,6 +290,30 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-gYg5gT/receipt.json`.
   Cleanup/sentinel preservation and original/copied artifact hashes pass. A bounded
   plugin-lifetime/idle probe follows; no native claims are manufactured or rewritten.
+- The follow-up **native timer lifetime** probe passes on actual 2.0.24: plugin
+  Scope rearms from its persisted record and ticks after claim settlement. One
+  narrow authenticated RPC captures graph references; ticks take short leases and
+  compare exact native-map entry tokens. Exact-directory eviction finalizes plugin
+  Scope and stops ticks: capturing global Locations does **not** create a global
+  lifetime owner. Claim-free restart records **zero setups/rearms/ticks over 8 s**,
+  a bounded observation only. Counts remain **1 admission / 1 tool entry / 2 model
+  requests**, with no replay or keepalive prompts. Automatic 60-minute inactivity
+  eviction and all-CodeNomad-closed operation remain untested. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-aOPsBv/receipt.json`.
+  Cleanup, sentinel preservation and artifact hashes pass. Module evaluation at
+  cold boot is now being distinguished from setup activation; production remains
+  disabled and the cold scheduling gate remains open.
+- A further module-evaluation probe distinguishes imports from setup: claimed
+  restart has **1 entry / 1 bundled-dependency evaluation marker and 1 setup**;
+  claim-free restart without Location demand has **0 evaluations / 0 setups over
+  8 s**. The two positive sites are within one bundle, not two native imports.
+  Exact upstream module loading is called by the Location-scoped supervisor.
+  This bounded artifact observation does not prove global impossibility, and no
+  escaped/global Scope was added. Counts stay **1 admission / 1 tool / 2 model
+  requests**, with cleanup/sentinel/artifact hashes preserved. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-JQzXFg/receipt.json`.
+  A genuine enrolled standing native claim and actual graph callback/retention
+  contract are the next bounded candidates; no native execution rows are invented.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
@@ -251,8 +353,15 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   isolated preparations pass with browser loads **2.10–2.18 s**. The header fixture
   also needs the existing owned-cache lifecycle rather than checkout-shared cache.
   The complete Windows aggregate above has now settled with unchanged inputs;
-  the targeted owned-cache/preparation correction can proceed. It will have its
-  own frozen-source checks; diagnosis is not corrected-source hosted acceptance.
+   the targeted owned-cache/preparation correction is now **`35af6332`**. Frozen
+   corrected source passes **33/33** complete header cases, **7/7** existing compiler/
+   deadline/shutdown regressions and **3 fresh badge repeats, each 1/1**. All original
+   test bodies/assertions and the 15-second deadline remain unchanged. Independent
+   final review repeats **7/7 setup-hook probes**, closes with **0 actionable findings**
+   and confirms all **9 owned cache paths** absent. Receipt:
+   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-header-fix-validation-20261007.json`.
+   This is local corrected-source evidence, not current hosted acceptance; the
+   completed successful full browser aggregate predates this fixture correction.
 
 ### Current independent recurrence/native receipts
 

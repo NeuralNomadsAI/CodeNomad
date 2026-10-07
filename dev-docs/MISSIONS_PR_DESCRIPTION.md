@@ -242,12 +242,25 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Approbation finale de récurrence | Commit local `354acfaa` ; 57/57 checks et typecheck, revue indépendante 40/40 et zéro finding. Le callback final reste strict après préparation ; refus sans effet et pending incertain conservé sans replay |
 | Admission directement dans OpenCode | Commit local `e63c182c` ; 13/13 auteur/maître/reviewer, deux défauts d'approbation corrigés et clôturés. Fixture réelle 2.0.24 du helper haut niveau : ENV et prompt/synthetic admis sans backend ni modification OpenCode. Writer/gate injectés, Location chargée ; autorité native complète et réveil froid encore à prouver |
 | Commit de métadonnées natif | Commit local `6ba741c4` ; transaction réelle OpenCode 2.0.24, rollback après écriture et exclusion par une claim native concurrente. P1 de retrait tardif corrigé et clôturé indépendamment ; ce n'est pas encore un producteur d'autorité permanent |
+| Incarnation native gérée exacte | Commit local `65dd66a4` ; identité réelle du service/processus/exécutable/DB, challenge de stockage, 7 rollbacks post-écriture, concurrent standalone même DB refusé. Revue clôturée sans finding ; restart refuse l'enrollment devenu stale, sans réautoriser. Exclusion permanente, checkpoint indépendant et requalification positive restent à terminer |
 | Activation à froid du plugin | Redémarrage privé réel 2.0.24 : une claim enregistrée recharge le plugin sans demande de Location après boot. L'outil est marqué aborted, pas repris ; deux requêtes modèle. Activation prouvée, programmation/continuité encore non qualifiées |
+| Bootstrap desktop ordinaire | Commit local `1f0954da` ; transport borné/privé et publication native des cookies sérialisée/vérifiée. 22 Node et 14 Rust passent ; finding macOS IPv4 corrigé et clôturé, revue sans finding restant. Pas de qualification packagée ni d'activation de la fondation host |
+| Démarrage froid de la fixture header | Commit local `35af6332` ; cache détenu et préparation Vite existante, 33/33 cas, 7/7 régressions et 3 relances badge, assertions et délai 15 s inchangés. Revue indépendante clôturée ; CI précédente toujours en échec |
 | Focus des actions Mission | Commit local `32c308a1` ; 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Suite complète **sans capture : 758/0/2**, zéro annulation, 760 cas et 2 162 empreintes inchangées |
 
 ### Preuves actuelles et prochaine boucle
 
-- Nouveau run serveur intégral : **2 279 pass, 0 fail, 8 skipped**, terminé sur
+- Dernier aggregate serveur Windows après les corrections natives : **2 335 pass,
+  16 fail, 3 annulés, 8 skipped**, 2 362 cas sélectionnés, **619 empreintes inchangées**.
+  Résultat conservé ; diagnostic parallèle des processus/délais et observations
+  d'autorité. Le fichier d'admission Mission repasse **11/11** inchangé en isolation ;
+  cette relance ne remplace pas l'aggregate en échec ni ses autres cas à qualifier.
+- Comparaison complète à concurrence 2 : **2 351 pass, 3 fail, 0 annulé, 8 skipped**,
+  toujours 2 362 cas et **619 empreintes inchangées**. Restent l'annulation masquée,
+  le délai d'admission inchangé des 64 dossiers et un `EPERM` de nettoyage de fixture
+  Git. Correction minimale d'annulation appliquée après le gel, revue/checks en
+  cours ; validation complète série à suivre, sans augmenter les délais.
+- Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
 - Suite navigateur complète exploratoire : **711 pass, 39 fail, 2 skipped**.
@@ -293,8 +306,11 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   Cause reproduite : compilation à froid de la fixture, avant les assertions.
   Préparation native de Vite testée en isolation : trois chargements **2,10–2,18 s**,
   mêmes réglages/assertions/délai **15 s**. Le run local aux inputs gelés est
-  terminé ; correction ciblée en cours, avec cache détenu et helper existants.
-  Ce diagnostic ne remplace pas la CI en échec.
+   terminé ; correction ciblée **`35af6332`**, avec cache détenu et helper existants.
+   Sources corrigées figées : **33/33** cas header, **7/7** régressions et **3**
+   relances badge, chacune **1/1** ; revue indépendante **7/7** probes, zéro finding.
+   Les neuf caches détenus sont absents. Ce succès local ne remplace pas la CI en
+   échec ni un nouvel aggregate complet sur ces sources.
 - Livraison UX sur sources plus récentes : **240 tests Missions navigateur** et
   **32 tests unitaires/parité** passent selon le rapport de livraison ; les revues
    ciblées sont clôturées, les aggregates ci-dessus gardent leur périmètre exact.
