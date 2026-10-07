@@ -19,10 +19,11 @@ autonomy acceptance. Active integration assignments now target native admission,
 profile/environment, authority, storage and cold scheduling in OpenCode.
 
 **Latest scoped status:** ordinary server **2,370 pass / 0 fail / 8 skipped**,
-625 inputs unchanged; latest complete no-capture browser **757 pass / 1 fail /
-2 skipped**, 2,162 inputs unchanged. Its sole failure is the render-cost inline
-copy hit-testing, under root-cause investigation without relaxed
-assertions/deadlines. Native Job process-bound lifetime is committed in `1465793f`;
+625 inputs unchanged; latest complete no-capture browser **757 pass / 2 fail /
+2 skipped**, 2,162 inputs unchanged, 761 selected. Preferences locator and
+`ERR_NO_BUFFER_SPACE` navigation failures are under separate diagnosis. Earlier
+Copy interception did not reproduce but remains unexplained; no assertion/deadline
+is relaxed. Native Job process-bound lifetime is committed in `1465793f`;
 inactive-claim cold continuity, protected authority and packaged autonomy remain
 unqualified. Historical results below retain their original scope and failures.
 
@@ -866,9 +867,17 @@ unqualified. Historical results below retain their original scope and failures.
   close/remove after shutdown, no open pages/listening fixtures. Review:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-render-diagnostic-independent-20261007/verification.json`.
   Diagnostic committed **`82c7644e`**; original failed aggregate and unknown root
-  are unchanged. A fresh full ordinary no-capture aggregate is running at that
-  commit with **2,162 inputs frozen**, all earlier paths retained and **one extra
-  persistent wrapper check**. No outcome is claimed before completion. Inputs/log:
+  are unchanged. The fresh full ordinary no-capture aggregate completes at that
+  commit with **2,162 inputs unchanged**, all earlier paths retained and **one extra
+  persistent wrapper check**: **761 selected / 757 pass / 2 fail / 0 cancelled /
+  2 skipped**, **2,480.61 s**. Preferences locator in `mission-control.test.ts:179`
+  expires at original **15 s**; `mission-navigation.test.ts:62` navigation returns
+  **`net::ERR_NO_BUFFER_SPACE`**. Copy and its persistent diagnostic check pass in
+  this run; no failing Copy state was captured, so its old root is **not resolved**.
+  Disjoint diagnosis preserves both new failures and the previous aggregate;
+  no retry, skip, forced action or increased deadline is applied. Result:
+  `.../pr866-ui-diagnostic-complete-output-20261007.json`.
+  Inputs/log:
   `.../pr866-ui-diagnostic-complete-inputs-20261007.json` and
   `.../pr866-ui-diagnostic-complete-20261007.out`;
   job `sh_1175ae07e0017YiAg4Muj2zW5n`.

@@ -374,8 +374,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   Instrumentation failure-only figée, **27/27 ciblés + typecheck**, 16 corps/actions
   originaux inchangés ; capture bornée, erreur originale préservée. Revue indépendante
   **27/27 + 3 edge checks sans finding**, cleanup vérifié. Commit **`82c7644e`**,
-  nouvel aggregate complet lancé sur 2 162 inputs figés et un check supplémentaire ;
-  aucun résultat avant completion, cause toujours inconnue.
+  nouvel aggregate complet terminé : **761 cas / 757 pass / 2 fail / 0 annulé /
+  2 skipped**, **2 162 inputs inchangés** et un check supplémentaire. Deux échecs
+  distincts : Preferences introuvable après 15 s et navigation `ERR_NO_BUFFER_SPACE`.
+  Copy passe ici, sans résoudre sa cause précédente ; diagnostics séparés, tous
+  les receipts en échec conservés, aucun retry/skip/délai relâché.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
