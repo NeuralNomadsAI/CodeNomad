@@ -80,7 +80,9 @@ export async function installNativeMissionContracts(ctx: Plugin.Context, options
         const previous = await get("report/" + binding.missionID + "/" + binding.taskKey)
         if (previous && !equal(previous, report)) throw new Error("Immutable business report conflict")
         if (!previous) {
-          await event(binding.missionID, id, { type: "task.reported", report: { ...report, taskKey: binding.taskKey, evidence: [], next: [], createdAt: Date.now() } })
+          // The experiment's contract stays in private storage, not the public report schema.
+          const { contract: _, ...businessReport } = report
+          await event(binding.missionID, id, { type: "task.reported", report: { ...businessReport, taskKey: binding.taskKey, evidence: [], next: [], createdAt: Date.now() } })
           await set("report/" + binding.missionID + "/" + binding.taskKey, report)
         }
         return { content: JSON.stringify({ businessAcknowledged: true, reportID: id, contract: input.contract }), metadata: { reportID: id } }

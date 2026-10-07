@@ -56,7 +56,8 @@ function fixture() {
   const report = async (taskKey: string, revision = 1, late = false) => {
     const binding = await get<Binding>(`owner/${missionID}/${taskKey}`)
     const business = { id: "report_" + taskKey, contract: ref(taskKey, revision), sessionId: binding!.childID, outcome: "completed" as const, summary: "Explicit completion" }
-    await event(missionID, "report-" + taskKey, { type: "task.reported", report: { ...business, taskKey, evidence: [], next: [], createdAt: clock, ...(late ? { late: true } : {}) } })
+    const { contract: _, ...businessReport } = business
+    await event(missionID, "report-" + taskKey, { type: "task.reported", report: { ...businessReport, taskKey, evidence: [], next: [], createdAt: clock, ...(late ? { late: true } : {}) } })
     await set(`report/${missionID}/${taskKey}`, business)
   }
   return { plans, deps, values, get, set, seed, revise, bind, report, journal, sessions, events, dispose: () => { active = false }, failAfter: (count: number) => { failOnWrite = writes + count } }
@@ -128,6 +129,8 @@ test("dependency completions require exact current-generation report references"
   await assert.rejects(f.plans.admitted(ref("dependent"), coordinatorID), /current generation/)
   await f.bind("dependency", "ses_dependency", 2)
   await f.report("dependency", 2)
+  assert.deepEqual((await f.get<{ contract: Reference }>(`report/${missionID}/dependency`))!.contract, ref("dependency", 2))
+  assert.equal("contract" in (await f.journal.snapshot()).missions[0].reports[0], false)
   assert.equal((await f.plans.admitted(ref("dependent"), coordinatorID)).depth, 1)
 })
 
