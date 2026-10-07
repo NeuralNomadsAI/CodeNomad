@@ -1,4 +1,5 @@
 import { canonicalAuthority } from "./authority-protocol"
+import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { runMissionExclusive } from "./exclusive"
 import type { MissionStorage } from "./journal"
 import { isCoordinatorNotificationReport } from "./native-report-provenance"
@@ -12,7 +13,7 @@ import type { NativeMissionRecurrenceStore } from "./recurrence-store"
  * pending. Return the existing protected-writer synchronous fence, not a grant.
  * Called under the business mutation lock: reads only, no business mutators or
  * authority transactions that reacquire that lock. No native reader is implied. */
-export type RecurrenceArchiveAuthorization = (document: Readonly<RecurrenceDocument>, result: Readonly<RecurrenceResult>) => Promise<() => void>
+export type RecurrenceArchiveAuthorization = (document: Readonly<RecurrenceDocument>, result: Readonly<RecurrenceResult>) => Promise<() => true>
 
 /** Archive references into the existing bounded ledger, never delete a Mission
  * or a native conversation. Journals remain exact-key addressable but are never
@@ -34,7 +35,7 @@ export async function archiveRecurrencePassage(store: NativeMissionRecurrenceSto
   if (result.passageID !== admission.passageID || result.messageID !== admission.messageID
     || result.missionID !== admission.missionID || result.conversationID !== admission.conversationID) throw new Error("Recurrence archive identity conflict")
   const current = await authorizeArchive(structuredClone(doc), structuredClone(result))
-  current()
+   assertSynchronousAuthorityGuard(current, "policy-unqualified")
   const { journal, missionID } = recurrencePassage(storage, doc, current, () => now)
   const snapshot = await journal.snapshot(), mission = snapshot.missions[0]
   if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable
@@ -44,7 +45,7 @@ export async function archiveRecurrencePassage(store: NativeMissionRecurrenceSto
     || snapshot.cleanups?.some(cleanup => cleanup.pending > 0)) throw new Error("Recurrence archive unsettled journal")
   const fresh = await store.read(id)
   if (!fresh || fresh.revision !== doc.revision) throw new Error("Recurrence archive changed")
-  current()
+   assertSynchronousAuthorityGuard(current, "policy-unqualified")
   // finish rechecks all four exact identities, watches and cursor capacity;
   // unknown writes keep the original pending or durable receipt, never replay.
   return store.finish(id, result, now, current)

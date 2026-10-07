@@ -1,4 +1,5 @@
 import { canonicalAuthority } from "./authority-protocol"
+import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { runMissionExclusive } from "./exclusive"
 import { latestDailyDue } from "./recurrence-clock"
 import { recurrenceIDSchema, type RecurrenceAdmission, type RecurrenceDocument, type RecurrenceDue } from "./recurrence-contract"
@@ -8,14 +9,14 @@ export interface RecurrenceAuthorizedAdmission {
   /** Fresh owning-authority read, including active protected host incarnation.
    * Throw on unknown/unowned/read-only/disabled authority; returned synchronous
    * fence MUST be passed through native storage/admission preparation. */
-  authorize(document: Readonly<RecurrenceDocument>, purpose: "dispatch" | "settle"): Promise<() => void>
+  authorize(document: Readonly<RecurrenceDocument>, purpose: "dispatch" | "settle"): Promise<() => true>
   /** Starts ONE ordinary Mission using the exact frozen request. This is NOT
-   * ctx.session.prompt: integration must perform fresh full backend/Mission
+   * ctx.session.prompt: integration must perform fresh full native Mission
    * admission (ownership, profile ENV, inbox, permissions, publication scope).
    * Invoke beforeEffect at actual admission after async preparation, then its
    * synchronous fence immediately before the first external effect. No retries.
    * Rejection requires positive exact no-effect proof; throw means unknown. */
-  admit(document: Readonly<RecurrenceDocument>, beforeEffect: () => Promise<() => void>): Promise<RecurrenceAdmission>
+  admit(document: Readonly<RecurrenceDocument>, beforeEffect: () => Promise<() => true>): Promise<RecurrenceAdmission>
 }
 export type RecurrenceRunOutcome = "inactive" | "not-due" | "pending" | "accepted" | "rejected-before-effect" | "unknown"
 
@@ -45,7 +46,7 @@ export class MissionRecurrenceRunner {
       if (due.kind === "daily" && !isNewDailyDue(doc, due)) return "not-due"
       // Read-only failed authority cannot even reserve a passage.
       const current = await this.admission.authorize(structuredClone(doc), "dispatch")
-      current()
+      assertSynchronousAuthorityGuard(current, "policy-unqualified")
       const reserved = await this.store.reserve(id, doc.revision, due, now, current)
       const beforeEffect = async () => {
         const fresh = await this.store.read(id)
@@ -55,8 +56,9 @@ export class MissionRecurrenceRunner {
         const fence = await this.admission.authorize(structuredClone(fresh), "dispatch")
         const rechecked = await this.store.read(id)
         if (!rechecked || rechecked.revision !== fresh.revision) throw new Error("Recurrence admission changed")
-        fence()
-        return fence
+        const current = () => assertSynchronousAuthorityGuard(fence, "policy-unqualified")
+        current()
+        return current
       }
       try {
         await beforeEffect()

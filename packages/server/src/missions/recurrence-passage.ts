@@ -1,11 +1,12 @@
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
+import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { parseRecurrenceDocument, RECURRENCE_STORAGE_PREFIX, type RecurrenceDocument } from "./recurrence-contract"
 
 /** Storage isolation only, never an ownership grant. The caller supplies its
  * current protected-writer fence; ordinary MissionControl can use this storage
  * unchanged, with passage.id as its creation requestID and the real project.
  * Authority storage must NOT use this adapter or acquire a new namespace. */
-export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocument, current: () => void,
+export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocument, current: () => true,
   now: () => number = Date.now) {
   const doc = parseRecurrenceDocument(input, input.projectID, input.projectCanonical, input.id)
   if (!doc.pending) throw new Error("Recurrence passage missing")
@@ -27,7 +28,7 @@ export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocu
     get: async key => storage.get(`${physical}${suffix(key)}`),
     set: async (key, value, supplied) => {
       const target = `${physical}${suffix(key)}`
-      const fence = () => { current(); supplied?.() }
+      const fence = () => { assertSynchronousAuthorityGuard(current, "policy-unqualified"); supplied?.() }
       fence()
       // Repeat the same fence after the native adapter's async preparation.
       await storage.set(target, value, fence)

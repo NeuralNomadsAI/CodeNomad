@@ -30,7 +30,7 @@ async function fixture() {
     taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
     publication: { policy: "disabled", conversationIDs: [] } }
   const now = Date.parse("2026-10-01T07:00:00Z")
-  await store.create("schedule", config, now, () => {})
+  await store.create("schedule", config, now, () => true)
   let owned = true, nativeDirectory = directory, live = true, reads = 0, effects = 0
   const connection = { assertCurrent: () => { if (!live) throw new Error("stale connection") },
     client: { location: { get: async () => { reads++; return { directory: nativeDirectory, project: { id: projectID } } } },
@@ -46,7 +46,7 @@ async function fixture() {
   const input = { manager, fence, connection, workspaceID: "workspace", projectID, projectCanonical: directory,
     signal: new AbortController().signal }
   const adapter = createMissionRecurrenceAdmissionPreparation(input)
-  const reserve = () => store.reserve("schedule", 0, { kind: "manual", expectedRevision: 0, requestID: "manual_request", at: now }, now, () => {})
+  const reserve = () => store.reserve("schedule", 0, { kind: "manual", expectedRevision: 0, requestID: "manual_request", at: now }, now, () => true)
   return { input, adapter, store, reserve, now, data, counts: () => ({ reads, effects }),
     foreign: () => { owned = false }, redirect: () => { nativeDirectory = "C:/foreign" }, stale: () => { live = false } }
 }
@@ -84,7 +84,7 @@ test("ordinary and recurrence preparation reject the same foreign ownership/nati
 
 test("missing standing grant parks ONE durable passage, never calls beforeEffect or fabricates acceptance", async () => {
   const f = await fixture()
-  const runner = new MissionRecurrenceRunner(f.store, { authorize: async () => () => {}, admit: f.adapter.admit }, () => f.now)
+  const runner = new MissionRecurrenceRunner(f.store, { authorize: async () => () => true, admit: f.adapter.admit }, () => f.now)
   assert.equal(await runner.trigger("schedule", 0, "manual_request"), "unknown")
   const pending = structuredClone((await f.store.read("schedule"))!.pending)
   assert.ok(pending)
@@ -122,6 +122,36 @@ test("late passage revocation prevents native effect and releases an undispatche
   prepared.admission.release()
   assert.equal(prepared.admission.uncertain, false)
   await f.input.fence.run(physical, [physical], async () => {})
+})
+
+test("returned recurrence fence denies late nonliteral approval at the shared creation effect", async () => {
+  for (const denial of [false, undefined]) {
+    const f = await fixture()
+    let nativeEntry = false, effects = 0
+    const prepared = await prepareMissionRootCreationLocation({ ...f.input, locations: [{ directory }], rootLocation: { directory },
+      assertContract: async () => {}, operation: { key: "ordinary", workspaceID: "workspace", projectID,
+        missionID: "mission", sessionID: "session", requestDigest: "digest" } })
+    const runner = new MissionRecurrenceRunner(f.store, {
+      authorize: async () => (() => nativeEntry ? denial : true) as () => true,
+      admit: async (doc, beforeEffect) => {
+        await prepared.effect(async () => { effects++ }, async () => {
+          const fence = await beforeEffect()
+          nativeEntry = true
+          return fence
+        })
+        return { kind: "accepted", passageID: doc.pending!.passage.id, messageID: doc.pending!.passage.messageID,
+          missionID: "mission", conversationID: "session" }
+      },
+    }, () => f.now)
+    try {
+      assert.equal(await runner.trigger("schedule", 0, "manual_request"), "unknown")
+      assert.equal(effects, 0)
+      assert.equal(prepared.admission.uncertain, false)
+      assert.equal((await f.store.read("schedule"))!.pending!.admission, null)
+      assert.equal(await runner.trigger("schedule", 1, "manual_other"), "pending")
+    } finally { prepared.admission.release() }
+    await f.input.fence.run(physical, [physical], async () => {})
+  }
 })
 
 test("an asynchronous actual-effect fence is not synchronous authority", async () => {

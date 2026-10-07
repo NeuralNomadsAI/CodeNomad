@@ -20,7 +20,7 @@ const config: RecurrenceConfig = {
 async function fixture() {
   const values = new Map<string, MissionJsonValue>(), reads: string[] = []
   let active = true, now = Date.parse("2026-10-01T06:00:00Z"), effects = 0, preparation = () => {}
-  const current = () => { if (!active) throw new Error("revoked") }
+  const current = () => { if (!active) throw new Error("revoked"); return true as const }
   const storage: MissionStorage = {
     get: async key => { reads.push(key); return structuredClone(values.get(key)) },
     set: async (key, value, fence) => { preparation(); fence?.(); values.set(key, structuredClone(value)) },
@@ -139,8 +139,25 @@ test("scoped adapter rejects foreign keys/pages and repeats fences after native 
   f.storage.scan = scan
   const before = structuredClone([...f.values])
   f.revokeDuringPreparation()
-  await assert.rejects(scope.journal.append({ ...f.created(scope.missionID, "ses_same"), id: "evt_late" }), /revoked/)
+  await assert.rejects(scope.journal.append({ ...f.created(scope.missionID, "ses_same"), id: "evt_late" }), /policy-unqualified/)
   assert.deepEqual([...f.values], before)
+})
+
+test("passage publication and archive reject nonliteral authority while preserving pending and journal bytes", async () => {
+  for (const check of [() => false, () => undefined, async () => { throw new Error("owner retired") },
+    () => ({ then() { assert.fail("authority must not assimilate a thenable") } })]) {
+    const f = await fixture()
+    f.now += 86_400_000
+    await f.runner.tick("daily_review")
+    const doc = (await f.store.read("daily_review"))!, unsafe = check as unknown as () => true
+    const scope = recurrencePassage(f.storage, doc, unsafe), before = structuredClone([...f.values])
+    await assert.rejects(scope.journal.append({ ...f.created(scope.missionID, "ses_late"), id: "evt_late" }), /policy-unqualified/)
+    await assert.rejects(archiveRecurrencePassage(f.store, f.storage, doc.id, await f.result(), f.now,
+      async () => unsafe), /policy-unqualified/)
+    assert.deepEqual([...f.values], before)
+    assert.equal(f.effects(), 1)
+    assert.equal(await f.runner.tick(doc.id), "pending")
+  }
 })
 
 test("archive ACK loss retains durable references and original dedup without deleting or replaying", async () => {

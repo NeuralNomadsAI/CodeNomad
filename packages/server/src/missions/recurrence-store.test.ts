@@ -8,7 +8,7 @@ import { RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_STORAGE_PREF
 import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "./recurrence-runner"
 import { NativeMissionRecurrenceStore } from "./recurrence-store"
 
-const current = () => {}
+const current = () => true as const
 function config(): RecurrenceConfig {
   const execution = { agent: "worker", model: { providerID: "provider", id: "model", variant: "default" } }
   return { consigne: "Review the explicitly watched conversations; publish only as authorized.",
@@ -274,6 +274,57 @@ test("read-only/unowned/disabled authority and invalid target make zero callback
   }
 })
 
+test("recurrence authority approval must be synchronous literal true before reservation or settlement", async () => {
+  const denied = [() => false, () => undefined, async () => { throw new Error("owner retired") },
+    () => ({ then() { assert.fail("authority must not assimilate a thenable") } })]
+  for (const check of denied) {
+    const f = await fixture(), counts = f.counts(), before = canonicalAuthority(await f.store.read("daily_review"))
+    const unsafe = check as unknown as () => true
+    f.admission.authorize = async () => unsafe
+    await assert.rejects(f.runner().tick("daily_review"), /policy-unqualified/)
+    await assert.rejects(f.store.setState("daily_review", 1, "paused", unsafe), /policy-unqualified/)
+    assert.deepEqual(f.counts(), counts)
+    assert.equal(canonicalAuthority(await f.store.read("daily_review")), before)
+
+    f.admission.authorize = async (_doc, purpose) => purpose === "settle" ? unsafe : current
+    assert.equal(await f.runner().tick("daily_review"), "unknown")
+    const pending = (await f.store.read("daily_review"))!
+    assert.equal(pending.pending!.admission, null, "an invalid settlement fence cannot acknowledge a reserved effect")
+    assert.equal(f.counts().callbacks, 1)
+    assert.equal(await f.runner().tick("daily_review"), "pending", "uncertain effects remain reserved without replay")
+  }
+})
+
+test("native storage preparation rechecks literal approval rather than passing through an async guard", async () => {
+  const f = await fixture(), before = structuredClone([...f.values]), counts = f.counts()
+  let checks = 0
+  const current = (() => ++checks === 1 ? true : Promise.reject(new Error("owner retired during preparation"))) as unknown as () => true
+  await assert.rejects(f.store.setState("daily_review", 1, "paused", current), /policy-unqualified/)
+  assert.equal(checks, 2)
+  assert.deepEqual([...f.values], before)
+  assert.deepEqual(f.counts(), counts)
+})
+
+test("beforeEffect returns a guarded final callback when ownership changes after preparation", async () => {
+  for (const denial of [false, undefined]) {
+    const f = await fixture()
+    let nativeEntry = false, effects = 0
+    f.admission.authorize = async () => (() => nativeEntry ? denial : true) as () => true
+    f.admission.admit = async (doc, beforeEffect) => {
+      const fence = await beforeEffect()
+      nativeEntry = true
+      fence()
+      effects++
+      return accepted(doc)
+    }
+    assert.equal(await f.runner().tick("daily_review"), "unknown")
+    assert.equal(effects, 0)
+    const doc = (await f.store.read("daily_review"))!
+    assert.equal(doc.pending!.admission, null)
+    assert.equal(await f.runner().tick(doc.id), "pending")
+  }
+})
+
 test("async preparation fences revoke authority/Pause; uncertain storage publication never admits", async () => {
   for (const mode of ["before-write", "after-write", "revoked", "paused-during-authorize"]) {
     const f = await fixture(), nativeSet = f.storage.set
@@ -284,7 +335,7 @@ test("async preparation fences revoke authority/Pause; uncertain storage publica
       }
     } else if (mode === "revoked") {
       let active = true
-      f.admission.authorize = async () => () => { if (!active) throw new Error("revoked") }
+      f.admission.authorize = async () => () => { if (!active) throw new Error("revoked"); return true }
       f.storage.set = async (key, value, fence) => { active = false; await nativeSet(key, value, fence) }
     } else {
       let reads = 0

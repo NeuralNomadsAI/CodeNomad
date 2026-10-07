@@ -1,4 +1,5 @@
 import { canonicalAuthority } from "./authority-protocol"
+import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { runMissionExclusive } from "./exclusive"
 import { stableToken, type MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
@@ -53,7 +54,7 @@ export class NativeMissionRecurrenceStore {
     return result
   }
 
-  create(id: string, input: RecurrenceConfig, now: number, current: () => void): Promise<RecurrenceDocument> {
+  create(id: string, input: RecurrenceConfig, now: number, current: () => true): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       this.key(id)
       const config = recurrenceConfigSchema.parse(JSON.parse(canonicalAuthority(input)))
@@ -66,7 +67,7 @@ export class NativeMissionRecurrenceStore {
     })
   }
 
-  configure(id: string, expectedRevision: number, input: RecurrenceConfig, current: () => void): Promise<RecurrenceDocument> {
+  configure(id: string, expectedRevision: number, input: RecurrenceConfig, current: () => true): Promise<RecurrenceDocument> {
     return this.change(id, expectedRevision, current, doc => {
       if (doc.pending || doc.state === "stopped") throw new Error("Recurrence pending or stopped")
       const config = recurrenceConfigSchema.parse(JSON.parse(canonicalAuthority(input)))
@@ -81,14 +82,14 @@ export class NativeMissionRecurrenceStore {
 
   /** Explicit opt-in/resume, Pause and terminal Stop. Pending results may still
    * settle in either inactive state. Never changes a native session's controls. */
-  setState(id: string, expectedRevision: number, state: RecurrenceDocument["state"], current: () => void): Promise<RecurrenceDocument> {
+  setState(id: string, expectedRevision: number, state: RecurrenceDocument["state"], current: () => true): Promise<RecurrenceDocument> {
     return this.change(id, expectedRevision, current, doc => {
       if (doc.state === "stopped") throw new Error("Recurrence is terminal")
       doc.state = state
     })
   }
 
-  reserve(id: string, expectedRevision: number, due: RecurrenceDue, now: number, current: () => void): Promise<RecurrenceDocument> {
+  reserve(id: string, expectedRevision: number, due: RecurrenceDue, now: number, current: () => true): Promise<RecurrenceDocument> {
     return this.change(id, expectedRevision, current, doc => {
       if (doc.pending || doc.state === "stopped" || due.kind === "daily" && doc.state !== "running") throw new Error("Recurrence cannot trigger")
       if (due.kind === "daily") {
@@ -105,7 +106,7 @@ export class NativeMissionRecurrenceStore {
     })
   }
 
-  recordAdmission(id: string, input: RecurrenceAdmission, now: number, current: () => void): Promise<RecurrenceDocument> {
+  recordAdmission(id: string, input: RecurrenceAdmission, now: number, current: () => true): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       const doc = await this.required(id), admission = recurrenceAdmissionSchema.parse(JSON.parse(canonicalAuthority(input)))
       const pending = this.exactPending(doc, admission)
@@ -122,7 +123,7 @@ export class NativeMissionRecurrenceStore {
 
   /** Caller supplies fresh authorized native terminal evidence, not model prose.
    * Unknown admissions first need exact recordAdmission reconciliation. */
-  finish(id: string, input: RecurrenceResult, now: number, current: () => void): Promise<RecurrenceDocument> {
+  finish(id: string, input: RecurrenceResult, now: number, current: () => true): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       const doc = await this.required(id), result = recurrenceResultSchema.parse(JSON.parse(canonicalAuthority(input)))
       const pending = this.exactPending(doc, result), admission = pending.admission
@@ -146,7 +147,7 @@ export class NativeMissionRecurrenceStore {
     if (!doc.pending || doc.pending.passage.id !== identity.passageID || doc.pending.passage.messageID !== identity.messageID) throw new Error("Recurrence passage conflict")
     return doc.pending
   }
-  private change(id: string, expected: number, current: () => void, update: (doc: RecurrenceDocument) => void) {
+  private change(id: string, expected: number, current: () => true, update: (doc: RecurrenceDocument) => void) {
     return this.exclusive(async () => {
       const doc = await this.required(id)
       if (!Number.isSafeInteger(expected) || doc.revision !== expected) throw new Error("Recurrence revision conflict")
@@ -164,15 +165,16 @@ export class NativeMissionRecurrenceStore {
     return runMissionExclusive(`recurrence-mutation:${this.projectToken}`, operation)
   }
   private key(id: string) { return `${this.prefix}${recurrenceIDSchema.parse(id)}` }
-  private async publish(doc: RecurrenceDocument, current: () => void): Promise<RecurrenceDocument> {
+  private async publish(doc: RecurrenceDocument, current: () => true): Promise<RecurrenceDocument> {
     const parsed = parseRecurrenceDocument(doc, this.projectID, this.projectCanonical, doc.id)
     const bytes = canonicalAuthority(parsed, RECURRENCE_MAX_BYTES)
-    current()
-    await this.storage.set(this.key(doc.id), JSON.parse(bytes) as MissionJsonValue, current)
+    const fence = () => assertSynchronousAuthorityGuard(current, "policy-unqualified")
+    fence()
+    await this.storage.set(this.key(doc.id), JSON.parse(bytes) as MissionJsonValue, fence)
     // A failed/partial/foreign publication never reaches external admission.
     const saved = await this.required(doc.id)
     if (canonicalAuthority(saved, RECURRENCE_MAX_BYTES) !== bytes) throw new Error("Recurrence publication unknown")
-    current()
+    fence()
     return saved
   }
 }
