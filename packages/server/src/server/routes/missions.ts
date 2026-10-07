@@ -5,15 +5,12 @@ import type { MissionListResponse, MissionMap, MissionSnapshot } from "../../mis
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
-import { isMissionCreateNoEffectError, readMissionMutationError } from "../../missions/rpc-errors"
+import { readMissionMutationError } from "../../missions/rpc-errors"
 import { projectMissionActivity } from "../../missions/activity"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { admitMissionCreationLocations } from "./mission-creation-admission"
+import { prepareMissionCreation, MissionCreationPreparationError } from "./mission-creation-pipeline"
 import { requestAdmission } from "../request-admission"
-import { stableToken } from "../../missions/journal"
-import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
-import { missionProfilesInputSchema, sameMissionProfiles, validateMissionProfiles } from "../../missions/playbook-profiles"
-import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
+import { MissionCreationHoldError } from "./mission-creation-holds"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -23,13 +20,6 @@ interface MissionRouteDeps {
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })
 const RequestID = z.string().trim().min(1).max(128)
-const CreateSchema = z.object({
-  objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "wayfinder", "pocock-fix-bug"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
-  directory: z.string().trim().min(1).max(4_096).optional(), requestId: RequestID,
-  profiles: missionProfilesInputSchema,
-  taskMode: missionTaskModeInputSchema.default("native"),
-}).strict()
 const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
   expectedRevision: z.number().int().positive(), requestId: RequestID,
@@ -100,66 +90,13 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
 
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply) => {
     const lifetime = requestAdmission(request, reply)
-    let admission: Awaited<ReturnType<typeof admitMissionCreationLocations>> | undefined
     try {
       lifetime.signal.throwIfAborted()
-      const parsed = CreateSchema.safeParse(request.body)
-      if (!parsed.success) return reply.code(400).send({ error: "Invalid mission creation request" })
-      try { validateMissionProfiles(parsed.data.template, parsed.data.profiles) }
-      catch { return reply.code(400).send({ error: "Invalid mission creation request" }) }
-      if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission creation unavailable" })
-      const setup = await mutationLocation(request.params.id, parsed.data.directory, deps, reply, true, lifetime)
-      if (!setup) return
-      const rpc = setup.client.rpc(CODENOMAD_MISSIONS_RPC)
-      const locations = [setup.options.location]
-      if (parsed.data.coordinatorSessionId) {
-        const coordinator = await lifetime.wait(setup.client.session.get({ sessionID: parsed.data.coordinatorSessionId }, { signal: lifetime.signal }))
-        if (coordinator.id !== parsed.data.coordinatorSessionId || coordinator.parentID || coordinator.projectID !== setup.projectID
-          || !await lifetime.wait(deps.workspaceManager.ownsLocation(request.params.id, coordinator.location, setup.client, lifetime.signal))) {
-          return reply.code(403).send({ error: "Coordinator session does not belong to workspace project" })
-        }
-        locations.push(coordinator.location)
-      }
-      if (!setup.connection) throw new Error("Missing mission creation connection")
-      const missionID = `msn_${stableToken(`${setup.projectID}\0${parsed.data.requestId}`, 24)}`
-      const sessionID = parsed.data.coordinatorSessionId ?? `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
-      const input = {
-        prepared: true,
-        requestID: parsed.data.requestId,
-        objective: parsed.data.objective,
-        ...(parsed.data.notes === undefined ? {} : { notes: parsed.data.notes }),
-        template: parsed.data.template,
-        taskMode: parsed.data.taskMode,
-        ...(parsed.data.profiles === undefined ? {} : { profiles: parsed.data.profiles }),
-        ...(parsed.data.coordinatorSessionId ? { coordinatorSessionID: parsed.data.coordinatorSessionId } : {}),
-        expectedCoordinatorLocation: locations.at(-1)!,
-      }
-      admission = await admitMissionCreationLocations(deps.workspaceManager, deps.worktreeDeletionFence,
-        request.params.id, setup.connection, locations, lifetime.signal, {
-          key: `human:${setup.projectID}:${missionID}`, workspaceID: request.params.id,
-          projectID: setup.projectID, missionID, sessionID, requestDigest: missionCreationDigest(input),
-        })
-      await admission.assertCurrent()
-      admission.dispatched()
-      // Do not abort/race the RPC after dispatch. A rejected transport is NOT a
-      // native denial/completion receipt: finally parks the original permit.
-      let result: { mission: MissionMap }
-      try { result = await rpc.create(input, setup.options) as { mission: MissionMap } }
-      catch (error) {
-        if (isMissionCreateNoEffectError(error, input.requestID, missionID)) admission.settled()
-        throw error
-      }
-      const coordinator = result.mission?.actors?.find(actor => actor.sessionId === sessionID && actor.kind === "coordinator")
-      if (result.mission?.id !== missionID || result.mission.projectID !== setup.projectID
-        || result.mission.coordinatorSessionId !== sessionID || !coordinator
-        || !sameLocation(coordinator.location, input.expectedCoordinatorLocation)
-        || !sameMissionProfiles(result.mission.profiles, input.profiles)
-        || (result.mission.taskMode ?? "native") !== input.taskMode) throw new MissionCreationHoldError("creation-uncertain")
-      admission.settled()
-      await admission.assertCurrent()
-      return { mission: result.mission }
+      const creation = await prepareMissionCreation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
+        workspaceID: request.params.id, request: request.body, signal: lifetime.signal, wait: lifetime.wait })
+      return await creation.execute()
     } catch (error) {
-      if (admission?.uncertain) error = new MissionCreationHoldError("creation-uncertain")
+      if (error instanceof MissionCreationPreparationError) return reply.code(error.status).send({ error: error.message })
       if (error instanceof MissionCreationHoldError) {
         return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
       }
@@ -167,7 +104,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
         return reply.code(409).send({ error: "Worktree deletion is in progress" })
       }
       return mutationError(reply, error)
-    } finally { admission?.release(); lifetime.dispose() }
+    } finally { lifetime.dispose() }
   })
 
   app.patch<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
@@ -224,12 +161,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   })
 }
 
-async function mutationLocation(workspaceID: string, requestedDirectory: string | undefined, deps: MissionRouteDeps, reply: import("fastify").FastifyReply,
-  creation = false, lifetime?: ReturnType<typeof requestAdmission>) {
-  const wait = lifetime?.wait ?? (<T>(promise: Promise<T>) => promise)
-  const signal = lifetime?.signal
-  const options = (location: { directory: string; workspaceID?: string }) => lifetime
-    ? { ...locationRequestOptions(location), signal } : locationRequestOptions(location)
+async function mutationLocation(workspaceID: string, requestedDirectory: string | undefined, deps: MissionRouteDeps, reply: import("fastify").FastifyReply) {
   if (!deps.workspaceManager.get(workspaceID)) {
     reply.code(404).send({ error: "Workspace unavailable" })
     return
@@ -240,39 +172,25 @@ async function mutationLocation(workspaceID: string, requestedDirectory: string 
     return
   }
   try {
-    signal?.throwIfAborted()
-    const connection = creation ? await wait(deps.workspaceManager.getSharedServiceConnection(workspaceID)) : undefined
-    if (creation && !connection) throw new Error("Missing mission creation connection")
-    const client = connection?.client ?? await wait(deps.workspaceManager.getSharedServiceClient())
-    let location = requestedDirectory ? { directory: requestedDirectory } : base
-    if (!await wait(deps.workspaceManager.ownsLocation(workspaceID, location, client, signal))) {
+    const client = await deps.workspaceManager.getSharedServiceClient()
+    const location = requestedDirectory ? { directory: requestedDirectory } : base
+    if (!await deps.workspaceManager.ownsLocation(workspaceID, location, client)) {
       reply.code(403).send({ error: "Mission directory does not belong to workspace" })
       return
     }
-    if (creation) {
-      const directory = await wait(deps.workspaceManager.getServiceDirectoryForPath(workspaceID, location.directory))
-      if (!directory) throw new Error("Missing effective mission location")
-      location = { directory }
-    }
-    const resolved = await wait(client.location.get({ location: { directory: location.directory } }, options(location)))
-    if (creation && (!sameLocation(location, resolved)
-      || !await wait(deps.workspaceManager.ownsLocation(workspaceID, resolved, client, signal)))) {
-      reply.code(403).send({ error: "Native mission location differs from owned directory" })
-      return
-    }
-    const baseResolved = await wait(client.location.get({ location: { directory: base.directory } }, options(base)))
+    const resolved = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))
+    const baseResolved = await client.location.get({ location: { directory: base.directory } }, locationRequestOptions(base))
     if (resolved.project.id !== baseResolved.project.id) {
       reply.code(403).send({ error: "Mission directory belongs to another project" })
       return
     }
-    const inventory = await wait(client.plugin.list({ location: { directory: location.directory } }, options(location)))
+    const inventory = await client.plugin.list({ location: { directory: location.directory } }, locationRequestOptions(location))
     const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
     if (!plugin || plugin.state.status !== "active") {
       reply.code(503).send({ error: "Mission plugin unavailable" })
       return
     }
-    signal?.throwIfAborted(); connection?.assertCurrent()
-    return { client, connection, projectID: resolved.project.id, options: { location: { directory: location.directory }, ...locationRequestOptions(location) } }
+    return { client, projectID: resolved.project.id, options: { location: { directory: location.directory }, ...locationRequestOptions(location) } }
   } catch {
     reply.code(503).send({ error: "Mission plugin unavailable" })
     return

@@ -1,9 +1,10 @@
 import type { LocationRef } from "@opencode/client"
-import { sameLocation } from "../../opencode/compatibility/location"
+import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { MissionControlError } from "../../missions/control-error"
+import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { holdMissionCreation, type MissionCreationOperation } from "./mission-creation-holds"
 
 export type MissionCreationManager = Pick<WorkspaceManager, "get" | "ownsLocation" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath">
@@ -42,4 +43,52 @@ export async function admitMissionCreationLocations(manager: MissionCreationMana
   catch (error) { release(); throw error }
   return { release, assertCurrent, dispatched: () => hold?.dispatched(), settled: () => hold?.settled(),
     get uncertain() { return hold?.uncertain ?? false } }
+}
+
+/** Shared ordinary root preparation. Reads only: callers retain the SAME permit
+ * through native creation/publication, and must recheck their durable contract
+ * at the effect. This does not authorize a prompt, Play or recurrence dispatch. */
+export async function prepareMissionRootCreationLocation(input: {
+  manager: MissionCreationManager; fence: WorktreeDeletionFence; workspaceID: string
+  connection: ServiceConnection; projectID: string; locations: readonly LocationRef[]
+  rootLocation: LocationRef; signal: AbortSignal; operation: MissionCreationOperation
+  assertContract(): Promise<void>
+}) {
+  const { manager, connection, workspaceID, signal } = input
+  if (!input.locations.some(location => sameLocation(location, input.rootLocation))) {
+    throw new MissionControlError("Mission root is outside creation admission", "foreign-session")
+  }
+  const admission = await admitMissionCreationLocations(manager, input.fence, workspaceID, connection,
+    input.locations, signal, input.operation)
+  try {
+    const assertCurrent = async () => {
+      await input.assertContract()
+      await admission.assertCurrent()
+    }
+    await assertCurrent()
+    const directory = await manager.getServiceDirectoryForPath(workspaceID, input.rootLocation.directory)
+    if (!directory) throw new MissionControlError("Missing effective mission root location", "foreign-session")
+    const resolved = await connection.client.location.get({ location: { directory } }, {
+      ...locationRequestOptions(input.rootLocation), signal,
+    })
+    if (resolved.project.id !== input.projectID || !sameLocation(resolved, { directory })
+      || !await manager.ownsLocation(workspaceID, resolved, connection.client, signal)) {
+      throw new MissionControlError("Foreign effective mission root location", "foreign-session")
+    }
+    await assertCurrent()
+    const effect = async <T>(run: () => Promise<T>, beforeEffect?: () => Promise<() => void>): Promise<T> => {
+      await assertCurrent()
+      const current = await beforeEffect?.()
+      // No await between the final authority fence, marking unknown-effect
+      // retention and the actual native write. Never race/abort its settlement.
+      signal.throwIfAborted(); connection.assertCurrent()
+      if (current) assertSynchronousAuthorityGuard(() => {
+        const result: unknown = current()
+        return (result === undefined ? true : result) as true
+      }, "policy-unqualified")
+      admission.dispatched()
+      return run()
+    }
+    return { admission, assertCurrent, effect, location: { directory } }
+  } catch (error) { admission.release(); throw error }
 }

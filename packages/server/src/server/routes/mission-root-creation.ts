@@ -9,7 +9,7 @@ import { missionIsRunning } from "../../missions/lifecycle-model"
 import { stableToken } from "../../missions/journal"
 import { matchesExecution } from "../../missions/execution"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
-import { admitMissionCreationLocations, type MissionCreationManager } from "./mission-creation-admission"
+import { prepareMissionRootCreationLocation, type MissionCreationManager } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
 
 const schema = z.object({ kind: z.literal("create-root"), input: z.object({
@@ -52,26 +52,21 @@ export async function createManagedMissionRoot(manager: Manager, fence: Worktree
     return { actor, task }
   }
   const contract = await readContract()
-  const admission = await admitMissionCreationLocations(manager, fence, workspace.id, connection,
-    [coordinator.location, contract.actor.location], signal, {
+  const { admission, assertCurrent, effect, location } = await prepareMissionRootCreationLocation({
+    manager, fence, workspaceID: workspace.id, connection, projectID: coordinator.projectID,
+    locations: [coordinator.location, contract.actor.location], rootLocation: contract.actor.location, signal,
+    assertContract: async () => {
+      if (!isDeepStrictEqual(await readContract(), contract)) throw new Error("Managed root contract changed")
+    }, operation: {
       key: `managed:${coordinator.projectID}:${input.missionID}:${input.taskKey}`, workspaceID: workspace.id,
       projectID: coordinator.projectID, missionID: input.missionID, sessionID: contract.actor.sessionId,
       requestDigest: missionCreationDigest({ coordinatorID, input, contract }),
-    })
+    },
+  })
   try {
-    const assertCurrent = async () => {
-      if (!isDeepStrictEqual(await readContract(), contract)) throw new Error("Managed root contract changed")
-      await admission.assertCurrent()
-    }
-    await assertCurrent()
-    const directory = await manager.getServiceDirectoryForPath(workspace.id, contract.actor.location.directory)
-    if (!directory) throw new Error("Missing effective managed root location")
-    const resolved = await client.location.get({ location: { directory } }, { ...locationRequestOptions(contract.actor.location), signal })
-    if (resolved.project.id !== coordinator.projectID || !sameLocation(resolved, { directory })
-      || !await manager.ownsLocation(workspace.id, resolved, client, signal)) throw new Error("Foreign effective managed root location")
     const nativeInput = {
       id: contract.actor.sessionId, title: contract.actor.title || `Mission · ${contract.task.role}: ${contract.task.title}`,
-      location: { directory },
+      location,
       metadata: { "codenomad.mission": { version: MISSION_SCHEMA_VERSION, missionID: input.missionID,
         kind: "actor", role: contract.task.role } }, ...contract.task.execution,
     }
@@ -83,11 +78,9 @@ export async function createManagedMissionRoot(manager: Manager, fence: Worktree
     try { session = await client.session.get({ sessionID: nativeInput.id }, { signal }) }
     catch (error) {
       if (!isSessionNotFoundError(error)) throw error
-      await assertCurrent()
-      admission.dispatched()
       // No abort race after dispatch. Transport rejection parks this SAME permit;
       // it is not a receipt that the already-received remote handler stopped.
-      session = await client.session.create(nativeInput)
+      session = await effect(() => client.session.create(nativeInput))
     }
     if (session.id !== nativeInput.id || session.parentID || session.projectID !== coordinator.projectID
       || !sameLocation(session.location, nativeInput.location) || !matchesExecution(contract.task.execution, session)

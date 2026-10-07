@@ -8,6 +8,7 @@ import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { MISSION_MAX_MISSIONS } from "../../missions/model"
+import { prepareMissionCreation } from "./mission-creation-pipeline"
 
 const directory = "C:/private-fixture/worktree"
 const physical = "C:/private-fixture/physical"
@@ -392,4 +393,71 @@ test("managed creation uses the authenticated desktop bridge without generic nat
     held.resolve(); await deletion
     await delegate(f); assert.equal(f.creates, 1)
   } finally { held.resolve(); await f.close() }
+})
+
+test("ordinary HTTP and extracted creation execute the same native catalog/root/journal policy without Play", async () => {
+  for (const path of ["http", "pipeline"] as const) {
+    const f = await fixture()
+    try {
+      const request = { ...payload, profiles: { coordinator: { agent: "fixture" } }, taskMode: "independent" }
+      let mission
+      if (path === "http") {
+        const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload: request })
+        assert.equal(response.statusCode, 200)
+        mission = response.json().mission
+      } else {
+        const prepared = await prepareMissionCreation({ manager: f.manager, fence: f.fence, workspaceID: "workspace",
+          request, signal: new AbortController().signal })
+        // Neither request aliases nor inspection copies can retarget the effect.
+        request.objective = "Changed caller alias"
+        prepared.request.objective = "Changed inspection copy"
+        prepared.request.profiles!.coordinator!.agent = "wrong"
+        mission = (await prepared.execute()).mission
+        await assert.rejects(prepared.execute(), /released/)
+      }
+      assert.equal(mission.objective, payload.objective)
+      assert.equal(mission.runState, "prepared")
+      assert.equal(mission.taskMode, "independent")
+      assert.equal(mission.profiles.coordinator.agent, "fixture")
+      assert.equal(f.rpcCreates, 1); assert.equal(f.creates, 1); assert.equal(f.writes, 1)
+      await f.fence.run(physical, [physical], async () => {})
+    } finally { await f.close() }
+  }
+})
+
+test("extracted creation runs the exact late passage fence before its only native RPC", async () => {
+  const f = await fixture()
+  try {
+    const prepared = await prepareMissionCreation({ manager: f.manager, fence: f.fence, workspaceID: "workspace",
+      request: payload, signal: new AbortController().signal })
+    await assert.rejects(prepared.execute(async () => () => { throw new Error("revoked") }), /policy-unqualified/)
+    assert.equal(f.rpcCreates, 0); assert.equal(f.creates, 0); assert.equal(f.writes, 0)
+    await f.fence.run(physical, [physical], async () => {})
+  } finally { await f.close() }
+})
+
+test("concurrent execution and disposal cannot release the original creation owner's permit", async () => {
+  const f = await fixture(), gate = f.delayCreation()
+  try {
+    const prepared = await prepareMissionCreation({ manager: f.manager, fence: f.fence, workspaceID: "workspace",
+      request: payload, signal: new AbortController().signal })
+    const original = f.track(prepared.execute())
+    await assert.rejects(prepared.execute(), /already claimed/)
+    await waitForGate(f.creationStarted, original, "original concurrent execution")
+    prepared.dispose()
+    let evacuated = false
+    const deletion = f.track(f.fence.run(physical, [physical], async () => { evacuated = true }))
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(evacuated, false)
+    gate.resolve()
+    const result = await original
+    assert.equal(result.mission.runState, "prepared")
+    await deletion
+    assert.equal(evacuated, true)
+    assert.equal(f.rpcCreates, 1); assert.equal(f.creates, 1); assert.equal(f.writes, 1)
+    // Proven success released the original registry entry, not a replacement.
+    const retry = await prepareMissionCreation({ manager: f.manager, fence: f.fence, workspaceID: "workspace",
+      request: payload, signal: new AbortController().signal })
+    retry.dispose()
+  } finally { gate.resolve(); await f.close() }
 })
