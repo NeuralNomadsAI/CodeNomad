@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "扩展…",
+  "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",
   "panelExtensions.catalog.loading": "正在加载官方目录…",

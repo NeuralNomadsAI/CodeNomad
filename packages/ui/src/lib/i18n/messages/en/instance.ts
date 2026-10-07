@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "Extensions…",
+  "panelExtensions.empty": "No extensions installed.",
   "panelExtensions.catalog.title": "Available online",
   "panelExtensions.catalog.search": "Search extensions",
   "panelExtensions.catalog.loading": "Loading the official catalogue…",

@@ -1,11 +1,16 @@
 # External right-panel extensions — API 1
 
 CodeNomad panel extensions are independently distributed **UI addons**, not
-OpenCode plugins. Open **Customize right panel → Panel extensions → Available
+OpenCode plugins. Open **Customize right panel → Extensions… → Available
 online** to browse/search the official catalogue, choose an addon, review the
 downloaded package and confirm installation. No manual ZIP download, CodeNomad
 rebuild or shared OpenCode service restart is involved. Manual ZIP installation
 remains available for offline/unlisted packages.
+
+Customization contains only a one-line launcher. Management opens in a separate,
+non-modal, viewport-bounded window: compact installed/online lists, source details
+on hover/focus, and explicit trust/removal confirmations. Closing, changing the
+project or leaving its view disposes the manager; no automatic mutation replay.
 
 The official index lives in
 [`NeuralNomadsAI/CodeNomad-Extensions`](https://github.com/NeuralNomadsAI/CodeNomad-Extensions).

@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "הרחבות…",
+  "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",
   "panelExtensions.catalog.loading": "טוען את הקטלוג הרשמי…",

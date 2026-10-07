@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "拡張機能…",
+  "panelExtensions.empty": "インストール済みの拡張機能はありません。",
   "panelExtensions.catalog.title": "オンラインで利用可能",
   "panelExtensions.catalog.search": "拡張機能を検索",
   "panelExtensions.catalog.loading": "公式カタログを読み込み中…",

@@ -1,4 +1,6 @@
 export const instanceMessages = {
+  "panelExtensions.manage": "Uzantılar…",
+  "panelExtensions.empty": "Yüklü uzantı yok.",
   "panelExtensions.catalog.title": "Çevrimiçi kullanılabilir",
   "panelExtensions.catalog.search": "Uzantı ara",
   "panelExtensions.catalog.loading": "Resmî katalog yükleniyor…",
