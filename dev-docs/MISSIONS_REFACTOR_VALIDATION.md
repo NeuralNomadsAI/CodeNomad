@@ -735,6 +735,20 @@ unqualified. Historical results below retain their original scope and failures.
   One distinct corrected-source native run is authorized after hash validation;
   it is not a replay of the old admission (none occurred). No park/cold acceptance
   is claimed before its receipt and review; the original negative stays unchanged.
+  The distinct corrected-source run then closes **negative in 61.4 s** with exact
+  hashes unchanged: **1 prompt ACK / 1 healthy hook entry / 1 charged Job attempt /
+  0 Job ACKs**. Inner helper-refusal cause is not captured; admission remains
+  **unknown/no-replay**, not proven refused. **0 self-interruptions/cold transitions/
+  model-HTTP markers** are observed; provider request count was not saved and is
+  not inferred zero. Daemon **4596** same-handle exit, watcher **42988** close,
+  sentinel **37164** preservation/close and worker **42024** fork-close/exit **1**
+  are witnessed; parent writes drain, no supervisor exit-handle ACK is claimed.
+  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-2iSIoG/receipt.json`,
+  SHA-256 `c8382b424ec99b784d256def9722e1456170360390e139fb5217132dd6cc1855`;
+  review: `.../park-corrected-native-execution-f7EdCk/independent-runtime-review.json`.
+  Retained-source/log diagnosis and bounded private cause instrumentation proceed
+  without another native run. Qualified RPC Job adoption does not by itself
+  qualify the awaited primary-hook context. Parking/cold continuity remain open.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture

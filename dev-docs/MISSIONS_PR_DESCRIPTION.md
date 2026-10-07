@@ -346,6 +346,10 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   **37,8 s**, aucun prompt/Job/modèle, cleanup vérifié. Correction revue **6 checks
   sans admission native** ; un run distinct du candidat figé autorisé, reprise
   froide encore non qualifiée.
+  Ce run corrigé clôture négatif en **61,4 s** : 1 prompt acquitté, hook sain atteint,
+  **1 tentative Job chargée / 0 ACK**. Admission **inconnue, sans replay** ; aucune
+  interruption/transition froide prouvée. Compte provider non enregistré, pas un
+  zéro inventé. Cleanup vérifié ; cause interne à diagnostiquer avant tout nouvel essai.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
