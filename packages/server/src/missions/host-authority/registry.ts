@@ -3,6 +3,7 @@ import type { AuthorityIntent } from "../authority-protocol"
 import { authorityDigest, canonicalAuthority, matchesAuthorityCompletion } from "../authority-protocol"
 import type { AuthorityOperationResult } from "../authority-core"
 import { deny, matchBinding, type HostDocument } from "./model"
+import type { MissionLifecycleOperation } from "../lifecycle-model"
 
 /** A protected mirror, NOT a second Mission journal/dispatcher. Native core owns
  * revision/epoch/receipt/capacity semantics; host owns denial and admission fences. */
@@ -21,6 +22,19 @@ export interface NativeMirrorObservation {
  * The route/plugin owner supplies this; native state JSON alone is not a proof. */
 export interface NativeAuthorityMirrorReader {
   read(body: AuthorityIntent): Promise<NativeMirrorObservation>
+  /** Authenticated read-only restart reconciliation; never adoption or Play.
+   * Optional implementations fail closed rather than borrowing human admission. */
+  restore?(grant: AuthorityGrant, signal: AbortSignal): Promise<NativeGrantObservation>
+}
+export interface NativeGrantObservation {
+  grant: AuthorityGrant | null
+  revision: number
+  terminal: "stopped" | "deleted" | null
+  pendingRequestIDs: readonly string[]
+  status: "active" | "completed" | "failed" | "stopped"
+  runState: "prepared" | "running" | "paused" | "stopped"
+  controlPending: boolean
+  control: Pick<MissionLifecycleOperation, "id" | "missionID" | "requestID" | "action" | "expectedRevision" | "targets" | "pending" | "completedRevision">
 }
 
 export function stageMirror(doc: HostDocument, body: AuthorityIntent): void {

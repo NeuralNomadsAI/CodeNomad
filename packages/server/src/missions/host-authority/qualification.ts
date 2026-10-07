@@ -29,16 +29,19 @@ export type ManagedAuthorityObservation = z.infer<typeof observationSchema>
 export interface PrivateManagedAuthorityBridge {
   /** Use readNativeDiscoveryBoundary on the authenticated connected daemon.
    * Bootstrap environment/CLI debug paths are not discovery authority. */
-  readDiscoveryBoundary(): Promise<{ globalDirectory: string; configDigest: string }>
+  readDiscoveryBoundary(signal?: AbortSignal): Promise<{ globalDirectory: string; configDigest: string }>
   handshake(input: { nonce: string; descriptor: HostAuthorityDescriptor; binding: AuthorityBinding;
-    provisioningGeneration: string; signerDigest: string }): Promise<unknown>
+    provisioningGeneration: string; signerDigest: string }, signal?: AbortSignal): Promise<unknown>
   verify(proof: unknown): ManagedAuthorityObservation
   assertCurrent(proof: unknown, observationDigest: string): true
 }
 export interface OwnedAuthorityMutationGate {
   /** Real WorkspaceManager/connection/session-send/family/deletion admission.
    * Root identities must be physical observations, never caller path prefixes. */
-  withOwned<T>(binding: AuthorityBinding, operation: (assertCurrent: () => true) => Promise<T>): Promise<T>
+  withOwned<T>(binding: AuthorityBinding, operation: (assertCurrent: () => true) => Promise<T>, signal?: AbortSignal): Promise<T>
+  /** Restoration may observe only an already authenticated connection and
+   * registered roots. No service start, plugin provisioning or inventory scan. */
+  withExisting?<T>(binding: AuthorityBinding, operation: (assertCurrent: () => true) => Promise<T>, signal: AbortSignal): Promise<T>
 }
 export interface QualificationLease {
   readonly digest: string
@@ -46,7 +49,21 @@ export interface QualificationLease {
   readonly provisioningGeneration: string
   readonly signerDigest: string
   readonly bindingDigest: string
+  readonly daemonStorageID: string
   assertCurrent(): true
+}
+
+/** Only read-only preparation may abandon an observer. Never race a native
+ * mutation/publication against cancellation and release its admission early. */
+export async function observeAuthorityRead<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  let abort!: () => void
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason)
+    if (signal.aborted) abort()
+    else signal.addEventListener("abort", abort, { once: true })
+  })
+  try { const result = await Promise.race([pending, cancelled]); signal.throwIfAborted(); return result }
+  finally { signal.removeEventListener("abort", abort) }
 }
 
 /** No independent login/session registry. AuthManager remains the sole HTTP
@@ -76,24 +93,42 @@ export class HostAuthorityAdmissions {
       const result = await operation(fence)
       fence()
       return result
-    })
+    }, signal)
   }
 
-  async qualify(binding: AuthorityBinding, humanFence: () => true, signer: { generation: string; signerDigest: string }): Promise<QualificationLease> {
+  /** Existing protected decisions only; the store must validate the saved grant.
+   * This supplies ownership, not permission to generate/sign/adopt new work. */
+  async existing<T>(binding: AuthorityBinding, operation: (fence: () => true) => Promise<T>, signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted()
+    if (!this.owned.withExisting) deny("existing-ownership-unavailable")
+    if (binding.profileID !== this.descriptor.scope.key || binding.executionHost !== this.descriptor.executionHost) deny("scope-mismatch")
+    return this.owned.withExisting(binding, async ownedFence => {
+      const fence = (): true => { signal.throwIfAborted(); return assertSynchronousAuthorityGuard(ownedFence, "policy-unqualified") }
+      fence()
+      const result = await operation(fence)
+      fence()
+      return result
+    }, signal)
+  }
+
+  async qualify(binding: AuthorityBinding, currentFence: () => true, signer: { generation: string; signerDigest: string }, origin?: AbortSignal): Promise<QualificationLease> {
+    const signal = origin ? AbortSignal.any([origin, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
+    signal.throwIfAborted()
     if (!this.bridge) deny("native-qualification-unavailable")
     const bridge = this.bridge
     const readDiscovery = async () => {
-      try { return await bridge.readDiscoveryBoundary() }
+      try { return await observeAuthorityRead(bridge.readDiscoveryBoundary(signal), signal) }
       catch { deny("native-observation-unavailable") }
     }
     const nonce = randomUUID()
-    humanFence()
+    currentFence()
     const discovery = await readDiscovery()
-    humanFence()
+    currentFence()
     let proof: unknown
-    try { proof = await bridge.handshake({ nonce, descriptor: this.descriptor, binding, provisioningGeneration: signer.generation, signerDigest: signer.signerDigest }) }
+    try { proof = await observeAuthorityRead(bridge.handshake({ nonce, descriptor: this.descriptor, binding,
+      provisioningGeneration: signer.generation, signerDigest: signer.signerDigest }, signal), signal) }
     catch { deny("native-observation-unavailable") }
-    humanFence()
+    currentFence()
     let observation: ManagedAuthorityObservation
     try { observation = observationSchema.parse(bridge.verify(proof)) } catch { deny("native-proof-invalid") }
     if (observation.nonce !== nonce || observation.backendOwner.pid !== process.pid
@@ -102,14 +137,16 @@ export class HostAuthorityAdmissions {
     matchBinding({ ...binding, ...observation.writer }, binding)
     assertExplicitQuiescence(observation.quiescence, observation.writer)
     const freshDiscovery = await readDiscovery()
-    humanFence()
+    currentFence()
     if (canonicalAuthority(discovery) !== canonicalAuthority(freshDiscovery) || observation.quiescence.discoveryRoot !== freshDiscovery.globalDirectory
       || observation.quiescence.configDigest !== freshDiscovery.configDigest) deny("native-discovery-changed")
     const immutable = JSON.parse(canonicalAuthority(observation)) as ManagedAuthorityObservation
     const proofDigest = authorityDigest(immutable)
+    // Qualification's preparation deadline does not expire an accepted grant;
+    // the private retained owner/channel is the sustained admission fence.
     const assertCurrent = (): true => assertSynchronousAuthorityGuard(() => bridge.assertCurrent(proof, proofDigest), "policy-unqualified")
-    assertCurrent(); humanFence()
+    assertCurrent(); currentFence()
     return Object.freeze({ digest: proofDigest, hostGeneration: immutable.hostGeneration, provisioningGeneration: immutable.provisioningGeneration,
-      signerDigest: immutable.signerDigest, bindingDigest: authorityDigest(binding), assertCurrent })
+      signerDigest: immutable.signerDigest, bindingDigest: authorityDigest(binding), daemonStorageID: immutable.writer.daemonStorageID, assertCurrent })
   }
 }

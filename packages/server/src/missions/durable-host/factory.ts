@@ -28,7 +28,7 @@ export interface QualifiedNativeMissionChannel {
 export interface ProtectedNativeMissionHostFactory {
   open(): Promise<QualifiedNativeMissionChannel>
 }
-type Manager = AdmissionManager & Pick<WorkspaceManager, "getHostPathForServicePath">
+type Manager = AdmissionManager & Pick<WorkspaceManager, "getHostPathForServicePath" | "getExistingSharedServiceConnection">
 export interface CanonicalDurableHostDependencies {
   nativeHost: ProtectedNativeMissionHostFactory; auth: AuthManager; manager: Manager; workspaceID: string
   fence: WorktreeDeletionFence; familyClaims: readonly HeldFamilyClaim[]
@@ -67,7 +67,9 @@ export function assembleCanonicalDurableMissionsHost(input: CanonicalDurableHost
     assertManagedIncarnation: assertNativeCurrent,
     readSigners: async () => { assertNativeCurrent(); const signers = await authority.readSigners(); assertNativeCurrent(); return signers },
     assertSignerCurrent: signer => { assertNativeCurrent(); return authority.assertSignerCurrent(signer) },
-    resolveRoot: location => roots.resolve(location),
+    // Native state/receipt observation must not start or provision a daemon.
+    // Explicit human admission acquires its connection before reaching here.
+    resolveRoot: location => roots.resolveExisting(location, AbortSignal.timeout(15_000)),
     transport: createCanonicalMissionTransport({ ...input, authority, roots, assertNativeCurrent }),
   }
   const actions = createMissionAuthorityActions({ ...input, authority, native, roots, scope, assertNativeCurrent })

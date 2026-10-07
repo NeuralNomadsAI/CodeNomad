@@ -7,10 +7,11 @@ import type { AuthorityGrant } from "../authority-store"
 import { assertSynchronousAuthorityGuard } from "../authority-synchronous"
 import { deny, matchBinding, publicSigner, type HostDocument } from "./model"
 import { physical, ProtectedAuthorityFiles } from "./private-files"
-import { HostAuthorityAdmissions, type QualificationLease } from "./qualification"
+import { HostAuthorityAdmissions, observeAuthorityRead, type QualificationLease } from "./qualification"
 import { acceptMirror, assertMirror, stageMirror, type HostAuthorityRegistry, type NativeAuthorityMirrorReader } from "./registry"
 import { parseDerivedCallBody, derivedSigningBytes, assertVerifiedDerivedInvocation, authenticateDerivedCall,
   type DerivedInvocationLease, type SignedDerivedCall } from "../derived-call-protocol"
+import { controlOperationID } from "../receipt-identity"
 
 const targetSchema = authorityBindingSchema.omit({ authorityID: true, keyID: true, profileID: true, executionHost: true })
 export type HostAuthorityTarget = import("zod").infer<typeof targetSchema>
@@ -54,7 +55,8 @@ export class ProtectedHostAuthority implements HostAuthorityRegistry {
         const old = await this.required()
         if (old.revision !== expectedRevision || !old.revoked || old.pending || old.mirror?.grant.state !== "revoked") deny("rotation-unqualified")
         if (canonicalAuthority(targetSchema.parse(parsed)) !== canonicalAuthority(targetSchema.parse(Object.fromEntries(Object.keys(targetSchema.shape).map(key => [key, old.manifest[key as keyof AuthorityBinding]]))))) deny("binding-mismatch")
-        rotation = await this.admissions.qualify(old.manifest, humanFence, old)
+        rotation = await this.admissions.qualify(old.manifest, humanFence, old, signal)
+        if (!old.daemonStorageID || old.daemonStorageID !== rotation.daemonStorageID) deny("native-storage-mismatch")
         rotationDigest = authorityDigest(old)
       }
       const key = generateKeyPairSync("ed25519")
@@ -65,7 +67,8 @@ export class ProtectedHostAuthority implements HostAuthorityRegistry {
           storageIdentity: physical(this.files.directory), installationID: current?.installationID ?? randomUUID(), generation: randomUUID(), manifest: binding,
           publicKey: key.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
           privateKey: key.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"), signerDigest: authoritySignerDigest(key.publicKey),
-          revoked: false, epochFloor: current?.mirror?.grant.epoch ?? 0, anchor: null, mirror: null, pending: null }
+          revoked: false, epochFloor: current?.mirror?.grant.epoch ?? 0, anchor: null,
+          daemonStorageID: current?.daemonStorageID ?? null, mirror: null, pending: null }
       }, () => { humanFence(); rotation?.assertCurrent() }, true)
       this.lease = undefined
       return this.snapshot(document)
@@ -87,6 +90,57 @@ export class ProtectedHostAuthority implements HostAuthorityRegistry {
     return [publicSigner(fresh)]
   }
 
+  /** Requalify only an already accepted Play after a backend restart. No new
+   * grant, key, epoch, signature, prompt or human-auth substitution is issued.
+   * A missing/paused/revoked/ambiguous mirror requires explicit human action. */
+  async restore(signal: AbortSignal = AbortSignal.timeout(15_000)): Promise<HostAuthoritySnapshot> {
+    let publishedLease: QualificationLease | undefined
+    const before = await this.required(), mirror = before.mirror
+    if (!this.native?.restore || before.revoked || before.pending || !before.anchor || !before.daemonStorageID || !mirror
+      || mirror.disabled || mirror.grant.state !== "active" || !mirror.grant.sendsEnabled) deny("restoration-blocked")
+    const native = this.native
+    try {
+      return await this.admissions.existing(before.manifest, async ownedFence => {
+        const lease = await this.admissions.qualify(before.manifest, ownedFence, before, signal)
+        if (before.daemonStorageID !== lease.daemonStorageID) deny("native-storage-mismatch")
+        const readNative = async () => {
+          const observation = await observeAuthorityRead(native.restore!(structuredClone(mirror.grant), signal), signal)
+          ownedFence(); lease.assertCurrent()
+          const control = observation.control
+          if (observation.terminal || observation.pendingRequestIDs.length || observation.controlPending
+            || observation.status !== "active" || observation.runState !== "running"
+            || !Number.isSafeInteger(observation.revision) || observation.revision < mirror.nativeRevision
+            || canonicalAuthority(observation.grant) !== canonicalAuthority(mirror.grant)
+            || !control || control.action !== "start" || control.missionID !== mirror.grant.missionID
+            || control.id !== controlOperationID(control.missionID, control.requestID)
+            || !Array.isArray(control.pending) || control.pending.length || !Array.isArray(control.targets) || !control.targets.length
+            || !control.targets.every(target => before.manifest.roots.some(root => root.directory === target.location.directory))
+            || !Number.isSafeInteger(control.completedRevision) || control.completedRevision! <= control.expectedRevision
+            || control.completedRevision! > observation.revision) deny("restoration-mismatch")
+          return observation
+        }
+        const first = await readNative(), second = await readNative()
+        if (canonicalAuthority(first) !== canonicalAuthority(second)) deny("native-observation-changed")
+        const document = await this.files.cas(before.revision, async current => {
+          if (!current || authorityDigest(current) !== authorityDigest(before)) deny("restoration-changed")
+          const next = structuredClone(current)
+          next.anchor = lease.digest; next.revision++
+          return next
+        }, () => {
+          ownedFence(); lease.assertCurrent()
+          if (authorityDigest(this.files.readSync(true)) !== authorityDigest(before)) deny("restoration-changed")
+        })
+        ownedFence(); lease.assertCurrent()
+        if (authorityDigest(this.files.readSync()) !== authorityDigest(document)) deny("restoration-changed")
+        publishedLease = lease; this.lease = lease
+        return this.snapshot(document)
+      }, signal)
+    } catch (error) {
+      if (publishedLease && this.lease === publishedLease) this.lease = undefined
+      throw error
+    }
+  }
+
   /** Typed product allowlist. Durable protected staging happens BEFORE a
    * signature leaves the host. A lost reply never frees/replays its reservation. */
   async sign(request: FastifyRequest, input: unknown, expectedRevision: number, signal?: AbortSignal): Promise<SignedAuthorityIntent> {
@@ -98,12 +152,17 @@ export class ProtectedHostAuthority implements HostAuthorityRegistry {
       matchBinding(body, before.manifest)
       if (before.revoked) deny("signer-revoked")
       if (before.revision !== expectedRevision) deny("revision-conflict")
-      const lease = await this.admissions.qualify(before.manifest, humanFence, before)
+      // An old accepted mirror is not a first-time staged key. Unknown storage
+      // requires explicit adoption (which disables sends until separate Play).
+      if (!before.daemonStorageID && (before.anchor || before.mirror || before.epochFloor)
+        && body.method !== "adopt") deny("native-storage-mismatch")
+      const lease = await this.admissions.qualify(before.manifest, humanFence, before, signal)
+      if (before.daemonStorageID && before.daemonStorageID !== lease.daemonStorageID) deny("native-storage-mismatch")
       const doc = await this.files.cas(expectedRevision, async current => {
         if (!current || authorityDigest(current) !== authorityDigest(before)) deny("signer-changed")
         const next = structuredClone(current)
         stageMirror(next, body)
-        next.anchor = lease.digest; next.revision++
+        next.anchor = lease.digest; next.daemonStorageID = lease.daemonStorageID; next.revision++
         return next
       }, () => { humanFence(); lease.assertCurrent() })
       this.lease = lease
@@ -226,7 +285,7 @@ export class ProtectedHostAuthority implements HostAuthorityRegistry {
     if (!doc.anchor || !this.lease || doc.anchor !== this.lease.digest) deny("native-qualification-unavailable")
     if (doc.revoked) deny("signer-revoked")
     if (doc.generation !== this.lease.provisioningGeneration || doc.signerDigest !== this.lease.signerDigest
-      || authorityDigest(doc.manifest) !== this.lease.bindingDigest) deny("signer-changed")
+      || authorityDigest(doc.manifest) !== this.lease.bindingDigest || doc.daemonStorageID !== this.lease.daemonStorageID) deny("signer-changed")
     return assertSynchronousAuthorityGuard(this.lease.assertCurrent, "policy-unqualified")
   }
   private async required(): Promise<HostDocument> { return await this.files.read() ?? deny("key-lost") }

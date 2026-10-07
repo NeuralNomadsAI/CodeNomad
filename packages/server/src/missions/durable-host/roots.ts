@@ -5,8 +5,9 @@ import { readFamilyAuthorityIdentity, type FamilyAuthorityClaim } from "../../wo
 import { canonicalAuthority, rejectAuthority, type AuthorityRoot } from "../authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../authority-synchronous"
 import type { MissionLocation } from "../model"
+import type { ServiceConnection } from "../../workspaces/opencode-service"
 
-export type RootManager = Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "getHostPathForServicePath">
+export type RootManager = Pick<WorkspaceManager, "getSharedServiceConnection" | "getExistingSharedServiceConnection" | "ownsLocation" | "getHostPathForServicePath">
 export interface HeldFamilyClaim { readonly family: string; readonly claim: FamilyAuthorityClaim }
 const identity = (value: string) => process.platform === "win32" ? path.normalize(value).toLowerCase() : path.normalize(value)
 
@@ -21,9 +22,17 @@ export class CanonicalMissionRoots {
     this.claims = Object.freeze(claims.map(entry => Object.freeze({ ...entry })))
   }
   async resolve(location: MissionLocation): Promise<AuthorityRoot> {
-    if ("workspaceID" in location) rejectAuthority("binding-mismatch")
     const connection = await this.manager.getSharedServiceConnection(this.workspaceID)
-    if (!connection || !await this.manager.ownsLocation(this.workspaceID, location, connection.client)) rejectAuthority("binding-mismatch")
+    return this.resolveConnection(location, connection)
+  }
+  async resolveExisting(location: MissionLocation, signal: AbortSignal): Promise<AuthorityRoot> {
+    signal.throwIfAborted()
+    return this.resolveConnection(location, this.manager.getExistingSharedServiceConnection(this.workspaceID), "event", signal)
+  }
+  private async resolveConnection(location: MissionLocation, connection: ServiceConnection | undefined,
+    purpose: "request" | "event" = "request", signal?: AbortSignal): Promise<AuthorityRoot> {
+    if ("workspaceID" in location || !connection
+      || !await this.manager.ownsLocation(this.workspaceID, location, connection.client, signal, purpose)) rejectAuthority("binding-mismatch")
     const hostPath = await this.manager.getHostPathForServicePath(this.workspaceID, location.directory)
     // No guessed WSL translation or independent Windows claim for Linux roots.
     if (!hostPath || identity(hostPath) !== identity(location.directory)) rejectAuthority("observation-unavailable")
@@ -32,6 +41,7 @@ export class CanonicalMissionRoots {
     const held = this.claims.find(entry => entry.family === family)
     if (!held) rejectAuthority("authorization-blocked")
     await held.claim.assertCurrent()
+    signal?.throwIfAborted()
     connection.assertCurrent()
     assertSynchronousAuthorityGuard(() => this.assertClaimCurrent(held), "policy-unqualified")
     return { mode: "git", directory: location.directory, family, checkout }
@@ -39,6 +49,13 @@ export class CanonicalMissionRoots {
   async assertRoots(roots: readonly AuthorityRoot[]): Promise<void> {
     for (const expected of roots) {
       const current = await this.resolve({ directory: expected.directory })
+      if (canonicalAuthority(current) !== canonicalAuthority(expected)) rejectAuthority("binding-mismatch")
+    }
+    this.current(roots)
+  }
+  async assertExistingRoots(roots: readonly AuthorityRoot[], signal: AbortSignal): Promise<void> {
+    for (const expected of roots) {
+      const current = await this.resolveExisting({ directory: expected.directory }, signal)
       if (canonicalAuthority(current) !== canonicalAuthority(expected)) rejectAuthority("binding-mismatch")
     }
     this.current(roots)

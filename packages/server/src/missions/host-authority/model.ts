@@ -21,6 +21,8 @@ export const documentSchema = z.object({
   manifest: authorityBindingSchema, publicKey: z.string().min(1).max(1024),
   privateKey: z.string().min(1).max(1024), signerDigest: z.string().regex(/^[a-f0-9]{64}$/),
   revoked: z.boolean(), epochFloor: z.number().int().nonnegative().safe(), anchor: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  // Absence is unknown, never permission to restore a pre-identity grant.
+  daemonStorageID: bounded.nullable().optional(),
   mirror: z.object({ grant: authorityGrantSchema, nativeRevision: z.number().int().nonnegative().safe(), disabled: z.boolean() }).strict().nullable(),
   pending: z.object({ body: authorityIntentSchema, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().nullable(),
 }).strict()

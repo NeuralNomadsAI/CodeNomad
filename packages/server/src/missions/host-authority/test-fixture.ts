@@ -69,7 +69,8 @@ export async function fixture(options: { bridge?: boolean; policy?: PrivateFileP
     }
     fence(); return operation(fence)
   } }
-  const admissions = new HostAuthorityAdmissions(auth, gate, descriptor, options.bridge === false ? undefined : nativeBridge)
+  // No startup/provisioning exists in this injected ownership reader.
+  const admissions = new HostAuthorityAdmissions(auth, { ...gate, withExisting: gate.withOwned }, descriptor, options.bridge === false ? undefined : nativeBridge)
   let observation: NativeMirrorObservation | undefined, nativeReads = 0, betweenNativeReads: (() => void) | undefined
   const reader = { async read(_body: AuthorityIntent) {
     nativeReads++

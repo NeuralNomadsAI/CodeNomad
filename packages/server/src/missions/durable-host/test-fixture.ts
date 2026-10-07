@@ -85,6 +85,7 @@ export async function fixture() {
   const connection: any = { client, assertCurrent() { if (!nativeCurrent) throw new Error("private connection lost") } }
   const manager: CanonicalDurableHostDependencies["manager"] = {
     list: () => [{ id: "workspace" }] as any, getSharedServiceConnection: async () => connection,
+    getExistingSharedServiceConnection: () => connection,
     ownsLocation: async (_id, location) => location.directory === f.project,
     getWorktreeIdentityForPath: async (_id, directory) => directory === f.project ? "worktree-fixture" : undefined,
     getSessionEnvironment: async () => { await prepareEnvironment?.(); return { PRIVATE_FRESH: "fixture" } },
