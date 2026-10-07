@@ -373,6 +373,26 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   A real long-duration private expiry probe and bounded native handover investigation
   are separate next work. No
   production scheduling or claim-row writes are enabled.
+- The real **automatic inactivity** probe is now running in its separate private
+  service: **63 minutes** without native polling, prompts or keepalive writes;
+  acknowledged genuine held claim and **1 primary model request**. Cancellation/
+  cleanup watchdogs are armed within **69 minutes**. Outcome remains pending.
+  Ack: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-slow-expiry-20261007-a.json`;
+  future final receipt: `.../missions-startup-GzOudV/receipt.json`.
+  Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
+  attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
+  resets the count. Whole-execution completion resets it; a tool/step completion
+  does not. No exposed reset/budget setting is found, and the fixture never writes
+  native claim/counter columns. A truthful genuine pending compaction can produce
+  native `Complete`/`Succeeded`, followed by a new stable-ID admission, but that
+  does not terminate an already held primary context callback; returning the
+  callback still dispatches a model request. Finite authorized watcher handover
+  and uncertain-ACK recovery remain unqualified, not a permanent session limit.
+  Source-contract receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-watcher-budget-contract-20261007.json`.
+  The frozen watcher receipt's post-eviction native claim is **non-null, attempt 1**:
+  handler/Scope cancellation is not claim settlement. Its additive read-only
+  verification does not invent a historical interruption reason.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture

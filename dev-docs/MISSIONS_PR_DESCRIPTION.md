@@ -267,6 +267,12 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   pas un retry de suppression. Validation complète série en cours sur **623 inputs
   figés**, sans augmenter les délais ni retirer les assertions ; pas encore de
   résultat annoncé.
+- Probe natif d'inactivité réel lancé : **63 minutes** sans polling, prompt ou
+  keepalive, avec watchdogs de nettoyage ; résultat attendu. La limite native de
+  dix reprises est **par exécution**, réinitialisée par sa terminaison, pas une
+  limite permanente de session. Le handover fini autorisé et son ACK incertain
+  restent à qualifier. Après éviction, le callback est fermé mais la claim observée
+  reste non nulle ; seul le Park explicite du probe a établi sa libération.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
