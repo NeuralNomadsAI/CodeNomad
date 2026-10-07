@@ -303,7 +303,10 @@ GraphQL ; sa publication n'est pas acquittée.
   l'éviction automatique de Location. Nettoyage original encore **non qualifié** :
   ACK de fermeture du fork superviseur absent, supplement **confirmed:false**.
   Les 14/0 checks des nouvelles fixtures ne réécrivent pas ce run. Preuve fraîche
-  de cleanup séparée, sans imposer un second délai de 63 minutes. La limite native de
+  de cleanup séparée : préflight **4/4**, **0 lancement natif**, encore
+  `confirmed:false`. Deux producteurs à compléter — attente sur un vrai handle
+  du daemon et annulation post-ACK au superviseur — sans assimiler absence de PID
+  à un acquittement ni imposer un second délai de 63 minutes. La limite native de
   dix reprises est **par exécution**, réinitialisée par sa terminaison, pas une
   limite permanente de session. Le handover fini autorisé et son ACK incertain
   restent à qualifier. Après éviction, le callback est fermé mais la claim observée

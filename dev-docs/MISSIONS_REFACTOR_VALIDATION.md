@@ -519,6 +519,17 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   supplement: `e5a39bf1442ca62c931d8f791265db2f248c92d1746b39f07ffb46314d41f4b1`.
   Main verifies these and the original ACK unchanged; raw native log and frozen
   bundle/CLI/run inputs are independently verified without runtime/process queries.
+  A cleanup-only preflight now passes **4/4 refusal checks** with **0 CLI executions,
+  forks, services or admissions**, retaining `confirmed:false`. It exposes two
+  actual producer gaps: `observeOwnedExit` proves PID absence, not an already-open
+  managed-daemon exit-handle ACK; immediate cancellation is worker-only, with no
+  supported post-held-ACK supervisor entry inside five minutes. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-cleanup-proof-9CXFLu/receipt.json`.
+  The concrete fixture interfaces are being implemented separately: exact owned
+  Windows process-handle waiting before stop and nonce-bound supervisor IPC
+  cancellation. Shared PID-observation helpers remain frozen for ongoing Job
+  diagnosis; no absent-PID result is upgraded to an ACK. No fresh native lineage
+  has yet been launched or qualified by this preflight.
   Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
   attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
   resets the count. Whole-execution completion resets it; a tool/step completion
