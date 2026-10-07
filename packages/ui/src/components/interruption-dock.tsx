@@ -57,14 +57,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
             aria-controls={`interruption-body-${props.instanceId}`} onClick={() => select(current()!.key, !expanded())}>
             <Show when={!expanded()} fallback={<ChevronDown size={16} />}><ChevronUp size={16} /></Show>
           </button>
-          <Show when={current()?.kind === "permission"} fallback={
-            <Show when={!own() && !project() && !descendant()} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}>
-              <span class="status-indicator session-status session-status-list session-permission badge-shape shrink-0" role="img"
-                aria-label={t("sessionList.status.needsInput")} title={t("sessionList.status.needsInput")}>
-                <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
-              </span>
-            </Show>
-          }><ShieldCheck size={18} aria-hidden="true" /></Show>
+          <Show when={current()?.kind === "permission"} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}><ShieldCheck size={18} aria-hidden="true" /></Show>
           <div class="interruption-heading-copy">
             <h2 class="window-title" title={heading()}>
               <Show when={expanded() && !own() && !project()} fallback={heading()}>
@@ -76,6 +69,13 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
           </div>
         </div>
         <div class="window-actions">
+          <Show when={!expanded() && !own() && !project() && !descendant()}>
+            <button type="button" class="status-indicator session-status session-status-list session-permission badge-shape shrink-0"
+              aria-expanded="false" aria-controls={`interruption-body-${props.instanceId}`} onClick={() => focusInterruption(props.instanceId)}>
+              <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+              <span class="session-status-text">{t(current()?.kind === "permission" ? "sessionList.status.needsPermission" : "sessionList.status.needsInput")}</span>
+            </button>
+          </Show>
           <Show when={pending().length > 1}>
             <div class="interruption-navigation">
               <button type="button" class="window-icon-button" disabled={index() === 0} aria-label={t("interruption.previous")} title={t("interruption.previous")} onClick={() => move(-1)}><ChevronLeft size={16} /></button>
