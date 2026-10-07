@@ -749,6 +749,25 @@ unqualified. Historical results below retain their original scope and failures.
   Retained-source/log diagnosis and bounded private cause instrumentation proceed
   without another native run. Qualified RPC Job adoption does not by itself
   qualify the awaited primary-hook context. Parking/cold continuity remain open.
+  Source-only inner-cause instrumentation then passes independent **4 new + 6
+  existing zero-native checks**, without reconstructing the old cause. One distinct
+  diagnostic run observes the real first failure in **54.8 s**:
+  **`Service not found: @opencode/example/LocationServiceMap`**, before this
+  attempt invokes `jobs.get/start`. Job callable validation and Core Session lookup
+  are not reached; tag presence alone is not adoption acceptance. Counts: **1
+  prompt ACK / 1 healthy hook / 1 conservatively charged helper attempt**, saved
+  fixture-provider requests **0**, no self-interruption/cold transition. Exact
+  daemon **19992** same-handle exit, watcher/worker close, sentinel preservation/
+  close and parent write drain are witnessed; no supervisor handle ACK is claimed.
+  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-KoCYhX/receipt.json`,
+  SHA-256 `b103091633cef8a2693dd68bf140b0cba24caf179a68a41b5e34ff47e2697191`;
+  review: `.../park-first-cause-native-execution-wjsBK7/independent-runtime-review.json`.
+  Earlier admission/unsaved provider count stay unknown. The next candidate removes
+  the unnecessary map/Core-Session dependency from **parking-only finite wait
+  adoption**, using only the actual validated native Job service and frozen scalar
+  fixture identity. No constructed service, retained origin graph or self-HTTP
+  fallback is authorized. Source checks/review precede any next native run; fresh
+  due-time graph/profile/authority qualification remains separately mandatory.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
@@ -834,6 +853,27 @@ unqualified. Historical results below retain their original scope and failures.
   assertions, deadlines or production CSS, and must preserve the originating error.
   No Escape patch or inferred responsive-menu fix is applied. The complete failed
   aggregate remains unsuperseded.
+  Failure-only instrumentation is now frozen in `render-cost.test.ts` (**442
+  lines**), with **27/27 focused checks**, UI typecheck and diff check passing.
+  All **16 original bodies/copy actions/assertions/deadlines are unchanged**;
+  the extra actual-wrapper check preserves the identical originating Error through
+  successful and failed snapshots. Capture uses a page-local **64-event passive
+  ring**, a caught-failure **2-second** deadline and **32 KiB JSON** cap, without
+  altering pointer routing, hover, focus or scrolling. It is **not a root fix**.
+  Independent review closes **0 scoped findings**, repeats **27/27 + 3/3 edge
+  checks** for timeout/logger/size, confirms identical error preservation and
+  pending evaluation drain on owned-page close. **7 browser processes / 7 caches**
+  close/remove after shutdown, no open pages/listening fixtures. Review:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-render-diagnostic-independent-20261007/verification.json`.
+  Diagnostic committed **`82c7644e`**; original failed aggregate and unknown root
+  are unchanged. A fresh full ordinary no-capture aggregate is running at that
+  commit with **2,162 inputs frozen**, all earlier paths retained and **one extra
+  persistent wrapper check**. No outcome is claimed before completion. Inputs/log:
+  `.../pr866-ui-diagnostic-complete-inputs-20261007.json` and
+  `.../pr866-ui-diagnostic-complete-20261007.out`;
+  job `sh_1175ae07e0017YiAg4Muj2zW5n`.
+  Focused inputs/result:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-render-diagnostic-final-{inputs,output}-20261007.json`.
 
 ### Current independent recurrence/native receipts
 

@@ -350,6 +350,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   **1 tentative Job chargée / 0 ACK**. Admission **inconnue, sans replay** ; aucune
   interruption/transition froide prouvée. Compte provider non enregistré, pas un
   zéro inventé. Cleanup vérifié ; cause interne à diagnostiquer avant tout nouvel essai.
+  Probe diagnostique distinct : cause réelle **LocationServiceMap absent**, avant
+  `jobs.get/start`, **54,8 s**, provider **0** sauvegardé et cleanup vérifié.
+  L'ancien effet inconnu n'est pas reclassé. Candidat parking-only simplifié en
+  préparation : Job natif réel, attente finie, aucune couche fabriquée/self-HTTP ;
+  adoption et reprise froide toujours non qualifiées.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
@@ -366,6 +371,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   démontrent aucun autoscroll. Capture limitée à l'état de la page lors d'un échec
   en préparation, sans changer l'interaction. Aucun patch spéculatif, clic forcé, skip
   ni hausse de délai ; ancien receipt vert et nouveau receipt en échec conservés.
+  Instrumentation failure-only figée, **27/27 ciblés + typecheck**, 16 corps/actions
+  originaux inchangés ; capture bornée, erreur originale préservée. Revue indépendante
+  **27/27 + 3 edge checks sans finding**, cleanup vérifié. Commit **`82c7644e`**,
+  nouvel aggregate complet lancé sur 2 162 inputs figés et un check supplémentaire ;
+  aucun résultat avant completion, cause toujours inconnue.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
