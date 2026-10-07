@@ -5,7 +5,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
@@ -17,7 +17,8 @@ test("actual compiled N-API artifact loads despite cache/hook bait; native expor
   // bootstrap, supervisor, profile, daemon or package artifacts are mutated.
   const parent = path.join(tmpdir(), "opencode")
   await mkdir(parent, { recursive: true })
-  const root = await mkdtemp(path.join(parent, "native-positive-loader-"))
+  // Windows runner TEMP can contain RUNNER~1; the loader requires its canonical path.
+  const root = await realpath(await mkdtemp(path.join(parent, "native-positive-loader-")))
   try {
     const artifact = path.join(root, "compiled.node"), script = path.join(root, "probe.mts")
     await writeFile(artifact, bytes)
