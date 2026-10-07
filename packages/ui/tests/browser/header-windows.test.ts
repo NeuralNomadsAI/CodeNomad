@@ -545,14 +545,42 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays vi
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
     const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
-    const input = panel.locator("input").first()
+    const input = panel.locator(kind === "session-search" ? 'input[type="search"]' : 'input[type="text"]')
     if (kind === "command-palette") await input.fill("no-such-command")
     const before = await dragWindow(page, panel, 0, 2000)
     await input.fill("fixture")
+    if (kind === "session-search") await panel.locator(".history-search-result").first().waitFor()
     await page.waitForFunction(({ id, height }) => {
       const r = document.getElementById(id!)!.getBoundingClientRect()
       return r.height > height && r.bottom <= innerHeight && r.top >= 0
     }, { id: await panel.getAttribute("id"), height: before.height })
+  } finally { await page.close() }
+})
+
+for (const kind of ["command-palette", "session-search"]) test(`${kind} close remains reachable after native zoom and pan`, async () => {
+  const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
+    const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
+    await panel.waitFor()
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 })
+    for (let i = 0; i < 4; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 180, y: 50 }] })
+      for (const x of [150, 120, 90, 60, 30]) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: 50 }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    }
+    const close = await panel.locator(".window-close-button").evaluate(el => {
+      const r = el.getBoundingClientRect(), v = window.visualViewport!
+      return { left: v.offsetLeft, reachable: r.x >= v.offsetLeft && r.right <= v.offsetLeft + v.width,
+        hit: el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }
+    })
+    assert.ok(close.left >= 179 && close.reachable && close.hit, JSON.stringify(close))
+    await cdp.detach()
   } finally { await page.close() }
 })
 

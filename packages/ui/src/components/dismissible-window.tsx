@@ -24,10 +24,15 @@ export default function DismissibleWindow(props: {
     if (!panel?.isConnected) return
     const rect = panel.getBoundingClientRect(), viewport = window.visualViewport
     const x = (viewport?.offsetLeft ?? 0) + 16, y = (viewport?.offsetTop ?? 0) + 16
+    const bound = (value: number, start: number, space: number, size: number) => {
+      // Oversized windows can expose either edge instead of chasing viewport pan.
+      const end = start + space - 32 - size
+      return Math.max(Math.min(start, end), Math.min(value, Math.max(start, end)))
+    }
     Object.assign(panel.style, {
       position: "fixed", transform: "none", right: "auto",
-      left: `${Math.max(x, Math.min(left, x + Math.max(0, (viewport?.width ?? innerWidth) - 32 - rect.width)))}px`,
-      top: `${Math.max(y, Math.min(top, y + Math.max(0, (viewport?.height ?? innerHeight) - 32 - rect.height)))}px`,
+      left: `${bound(left, x, viewport?.width ?? innerWidth, rect.width)}px`,
+      top: `${bound(top, y, viewport?.height ?? innerHeight, rect.height)}px`,
     })
   }
   const startDrag = (event: PointerEvent) => {
