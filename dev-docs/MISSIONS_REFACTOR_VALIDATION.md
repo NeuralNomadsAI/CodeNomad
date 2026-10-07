@@ -467,7 +467,7 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-EmWMtU/receipt.json`;
   timer: `.../missions-startup-gvibEk/receipt.json`. Artifact hashes, sentinel and
   cleanup pass. Native denial/unclaimed control pass, not broader permission/inbox
-  qualification. Automatic 60-minute expiry, ten-resume budget continuity, global/
+  qualification. Unattended inactivity survival, ten-resume budget continuity, global/
   RcMap ownership, signer/writer composition and model-following reliability remain
   open. Independent callback review closes with **0 scoped findings**, matching
   authored sources/bundles, CLI fingerprints, raw markers and read-only native DB
@@ -479,12 +479,19 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   A real long-duration private expiry probe and bounded native handover investigation
   are separate next work. No
   production scheduling or claim-row writes are enabled.
-- The real **automatic inactivity** probe is now running in its separate private
+- The real **automatic inactivity** probe completed in its separate private
   service: **63 minutes** without native polling, prompts or keepalive writes;
   acknowledged genuine held claim and **1 primary model request**. Cancellation/
-  cleanup watchdogs are armed within **69 minutes**. Outcome remains pending.
+  cleanup watchdogs were armed within **69 minutes**. Independent read-only review
+  verifies exact-root native eviction **60 min 59.823 s** after the held marker,
+  **122 s before the pre-tail read**. Claim clears and attempts reset to **0**;
+  counts **1 admission / 1 tool / 1 model**, original tool **error: aborted**, no
+  executor replay. The old plugin finalizes; tail demand loads a **new graph**, not
+  uninterrupted retention. Historical `session.execution.interrupted.1` payloads
+  are absent (**0**), so exact execution-interruption reason remains **Unknown**;
+  automatic Location eviction is independently evidenced by the bounded native log.
   Ack: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-slow-expiry-20261007-a.json`;
-  future final receipt: `.../missions-startup-GzOudV/receipt.json`.
+  original final receipt: `.../missions-startup-GzOudV/receipt.json`.
   Independent setup review finds **2 scoped P2 defects** in the new probe only:
   the supervisor can claim sentinel closure from a kill request without awaiting
   owned close acknowledgements, and acceptance can attribute generic cancellation/
@@ -492,17 +499,26 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   Both are reproduced by memory-only negative probes. New slow-fixture sources
   now require worker/fork/native close acknowledgements and mandatory exact-root
   native eviction provenance; old-fail/new-pass local checks and generated-adapter
-  syntax checks pass with **0 native operations**. Independent closure is pending,
-  including negative pre-service cleanup/readiness entry paths. All **12 reviewed
+  syntax checks pass with **0 native operations**. Revised entry/readiness checks
+  record **14/0**, but do not retroactively qualify the old run. All **12 reviewed
   baseline files remain unchanged**. Source/check receipt:
   `C:/Users/Admin/AppData/Local/Temp/opencode/slow-expiry-p2-validation-20261007-v2.json`.
   These checks do not prove execution of the patched 63-minute probe;
-  current running old-source output remains **unqualified**, even if its initial
-  outcome says success. Preserve that receipt unchanged and require separately
-  qualified native event/log provenance and acknowledged cleanup. Automatic
+  completed old-source cleanup remains **unqualified**, despite its literal
+  success outcome. One **P2 evidence gap** remains: preserved-sentinel check and
+  native child close witness are supported, but the supervisor's original
+  **fork-close ACK is absent**; managed stop/status is not a persisted native
+  process-close witness. Supplementary PID absence cannot replace those ACKs.
+  The supplement truthfully retains **`confirmed: false`**. A fresh ACK-bearing
+  cleanup-only protocol proof is separate next work, not automatically another
+  63-minute wait and never a retroactive rewrite of the old receipt. Automatic
   Location eviction logs must not be relabeled as an exact execution-interruption
   reason. No quiet-phase polling, native clock changes, fabricated claims or
   production authority are involved; initial setup otherwise matches frozen inputs.
+  Original receipt SHA-256: `e0ee90cfcc95a0716681032332f9f3115ac1c7906abd0ea16aa7cd18efe4c6e4`;
+  supplement: `e5a39bf1442ca62c931d8f791265db2f248c92d1746b39f07ffb46314d41f4b1`.
+  Main verifies these and the original ACK unchanged; raw native log and frozen
+  bundle/CLI/run inputs are independently verified without runtime/process queries.
   Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
   attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
   resets the count. Whole-execution completion resets it; a tool/step completion

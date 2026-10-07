@@ -295,13 +295,15 @@ GraphQL ; sa publication n'est pas acquittée.
   annoncé avant la fin. CAS public et fixtures natives opt-in restent séparés.
   Délai, limites,
   rejet des clones étrangers et fences conservés.
-- Probe natif d'inactivité réel lancé : **63 minutes** sans polling, prompt ou
-  keepalive ; résultat attendu, **non qualifiant** tant que deux défauts du probe
-  ne sont pas clôturés : acquittement réel du nettoyage et provenance native
-  obligatoire de l'inactivité. Un signal kill ou une annulation générique ne
-  constituent pas ces preuves. Nouvelles fixtures corrigées, checks négatifs locaux
-  passent ; revue indépendante encore requise, ancien code exécuté par le probe
-  en cours inchangé. La limite native de
+- Probe natif d'inactivité terminé : **63 minutes** sans polling, prompt ou
+  keepalive. Éviction automatique vérifiée à **60 min 59,823 s**, claim libérée,
+  **1 admission / 1 outil / 1 modèle**, outil original aborted, aucun replay.
+  Le graphe après la demande finale est **nouveau**, pas une survie ininterrompue.
+  Raison exacte d'interruption **Unknown**, sans payload historique ; le log prouve
+  l'éviction automatique de Location. Nettoyage original encore **non qualifié** :
+  ACK de fermeture du fork superviseur absent, supplement **confirmed:false**.
+  Les 14/0 checks des nouvelles fixtures ne réécrivent pas ce run. Preuve fraîche
+  de cleanup séparée, sans imposer un second délai de 63 minutes. La limite native de
   dix reprises est **par exécution**, réinitialisée par sa terminaison, pas une
   limite permanente de session. Le handover fini autorisé et son ACK incertain
   restent à qualifier. Après éviction, le callback est fermé mais la claim observée
