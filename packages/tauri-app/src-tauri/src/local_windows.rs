@@ -341,10 +341,16 @@ pub(crate) fn create_local_window(
         .state::<crate::AppState>()
         .webview_data_directory
         .join("local");
+    let badge_binding = crate::notification_badge::prepare_window(app, &record.label);
     let builder =
         WebviewWindowBuilder::new(app, &record.label, WebviewUrl::App("loading.html".into()))
             .data_directory(data_directory)
-            .initialization_script(script);
+            .initialization_script(script)
+            .on_page_load(move |window, payload| {
+                if payload.event() == tauri::webview::PageLoadEvent::Started {
+                    crate::notification_badge::page_started(window.as_ref(), badge_binding);
+                }
+            });
     #[cfg(windows)]
     let developer_browser_arguments = app
         .state::<crate::AppState>()
@@ -375,6 +381,7 @@ pub(crate) fn create_local_window(
     let window = match result {
         Ok(window) => window,
         Err(error) => {
+            crate::notification_badge::remove_window(app, &record.label, badge_binding);
             app.state::<LocalWindows>().remove_runtime(&record.label);
             return Err(error.to_string());
         }
@@ -389,6 +396,7 @@ pub(crate) fn create_local_window(
         let _ = window.destroy();
         return Err(error);
     }
+    crate::notification_badge::bind_webview(window.as_ref(), badge_binding);
     #[cfg(windows)]
     if let Err(error) = crate::shutdown::schedule_windows_session_end_handler(&window) {
         app.state::<LocalWindows>().remove_runtime(&record.label);

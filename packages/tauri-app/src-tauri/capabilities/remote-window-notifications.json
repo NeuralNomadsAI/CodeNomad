@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/capabilities.json",
   "identifier": "remote-window-notifications",
-  "description": "Grant remote CodeNomad windows access only to native OS notifications.",
+  "description": "Grant remote CodeNomad primary windows access only to native OS notifications and unread icon badges.",
   "local": false,
   "remote": {
     "urls": ["http://*:*", "https://*:*"]
@@ -10,6 +10,7 @@
   "permissions": [
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
-    "notification:allow-notify"
+    "notification:allow-notify",
+    "allow-notification-badge-set"
   ]
 }
