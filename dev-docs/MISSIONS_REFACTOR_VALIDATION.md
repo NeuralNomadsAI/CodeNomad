@@ -24,13 +24,20 @@ results below into current-source or installed-app qualification.
   away from the Node implementation dependency chain.
 - Previous changing-source aggregate: server 2,247 pass/0 fail/8 skipped; browser
   711 pass/39 fail/2 skipped. A focused rerun does not erase either receipt. A
-  frozen-source aggregate and fresh hosted CI are still required.
+  frozen-input aggregates below and hosted CI remain separately scoped receipts.
 - New complete server aggregate: **2,279 pass / 0 fail / 8 skipped**, no
   cancellations, 2,287 selected cases. Completed in 1,312 seconds on unchanged
   execution inputs; only the separately invoked positive-loader qualification
   fixture changed outside the ordinary `**/*.test.ts` selection. The eight
   platform/opt-in skips remain skips, not positive native qualification. Receipt:
   `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115938c56001IqmfdmI8K4DLrV.out`.
+- New complete browser aggregate: **758 pass / 0 fail / 2 skipped**, all 760 cases
+  selected, no cancellations. Completed in 2,445 seconds. Benchmark and native
+  Electron zoom opt-ins remain skips. Historical capture replay passed against
+  current Technical details/report/coordinator navigation with an exact input
+  digest; it is renderer-only proof, not current native transport/closed-client
+  scheduled execution. Original 711/39/2 failed aggregate remains retained. Receipt:
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1158aef010015QPM7e460RS2XH.out`.
 - Three isolated permission-fallback failures were fixture omissions: the dock was
   given neither a registered current conversation nor its identity. With that real
   conversation fixture, all three original copy/page/late-ack scenarios pass. The
@@ -80,18 +87,47 @@ results below into current-source or installed-app qualification.
   pass. Minimal fixture corrections are pushed in `32ee0fc5`: six current
   i18n/preferences checks and the genuine positive-loader fixture with actual
   short-directory TEMP on pinned Node 24.20.0 pass. Production loader is unchanged.
-  A fresh hosted result is still required, not inferred from these local passes.
+  Both corrected steps pass in hosted run `37599765514` below; that run still has
+  separate browser failures and is not complete-product acceptance.
 - Run `37599550532` on `32ee0fc5` passed the corrected UI scanner and genuine
   Windows loader, then was **cancelled**, not failed, by a body-edit-triggered
-  higher-priority run. The workflow includes `pull_request.edited`. Stop publishing
-  body updates while replacement run `37599765514` completes; do not weaken or
+  higher-priority run. The workflow includes `pull_request.edited`. Replacement
+  run `37599765514` completed without metadata interruption. Do not weaken or
   remove authorization/event handling to manufacture CI stability.
+- Hosted run `37599765514` on `32ee0fc5`: **755 browser passes / 3 failures / 2
+  skips**, all 760 selected. All other test jobs pass, including server,
+  minimum/latest runtime, three-platform compatibility/pruning and Windows/macOS
+  Tauri. Two 390px French checks read English while the dictionary loads; saving
+  preferences does not await i18n import. The remaining failure is the mandatory
+  external native capture absent on ordinary CI. Logs retained at
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ci-32ee0fc5-browser-failed.log`.
+- Targeted browser-fixture corrections: geometry now waits for the actual French
+  worktree label, and a held real French dictionary import verifies English while
+  pending, translated text after release and unchanged draft. **11/11** focused
+  checks pass. No product i18n behavior or timeout is changed.
+- Independent capture-boundary review found ordinary discovery incorrectly
+  includes externally provisioned replay. It is now explicitly
+  `native-mission-integration.qualification.ts` with
+  `qualify:browser:native-mission-replay`; all assertions/digest/scope survive.
+  Explicit missing capture fails **0 pass / 1 fail / 0 skips**, never claims
+  qualification. Audited historical capture passes **1/1** with digest
+  `63f3eaf8d8d5aa91b3a46dd9b41d55729f1a72f9d4647d82aa97a854debca3fc`, zero
+  page errors/external requests. Fresh output:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-explicit-replay-004c6d9142324c318649b7496b55d448/browser-report.json`.
+  Ordinary discovery loses only this external case and adds one held-import
+  regression; another complete no-capture aggregate and hosted result are required.
+- Complete ordinary browser rerun is launched without `NATIVE_MISSION_CAPTURE`
+  or `NATIVE_MISSION_OUTPUT`. Its 2,162 input fingerprints are retained at
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-no-capture-inputs-20261007.json`.
+  Output is
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115db55ce001fui5txnQWs9XS7.out`.
+  Result is pending; do not infer it from focused checks or the older aggregate.
 - Independent published-head integration review closes at zero findings. Its
   230 focused checks pass without skips: create/journal/durable 90,
   authority/catalog/projection 45, resources/guards 59, outcome recovery 25,
   browser copy 10 and genuine compiled loader 1. This does not close full-product
   or scheduled/headless acceptance.
-- Fresh server aggregate completed; UI aggregate remains in progress, with input fingerprints retained.
+- Fresh server and UI aggregates completed, with input fingerprints retained.
   The UI run uses an unchanged historical OpenCode 2.0.22 capture for its renderer
   replay prerequisite, with exact capture digest and explicit renderer-only scope;
   this is not a fresh native-pipeline qualification. Post-start fingerprints show

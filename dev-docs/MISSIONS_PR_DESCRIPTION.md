@@ -235,9 +235,26 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
 - Suite navigateur complète exploratoire : **711 pass, 39 fail, 2 skipped**.
   Ce résultat reste enregistré, il n'est pas remplacé par la somme de reruns.
+- Nouveau run navigateur intégral : **758 pass, 0 fail, 2 skipped**, 760 cas
+  sélectionnés sans exclusion. Le replay utilise un capture natif historique avec
+  digest explicite, uniquement pour qualifier le renderer actuel ; pas le host
+  persistant ou une admission native récurrente.
+- CI complète `37599765514` sur `32ee0fc5` : **755 pass, 3 fail, 2 skipped**
+  au navigateur ; serveur, runtime minimum/latest, compatibilité/pruning sur les
+  trois OS et Tauri Windows/macOS passent. Deux assertions françaises précèdent
+  l'import du dictionnaire ; le troisième cas exige une capture privée absente.
+  Les reçus locaux verts ne remplacent pas ce résultat hébergé.
+- Corrections ciblées : géométrie mesurée après traduction effective, avec un
+  import français volontairement retenu (**11 contrôles passent**). Le replay
+  privé est désormais une qualification explicitement invoquée ; aucune assertion
+  retirée, aucun skip ajouté. Sans capture : échec obligatoire. Avec la capture
+  auditée : **1/1**, digest inchangé, zéro requête externe. L'aggregate ordinaire
+  perd ce seul cas externe et gagne la régression de chargement ; nouveau run
+  ordinaire sans capture lancé avec 2 162 inputs fingerprintés, nouvelle CI à
+  obtenir après publication. Ces exécutions n'ont pas encore de résultat final.
 - Livraison UX sur sources plus récentes : **240 tests Missions navigateur** et
   **32 tests unitaires/parité** passent selon le rapport de livraison ; les revues
-  ciblées sont clôturées, l'aggregate complet reste nécessaire.
+   ciblées sont clôturées, les aggregates ci-dessus gardent leur périmètre exact.
 - Typechecks serveur/UI relancés après séparation du contrat HTTP de profondeur :
   passent. Tests natifs isolés de profondeur JSONC, création/autorité HTTP-RPC
   (16 gates OpenCode 2.0.24) et environnement minimum 2.0.7 ont leurs reçus propres.
@@ -274,10 +291,11 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   addon charge via le chemin canonique sur Node 24.20.0 sans affaiblir le loader.
   Les corrections sont publiées dans `32ee0fc5` : six contrôles i18n/parité et le
   vrai loader avec TEMP court sur Node 24.20.0 passent, loader produit inchangé.
-  Nouvelle CI requise sur ce commit, les échecs précédents restent conservés.
+  Ces deux étapes corrigées passent dans la CI complète citée plus haut.
 - Les manifestes des suites locales montrent uniquement ces deux
   modifications de fixtures hors de leur sélection ; les sources d'exécution
-  restent inchangées. Le navigateur reste en cours. Il ne s'agit donc pas d'un
+  restent inchangées pour les deux suites terminées. Les corrections de tests
+  ultérieures nécessitent une nouvelle preuve navigateur ; il ne s'agit pas d'un
   gel de l'ensemble du dépôt.
 - Reproduire/corriger les échecs actuels, reviewer les seams d'intégration, répéter
   jusqu'à zéro finding actionnable, puis source figée et validation combinée

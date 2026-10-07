@@ -1,3 +1,4 @@
+// Explicit externally provisioned replay; missing capture fails, never skips.
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { mkdir, readFile, writeFile } from "node:fs/promises"

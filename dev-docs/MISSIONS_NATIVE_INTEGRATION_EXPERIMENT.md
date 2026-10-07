@@ -58,12 +58,19 @@ native execution, without hiding or rerunning it.
 
 From `D:/CodeNomad/.codenomad/worktrees/missions-native-subsessions-20261003`:
 
+The native generator below is a frozen historical Windows experiment, not a
+portable current-product CI fixture. Review its exact private prerequisites
+before running it. Current renderer replay is separately invoked and requires
+an audited capture; ordinary browser CI neither provisions that historical run
+nor claims native qualification. Missing capture in explicit qualification fails
+rather than skips. Always use a new output directory to preserve old receipts.
+
 ```powershell
 node scripts/native-subsession-spike/integration/run.mjs
 
 $env:NATIVE_MISSION_CAPTURE = 'C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-oLnPm0/capture.json'
-$env:NATIVE_MISSION_OUTPUT = 'C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-oLnPm0/ui-proof'
-node --import tsx --test packages/ui/tests/browser/native-mission-integration.test.ts
+$env:NATIVE_MISSION_OUTPUT = Join-Path $env:LOCALAPPDATA ('Temp/opencode/native-mission-replay-' + [guid]::NewGuid().ToString('N'))
+npm run qualify:browser:native-mission-replay --workspace '@codenomad/ui'
 ```
 
 Native artifact root:
@@ -83,7 +90,7 @@ event payloads are actual reads from the pipeline, not invented renderer inputs.
   plugin adapter: context instructions, native fact observation, business tools.
 - `scripts/native-subsession-spike/integration/runtime.mjs` and `run.mjs` own
   isolation, deterministic model responses, assertions and exact child cleanup.
-- `packages/ui/tests/browser/native-mission-integration.test.ts` and
+- `packages/ui/tests/browser/native-mission-integration.qualification.ts` and
   `fixtures/native-mission-integration.tsx` mount the existing UI components.
 
 ```ts

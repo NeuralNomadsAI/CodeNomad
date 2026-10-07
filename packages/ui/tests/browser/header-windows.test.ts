@@ -172,6 +172,9 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         await page.goto(url)
         await page.waitForFunction(() => Boolean((window as any).fixture))
         await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+        const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+        // Saving the locale does not await its lazily imported dictionary.
+        await worktree.filter({ hasText: "Espace de travail" }).waitFor()
         const input = page.locator("textarea.prompt-input")
         await input.fill("Brouillon mobile conservé")
         const geometry = await page.evaluate(() => {
@@ -196,7 +199,6 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         assert.equal(new Set(geometry.selectors).size, 1, "selectors retain one compact row")
         assert.ok(Math.abs(geometry.actionsY - geometry.selectors[0]) <= 1, "actions and selectors always share one row")
         if (width === 390) {
-          const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
           assert.match(await worktree.innerText(), /Espace de travail/)
           await worktree.focus()
           await page.keyboard.press("ArrowDown")
@@ -216,6 +218,32 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
     })
   })
 }
+
+test("composer locale settles after a held French dictionary import without losing its draft", { timeout: 20000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const requested = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/messages/fr/index.ts*", async route => {
+      requested.resolve()
+      await release.promise
+      await route.continue()
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    await input.fill("Brouillon conservé pendant le chargement")
+    await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+    await requested.promise
+    const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+    assert.match(await worktree.innerText(), /Workspace/)
+    assert.equal(await input.inputValue(), "Brouillon conservé pendant le chargement")
+    release.resolve()
+    await worktree.filter({ hasText: "Espace de travail" }).waitFor()
+    assert.match(await worktree.innerText(), /Espace de travail/)
+    assert.equal(await input.inputValue(), "Brouillon conservé pendant le chargement")
+  } finally { release.resolve(); await page.close() }
+})
 
 for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`timeline visibility follows conversation width on ${device}, independently of header density and height`, async () => {
   const page = await browser.newPage({ ...devices[device], viewport: { width: 1100, height: 1000 } })
