@@ -5,7 +5,7 @@ const PREPARATION_TIMEOUT_MS = 30_000
 
 /** Compile the fixture's static graph, not a hidden browser visit. Keep the
  * installed Solid export/compiler and excluded icon barrel exactly as-is. */
-export async function prepareInterruptionDock(server: ViteDevServer): Promise<void> {
+export async function prepareInterruptionDock(server: ViteDevServer, entry = ENTRY): Promise<void> {
   const started = performance.now()
   const logger = server.config.logger
   const originalError = logger.error
@@ -18,7 +18,7 @@ export async function prepareInterruptionDock(server: ViteDevServer): Promise<vo
   try {
     await Promise.race([
       (async () => {
-        if (!await server.transformRequest(ENTRY)) throw new Error("Interruption fixture did not transform")
+        if (!await server.transformRequest(entry)) throw new Error("Interruption fixture did not transform")
         // Vite's supported crawl completion API waits for transitive static
         // pre-transforms. It does not execute the fixture or its native events.
         await server.waitForRequestsIdle()
@@ -32,7 +32,7 @@ export async function prepareInterruptionDock(server: ViteDevServer): Promise<vo
         }
         const durationMs = Math.round(performance.now() - started)
         if (performance.now() - started >= PREPARATION_TIMEOUT_MS) throw new Error("Interruption fixture preparation deadline expired")
-        console.log(JSON.stringify({ kind: "interruption-fixture-prepared", entry: ENTRY,
+        console.log(JSON.stringify({ kind: "interruption-fixture-prepared", entry,
           durationMs, budgetMs: PREPARATION_TIMEOUT_MS,
           cacheDir: server.config.cacheDir, modules: modules.length,
           transformed: modules.filter(module => module.transformResult).length, solidIcon: icon!.id }))

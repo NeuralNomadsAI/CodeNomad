@@ -11,23 +11,45 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
+async function disposeFixture() {
+  try { await browser?.close() }
+  finally {
+    if (server) await server.close()
+    else await cache?.dispose()
+  }
+}
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "header-windows-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  try {
+    cache = await createFixtureCache()
+    const shutdown = createFixtureShutdown(cache)
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+      cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "header-windows-fixture", configureServer(s) {
+        s.middlewares.use("/fixture", async (_req, res) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
+        })
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+    })
+    shutdown.own(server)
+    await server.listen()
+    await prepareInterruptionDock(server, "/tests/browser/fixtures/header-windows.tsx")
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) {
+    try { await disposeFixture() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Header fixture setup and cleanup failed") }
+    throw error
+  }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(disposeFixture)
 
 test("the real shell badge reopens the selected question with a same-session permission queued", async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
