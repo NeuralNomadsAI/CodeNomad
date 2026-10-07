@@ -557,7 +557,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays vi
     if (kind === "session-search") {
       await page.setViewportSize({ width: 932, height: 390 })
       const raised = await dragWindow(page, panel, 0, -2000)
-      assert.ok(raised.height > 390 && raised.y >= 16, "oversized landscape search retains its top bar")
+      assert.ok(raised.y >= 16 && raised.y + raised.height <= 374, "landscape search is height-bounded and retains its top bar")
       assert.equal(await panel.locator(".window-close-button").evaluate(el => {
         const r = el.getBoundingClientRect()
         return r.y >= 0 && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
@@ -593,6 +593,46 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} close re
         hit: el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }
     })
     assert.ok(close.left >= 179 && close.reachable && close.hit, JSON.stringify(close))
+    await cdp.detach()
+  } finally { await page.close() }
+})
+
+test("zoomed search can scroll to its last result and pagination without losing its toolbar", async () => {
+  const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
+  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/query")
+    ? { status: "page", scanned: 32, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: "fixture-next-page",
+        hits: Array.from({ length: 32 }, (_, i) => ({ sessionID: "session", messageID: "hello", partIndex: i,
+          kind: "text", role: "user", excerpt: `fixture result ${i}` })) }
+    : {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press("Control+f")
+    const panel = page.locator('[role="dialog"][id^="session-search-"]')
+    await panel.locator('input[type="search"]').fill("fixture")
+    await panel.locator(".history-search-result").first().waitFor()
+    const list = (await panel.locator(".history-search-results").boundingBox())!
+    await page.mouse.move(list.x + 30, list.y + 30)
+    await page.mouse.wheel(0, 10000)
+    await page.waitForFunction(() => document.querySelector(".history-search-results")!.scrollTop > 0)
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 3 })
+    for (let i = 0; i < 2; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 4, y: 430 }] })
+      for (const y of [400, 370, 340, 310, 280]) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 4, y }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    }
+    assert.ok(await page.evaluate(() => window.visualViewport!.offsetTop > 100), "native vertical pan occurred")
+    await panel.evaluate(el => el.scrollTo(0, el.scrollHeight))
+    await page.waitForFunction(id => {
+      const panel = document.getElementById(id!)!, v = window.visualViewport!
+      return [".history-search-result:last-child", "button.button-tertiary", "[data-window-drag-handle]"].every(selector => {
+        const el = panel.querySelector(selector)!, r = el.getBoundingClientRect()
+        return r.y >= v.offsetTop && r.bottom <= v.offsetTop + v.height
+          && el.contains(document.elementFromPoint(Math.max(r.x, v.offsetLeft) + 5, r.y + r.height / 2))
+      })
+    }, await panel.getAttribute("id"))
     await cdp.detach()
   } finally { await page.close() }
 })

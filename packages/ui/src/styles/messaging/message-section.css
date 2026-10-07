@@ -293,6 +293,7 @@
 }
 
 .message-search-popover {
+  max-height: var(--window-visible-height, none);
   position: absolute;
   top: 0.75rem;
   left: 50%;

@@ -226,7 +226,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       title={t("commandPalette.title")}
       initialFocus={() => inputRef}
       description={t("commandPalette.description")}
-      class="fixed top-[20vh] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl max-h-[60vh]"
+      class="fixed top-[20vh] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl max-h-[min(60vh,var(--window-visible-height,60vh))]"
       draggable
       onKeyDown={handleKeyDown}
     >

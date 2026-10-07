@@ -22,7 +22,9 @@ export default function DismissibleWindow(props: {
   let drag: { id: number; x: number; y: number; left: number; top: number } | undefined
   const place = (left: number, top: number) => {
     if (!panel?.isConnected) return
-    const rect = panel.getBoundingClientRect(), viewport = window.visualViewport
+    const viewport = window.visualViewport
+    panel.style.setProperty("--window-visible-height", `${Math.max(0, (viewport?.height ?? innerHeight) - 32)}px`)
+    const rect = panel.getBoundingClientRect()
     const x = (viewport?.offsetLeft ?? 0) + 16, y = (viewport?.offsetTop ?? 0) + 16
     const bound = (value: number, start: number, space: number, size: number) => {
       // Oversized windows can expose either horizontal edge without chasing pan.
