@@ -21,6 +21,7 @@ function Fixture() {
     theme: theme.setThemeMode,
     changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
     transport: (value: string) => (serverEvents as any).emitTransportStatus(value),
+    event: (event: unknown) => (serverEvents as any).dispatchBatch([event]),
   }
   const panel = () => <RightPanel instanceId={instanceId()} instance={{ id: instanceId(), folder: `/${instanceId()}`, status: "ready", client: null, port: 0, pid: 0, proxyPath: "/fixture" }}
       isActive={active} t={t} activeSessionId={sessionId} activeSession={() => null} isPhoneLayout={() => floating}

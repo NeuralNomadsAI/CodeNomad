@@ -16,30 +16,39 @@ export function useAssetsChannel(props: {
   send: (value: unknown) => void
 }) {
   const pending = new Set<AbortController>()
-  let disposed = false, connected = true, timer: ReturnType<typeof setTimeout> | undefined
+  let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined,
+    timer: ReturnType<typeof setTimeout> | undefined
+  const abort = () => { for (const request of pending) request.abort() }
   const invalidate = () => {
     if (timer || disposed) return
-    timer = setTimeout(() => { timer = undefined; if (!disposed) props.send({ type: "assets:changed" }) }, 300)
+    timer = setTimeout(() => { timer = undefined; if (!disposed && connected && nativeConnected) props.send({ type: "assets:changed" }) }, 300)
   }
   onCleanup(serverEvents.on("instance.event", payload => {
     if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
-    if (event.data?.sessionID === props.sessionId() && ["session.tool.success", "session.message.content.updated", "session.moved", "session.deleted",
+    if (event.data?.sessionID === props.sessionId() && ["session.tool.success", "session.tool.failed", "rpc.codenomad.session-pruning.pruned", "session.message.content.updated", "session.moved", "session.deleted",
       "session.revert.staged", "session.revert.cleared", "session.revert.committed", "session.compaction.ended"].includes(event.type ?? "")) invalidate()
+  }))
+  onCleanup(serverEvents.on("instance.eventStatus", event => {
+    if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
+    nativeConnected = event.status === "connected"
+    if (!nativeConnected || nativeGeneration !== event.generation) abort()
+    nativeGeneration = event.generation
+    if (nativeConnected) invalidate()
   }))
   onCleanup(serverEvents.onTransportStatus(status => {
     connected = status === "connected"
-    if (!connected) for (const request of pending) request.abort()
+    if (!connected) abort()
     else invalidate()
   }))
-  onCleanup(() => { disposed = true; clearTimeout(timer); for (const request of pending) request.abort(); pending.clear() })
+  onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear() })
   return async (value: unknown) => {
     const parsed = requestSchema.safeParse(value)
     if (!parsed.success || disposed) return
     const { id, method, input } = parsed.data, session = props.sessionId()
     const controller = new AbortController()
     try {
-      if (!connected || !session || pending.size >= 4) throw new Error("Unavailable")
+      if (!connected || !nativeConnected || !session || pending.size >= 4) throw new Error("Unavailable")
       pending.add(controller)
       const args = [props.instanceId, props.id, props.digest, session] as const
       let result
@@ -51,7 +60,7 @@ export function useAssetsChannel(props: {
         const asset = await panelExtensionsApi.assetRead(...args, request.target, controller.signal)
         result = request.thumbnail ? await thumbnail(asset) : asset
       }
-      if (!disposed && connected && !controller.signal.aborted && props.sessionId() === session) props.send({ type: "assets:result", id, result })
+      if (!disposed && connected && nativeConnected && !controller.signal.aborted && props.sessionId() === session) props.send({ type: "assets:result", id, result })
     } catch {
       if (!disposed && props.sessionId() === session) props.send({ type: "assets:result", id, error: true })
     } finally { pending.delete(controller) }

@@ -410,6 +410,67 @@ test("API2 grants only current-session asset pages and bounded thumbnails; sessi
   } finally { holdAssets = undefined; release?.(); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
+test("API2 observes failed/pruned assets and fences native disconnects and connection generations", async () => {
+  const pkg = await readPanelExtensionArchive(fixtureArchive(`<p id="changes">0</p><p id="state"></p><script>
+    let changes=0; codenomad.assets.onChanged(()=>document.querySelector('#changes').textContent=++changes);
+    window.probe=()=>{document.querySelector('#state').textContent='pending';void codenomad.assets.list().then(()=>document.querySelector('#state').textContent='success').catch(()=>document.querySelector('#state').textContent='error');};
+  </script>`, { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
+  await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+  const view = await page()
+  try {
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    const frame = view.frameLocator("iframe[title='Session example']")
+    await frame.locator("#changes").waitFor()
+    const status = (status: string, generation: number, instanceId = "first") => view.evaluate(event => (window as any).extensionFixture.event(event), {
+      type: "instance.eventStatus", instanceId, status, generation,
+    })
+    await status("connected", 1)
+    await frame.locator("#changes").filter({ hasText: /^1$/ }).waitFor()
+    for (const [index, type] of ["session.tool.failed", "rpc.codenomad.session-pruning.pruned"].entries()) {
+      await view.evaluate(type => (window as any).extensionFixture.event({ type: "instance.event", instanceId: "first", event: { type, data: { sessionID: "session-a" } } }), type)
+      await frame.locator("#changes").filter({ hasText: new RegExp(`^${index + 2}$`) }).waitFor()
+    }
+    await view.evaluate(() => {
+      const fetch = window.fetch, post = MessagePort.prototype.postMessage
+      ;(window as any).assetResults = []
+      MessagePort.prototype.postMessage = function (value, ...args: any[]) {
+        if (value?.type === "assets:result") (window as any).assetResults.push(value)
+        return (post as any).call(this, value, ...args)
+      }
+      window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        if ((window as any).holdAsset && String(input).endsWith("/assets")) {
+          ;(window as any).holdAsset = false
+          ;(window as any).assetSignal = init?.signal
+          // Deliberately ignore abort to exercise the publication fence, not just fetch cancellation.
+          return new Promise<Response>(resolve => { (window as any).releaseAsset = () => resolve(new Response(JSON.stringify({ status: "page", entries: [], cursor: null }))) })
+        }
+        return fetch(input, init)
+      }) as typeof window.fetch
+    })
+    for (const generation of [2, 3]) {
+      await view.evaluate(() => { (window as any).holdAsset = true; (window as any).assetSignal = null })
+      await frame.locator("body").evaluate(() => (window as any).probe())
+      await view.waitForFunction(() => Boolean((window as any).assetSignal))
+      await status("error", generation, "second")
+      assert.equal(await view.evaluate(() => (window as any).assetSignal.aborted), false, "Other instances do not cancel this channel")
+      if (generation === 2) {
+        await status("error", 1)
+        assert.equal(await view.evaluate(() => (window as any).assetSignal.aborted), true)
+        await frame.locator("body").evaluate(() => (window as any).probe())
+        await frame.locator("#state").filter({ hasText: /^error$/ }).waitFor()
+      }
+      await status("connected", generation)
+      assert.equal(await view.evaluate(() => (window as any).assetSignal.aborted), true, "Generation replacement fences even without an error event")
+      await frame.locator("#changes").filter({ hasText: new RegExp(`^${generation + 2}$`) }).waitFor()
+      const before = await view.evaluate(() => (window as any).assetResults.filter((value: any) => value.result).length)
+      await view.evaluate(() => (window as any).releaseAsset())
+      await frame.locator("body").evaluate(() => (window as any).probe())
+      await frame.locator("#state").filter({ hasText: /^success$/ }).waitFor()
+      assert.equal(await view.evaluate(() => (window as any).assetResults.filter((value: any) => value.result).length), before + 1, "Only the new native connection publishes a successful result")
+    }
+  } finally { await view.evaluate(() => (window as any).releaseAsset?.()).catch(() => {}); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+})
+
 test("inline management and keyboard tooltips work inside the real temporary drawer", async () => {
   const view = await page("en-US", true)
   try {

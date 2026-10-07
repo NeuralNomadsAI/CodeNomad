@@ -30,10 +30,10 @@ export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
         if (!parsed.success) throw new PanelExtensionError("unavailable")
         const output = parsed.data
         // Revocation, replacement and moves during IO must fence the response too.
-        await deps.store.authorizeAssets(id, digest)
         const current = await client.session.get({ sessionID: input.sessionID })
         if (JSON.stringify(readLocationRef(current.location)) !== JSON.stringify(location)
           || !await deps.workspaceManager.ownsLocation(instanceId, current.location, client)) return reply.code(409).send({ error: "Session moved" })
+        await deps.store.authorizeAssets(id, digest)
         if (output.status === "blocked") return reply.code(503).send({ error: "Assets unavailable" })
         return output
       } catch (error) {
