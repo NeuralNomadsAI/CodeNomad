@@ -550,9 +550,15 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   `ERR_IPC_CHANNEL_CLOSED`. **13 existing + 5 targeted checks** and owned-child/
   watcher closure are separate zero-native evidence, not native acceptance.
   Review: `.../slow-cleanup-independent-20261007/verification.json`.
-  Minimal admitted-work drain is in progress before final publication/disconnect;
-  errors remain fail-closed and deadline receipts monotonic. No second native
-  lineage is authorized before independent closure and current custody disposition.
+  The minimal admitted-work drain is now frozen before final publication/
+  disconnect; **13 existing + 5 targeted checks pass**, **0 CLI/native admissions**,
+  first errors sticky and deadline receipts monotonic. Final independent closure
+  remains required. Freeze:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-supervisor-p2-final-73LvsH/freeze.json`.
+  Current first-v4 disposition records all **7 known PIDs OS-dead** and no matching
+  controller command line, but its original controller PID was not recorded; this
+  supplies **no historical close ACK**. No second native lineage is authorized
+  before independent closure; the first attempt remains unqualified.
   Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
   attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
   resets the count. Whole-execution completion resets it; a tool/step completion
@@ -626,6 +632,23 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   registration manipulation is added. Source:
   `packages/client/src/effect/service.ts:181–206` and
   `packages/cli/src/commands/handlers/service/stop.ts:10–13`, pinned 2.0.24.
+  A separately scoped actual **stock-stop Job run** now completes in **49.8 s**:
+  **2 Jobs / 1 fresh acquisition / 1 due marker**, **0 prompts/models**, **0
+  Job.cancel calls**. Caller closure and exact origin eviction precede the fresh
+  due acquisition; daemon **21136** has a same-handle exit ACK/watcher close,
+  sentinel **33948** is preserved then closed, worker **35660** has a fork-close
+  ACK/exit **0**. Shutdown finalizer remains **null**: this is native process-bound
+  lifetime, not graceful application/generation Scope cancellation or persistence.
+  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-ygipUx/receipt.json`,
+  SHA-256 `41c317a135fc60da5613cb849eb8efb3b8ead1bfdc31a08775b90336ece42da3`.
+  Independent review supports that executed proof but finds a custody-retention
+  correction, then closes its source with **2 artifact-free checks / 0 findings**.
+  **Patched sources did not execute in that native run**. Executed sources and
+  corrected candidates stay separately frozen under `job-stock-stop-source-freeze-MYID2v`
+  and `job-stock-stop-p2-custody-freeze-we0emD`; one fresh corrected-source run is
+  authorized after exact hash verification, no park probe. Review:
+  `.../job-stock-stop-p2-custody-freeze-we0emD/independent-review.json`.
+  Original failures/ACK gaps and all 12 baseline source hashes remain preserved.
 - Cold-entry scrutiny rejects a specific bootstrap hypothesis: retained
   `missions-startup-JQzXFg/receipt.json` is a **claim-timer** receipt, not an
   independent global-plugin startup. Its restart module/setup hits follow genuine
@@ -704,7 +727,16 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
    and confirms all **9 owned cache paths** absent. Receipt:
    `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-header-fix-validation-20261007.json`.
    This is local corrected-source evidence, not current hosted acceptance; the
-   completed successful full browser aggregate predates this fixture correction.
+    completed successful full browser aggregate predates this fixture correction.
+- A fresh complete ordinary **no-capture browser aggregate** starts at
+  **`9143f347`** after the reviewed header correction, retaining all **2,162 prior
+  input paths**. Original command/selector and deadlines remain unchanged;
+  `NATIVE_MISSION_CAPTURE` and `NATIVE_MISSION_OUTPUT` are absent. This run is
+  independent of the passing server aggregate and ongoing native fixtures; no
+  browser outcome is claimed before completion. Inputs:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-inputs-20261007.json`;
+  log: `.../pr866-ui-header-complete-20261007.out`;
+  job: `sh_11714504d001OxNqANpQB4yJfM`.
 
 ### Current independent recurrence/native receipts
 

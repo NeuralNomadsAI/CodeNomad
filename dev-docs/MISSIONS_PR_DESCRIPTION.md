@@ -314,8 +314,10 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   reste non nulle ; seul le Park explicite du probe a établi sa libération.
   L'essai court suivant a les ACKs natifs mais pas la fermeture complète du
   superviseur ; il reste **non qualifié**. Revue : **un P2** reproduit, validation
-  asynchrone d'ACK encore en vol lors de la déconnexion IPC. Drain ciblé en cours,
-  aucune seconde admission native avant clôture indépendante.
+  asynchrone d'ACK encore en vol lors de la déconnexion IPC. Aucune seconde admission
+  native avant clôture indépendante. Correctif figé : **13 + 5 checks**, sans CLI/admission native ; revue
+  finale en cours. Résidus connus de l'essai précédent morts, sans inventer l'ACK
+  historique absent.
 - Un propriétaire natif distinct est identifié dans la source exacte : `Job.start`
   adopte le travail dans le Scope du daemon, sans emprunter celui du plugin. Probe
   réel d'éviction/acquisition fraîche/shutdown en préparation. La persistance après
@@ -331,6 +333,11 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   correspondant observé, aucun process tué. Le stop Windows stock termine le
   processus sans attendre les finalizers ; une preuve de vie liée au processus
   reste distincte d'une fermeture gracieuse de Scope et des effets incertains.
+  Nouveau run stock-stop : **49,8 s**, **2 Jobs / 1 acquisition fraîche / 1 marqueur
+  due**, sans prompt/modèle ni Job.cancel, ACKs daemon/sentinel/worker observés.
+  Revue accepte cette portée liée au processus, **finalizer null**. Correction de
+  custody revue avec 2 checks ajoutée ensuite : source corrigée encore à exécuter
+  nativement, aucune preuve de persistance ou Scope gracieux.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
@@ -339,6 +346,9 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   claim racine inactive, classée nativement « shutdown » **sans arrêt du daemon**.
   Ce n'est ni un succès ni un reset des dix reprises. Pause/Stop d'un acteur déjà
   inactif, passage fini et reprise froide restent à prouver avant toute activation.
+- Nouvel aggregate navigateur ordinaire lancé après la correction header, sans
+  capture native externe, sur **2 162 inputs figés**. Commande, assertions et délais
+  inchangés ; aucun résultat annoncé avant completion, qualifications natives séparées.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
