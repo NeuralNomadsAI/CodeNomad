@@ -41,13 +41,13 @@ export default function DismissibleWindow(props: {
     event.preventDefault()
   }
   const endDrag = (event: PointerEvent) => { if (drag?.id === event.pointerId) drag = undefined }
+  const keepVisible = () => {
+    if (panel?.style.position !== "fixed") return
+    const rect = panel.getBoundingClientRect()
+    place(rect.left, rect.top)
+  }
   createEffect(() => {
     if (!props.draggable || !props.open) return
-    const keepVisible = () => {
-      if (panel?.style.position !== "fixed") return
-      const rect = panel.getBoundingClientRect()
-      place(rect.left, rect.top)
-    }
     window.addEventListener("resize", keepVisible)
     window.visualViewport?.addEventListener("resize", keepVisible)
     window.visualViewport?.addEventListener("scroll", keepVisible)
@@ -62,12 +62,20 @@ export default function DismissibleWindow(props: {
     <Dialog.Content
       ref={element => {
         panel = element
-        if (props.inline && props.draggable) queueMicrotask(() => {
+        if (!props.draggable) return
+        const observer = new ResizeObserver(keepVisible)
+        observer.observe(element)
+        onCleanup(() => observer.disconnect())
+        queueMicrotask(() => {
           // Portal placement escapes transcript clipping while retaining the initial anchor.
-          if (!element.isConnected || !anchor?.parentElement) return
-          const rect = anchor.parentElement.getBoundingClientRect()
-          Object.assign(element.style, { position: "fixed", left: `${rect.left + rect.width / 2}px`,
-            top: `${rect.top + parseFloat(getComputedStyle(element).top)}px` })
+          if (!element.isConnected) return
+          if (props.inline && anchor?.parentElement) {
+            const rect = anchor.parentElement.getBoundingClientRect()
+            Object.assign(element.style, { position: "fixed", left: `${rect.left + rect.width / 2}px`,
+              top: `${rect.top + parseFloat(getComputedStyle(element).top)}px` })
+          }
+          const rect = element.getBoundingClientRect()
+          place(rect.left, rect.top)
         })
       }}
       id={props.id}

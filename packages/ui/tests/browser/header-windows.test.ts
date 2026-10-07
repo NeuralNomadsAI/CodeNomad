@@ -533,6 +533,69 @@ async function dragWindow(page: Page, panel: Locator, dx: number, dy: number) {
   return (await panel.boundingBox())!
 }
 
+for (const kind of ["command-palette", "session-search"]) test(`${kind} stays visible when content grows after dragging`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/query")
+    ? { status: "page", scanned: 32, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+        hits: Array.from({ length: 32 }, (_, i) => ({ sessionID: "session", messageID: "hello", partIndex: i,
+          kind: "text", role: "user", excerpt: `fixture result ${i}` })) }
+    : {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
+    const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
+    const input = panel.locator("input").first()
+    if (kind === "command-palette") await input.fill("no-such-command")
+    const before = await dragWindow(page, panel, 0, 2000)
+    await input.fill("fixture")
+    await page.waitForFunction(({ id, height }) => {
+      const r = document.getElementById(id!)!.getBoundingClientRect()
+      return r.height > height && r.bottom <= innerHeight && r.top >= 0
+    }, { id: await panel.getAttribute("id"), height: before.height })
+  } finally { await page.close() }
+})
+
+test("ported search opens inside the viewport with asymmetric drawers", async () => {
+  const page = await browser.newPage({ viewport: { width: 810, height: 600 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.viewAction("view-right-panel"))
+    await page.keyboard.press("Control+f")
+    const panel = page.locator('[role="dialog"][id^="session-search-"]')
+    await panel.waitFor()
+    const bounds = (await panel.boundingBox())!, close = (await panel.locator(".window-close-button").boundingBox())!
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 810 && close.x + close.width <= 810)
+    assert.equal(await panel.locator(".window-close-button").evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+    }), true)
+  } finally { await page.close() }
+})
+
+for (const first of ["command-palette", "session-search"]) test(`new utility window remains above the older ${first}`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const second = first === "command-palette" ? "session-search" : "command-palette"
+    for (const kind of [first, second]) await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
+    const older = page.locator(`[role="dialog"][id^="${first}-"]`), active = page.locator(`[role="dialog"][id^="${second}-"]`)
+    const a = (await older.boundingBox())!, b = (await active.boundingBox())!
+    await dragWindow(page, active, a.x - b.x, a.y - b.y)
+    assert.equal(await active.locator(".window-close-button").evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+    }), true)
+    await page.keyboard.press("Escape")
+    await active.waitFor({ state: "hidden" })
+    assert.equal(await older.isVisible(), true)
+  } finally { await page.close() }
+})
+
 for (const kind of ["command-palette", "session-search"]) test(`${kind} stays open outside, marks its toggle, and closes explicitly`, async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
   const errors: string[] = []
@@ -571,8 +634,8 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
       const r = document.getElementById(id!)!.getBoundingClientRect()
       return r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight
     }, id)
-    const bounds = (await panel.boundingBox())!
-    assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 900 && bounds.y + bounds.height <= 700)
+    const resizedBounds = (await panel.boundingBox())!
+    assert.ok(resizedBounds.x >= 0 && resizedBounds.y >= 0 && resizedBounds.x + resizedBounds.width <= 900 && resizedBounds.y + resizedBounds.height <= 700)
     assert.equal(await panel.locator("[data-window-drag-handle]").evaluate(el => {
       const r = el.getBoundingClientRect()
       return el.contains(document.elementFromPoint(r.right - 4, r.y + 4))
