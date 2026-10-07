@@ -122,3 +122,29 @@ test("disposal before the source image loads cannot restore a stale badge", asyn
     assert.equal(await page.locator('link[rel="icon"]').getAttribute("href"), "/original.ico")
   } finally { release(); await page.close() }
 })
+
+test("async native updates retain FIFO through failure, rapid clearing and cleanup", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(`window.badgeCalls = []; window.badgeRelease = [];
+      window.__TAURI__ = { core: {} }; window.__TAURI_INTERNALS__ = {
+        invoke: (command, args) => new Promise((resolve, reject) => {
+          window.badgeCalls.push(args.count); window.badgeRelease.push({ resolve, reject });
+        })
+      }`)
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).badgeFixture))
+    await page.evaluate(() => { const f = (window as any).badgeFixture; f.add(); f.clear(); f.stop() })
+    assert.deepEqual(await page.evaluate(() => (window as any).badgeCalls), [0])
+    await page.evaluate(() => (window as any).badgeRelease.shift().reject(new Error("unsupported")))
+    await page.waitForFunction(() => (window as any).badgeCalls.length === 2)
+    assert.deepEqual(await page.evaluate(() => (window as any).badgeCalls), [0, 1])
+    await page.evaluate(() => (window as any).badgeRelease.shift().resolve())
+    await page.waitForFunction(() => (window as any).badgeCalls.length === 3)
+    assert.deepEqual(await page.evaluate(() => (window as any).badgeCalls), [0, 1, 0])
+    await page.evaluate(() => (window as any).badgeRelease.shift().resolve())
+    await page.waitForFunction(() => (window as any).badgeCalls.length === 4)
+    assert.deepEqual(await page.evaluate(() => (window as any).badgeCalls), [0, 1, 0, 0])
+    await page.evaluate(() => (window as any).badgeRelease.shift().resolve())
+  } finally { await page.close() }
+})
