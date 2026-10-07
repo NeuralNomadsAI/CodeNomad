@@ -11,7 +11,7 @@ before(async () => {
     plugins: [solid(), { name: "skills-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/skills.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/skills.tsx"></script></body></html>'))
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
@@ -103,3 +103,32 @@ test("skills use the existing attachments bar without a second composer row", as
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+for (const [locale, touch] of [["en", false], ["en", true], ["he", true]] as const) {
+  test(`long skill labels stay readable in narrow ${locale} ${touch ? "touch" : "desktop"} transcripts`, async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 700 }, hasTouch: touch, isMobile: touch })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    try {
+      await page.goto(`${url}?longSkill=1&locale=${locale}`)
+      const item = page.locator('[data-view="message-item"][data-message-id="history"]')
+      const chip = item.locator(".attachment-chip")
+      await chip.waitFor()
+      assert.equal(await chip.textContent(), "m".repeat(64) + "-END-SKILL")
+      assert.equal(await page.locator("html").getAttribute("dir"), locale === "he" ? "rtl" : "ltr")
+      const bounds = await chip.evaluate(el => {
+        const message = el.closest('[data-view="message-item"]') as HTMLElement
+        const messageRect = message.getBoundingClientRect(), chipRect = el.getBoundingClientRect()
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        const rects = [...range.getClientRects()]
+        return { messageFits: message.scrollWidth <= message.clientWidth + 1,
+          chipFits: chipRect.left >= messageRect.left && chipRect.right <= messageRect.right,
+          textFits: rects.every(rect => rect.left >= chipRect.left - 1 && rect.right <= chipRect.right + 1),
+          wraps: rects.length > 1 }
+      })
+      assert.deepEqual(bounds, { messageFits: true, chipFits: true, textFits: true, wraps: true })
+      if (process.env.CODENOMAD_SKILLS_SENT_CAPTURE) await page.screenshot({
+        path: process.env.CODENOMAD_SKILLS_SENT_CAPTURE.replace(/\.png$/, `-${locale}-${touch}.png`), fullPage: true })
+    } finally { await page.close() }
+  })
+}

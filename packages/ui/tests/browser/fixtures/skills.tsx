@@ -23,12 +23,14 @@ import "../../../src/index.css"
 
 const [session, setSession] = createSignal("a")
 const [active, setActive] = createSignal(true)
+const params = new URLSearchParams(location.search)
+const skillName = params.has("longSkill") ? "m".repeat(64) + "-END-SKILL" : "Review"
 const pending: Array<{ directory: string; resolve: (value: any) => void }> = []
 const history: SessionMessageUser[] = [
   { type: "user", id: "history", text: "Previously sent", time: { created: 1 },
-    skills: [{ id: "review", name: "Review", text: "PRIVATE-SKILL-INSTRUCTIONS" }] },
+    skills: [{ id: "review", name: skillName, text: "PRIVATE-SKILL-INSTRUCTIONS" }] },
   { type: "user", id: "skill-only", text: "", time: { created: 2 },
-    skills: [{ id: "review", name: "Review", text: "PRIVATE-SKILL-INSTRUCTIONS" }] },
+    skills: [{ id: "review", name: skillName, text: "PRIVATE-SKILL-INSTRUCTIONS" }] },
 ]
 const client = {
   skill: { list: ({ location }: any) => new Promise(resolve => pending.push({ directory: location.directory, resolve })) },
@@ -47,7 +49,7 @@ sseManager.getStatuses = () => new Map([["skills", "connected"]])
 serverApi.fetchPermissionReceipts = async () => ({ receipts: [] })
 const sends: unknown[] = [], commands: unknown[] = []
 let promptInputApi: PromptInputApi | undefined
-await applyUiSettings({ showMessageTimeline: false })
+await applyUiSettings({ showMessageTimeline: false, locale: params.get("locale") === "he" ? "he" : "en" })
 await loadMessages("skills", "a", { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><main style={{ width: "min(700px, 100%)" }}>
   <div style={{ height: "280px", display: "flex" }}>
