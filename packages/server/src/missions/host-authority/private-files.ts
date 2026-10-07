@@ -1,11 +1,10 @@
-import { execFileSync } from "node:child_process"
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs"
 import { lstat, mkdir, realpath, rmdir } from "node:fs/promises"
 import path from "node:path"
 import { TextDecoder } from "node:util"
 import { HostStorage, privateStorage, type StoragePolicy } from "../../host-lifetime/storage"
 import { MAX_BYTES, validateScope } from "../../host-lifetime/protocol"
-import { windowsStorageScript, verifyWindowsStorageEvidence } from "../../host-lifetime/windows-storage"
+import { verifyPrivateSync as verifyStorageSync } from "../../host-lifetime/private-storage-sync"
 import { canonicalAuthority, authorityDigest } from "../authority-protocol"
 import { deny, HostAuthorityError, parseDocument, type HostAuthorityDescriptor, type HostDocument } from "./model"
 
@@ -17,19 +16,7 @@ export const physical = (value: string) => process.platform === "win32" ? path.n
 /** Same Windows owner/DACL/reparse evaluator as privateStorage, but synchronous
  * for the mandatory final publication fence. No cached asynchronous approval. */
 export function verifyPrivateSync(file: string, directory: boolean): void {
-  try {
-    const stat = lstatSync(file)
-    if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1)) deny("unsafe-storage")
-    if (process.platform === "win32") {
-      const { script, ancestorCount } = windowsStorageScript(file)
-      const executable = path.join(process.env.SystemRoot || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe")
-      const raw = execFileSync(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-        windowsHide: true, timeout: 5_000, maxBuffer: 256 * 1024, encoding: "utf8",
-        env: { ...process.env, PSModulePath: path.join(path.dirname(executable), "Modules") },
-      })
-      verifyWindowsStorageEvidence(raw, directory, ancestorCount)
-    } else if (!process.getuid || stat.uid !== process.getuid() || (stat.mode & 0o077)) deny("unsafe-storage")
-  } catch { deny("private-storage-unavailable") }
+  try { verifyStorageSync(file, directory) } catch { deny("private-storage-unavailable") }
 }
 export interface PrivateFilePolicy extends StoragePolicy { verifySync(file: string, directory: boolean): void }
 const nativePolicy: PrivateFilePolicy = { ...privateStorage, verifySync: verifyPrivateSync }
