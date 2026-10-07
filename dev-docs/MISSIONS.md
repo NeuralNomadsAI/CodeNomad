@@ -4,12 +4,11 @@ Missions coordinate native OpenCode V2 work through a durable project map,
 dependency-aware tasks, human controls and readable results. OpenCode owns execution;
 Missions gives the user a coherent way to specify, follow and reuse that work.
 
-The current delivery contract and review index are
-[`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md), published in
-[PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866). That contract includes
-permanent recurring missions with CodeNomad closed, and distinguishes implemented
-source from work still to deliver. Historical experiment/validation documents are
-dated evidence, not permanent product restrictions or current release approval.
+The target product contract is the description of
+[PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866), including permanent
+recurring missions with CodeNomad closed. Implementation status and qualification
+are tracked separately in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
+Historical experiment documents are dated evidence, not release approval.
 
 ## Ownership
 

@@ -3,8 +3,8 @@
 > Historical 2026-10-04 scope and receipts. The installation authorization below
 > applied to that completed refresh, not the ongoing PR #866 delivery. Current
 > work permits source changes, isolated tests and publication; no new installation,
-> release, merge or live-Mission/configuration changes. See
-> [`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md) and
+> release, merge or live-Mission/configuration changes. See the description of
+> [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866) and
 > [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md) for current
 > preferences/depth, recurrence and qualification status.
 

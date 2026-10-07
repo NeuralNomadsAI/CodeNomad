@@ -3,8 +3,8 @@
 > Historical 2026-10-03 comparison and architectural decision. Its private adapter
 > and native 2.0.22 receipts remain evidence for their exact scenarios, not the
 > current product API or a runtime-version allowlist. The selected native-first
-> architecture is now integrated in open PR #866; current contracts and delivery
-> gates are in [`MISSIONS_PR_DESCRIPTION.md`](MISSIONS_PR_DESCRIPTION.md) and
+> architecture is now integrated in open [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866);
+> its description is the target contract, while qualification is in
 > [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md). Ordinary
 > recurring passage admission and stronger signed-child authority remain distinct.
 
@@ -222,8 +222,8 @@ recorded browser/type failures and unresolved original specialist results remain
 open; this research does not relabel them.
 
 Reintroduction material remains unpublishable: the preserved pre-experiment
-`MISSIONS_REFACTOR_VALIDATION.md` and `MISSIONS_PR_DESCRIPTION.md` are historical
-source/qualification records, not a current native-first ready-to-merge result.
+validation records are historical source/qualification evidence, not a current
+native-first ready-to-merge result.
 Update the final PR description only after the changed product scope and final
 validation are known. No replacement PR, deployment, native writer takeover or
 waiver of existing desktop rollout gates is authorized or performed.
