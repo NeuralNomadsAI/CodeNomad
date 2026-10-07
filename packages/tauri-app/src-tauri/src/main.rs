@@ -15,6 +15,7 @@ mod managed_node;
 mod native_request;
 mod native_service_start;
 mod notification_badge;
+mod notification_badge_lifetime;
 mod preferences_window;
 mod shutdown;
 mod view_menu;
@@ -984,6 +985,7 @@ fn open_remote_window_locked(
         .webview_data_directory
         .join("remote")
         .join(profile_hash);
+    let badge_binding = notification_badge::prepare_window(&app, &label);
     let builder = WebviewWindowBuilder::new(
         &app,
         label.clone(),
@@ -992,6 +994,11 @@ fn open_remote_window_locked(
     .data_directory(data_directory)
     .incognito(requested_profile.proxy_session_id().is_some())
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
+    .on_page_load(move |window, payload| {
+        if payload.event() == PageLoadEvent::Started {
+            notification_badge::page_started(window.as_ref(), badge_binding);
+        }
+    })
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
@@ -1001,6 +1008,7 @@ fn open_remote_window_locked(
     let window = match builder.build() {
         Ok(window) => window,
         Err(error) => {
+            notification_badge::remove_window(&app, &label, badge_binding);
             cleanup_failed_remote_window(
                 &app,
                 None,
@@ -1013,6 +1021,7 @@ fn open_remote_window_locked(
         }
     };
 
+    notification_badge::bind_webview(window.as_ref(), badge_binding);
     window_constraints::register(&window.as_ref().window(), 1.0);
     #[cfg(windows)]
     window_constraints::register_remote_zoom(&window, &app);
@@ -1623,6 +1632,9 @@ fn main() {
     context.config_mut().identifier = scope.identifier.clone();
     let setup_scope = scope.clone();
     let setup_queue = Arc::clone(&launch_queue);
+    // This root outlives app.run; managed state/native handlers hold only Weak.
+    let notification_badge_host = Arc::new(Mutex::new(None::<Arc<AppHandle>>));
+    let setup_notification_badge_host = Arc::clone(&notification_badge_host);
 
     tauri::Builder::default()
         .plugin(single_instance)
@@ -1670,7 +1682,6 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
-                notification_badge::page_started(&webview.app_handle(), webview);
                 webview
                     .app_handle()
                     .state::<AppState>()
@@ -1713,6 +1724,12 @@ fn main() {
             }
         })
         .setup(move |app| {
+            let badge_host = Arc::new(app.handle().clone());
+            app.state::<notification_badge::NotificationBadge>()
+                .set_host(&badge_host);
+            *setup_notification_badge_host
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
             set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
             let client_state = client_state::ClientState::initialize(
@@ -1998,7 +2015,6 @@ fn main() {
                     .state::<AppState>()
                     .browser_controller
                     .remove_window(&app_handle, &label);
-                notification_badge::remove_window(&app_handle, &label);
                 if let Ok(window_id) = identity::local_window_id(&label) {
                     app_handle
                         .state::<local_windows::LocalWindows>()
@@ -2040,6 +2056,7 @@ fn main() {
             }
             _ => {}
         });
+    drop(notification_badge_host);
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<()> {
@@ -2422,7 +2439,8 @@ mod menu_tests {
             json!([
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
-                "notification:allow-notify"
+                "notification:allow-notify",
+                "allow-notification-badge-set"
             ])
         );
 

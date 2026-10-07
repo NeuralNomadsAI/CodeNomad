@@ -1,6 +1,6 @@
 //! Count-only badges. Images and process-wide aggregation stay in the host.
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 use tauri::{AppHandle, Manager, Webview};
 use url::Url;
 
@@ -8,9 +8,55 @@ use url::Url;
 struct Counts {
     generation: u64,
     windows: HashMap<String, (u64, u8)>,
+    bindings: HashMap<String, (u64, bool)>,
 }
 
 impl Counts {
+    fn bind(&mut self, label: &str) -> u64 {
+        self.generation += 1;
+        let binding = self.generation;
+        self.bindings.insert(label.into(), (binding, false));
+        self.reset(label);
+        binding
+    }
+
+    #[cfg(any(windows, target_os = "linux", test))]
+    fn terminated(&mut self, label: &str, binding: u64) -> bool {
+        if !self.is_binding_current(label, binding) {
+            return false;
+        }
+        // No contribution or command admission until a new page starts. This
+        // fences updates already queued by the terminated renderer.
+        self.windows.remove(label).is_some()
+    }
+
+    fn is_binding_current(&self, label: &str, binding: u64) -> bool {
+        self.bindings
+            .get(label)
+            .is_some_and(|entry| entry.0 == binding)
+    }
+
+    fn claim_binding(&mut self, label: &str, binding: u64) -> bool {
+        let Some(entry) = self
+            .bindings
+            .get_mut(label)
+            .filter(|entry| entry.0 == binding && !entry.1)
+        else {
+            return false;
+        };
+        entry.1 = true;
+        true
+    }
+
+    fn remove(&mut self, label: &str, binding: u64) -> bool {
+        if !self.is_binding_current(label, binding) {
+            return false;
+        }
+        self.bindings.remove(label);
+        self.windows.remove(label);
+        true
+    }
+
     fn reset(&mut self, label: &str) {
         self.generation += 1;
         self.windows.insert(label.into(), (self.generation, 0));
@@ -40,7 +86,63 @@ impl Counts {
 }
 
 #[derive(Default)]
-pub(crate) struct NotificationBadge(Mutex<Counts>);
+pub(crate) struct NotificationBadge(Mutex<Counts>, Mutex<Weak<AppHandle>>);
+
+impl NotificationBadge {
+    pub(crate) fn set_host(&self, host: &Arc<AppHandle>) {
+        *self.1.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(host);
+    }
+}
+
+// Only native local/remote factories enroll a future physical primary window.
+// Enrollment precedes build: initial pages do not depend on metadata timing.
+pub(crate) fn prepare_window(app: &AppHandle, label: &str) -> u64 {
+    app.state::<NotificationBadge>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .bind(label)
+}
+
+pub(crate) fn bind_webview(webview: &Webview, binding: u64) {
+    if webview.label() != webview.window().label() {
+        return;
+    }
+    let app = webview.app_handle();
+    let state = app.state::<NotificationBadge>();
+    if !state
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .claim_binding(webview.label(), binding)
+    {
+        return;
+    }
+    let host = state.1.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let closed_host = host.clone();
+    let label = webview.label().to_string();
+    webview.window().on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            if let Some(app) = closed_host.upgrade() {
+                remove_window(&app, &label, binding);
+            }
+        }
+    });
+    crate::notification_badge_lifetime::bind(webview, host, binding);
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) fn renderer_terminated(app: &AppHandle, label: &str, binding: u64) {
+    let changed = app
+        .state::<NotificationBadge>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .terminated(label, binding);
+    if changed {
+        publish(app);
+    }
+}
 
 fn is_main_owner(label: &str, window_label: &str, local: bool, remote: bool) -> bool {
     label == window_label
@@ -84,33 +186,35 @@ fn require_owner(webview: &Webview, app: &AppHandle) -> Result<Url, String> {
 
 // Native page-load events rotate even on same-URL reloads. Queued updates cannot
 // resurrect a previous document's contribution or overwrite another window.
-pub(crate) fn page_started(app: &AppHandle, webview: &Webview) {
+pub(crate) fn page_started(webview: &Webview, binding: u64) {
     if webview.label() != webview.window().label()
         || webview.label() == crate::preferences_window::LABEL
     {
         return;
     }
-    if crate::identity::local_window_id(webview.label()).is_err()
-        && !webview.label().starts_with("remote-")
+    let app = webview.app_handle();
     {
-        return;
+        let state = app.state::<NotificationBadge>();
+        let mut counts = state.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !counts.is_binding_current(webview.label(), binding) {
+            return;
+        }
+        counts.reset(webview.label());
     }
-    app.state::<NotificationBadge>()
-        .0
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .reset(webview.label());
+    bind_webview(webview, binding);
     publish(app);
 }
 
-pub(crate) fn remove_window(app: &AppHandle, label: &str) {
-    app.state::<NotificationBadge>()
+pub(crate) fn remove_window(app: &AppHandle, label: &str, binding: u64) {
+    let changed = app
+        .state::<NotificationBadge>()
         .0
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .windows
-        .remove(label);
-    publish(app);
+        .remove(label, binding);
+    if changed {
+        publish(app);
+    }
 }
 
 fn publish(app: &AppHandle) {
@@ -268,6 +372,81 @@ mod tests {
         counts.reset("two");
         assert!(counts.set("two", second, 8).is_err());
         assert_eq!(counts.total(), 0);
+    }
+
+    #[test]
+    fn notification_badge_termination_fences_updates_without_clearing_peer_or_replacement() {
+        let mut counts = Counts::default();
+        let retired = counts.bind("remote-one");
+        counts.bind("local-two");
+        let queued = counts.windows["remote-one"].0;
+        let peer = counts.windows["local-two"].0;
+        counts.set("remote-one", queued, 50).unwrap();
+        counts.set("local-two", peer, 12).unwrap();
+        assert!(counts.terminated("remote-one", retired));
+        assert_eq!(counts.total(), 12);
+        assert!(counts.set("remote-one", queued, 50).is_err());
+        assert!(!counts.terminated("remote-one", retired));
+        counts.reset("remote-one");
+        let recovered = counts.windows["remote-one"].0;
+        assert_ne!(queued, recovered);
+        counts.set("remote-one", recovered, 4).unwrap();
+        assert!(counts.set("remote-one", queued, 50).is_err());
+        assert_eq!(counts.total(), 16);
+
+        assert!(counts.remove("remote-one", retired));
+        assert!(
+            !counts.terminated("remote-one", retired),
+            "closed windows stay removed"
+        );
+        let replacement = counts.bind("remote-one");
+        assert_ne!(retired, replacement);
+        let current = counts.windows["remote-one"].0;
+        counts.set("remote-one", current, 7).unwrap();
+        assert!(
+            !counts.remove("remote-one", retired),
+            "retired close callback cannot remove replacement"
+        );
+        assert!(
+            !counts.terminated("remote-one", retired),
+            "retired native callback cannot clear replacement"
+        );
+        assert_eq!(counts.total(), 19);
+        assert!(counts.terminated("remote-one", replacement));
+        assert_eq!(counts.total(), 12);
+    }
+
+    #[test]
+    fn notification_badge_native_binding_is_once_per_physical_window_not_metadata_or_page() {
+        let mut counts = Counts::default();
+        // Factory enrollment exists before either native build or metadata.
+        let binding = counts.bind("remote-one");
+        assert!(counts.claim_binding("remote-one", binding));
+        counts.reset("remote-one");
+        let first_page = counts.windows["remote-one"].0;
+        counts.set("remote-one", first_page, 8).unwrap();
+        assert!(
+            !counts.claim_binding("remote-one", binding),
+            "post-build fallback does not duplicate the early subscription"
+        );
+        assert_eq!(
+            counts.total(),
+            8,
+            "fallback does not erase first-load publication"
+        );
+        counts.reset("remote-one");
+        assert!(
+            !counts.claim_binding("remote-one", binding),
+            "reload retains the physical subscription"
+        );
+        let replacement = counts.bind("remote-one");
+        assert!(!counts.claim_binding("remote-one", binding));
+        assert!(
+            !counts.is_binding_current("remote-one", binding),
+            "old page callbacks cannot reset the replacement"
+        );
+        assert!(counts.claim_binding("remote-one", replacement));
+        assert!(!counts.claim_binding("guest-one", replacement));
     }
 
     #[test]
