@@ -176,15 +176,36 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   snapshots. Final review repeats **5/5** focused cases, cold case **15.88 s**, but
   confirms **one latent P2** in actual old/new route bodies: `Promise.all` can
   return 503 before admitted peer reads settle, in provisional/pre-RPC preparation
-  and supported/unsupported post-RPC validation. Fix is active at both route-local
-  batch sites: deny publication, drain admitted reads, then rethrow the same first
-  error; never admit a next batch or late RPC. Scoped closure and a fresh aggregate
-  remain required. No cross-RPC identity cache, deadline or worker-limit change.
-  Candidate receipt:
+  and supported/unsupported post-RPC validation. Fix is now frozen at both
+  route-local batch sites: deny publication, drain admitted reads, then rethrow the
+  identical first error; never admit a next batch or late RPC. Author suite is
+  **26/26**, typecheck and diff check pass, all **18 original harness/test bodies
+  unchanged**. Four persistent negative custody cases fail against virtual old
+  batching; cleanup observes **0 outstanding Git reads**. Cold case remains
+  **130 commands (65 pre / 65 post)**, now **10.710 s**, unchanged 30-second deadline.
+  Final independent review closes **0 remaining findings**, **6/6** actual-source
+  checks: four phases retain admitted peers with RPC counts **0 / 0 / 1 / 1**,
+  actual helper rethrows the identical first error, real **30-second** expiry yields
+  503/**0 RPC**/**no capability publication**, four old-batch controls fail as
+  expected. All **9 fixtures removed**, **0 outstanding Git reads**, original
+  harness/18 test bodies unchanged. Correction committed **`01d63a0b`**. No
+  cross-RPC identity cache, deadline or worker-limit change. Custody candidate receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-custody-final-output-20261007.json`.
+  Earlier candidate receipt:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-final-output-20261007.json`;
   review: `.../pr866-pending-independent-20261007/verification.json`.
   Original read-only measurement:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-readonly-2rYnY0/summary.json`.
+- A fresh **complete ordinary serial server aggregate** is now running at
+  **`01d63a0b`**, with **625 inputs frozen**: all earlier **623 paths retained** plus
+  the new shared sync-privacy helper and family regression. Selector remains all
+  `packages/server/src/**/*.test.ts`; no original test, assertion or deadline is
+  removed. New unwired `native-protected-public.ts` and opt-in `.test.mjs`/startup
+  fixtures remain independently qualified, explicitly outside ordinary aggregate
+  acceptance; they have no `.ts` callers and may progress without modifying these
+  frozen inputs. No new aggregate outcome is claimed before completion.
+  Inputs: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-inputs-20261007.json`;
+  complete log: `.../pr866-server-serial-broker-625-20261007.out`.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
@@ -504,6 +525,24 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   CodeNomad scheduler substitute. Job source: `packages/core/src/job.ts:178–183,
   252–297,478–480`, Git blob `771c5a79722effe0ae48d072b95c68f5f03be0ee`.
   This is source evidence only, not a runtime pass or production activation.
+- Cold-entry scrutiny rejects a specific bootstrap hypothesis: retained
+  `missions-startup-JQzXFg/receipt.json` is a **claim-timer** receipt, not an
+  independent global-plugin startup. Its restart module/setup hits follow genuine
+  native **claim-driven Location acquisition**; its claim-free successor has
+  **0 module evaluations / 0 setups** over eight seconds. No caller Location demand
+  does not mean no native Location acquisition. Exact configured-plugin import
+  chain is Location supervisor → ConfigPluginSource → `PluginModule.load` → source/
+  package load. Bun dependency scanning is not evaluation, and `server/tui/rpc`
+  metadata exposes no separate startup entrypoint in the inspected contract.
+  Thus native self-HTTP credentials alone cannot create an unproved cold entry.
+  Public `Service.discover({file})` authenticates but already performs HTTP: signed
+  enrollment/path, exact private managed registration/current PID/incarnation and
+  loopback endpoint must be checked **before** discovery, then rechecked around
+  authentication/adoption. No self-HTTP, startup host or production bootstrap is
+  added. The existing native execution interruption/retained-claim path is under
+  separate source scrutiny; any inactive claim parking must remain a truthful
+  interruption, never claimed success or a fabricated event/counter write. This
+  is a concrete entry-contract limit, not a permanent impossibility finding.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture

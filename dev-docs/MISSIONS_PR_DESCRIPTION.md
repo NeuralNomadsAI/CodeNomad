@@ -251,6 +251,7 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Démarrage froid de la fixture header | Commit local `35af6332` ; cache détenu et préparation Vite existante, 33/33 cas, 7/7 régressions et 3 relances badge, assertions et délai 15 s inchangés. Revue indépendante clôturée ; CI précédente toujours en échec |
 | Propagation d'annulation d'autorité | Commit local `7d292121` ; trois catches préservent la raison exacte du demandeur, autres erreurs natives opaques. 10/10 checks combinés et typecheck, revue indépendante 3/3 sans finding ; aucune réservation/Play admis rejoué ou effacé |
 | Custody du scan worktree rejeté | Commit local `973d775b` ; stoppe les admissions et attend les lectures déjà admises avant le refus original. 10/10 checks et typecheck, revue sans finding avec deux probes de failure-path ; aucune assertion/délai de production relâché |
+| Admission pending chargée seule | `01d63a0b` : 195 → 130 commandes Git, revalidation fraîche pré/post-RPC et drain des lectures refusées. 26/26, typecheck, revue 6/6 sans finding, expiration réelle 30 s sans RPC/publication. Nouvel aggregate complet en cours ; aucune suppression d'assertion ni hausse de délai |
 | Focus des actions Mission | Commit local `32c308a1` ; 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Suite complète **sans capture : 758/0/2**, zéro annulation, 760 cas et 2 162 empreintes inchangées |
 
 ### Preuves actuelles et prochaine boucle
@@ -278,7 +279,13 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   pré-RPC, puis revalider après le RPC : **130 commandes mesurées**, cas original
   **12,576 s**, **22/22 checks** et typecheck. La revue répète 5/5 mais confirme un
   P2 latent : refus HTTP avant settlement des lectures déjà admises. Drain ciblé
-  en cours aux deux sites ; revue finale et nouvel aggregate requis. Délai, limites,
+  corrigé aux deux sites : **26/26 checks**, 4 négatifs reproduisent l'ancien défaut,
+  **0 lecture Git en vol** au nettoyage, cas original **10,710 s**. Revue finale
+  clôturée **6/6 sans finding**, 9 fixtures nettoyées, expiration réelle 30 s sans
+  RPC/publication ; correction **`01d63a0b`**. Nouvel aggregate série complet lancé
+  sur **625 inputs figés**, tous les 623 chemins précédents conservés ; aucun résultat
+  annoncé avant la fin. CAS public et fixtures natives opt-in restent séparés.
+  Délai, limites,
   rejet des clones étrangers et fences conservés.
 - Probe natif d'inactivité réel lancé : **63 minutes** sans polling, prompt ou
   keepalive ; résultat attendu, **non qualifiant** tant que deux défauts du probe
@@ -296,6 +303,10 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   réel d'éviction/acquisition fraîche/shutdown en préparation. La persistance après
   restart n'est pas fournie par les Jobs génériques ; réveil froid encore séparé,
   sans faux recovery Shell/subagent ni backend CodeNomad de substitution.
+- La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
+  inspecté était un **claim-timer**, chargé par une acquisition native de Location.
+  Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
+  conservation native d'une claim inactive encore à examiner séparément.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
