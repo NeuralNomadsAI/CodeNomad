@@ -13,7 +13,7 @@ export function registerPermissionReceiptRoutes(app: FastifyInstance, receipts: 
   app.get<{ Params: { id: string; sessionId: string } }>("/api/workspaces/:id/sessions/:sessionId/permission-receipts", async (request, reply) => {
     reply.header("cache-control", "no-store")
     const query = querySchema.safeParse(request.query)
-    if (!query.success || !request.params.sessionId || request.params.sessionId.length > 512) {
+    if (!query.success || !request.params.sessionId.startsWith("ses") || request.params.sessionId.length > 512) {
       return reply.code(400).send({ error: "Invalid permission receipt query" })
     }
     return receipts.list(request.params.id, request.params.sessionId, { ...query.data, unanchored: query.data.unanchored === "true" })
