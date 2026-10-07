@@ -1,5 +1,6 @@
 export const instanceMessages = {
   "panelExtensions.section": "विस्तारहरू",
+  "panelExtensions.assetsConsent": "अनुमति: हालको सत्रका उपकरण परिणामका छवि र संलग्नक, पहिचान, भाषा र रूप पढ्ने। फाइल प्रणाली वा नेटवर्कमा पहुँच छैन।",
   "panelExtensions.empty": "कुनै विस्तार स्थापित छैन।",
   "panelExtensions.catalog.title": "अनलाइन उपलब्ध",
   "panelExtensions.catalog.search": "विस्तार खोज्नुहोस्",

@@ -1,6 +1,7 @@
 import type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionCatalog } from "../../../server/src/api-types"
 import { CODENOMAD_API_BASE } from "./api-base"
 import { authenticatedFetch } from "./auth-recovery"
+import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server/src/opencode/session-pruning/assets-contract"
 
 async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(`${CODENOMAD_API_BASE ?? ""}/api/panel-extensions${suffix}`, {
@@ -10,6 +11,10 @@ async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   return response.json()
 }
 export const panelExtensionsApi = {
+  assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
+    request<Extract<AssetsResult, { status: "page" }>>(`/${encodeURIComponent(id)}/assets`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, cursor }), signal }),
+  assetRead: (instanceId: string, id: string, digest: string, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
+    request<Extract<AssetReadResult, { status: "asset" }>>(`/${encodeURIComponent(id)}/assetRead`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, target }), signal }),
   catalog: (refresh: boolean, signal: AbortSignal) => request<PanelExtensionCatalog>(`/catalog${refresh ? "?refresh=true" : ""}`, { signal }),
   inspectCatalog: (id: string, digest: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/catalog/inspect", {
     method: "POST", body: JSON.stringify({ id, digest }),

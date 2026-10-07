@@ -1,5 +1,6 @@
 export const instanceMessages = {
   "panelExtensions.section": "Extensiones",
+  "panelExtensions.assetsConsent": "Permiso: leer imágenes y adjuntos de resultados de herramientas de la sesión actual, su identificador, idioma y apariencia. Sin acceso al sistema de archivos ni a la red.",
   "panelExtensions.empty": "No hay extensiones instaladas.",
   "panelExtensions.catalog.title": "Disponibles en línea",
   "panelExtensions.catalog.search": "Buscar extensiones",

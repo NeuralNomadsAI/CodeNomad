@@ -1,5 +1,6 @@
 export const instanceMessages = {
   "panelExtensions.section": "הרחבות",
+  "panelExtensions.assetsConsent": "הרשאה: קריאת תמונות וקבצים מתוצאות כלים בשיחה הנוכחית, המזהה שלה, השפה והמראה. ללא גישה למערכת הקבצים או לרשת.",
   "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",

@@ -3,11 +3,10 @@ import yauzl from "yauzl"
 import { z } from "zod"
 import { PANEL_EXTENSION_LIMITS, type PanelExtensionManifest } from "./contract"
 
-export const ManifestSchema = z.object({
+export const ManifestFields = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/),
   name: z.string().trim().min(1).max(80),
   version: z.string().regex(/^\d{1,5}\.\d{1,5}\.\d{1,5}(?:-[a-zA-Z0-9.-]{1,40})?$/),
-  apiVersion: z.literal(1),
   author: z.string().trim().min(1).max(120),
   license: z.string().trim().min(1).max(80),
   repository: z.string().max(512).url().refine(value => {
@@ -15,8 +14,11 @@ export const ManifestSchema = z.object({
     return url.protocol === "https:" && url.hostname === "github.com" && !url.username && !url.password
       && !url.search && !url.hash && /^\/[\w.-]+\/[\w.-]+\/?$/.test(url.pathname)
   }),
-  permissions: z.tuple([z.literal("session.context")]),
 }).strict()
+export const ManifestSchema = z.discriminatedUnion("apiVersion", [
+  ManifestFields.extend({ apiVersion: z.literal(1), permissions: z.tuple([z.literal("session.context")]) }).strict(),
+  ManifestFields.extend({ apiVersion: z.literal(2), permissions: z.tuple([z.literal("session.context"), z.literal("session.assets.read")]) }).strict(),
+])
 
 export interface PanelExtensionPackage { manifest: PanelExtensionManifest; html: string; digest: string }
 export class PanelExtensionError extends Error {

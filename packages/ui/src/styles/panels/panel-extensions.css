@@ -9,7 +9,7 @@
   height: 100%;
   min-height: 12rem;
   border: 0;
-  background: var(--surface-base);
+  background: var(--surface-secondary);
 }
 
 .right-panel-customization-popover {

@@ -21,10 +21,12 @@ const build = spawnSync("cargo", ["build", "-p", "codenomad-panel-extension-fixt
 assert.equal(build.error, undefined, String(build.error))
 assert.equal(build.status, 0, build.stdout + build.stderr)
 const { panelExtensionDocument } = await tsImport(new URL("../packages/ui/src/components/panel-extensions/frame-document.ts", import.meta.url).href, import.meta.url)
+const apiVersion = process.argv.includes("--api2") ? 2 : 1
 const document = panelExtensionDocument(`<h1>External panel</h1><p id="session"></p><script>
   const results = { parent: 'unknown', network: 'unknown', context: null, nativeGlobal: typeof window.__TAURI_INTERNALS__ };
   try { parent.document; results.parent = 'allowed'; } catch { results.parent = 'blocked'; }
   codenomad.onContext(context => { results.context = context.sessionId; document.querySelector('#session').textContent = context.sessionId; });
+  if (codenomad.assets) codenomad.onContext(async () => { results.asset = (await codenomad.assets.list()).entries[0].name; });
   fetch('/api/forbidden').then(() => results.network = 'allowed').catch(() => results.network = 'blocked');
   // On Windows Tauri globals may be injected. Their presence is not permission.
   if (window.__TAURI_INTERNALS__) {
@@ -33,7 +35,7 @@ const document = panelExtensionDocument(`<h1>External panel</h1><p id="session">
   }
   parent.postMessage({ cmd: 'probe', role: 'message-child' }, '*');
   setTimeout(() => parent.postMessage({ type: 'results', results }, '*'), 1500);
-</script>`, "fixture-handshake")
+</script>`, "fixture-handshake", apiVersion)
 const reports = []
 const server = createServer((request, response) => {
   if (request.url === "/report") {
@@ -48,7 +50,10 @@ const server = createServer((request, response) => {
     window.addEventListener('DOMContentLoaded', () => __TAURI_INTERNALS__.invoke('probe', { role: 'parent' }));
     function initialize(frame) {
       const channel = new MessageChannel();
-      channel.port1.onmessage = e => { if (e.data?.handshake === 'fixture-handshake') channel.port1.postMessage({ type: 'context', context: { apiVersion: 1, sessionId: 'native-session', locale: 'en', appearance: 'light' } }); };
+      channel.port1.onmessage = e => {
+        if (e.data?.handshake === 'fixture-handshake') channel.port1.postMessage({ type: 'context', context: { apiVersion: ${apiVersion}, sessionId: 'native-session', locale: 'en', appearance: 'light' } });
+        else if (e.data?.type === 'assets:request') channel.port1.postMessage({ type: 'assets:result', id: e.data.id, result: { entries: [{ name: 'Native asset' }], cursor: null } });
+      };
       frame.contentWindow.postMessage({ type: 'codenomad:init' }, '*', [channel.port2]);
     }
   </script><iframe sandbox="allow-scripts" onload="initialize(this)" srcdoc="${document.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")}"></iframe>`)
@@ -70,6 +75,7 @@ try {
   assert.equal(reports[0].parent, "blocked")
   assert.equal(reports[0].network, "blocked")
   assert.equal(reports[0].context, "native-session")
+  if (apiVersion === 2) assert.equal(reports[0].asset, "Native asset")
   console.log(JSON.stringify({ nativeParent: "allowed", nativeChild: "blocked", ...reports[0] }, null, 2))
 } finally {
   await new Promise(resolve => server.close(resolve))

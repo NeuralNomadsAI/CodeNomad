@@ -217,7 +217,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   await fs.writeFile(a, "")
   await tick(() => entries.length === 2)
   assert.deepEqual(entries.map(entry => entry.id), ["codenomad.session-pruning", "codenomad.pending-requests"])
-  assert.deepEqual(entries[0].methods, ["history", "outline", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
+  assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "outline", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
   assert.deepEqual(entries[1].methods, ["snapshot"])
   await fs.writeFile(b, "")
   await fs.unlink(a)

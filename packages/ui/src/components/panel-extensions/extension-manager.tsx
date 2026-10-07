@@ -135,7 +135,7 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
         <p>{pkg().manifest.repository}</p>
         <code>{pkg().digest}</code>
       </details>
-      <p>{t("panelExtensions.permission")}</p>
+      <p>{t(pkg().manifest.apiVersion === 2 ? "panelExtensions.assetsConsent" : "panelExtensions.permission")}</p>
       <p>{t("panelExtensions.warning")}</p>
       <label><input type="checkbox" checked={acknowledged()} onChange={event => setAcknowledged(event.currentTarget.checked)} />{t("panelExtensions.trust")}</label>
       <div class="panel-extension-actions">

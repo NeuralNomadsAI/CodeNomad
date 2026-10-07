@@ -57,6 +57,15 @@ export class PanelExtensionStore {
     })
   }
 
+  async authorizeAssets(id: string, digest: string): Promise<void> {
+    const entry = (await this.list()).find(entry => entry.manifest.id === id)
+    if (!entry) throw new PanelExtensionError("missing")
+    if (entry.digest !== digest) throw new PanelExtensionError("conflict")
+    if (!entry.enabled || entry.manifest.apiVersion !== 2 || !entry.manifest.permissions.includes("session.assets.read")) {
+      throw new PanelExtensionError("disabled")
+    }
+  }
+
   private async read(): Promise<Stored[]> {
     try {
       const file = path.join(this.directory, "installed.json")
