@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, on, onCleanup, untrack } from "solid-js"
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageCircleQuestion, ShieldCheck, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { getPermissionQueue, incompletePendingRecovery, sendFormCancel, sendFormReply } from "../stores/instances"
+import { getPermissionQueue, sendFormCancel, sendFormReply } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
 import { sessions } from "../stores/sessions"
 import { focusInterruption, interruptionFocus } from "../stores/interruption-navigation"
@@ -45,9 +45,6 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   }))
 
   return <>
-    <Show when={incompletePendingRecovery().has(props.instanceId)}>
-      <div class="window-shell window-toolbar text-secondary shrink-0" role="status">{t("interruption.recoveryIncomplete")}</div>
-    </Show>
     <Show when={pending().length > 0}>
     <section ref={root} class="interruption-dock window-shell" classList={{ "is-collapsed": !expanded(), "has-origin": !own() }}
       style={{ "min-height": expanded() && minimumHeight() !== undefined ? `${minimumHeight()}px` : undefined }} tabIndex={-1} aria-label={t("permissionApproval.title")}>

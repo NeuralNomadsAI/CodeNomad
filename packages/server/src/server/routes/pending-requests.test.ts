@@ -66,7 +66,9 @@ async function harness() {
   }
   const app = Fastify()
   registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) } })
-  const url = (directories = [root]) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams(directories.map((directory) => ["directories", directory]))}`
+  const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
+    ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
+  ])}`
   return { root, subdirectory, state, manager, connection, app, url, async cleanup() { await app.close(); await rm(root, { recursive: true, force: true }) } }
 }
 
@@ -222,6 +224,52 @@ test("mixed unowned candidates are rejected without blocking recovery of owned d
     h.state.status = 400
     h.state.result = { _tag: "RpcError", type: "rpc.unavailable", message: "RPC unavailable" }
     assert.deepEqual((await h.app.inject({ url: h.url([h.root, "/foreign"]) })).json(), { supported: false })
+  } finally { await h.cleanup() }
+})
+
+test("deleted optional history is excluded without losing idle subdirectory requests or negotiating fake capability", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "deleted-history")
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+    h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{
+      location: { directory: h.subdirectory }, permissions: [permission], forms: [form],
+    }])] }
+    const response = await h.app.inject({ url: h.url([h.root, deleted, h.subdirectory], [deleted, h.subdirectory]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [
+      [deleted, "excluded"], [h.root, "ok"], [h.subdirectory, "ok"],
+    ])
+    assert.deepEqual(h.state.batches, [[h.root, h.subdirectory]])
+    assert.deepEqual(response.json().directories[2].locations[0].forms, [form])
+    assert.deepEqual(response.json().directories[2].locations[0].permissions, [permission])
+    h.state.result = { data: [complete(h.root)] }
+    const excluded = await h.app.inject({ url: h.url([deleted], [deleted]) })
+    assert.deepEqual(excluded.json(), { supported: true, directories: [{ directory: deleted, status: "excluded" }] })
+    assert.deepEqual(h.state.batches[1], [h.root], "all-excluded batches still validate the loaded-only RPC at the owned root")
+    h.state.status = 400
+    h.state.result = { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" }
+    assert.deepEqual((await h.app.inject({ url: h.url([deleted], [deleted]) })).json(), { supported: false })
+    assert.equal((await h.app.inject({ url: h.url([h.root], [deleted]) })).statusCode, 400)
+  } finally { await h.cleanup() }
+})
+
+test("required deleted paths and optional authorization/identity failures remain non-authoritative errors", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "deleted-history")
+    const required = await h.app.inject({ url: h.url([h.root, deleted]) })
+    assert.deepEqual(required.json().directories[0], { directory: deleted, status: "error" })
+    h.manager.getServiceDirectoryForPath = async (_id, directory) => {
+      if (directory === deleted) throw Object.assign(new Error("Access denied"), { code: "EACCES" })
+      return directory
+    }
+    assert.equal((await h.app.inject({ url: h.url([h.root, deleted], [deleted]) })).statusCode, 503)
+    h.manager.getServiceDirectoryForPath = async (_id, directory) => directory
+    const failed = await h.app.inject({ url: h.url([h.root, deleted], [deleted]) })
+    assert.deepEqual(failed.json().directories[0], { directory: deleted, status: "error" }, "missing identity is not an obsolete-history exclusion")
+    assert.deepEqual(h.state.batches, [[h.root], [h.root]])
   } finally { await h.cleanup() }
 })
 
