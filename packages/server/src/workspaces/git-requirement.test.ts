@@ -48,7 +48,7 @@ test("no-Git conversations retain directory ownership, agent context and deletio
   const logger = pino({ level: "silent" })
   const manager = new WorkspaceManager({
     rootDir: root,
-    settings: { getOwner: () => ({ environmentVariables: {} }) } as never,
+    settings: { getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) } as never,
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "fixture" }) } as never,
     eventBus: new EventBus(), logger,
     sharedService: {

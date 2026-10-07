@@ -1,11 +1,11 @@
-/** Explicit native-owner prerequisite: run only after the existing Windows
+/** Explicit native-owner prerequisite: run in the provisioned Windows job after the
  * addon artifact is built. Missing/wrong artifacts FAIL, never skip or fall back
  * to SDK JS. This fixture builds nothing and qualifies loader behavior only. */
 import test from "node:test"
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
@@ -15,7 +15,9 @@ test("actual compiled N-API artifact loads despite cache/hook bait; native expor
   // Loader regression only: actual native owner produced this addon; copying
   // its existing bytes creates an isolated single-link artifact. No native
   // bootstrap, supervisor, profile, daemon or package artifacts are mutated.
-  const root = await mkdtemp(path.join(process.platform === "win32" ? "C:/Users/Admin/AppData/Local/Temp/opencode" : tmpdir(), "native-positive-loader-"))
+  const parent = path.join(tmpdir(), "opencode")
+  await mkdir(parent, { recursive: true })
+  const root = await mkdtemp(path.join(parent, "native-positive-loader-"))
   try {
     const artifact = path.join(root, "compiled.node"), script = path.join(root, "probe.mts")
     await writeFile(artifact, bytes)

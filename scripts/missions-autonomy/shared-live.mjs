@@ -7,12 +7,14 @@ import { setTimeout as delay } from "node:timers/promises"
 import { build } from "esbuild"
 import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
+import { clearFixtureGitEnvironment } from "../native-fixture-guards.mjs"
 
 // Use the existing authenticated native service and its configured GPT provider.
 // Never copy credentials to a private server, alter global config, or start/stop
 // the service. All mutations below belong to this newly created trial Location.
 const root = await mkdtemp("C:/Users/Admin/AppData/Local/Temp/opencode/missions-gpt-trial-")
 const project = path.join(root, "project")
+clearFixtureGitEnvironment()
 await mkdir(project)
 const deadline = Date.now() + 240000
 const lifetime = new AbortController()

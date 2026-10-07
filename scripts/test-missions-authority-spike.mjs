@@ -14,6 +14,7 @@ import { canonical, envelope, POLICY, RPC } from "./missions-authority-spike/pro
 import { claimFamily, familyIdentity, inspectFamily } from "./missions-authority-spike/family-ownership.mjs"
 import { atomicJSON, freshSettings, startBroker } from "./missions-authority-spike/broker.mjs"
 import { startProvider } from "./missions-authority-spike/provider.mjs"
+import { clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
 
 const allowedCLI = "C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe"
 const cli = process.argv[2] ?? allowedCLI
@@ -24,6 +25,7 @@ const root = await mkdtemp(path.join(temporary, "missions-authority-"))
 console.log(`Private authority fixture: ${root}`)
 const project = path.join(root, "project"), config = path.join(root, "config"), settingsFile = path.join(root, "profile.json")
 for (const directory of [project, config, path.join(root, "hooks-disabled")]) await mkdir(directory)
+clearFixtureGitEnvironment()
 for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_)/i.test(key)) delete process.env[key]
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
 Object.assign(process.env, { HOME: root, USERPROFILE: root, APPDATA: root, LOCALAPPDATA: root, OPENCODE_TEST_HOME: root,
@@ -204,7 +206,8 @@ try {
   if (CODENOMAD_MISSIONS_RPC.methods.recover) {
     await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).recover({ missionID: mission.id, expectedRevision: mission.revision, target: "coordinator" }, { location }))
   }
-  const contract = { missionID: mission.id, taskKey: "first-work", title: "Private work", brief: "Authority task", role: "worker", blockedBy: [] }
+  const contract = { missionID: mission.id, taskKey: "first-work", title: "Private work", brief: "Authority task", role: "worker", blockedBy: [],
+    executionMode: { kind: "independent", reason: "playbook", explanation: "Isolated root assignment and lifecycle qualification" } }
   mission = (await invoke("delegate", contract)).mission
   const actorID = mission.tasks.find(t => t.key === contract.taskKey).actorSessionId
   await wait(actorID)

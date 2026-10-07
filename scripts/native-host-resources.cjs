@@ -84,9 +84,10 @@ function distDigest(root) {
 function prepareNativeHostResources({ workspaceRoot, serverRoot, target }) {
   if (!WINDOWS[target] && !OTHER.has(target)) refuse("unsupported-target")
   let plan
-  if (!WINDOWS[target]) plan = { target, unavailable: "native-platform-not-implemented" }
+  const source = path.join(workspaceRoot, "packages", "native-host-lifetime", "resources", target)
+  if (!WINDOWS[target] || target === "win32-arm64" && !fs.lstatSync(source, { throwIfNoEntry: false }))
+    plan = { target, unavailable: "native-platform-not-implemented" }
   else {
-    const source = path.join(workspaceRoot, "packages", "native-host-lifetime", "resources", target)
     const manifest = validateManifest(parseJson(readArtifact(path.join(source, "manifest.json"), undefined, 8192)), target)
     if (manifest.node.version !== `v${fs.readFileSync(path.join(workspaceRoot, ".node-version"), "utf8").trim()}`) refuse("bundled-node-version-mismatch")
     if (manifest.build.cargoLockSha256 !== sha256(readArtifact(path.join(workspaceRoot, "packages", "native-host-lifetime", "Cargo.lock")))) refuse("cargo-lock-mismatch")
@@ -183,7 +184,7 @@ function verifyStagedNativeHostResources(serverRoot) {
   const manifest = parseJson(readArtifact(path.join(root, "manifest.json"), undefined, 32768))
   if (manifest.qualification === "unavailable") {
     keys(manifest, ["version", "target", "qualification", "reason", "persistentLaunch"])
-    if (manifest.version !== 1 || !OTHER.has(manifest.target) || manifest.reason !== "native-platform-not-implemented" || manifest.persistentLaunch !== "disabled") refuse("unsupported-contract")
+    if (manifest.version !== 1 || !(OTHER.has(manifest.target) || manifest.target === "win32-arm64") || manifest.reason !== "native-platform-not-implemented" || manifest.persistentLaunch !== "disabled") refuse("unsupported-contract")
     if (fs.readdirSync(root).length !== 1) refuse("unexpected-native-artifacts")
     return manifest
   }

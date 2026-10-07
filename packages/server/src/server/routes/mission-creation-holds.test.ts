@@ -49,6 +49,19 @@ test("creation registration reserves bounded capacity before any native effect o
   await f.fence.run("/private/checkout", ["/private/checkout"], async () => {})
 })
 
+test("uncertain task policy is part of exact creation identity and cannot be changed or replayed", () => {
+  for (const taskMode of ["native", "independent"] as const) {
+    const f = fixture(), input = { objective: "Original", taskMode }
+    const binding = { ...f.binding, requestDigest: missionCreationDigest(input) }
+    const permit = holdMissionCreation(f.fence, binding, f.enter)!
+    permit.dispatched(); permit.release()
+    assert.throws(() => holdMissionCreation(f.fence, binding, f.enter), { code: "creation-uncertain" })
+    const changed = { ...input, taskMode: taskMode === "native" ? "independent" : "native" }
+    assert.throws(() => holdMissionCreation(f.fence, { ...binding, requestDigest: missionCreationDigest(changed) }, f.enter), { code: "creation-conflict" })
+    assert.equal(f.entries, 1)
+  }
+})
+
 test("pre-dispatch failure releases only its unconsumed reservation and checks the original connection", async () => {
   const f = fixture(), connection = { assertCurrent(): void { throw new Error("Retired") } } as ServiceConnection
   const permit = holdMissionCreation(f.fence, { ...f.binding, connection }, f.enter)!

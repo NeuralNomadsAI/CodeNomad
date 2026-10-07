@@ -1,6 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fixturePaginationGuard, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixturePaginationGuard, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
+import { execFileSync } from "node:child_process"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 test("fixture cleanup escalates a stuck owned child and returns a bounded failure", async () => {
   const signals = []
@@ -24,4 +28,36 @@ test("native pagination rejects cycles instead of looping indefinitely", () => {
   const accept = fixturePaginationGuard()
   accept("one"); accept("two")
   assert.throws(() => accept("one"), /repeated a nonterminal cursor/)
+})
+
+test("private Git setup cannot commit an inherited repository or index", t => {
+  const base = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA, "Temp", "opencode") : os.tmpdir()
+  const root = fs.mkdtempSync(path.join(base, "fixture-git-isolation-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const caller = path.join(root, "caller"), project = path.join(root, "project"), hooks = path.join(root, "hooks")
+  for (const directory of [caller, project, hooks]) fs.mkdirSync(directory)
+  const environment = { ...process.env }
+  clearFixtureGitEnvironment(environment)
+  Object.assign(environment, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty-config") })
+  fs.writeFileSync(environment.GIT_CONFIG_GLOBAL, "")
+  const git = (directory, args, env = environment) => execFileSync("git", ["-C", directory,
+    "-c", "user.name=Private Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+    "-c", `core.hooksPath=${hooks}`, ...args], { env, encoding: "utf8", stdio: "pipe", windowsHide: true }).trim()
+  git(caller, ["init"])
+  git(caller, ["commit", "--allow-empty", "-m", "caller"])
+  fs.writeFileSync(path.join(caller, "staged.txt"), "preserved")
+  git(caller, ["add", "staged.txt"])
+  const before = git(caller, ["rev-parse", "HEAD"]), index = fs.readFileSync(path.join(caller, ".git", "index"))
+  const hostile = { ...environment, GIT_DIR: path.join(caller, ".git"), GIT_WORK_TREE: caller,
+    GIT_INDEX_FILE: path.join(caller, ".git", "index"), GIT_COMMON_DIR: path.join(caller, ".git"),
+    GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.bare", GIT_CONFIG_VALUE_0: "true", git_object_directory: "hostile" }
+  clearFixtureGitEnvironment(hostile)
+  assert.equal(Object.keys(hostile).some(key => /^GIT_/i.test(key)), false)
+  assert.equal(hostile.PATH, environment.PATH)
+  Object.assign(hostile, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: environment.GIT_CONFIG_GLOBAL })
+  git(project, ["init"], hostile)
+  git(project, ["commit", "--allow-empty", "-m", "private"], hostile)
+  assert.equal(git(caller, ["rev-parse", "HEAD"]), before)
+  assert.deepEqual(fs.readFileSync(path.join(caller, ".git", "index")), index)
+  assert.equal(git(caller, ["diff", "--cached", "--name-only"]), "staged.txt")
 })

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
+import { clearFixtureGitEnvironment } from "../../native-fixture-guards.mjs"
 
 const experiment = "D:/CodeNomad/.codenomad/worktrees/missions-native-subsessions-20261003"
 assert.equal(path.resolve(process.cwd()).toLowerCase(), path.resolve(experiment).toLowerCase())
@@ -15,6 +16,7 @@ const cli = "C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/o
 const root = await mkdtemp("C:/Users/Admin/AppData/Local/Temp/opencode/missions-observer-")
 const project = path.join(root, "project"), config = path.join(root, "config"), pluginDir = path.join(root, "plugin")
 for (const dir of [project, config, pluginDir]) await mkdir(dir)
+clearFixtureGitEnvironment()
 for (const key of Object.keys(process.env)) if (/^(OPENCODE|CODENOMAD|XDG|WSL)/i.test(key) || /(API_KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH)/i.test(key)) delete process.env[key]
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
 Object.assign(process.env, { HOME: root, USERPROFILE: root, LOCALAPPDATA: root, APPDATA: root, XDG_RUNTIME_DIR: root, TMP: root, TEMP: root,

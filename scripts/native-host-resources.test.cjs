@@ -102,6 +102,27 @@ for (const target of ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"])
   assert.deepEqual(fs.readdirSync(path.join(f.server, "native-host")), ["manifest.json"])
 })
 
+test("unprovisioned Windows ARM64 packages ordinary resources with lifetime explicitly disabled", t => {
+  const f = fixture(t)
+  const plan = prepareNativeHostResources({ workspaceRoot: f.workspace, serverRoot: f.server, target: "win32-arm64" })
+  stageNativeHostResources(plan, f.server)
+  for (const host of ["electron", "tauri"]) {
+    const dest = path.join(f.root, host, "server")
+    copyPackagedServerResources({ serverRoot: f.server, serverDest: dest })
+    const manifest = verifyStagedNativeHostResources(dest)
+    assert.equal(manifest.target, "win32-arm64")
+    assert.equal(manifest.qualification, "unavailable")
+    assert.equal(manifest.persistentLaunch, "disabled")
+    assert.deepEqual(fs.readdirSync(path.join(dest, "native-host")), ["manifest.json"])
+  }
+})
+
+test("an existing but incomplete ARM64 resource directory still fails closed", t => {
+  const f = fixture(t, "win32-arm64")
+  fs.unlinkSync(path.join(f.source, "manifest.json"))
+  assert.throws(f.prepare, /ENOENT/)
+})
+
 const manifestFaults = {
   "wrong target": f => { f.manifest.target = "win32-arm64" },
   "wrong ABI": f => { f.manifest.abi = "fake.runtime.v1" },

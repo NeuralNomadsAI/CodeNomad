@@ -1,11 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { execFileSync } from "node:child_process"
 import path from "node:path"
+import { clearFixtureGitEnvironment } from "../native-fixture-guards.mjs"
 
 const root = "C:/Users/Admin/AppData/Local/Temp/opencode/missions-desktop-trial-20261003"
 const project = path.join(root, "product-project")
 await mkdir(project)
 await writeFile(path.join(project, "README.md"), "# Short product Mission trial\nNo source or user configuration modifications are permitted.\n")
+clearFixtureGitEnvironment()
 const git = args => execFileSync("git", ["-C", project, ...args], { windowsHide: true, stdio: "pipe" })
 git(["init", "--quiet"])
 git(["add", "README.md"])

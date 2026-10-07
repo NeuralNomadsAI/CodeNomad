@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
+import { clearFixtureGitEnvironment } from "../native-fixture-guards.mjs"
 
 export const ASSIGNED_CLI = "C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe"
 export async function privateRoot(cli) {
@@ -12,6 +13,7 @@ export async function privateRoot(cli) {
   const root = await mkdtemp("C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-")
   const config = path.join(root, "config"), project = path.join(root, "project")
   for (const directory of [config, project]) await mkdir(directory)
+  clearFixtureGitEnvironment()
   for (const key of Object.keys(process.env)) if (/^(OPENCODE_|CODENOMAD_|XDG_)/i.test(key)) delete process.env[key]
   for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
   Object.assign(process.env, { HOME: root, USERPROFILE: root, APPDATA: root, LOCALAPPDATA: root, OPENCODE_TEST_HOME: root,

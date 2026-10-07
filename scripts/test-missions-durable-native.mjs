@@ -16,6 +16,7 @@ import { startProvider } from "./missions-authority-spike/provider.mjs"
 import { startDurableBroker } from "./missions-durable-native/broker.mjs"
 import { FIXTURE_RPC } from "./missions-durable-native/schema.mjs"
 import { probeReceiptRead } from "./missions-durable-native/receipt-read.mjs"
+import { clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
 
 const allowedCLI = "C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe"
 // Current qualification target (#830). Historical 2.0.21 artifacts remain evidence
@@ -57,6 +58,7 @@ async function launch(environment) {
 }
 try {
   for (const directory of [project, config, path.join(root, "hooks-disabled")]) await mkdir(directory)
+  clearFixtureGitEnvironment()
   for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_)/i.test(key)) delete process.env[key]
   for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
   Object.assign(process.env, { HOME: root, USERPROFILE: root, APPDATA: root, LOCALAPPDATA: root, OPENCODE_TEST_HOME: root,
@@ -258,7 +260,8 @@ try {
   gate("Play provider consumption through authenticated bridge, real lifecycle, final checkpoint and fresh environment")
   stage = "native delegation, actor reporting and outbox consumption"
   const actor = await client.session.create({ location, title: "Private existing durable actor" })
-  const contract = { missionID, taskKey: "real-work", title: "Private evidence", brief: "PRODUCT_ADAPTER_ASSIGNMENT", role: "worker", targetSessionID: actor.id }
+  const contract = { missionID, taskKey: "real-work", title: "Private evidence", brief: "PRODUCT_ADAPTER_ASSIGNMENT", role: "worker", targetSessionID: actor.id,
+    executionMode: { kind: "independent", reason: "playbook", explanation: "Isolated root assignment and lifecycle qualification" } }
   await tool(coordinatorID, "delegate", contract); await wait(actor.id)
   assert(primary(actor.id).some(value => value.messages.includes("PRODUCT_ADAPTER_ASSIGNMENT")))
   await probe(actor.id, "first", "first-assignment")

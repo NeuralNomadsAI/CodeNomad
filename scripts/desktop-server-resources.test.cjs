@@ -82,7 +82,7 @@ for (const feature of ["automation", "missions"]) test(`both desktop resource la
     const { desktopPlugin } = await import(require("node:url").pathToFileURL(target).href)
     const plugin = desktopPlugin(path.join(root, "absent-presence"))
     assert.equal(plugin.id, `codenomad.${feature}`)
-    const cleanup = await plugin.setup({})
+    const cleanup = await plugin.setup({ location: { project: { id: "isolated-resource-fixture" }, directory: root } })
     await cleanup()
   }
 })
