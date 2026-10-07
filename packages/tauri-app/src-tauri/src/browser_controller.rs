@@ -160,6 +160,8 @@ impl BrowserController {
                 PhysicalSize::new(input.bounds.width, input.bounds.height),
             )
             .map_err(|error| format!("failed to create browser preview: {error}"))?;
+        #[cfg(windows)]
+        crate::windows_browser_accelerators::bind(&webview);
         if let Err(error) = install_webview2_handlers(
             &webview,
             self.clone(),
