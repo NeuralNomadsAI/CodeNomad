@@ -1,5 +1,5 @@
 export const instanceMessages = {
-  "panelExtensions.manage": "विस्तारहरू…",
+  "panelExtensions.section": "विस्तारहरू",
   "panelExtensions.empty": "कुनै विस्तार स्थापित छैन।",
   "panelExtensions.catalog.title": "अनलाइन उपलब्ध",
   "panelExtensions.catalog.search": "विस्तार खोज्नुहोस्",

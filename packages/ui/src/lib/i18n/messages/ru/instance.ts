@@ -1,5 +1,5 @@
 export const instanceMessages = {
-  "panelExtensions.manage": "Расширения…",
+  "panelExtensions.section": "Расширения",
   "panelExtensions.empty": "Нет установленных расширений.",
   "panelExtensions.catalog.title": "Доступны онлайн",
   "panelExtensions.catalog.search": "Поиск расширений",

@@ -1,16 +1,18 @@
 # External right-panel extensions — API 1
 
 CodeNomad panel extensions are independently distributed **UI addons**, not
-OpenCode plugins. Open **Customize right panel → Extensions… → Available
-online** to browse/search the official catalogue, choose an addon, review the
+OpenCode plugins. Open **Customize right panel → Extensions** to browse/search
+installed addons and the official catalogue together, choose an addon, review the
 downloaded package and confirm installation. No manual ZIP download, CodeNomad
 rebuild or shared OpenCode service restart is involved. Manual ZIP installation
 remains available for offline/unlisted packages.
 
-Customization contains only a one-line launcher. Management opens in a separate,
-non-modal, viewport-bounded window: compact installed/online lists, source details
-on hover/focus, and explicit trust/removal confirmations. Closing, changing the
-project or leaving its view disposes the manager; no automatic mutation replay.
+Extensions is a collapsed-by-default disclosure below a separator in customization.
+It expands to one compact searchable list, deduplicated by addon ID, with install,
+version-change and removal icons, ZIP/refresh actions, metadata on hover/focus,
+and explicit trust/removal confirmations. There are no separate list modes or
+floating manager window. Collapse, popup dismissal, project changes and leaving
+the view dispose the manager; no automatic mutation replay.
 
 The official index lives in
 [`NeuralNomadsAI/CodeNomad-Extensions`](https://github.com/NeuralNomadsAI/CodeNomad-Extensions).
@@ -75,7 +77,11 @@ duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
 
 Inspection shows the manifest and SHA-256 of the exact ZIP bytes before install.
 The user acknowledges trust; installation starts **disabled**. A single activation
-control enables it for every opened project on this CodeNomad backend/profile.
+control, the addon's checkbox in **Customize right panel**, enables it for every
+opened project on this CodeNomad backend/profile. Disabled installed addons remain
+listed there. The Extensions manager has no activation control. Legacy per-window
+addon hide flags are ignored rather than retaining a second gate; Reset changes
+built-in layout only and never grants or revokes addon consent.
 Installation and activation live under the selected profile's `panel-extensions/`,
 not inside a repository or the OpenCode discovery/database directories. In remote
 access, installation affects that **server profile**, not the viewer's device.

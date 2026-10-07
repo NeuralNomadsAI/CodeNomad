@@ -1,5 +1,5 @@
 export const instanceMessages = {
-  "panelExtensions.manage": "扩展…",
+  "panelExtensions.section": "扩展",
   "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",
