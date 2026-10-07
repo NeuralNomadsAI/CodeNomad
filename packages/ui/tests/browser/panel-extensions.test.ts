@@ -277,10 +277,10 @@ test("extension window and keyboard tooltips remain above the real temporary dra
   } finally { await view.close() }
 })
 
-test("French and RTL managers retain single-line rows at narrow dark widths", async () => {
+test("localized managers keep actions reachable and scope columns aligned at narrow dark widths", async () => {
   const pkg = await installDirect(example)
   try {
-    for (const locale of ["fr-FR", "he-IL"]) {
+    for (const locale of ["fr-FR", "he-IL", "ja-JP", "es-ES"]) {
       const view = await page(locale)
       try {
         await view.setViewportSize({ width: 390, height: 600 })
@@ -294,9 +294,27 @@ test("French and RTL managers retain single-line rows at narrow dark widths", as
         await popup.locator(".panel-extension-launch").click()
         const dialog = view.getByRole("dialog")
         await dialog.waitFor()
-        assert.equal(await dialog.locator(".window-body").evaluate(element => element.scrollWidth <= element.clientWidth), true)
-        assert.ok((await dialog.locator(".panel-extension-installed-row").boundingBox())!.height <= 44)
-        if (captures) await dialog.screenshot({ path: path.join(captures, `extensions-installed-${locale}.png`) })
+        for (const width of [390, 320]) {
+          await view.setViewportSize({ width, height: 600 })
+          assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true, `${locale} ${width}: no window overflow`)
+          assert.equal(await dialog.locator(".window-body").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+          const row = dialog.locator(".panel-extension-installed-row")
+          assert.ok((await row.boundingBox())!.height <= 44)
+          for (let scope = 0; scope < 2; scope++) {
+            const heading = (await dialog.locator(".panel-extension-installed-header span").nth(scope + 1).boundingBox())!
+            const checkbox = (await row.getByRole("checkbox").nth(scope).boundingBox())!
+            assert.ok(Math.abs(heading.x + heading.width / 2 - checkbox.x - checkbox.width / 2) < 1, `${locale} ${width}: scope column ${scope} aligned`)
+          }
+          for (const button of await dialog.locator(".window-toolbar button").all()) {
+            const bounds = (await button.boundingBox())!
+            assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, `${locale} ${width}: toolbar action inside viewport`)
+          }
+          const zip = dialog.locator(".panel-extension-zip")
+          const chooser = view.waitForEvent("filechooser")
+          await zip.click()
+          await (await chooser).setFiles([])
+          if (captures) await dialog.screenshot({ path: path.join(captures, `extensions-installed-${locale}-${width}.png`) })
+        }
       } finally { await view.close() }
     }
   } finally { await store.remove(pkg.manifest.id, pkg.digest) }

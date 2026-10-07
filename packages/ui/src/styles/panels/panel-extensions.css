@@ -45,6 +45,7 @@
 }
 
 .panel-extension-zip { margin-inline-start: auto; }
+.panel-extension-manager .window-toolbar { flex-wrap: wrap; }
 
 .panel-extension-search-row,
 .panel-extension-row,
@@ -92,13 +93,13 @@
 .panel-extension-installed-header,
 .panel-extension-installed-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(5rem, max-content) minmax(5rem, max-content) var(--control-height-sm);
+  grid-template-columns: minmax(0, 1fr) 5rem 5rem var(--control-height-sm);
   align-items: center;
   column-gap: var(--space-sm);
 }
 
 .panel-extension-installed-header { padding-bottom: var(--space-xs); }
-.panel-extension-installed-header span:not(:first-child) { text-align: center; }
+.panel-extension-installed-header span:not(:first-child) { text-align: center; overflow-wrap: anywhere; }
 .panel-extension-installed-row input { justify-self: center; }
 .panel-extension-removal { grid-column: 1 / -1; padding-block: var(--space-sm); }
 .panel-extension-actions { flex-wrap: wrap; margin-top: var(--space-sm); }
