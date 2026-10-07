@@ -106,10 +106,43 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   cancellation remains **1 pass / 1 fail** and the original 15-second human queue
   check passes at **14.13 s**. These do not explain all aggregate setup errors or
   replace either failed aggregate. After the concurrency-2 run completed unchanged,
-  the three original-signal catch checks and an 84-line regression were applied.
+  the three original-signal catch checks and a regression were applied.
   Temp-before/after tests show **0/3 → 3/3**, covering **20 cancellation/redaction
-  cases**; original combined checks and independent review are ongoing. Evidence:
+  cases**. The final **86-line** regression asserts an actual completion revision
+  before constructing the observation; main server typecheck passes. Final combined
+  original/new cancellation checks pass **10/10**, zero failures/cancellations/skips,
+  at concurrency 1 (**54.73 s**). Independent review traces every qualification and
+  acceptance caller and repeats **3/3** new regressions, **0 scoped findings**.
+  Correction committed in **`7d292121`**; no admission deadlines or authority checks
+  changed. Author's prior combined **10/10** run confirms all 10 private fixture
+  roots removed; it predates only the explicit type-narrowing assertion. Evidence:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-cancellation-diagnostic-output-20261007.json`.
+- Independent Git teardown diagnosis confirms a **shared scan custody race**:
+  `listNativeWorktrees` can reject one bounded worker while another admitted Git
+  read is still outstanding. The ordered probe observes request **11** admitted
+  before fixture cleanup and later failing after its directory is removed. The
+  original EPERM holder is not retrospectively proven live, but the premature
+  custody release is demonstrated. All **9 original Git config cases** pass
+  serially unchanged. The correction is in the shared scan, not deletion retries:
+  deny partial inventory, stop further entry admission after failure and drain
+  already admitted readonly workers within existing bounds before rethrowing the
+  original error. Correction committed in **`973d775b`**; main repeats **10/10**
+  serial checks (including all 9 original Git config cases) and server typecheck.
+  Independent review closes with **0 findings**, repeating the real regression
+  **1/1** and both actual-body failure paths **2/2**. Initial test gate/temporary
+  path findings are corrected: bounded readiness, all gates released before drain,
+  current-user temporary root. Probe-only readiness is shortened to 50 ms; the
+  repository keeps its 30-second test bound and all production deadlines unchanged.
+  No original test cleanup or ownership assertion is weakened. Evidence:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-bounded-review-git-custody2-order.out`.
+- Corrected-source **full serial server aggregate** is running after these two
+  independently closed fixes, with **623 original/current source/helper inputs
+  frozen** at `973d775b`. Opt-in actual native `.test.mjs` fixtures are not selected
+  by the aggregate. No failed historical receipt is replaced, and no current pass
+  is claimed before completion. Inputs:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-inputs-20261007.json`;
+  complete log custody:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-20261007.out`.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
@@ -314,6 +347,32 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-JQzXFg/receipt.json`.
   A genuine enrolled standing native claim and actual graph callback/retention
   contract are the next bounded candidates; no native execution rows are invented.
+- The **standing watcher callback** candidate (opt-in fixtures in **`bdd6f874`**)
+  now passes on actual 2.0.24:
+  existing Effect `session.hook("context")` holds the genuine execution before
+  restart model dispatch, with current Location/lifecycle and Scope distinct from
+  plugin setup. The claim survives **2 recoveries**; the original tool remains
+  aborted and never replays. Exact eviction's existing local-RPC shutdown race
+  cancels the handler, finalizes Scope and cancels future observations—no escaped
+  owner. Explicit fixture park plus `session.interrupt(resume:false)` clears the
+  claim; a following cold restart without Location demand records zero imports/
+  setups/callbacks over **8 s**. Watcher counts: **1 admission / 1 tool / 1 model
+  request**. The original timer regression also passes, **1 / 1 / 2**.
+  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-EmWMtU/receipt.json`;
+  timer: `.../missions-startup-gvibEk/receipt.json`. Artifact hashes, sentinel and
+  cleanup pass. Native denial/unclaimed control pass, not broader permission/inbox
+  qualification. Automatic 60-minute expiry, ten-resume budget continuity, global/
+  RcMap ownership, signer/writer composition and model-following reliability remain
+  open. Independent callback review closes with **0 scoped findings**, matching
+  authored sources/bundles, CLI fingerprints, raw markers and read-only native DB
+  rows for both watcher and timer. It verifies exact upstream hook ordering and
+  inherited native graph services, without rerunning the heavyweight fixture.
+  Finalization markers prove the awaited handler/plugin lifetimes, not every native
+  owner. Receipts pin four authored files each, not the complete runner; new modes
+  need fresh frozen receipts and common-path changes need watcher/timer revalidation.
+  A real long-duration private expiry probe and bounded native handover investigation
+  are separate next work. No
+  production scheduling or claim-row writes are enabled.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture

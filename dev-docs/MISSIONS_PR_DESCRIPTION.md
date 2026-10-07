@@ -244,8 +244,11 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Commit de métadonnées natif | Commit local `6ba741c4` ; transaction réelle OpenCode 2.0.24, rollback après écriture et exclusion par une claim native concurrente. P1 de retrait tardif corrigé et clôturé indépendamment ; ce n'est pas encore un producteur d'autorité permanent |
 | Incarnation native gérée exacte | Commit local `65dd66a4` ; identité réelle du service/processus/exécutable/DB, challenge de stockage, 7 rollbacks post-écriture, concurrent standalone même DB refusé. Revue clôturée sans finding ; restart refuse l'enrollment devenu stale, sans réautoriser. Exclusion permanente, checkpoint indépendant et requalification positive restent à terminer |
 | Activation à froid du plugin | Redémarrage privé réel 2.0.24 : une claim enregistrée recharge le plugin sans demande de Location après boot. L'outil est marqué aborted, pas repris ; deux requêtes modèle. Activation prouvée, programmation/continuité encore non qualifiées |
+| Callback natif de veille | Fixtures opt-in `bdd6f874`, probe privé 2.0.24 : hook context attend avant le modèle, vraie claim conservée sur deux reprises, éviction/Park ferme le Scope. 1 admission / 1 outil / 1 requête modèle, sans replay. Revue ciblée clôturée sans finding ; rétention automatique, limite de dix reprises et autorité complète encore à qualifier |
 | Bootstrap desktop ordinaire | Commit local `1f0954da` ; transport borné/privé et publication native des cookies sérialisée/vérifiée. 22 Node et 14 Rust passent ; finding macOS IPv4 corrigé et clôturé, revue sans finding restant. Pas de qualification packagée ni d'activation de la fondation host |
 | Démarrage froid de la fixture header | Commit local `35af6332` ; cache détenu et préparation Vite existante, 33/33 cas, 7/7 régressions et 3 relances badge, assertions et délai 15 s inchangés. Revue indépendante clôturée ; CI précédente toujours en échec |
+| Propagation d'annulation d'autorité | Commit local `7d292121` ; trois catches préservent la raison exacte du demandeur, autres erreurs natives opaques. 10/10 checks combinés et typecheck, revue indépendante 3/3 sans finding ; aucune réservation/Play admis rejoué ou effacé |
+| Custody du scan worktree rejeté | Commit local `973d775b` ; stoppe les admissions et attend les lectures déjà admises avant le refus original. 10/10 checks et typecheck, revue sans finding avec deux probes de failure-path ; aucune assertion/délai de production relâché |
 | Focus des actions Mission | Commit local `32c308a1` ; 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Suite complète **sans capture : 758/0/2**, zéro annulation, 760 cas et 2 162 empreintes inchangées |
 
 ### Preuves actuelles et prochaine boucle
@@ -258,8 +261,12 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 - Comparaison complète à concurrence 2 : **2 351 pass, 3 fail, 0 annulé, 8 skipped**,
   toujours 2 362 cas et **619 empreintes inchangées**. Restent l'annulation masquée,
   le délai d'admission inchangé des 64 dossiers et un `EPERM` de nettoyage de fixture
-  Git. Correction minimale d'annulation appliquée après le gel, revue/checks en
-  cours ; validation complète série à suivre, sans augmenter les délais.
+  Git. Correction minimale d'annulation **`7d292121`**, 10/10 checks et revue clôturée.
+  Le diagnostic Git reproduit la libération prématurée d'un scan rejeté alors
+  qu'une lecture déjà admise continue ; correction au seam partagé **`973d775b`**,
+  pas un retry de suppression. Validation complète série en cours sur **623 inputs
+  figés**, sans augmenter les délais ni retirer les assertions ; pas encore de
+  résultat annoncé.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.
