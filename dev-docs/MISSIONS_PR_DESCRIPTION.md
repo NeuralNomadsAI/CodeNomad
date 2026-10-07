@@ -258,7 +258,8 @@ et de sa réconciliation documentaire est refusé par une **Internal Server Erro
 GitHub**. Ref distant vérifié à `29084987`, PR toujours ouverte. Aucun fichier
 LFS/verrouillable n'est concerné ; aucun réglage Git persistant changé. Cette
 limite de publication ne remplace ni le receipt local ni le résultat attendu de
-l'aggregate complet.
+l'aggregate complet. L'édition de description retourne aussi une erreur serveur
+GraphQL ; sa publication n'est pas acquittée.
 | Focus des actions Mission | Commit local `32c308a1` ; 9/9 ciblés et cinq répétitions, revue indépendante 9/9 sans finding. Suite complète **sans capture : 758/0/2**, zéro annulation, 760 cas et 2 162 empreintes inchangées |
 
 ### Preuves actuelles et prochaine boucle
@@ -310,10 +311,18 @@ l'aggregate complet.
   réel d'éviction/acquisition fraîche/shutdown en préparation. La persistance après
   restart n'est pas fournie par les Jobs génériques ; réveil froid encore séparé,
   sans faux recovery Shell/subagent ni backend CodeNomad de substitution.
+- Probe Job encore **incomplet** : invocation expirée sans receipt ni ACK de
+  fermeture. Les observations antérieures de Job actif après éviction ne prouvent
+  pas son arrêt avec le service. Diagnostic de custody en cours, aucun doublon ou
+  probe park-claim lancé ; un Scope frais n'est pas le Scope propriétaire natif.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
   conservation native d'une claim inactive encore à examiner séparément.
+- Source uniquement : une interruption directe du contexte peut conserver la
+  claim racine inactive, classée nativement « shutdown » **sans arrêt du daemon**.
+  Ce n'est ni un succès ni un reset des dix reprises. Pause/Stop d'un acteur déjà
+  inactif, passage fini et reprise froide restent à prouver avant toute activation.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.

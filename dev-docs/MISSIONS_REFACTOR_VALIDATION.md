@@ -212,7 +212,8 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   skipped hook) reaches GitHub but receives **Internal Server Error**. Read-only
   remote/PR checks retain **`29084987`**, PR open. Local **`01d63a0b`** and its
   documentation are not yet published; no successful push or updated head is
-  claimed. The complete ordinary aggregate continues independently.
+  claimed. PR body publication also returns a GraphQL server error; current body
+  update is not acknowledged. The complete ordinary aggregate continues independently.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
@@ -532,6 +533,17 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   CodeNomad scheduler substitute. Job source: `packages/core/src/job.ts:178–183,
   252–297,478–480`, Git blob `771c5a79722effe0ae48d072b95c68f5f03be0ee`.
   This is source evidence only, not a runtime pass or production activation.
+- Native Job qualification remains **incomplete**: the latest invocation times
+  out without a returned receipt or owned close acknowledgement. Earlier retained
+  failed receipts observe genuine `Job.get: running` after caller closure and
+  exact origin eviction, but full-service cancellation is still unqualified.
+  Effect `forkIn` owns the fiber lifetime without replacing inherited Context/
+  Scope; a fresh scoped due acquisition is **not** the native Job owner Scope.
+  Current private lineage/custody and first hung stage are being diagnosed without
+  a duplicate invocation, escaped fiber or timeout-based acceptance. No park-claim
+  runtime probe is started. Frozen candidate/hash custody:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/job-adoption-pending-source-freeze-20261007/manifest.json`.
+  All 12 reviewed startup files remain unchanged; production stays disabled.
 - Cold-entry scrutiny rejects a specific bootstrap hypothesis: retained
   `missions-startup-JQzXFg/receipt.json` is a **claim-timer** receipt, not an
   independent global-plugin startup. Its restart module/setup hits follow genuine
@@ -550,6 +562,19 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   separate source scrutiny; any inactive claim parking must remain a truthful
   interruption, never claimed success or a fabricated event/counter write. This
   is a concrete entry-contract limit, not a permanent impossibility finding.
+- Exact native source supports a **bounded inactive-claim parking hypothesis**,
+  not a new API or completed work: `Effect.interrupt` in the awaited primary
+  context propagates before model dispatch. With no supplied interruption reason,
+  native execution classifies it `Execution.Interrupted(reason:"shutdown")`,
+  retains the actual root claim and removes process-local active ownership. That
+  classification does **not** mean the daemon shut down. Automatic Location expiry
+  selects active owners only; native bootstrap selects non-null **root** claims
+  and charges recovery again. Self-parking does not reset the ten-recovery budget;
+  attempt 11 releases it. Interrupting an already inactive actor is a no-op and
+  does not prove Pause/Stop/revocation. Actual healthy-Location self-parking, native
+  Job adoption acknowledgement, cold recovery and genuine finite completion remain
+  untested; no fabricated events/counters, model waiting loop or success receipt
+  may replace them. Qualification waits for current Job custody closure first.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
