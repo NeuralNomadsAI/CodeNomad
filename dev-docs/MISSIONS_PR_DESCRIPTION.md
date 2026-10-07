@@ -355,6 +355,10 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   L'ancien effet inconnu n'est pas reclassé. Candidat parking-only simplifié en
   préparation : Job natif réel, attente finie, aucune couche fabriquée/self-HTTP ;
   adoption et reprise froide toujours non qualifiées.
+  Revue Jobs-only : P2 de rétention de contexte corrigé **avant le fork natif**,
+  re-revue **0 finding**, 15 checks sans admission et parsing. Sources figées vérifiées ;
+  **un probe natif borné parking/reprise froide autorisé**, résultat en attente.
+  Stop d'acteur garé préparé séparément via les contrats existants, pas une couche backend.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;
@@ -394,9 +398,12 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   cleanup préservés. Revue **24/24 sans finding**, commit **`9fab2293`** ; pas un
   correctif réseau. Les sinks factices bloqués ne prouvent pas la fin de vraies
   écritures FS annulées ; limite explicitement conservée.
-  Nouvel aggregate complet lancé après les deux clôtures : **2 162 inputs figés**,
-  seuls ces deux tests changés, **764 cas attendus** (+3 checks, aucun original retiré).
-  Sans capture native externe ni délai/action changé ; aucun résultat avant completion.
+  Nouvel aggregate complet terminé après les deux clôtures : **2 162 inputs inchangés**,
+  **764 cas / 761 pass / 1 fail / 0 annulé / 2 skipped** (+3 checks, aucun original retiré).
+  Seul échec : démarrage de fixture InterruptionDock, délai original 15 s, avant les
+  assertions. Diagnostic non reproduit, candidat failure-only laissé non commité.
+  Aucun nouvel aggregate en boucle : priorité réaffirmée à la chaîne native
+  parking → reprise froide → passage fini et Stop/Pause. Receipts historiques conservés.
 - Run serveur intégral antérieur : **2 279 pass, 0 fail, 8 skipped**, terminé sur
   les inputs d'exécution inchangés. L'ancienne preuve **2 247/0/8** reste datée ;
   ce succès ne qualifie ni les fixtures natives opt-in ni le host packagé.

@@ -19,11 +19,14 @@ autonomy acceptance. Active integration assignments now target native admission,
 profile/environment, authority, storage and cold scheduling in OpenCode.
 
 **Latest scoped status:** ordinary server **2,370 pass / 0 fail / 8 skipped**,
-625 inputs unchanged; latest complete no-capture browser **757 pass / 2 fail /
-2 skipped**, 2,162 inputs unchanged, 761 selected. Preferences locator and
-`ERR_NO_BUFFER_SPACE` navigation failures are under separate diagnosis. Earlier
-Copy interception did not reproduce but remains unexplained; no assertion/deadline
-is relaxed. Native Job process-bound lifetime is committed in `1465793f`;
+625 inputs unchanged; latest complete no-capture browser **761 pass / 1 fail /
+2 skipped**, 2,162 inputs unchanged, 764 selected. Sole failure: InterruptionDock
+fixture startup at its original 15-second deadline. The locale fixture correction
+passes; earlier Copy/network failures did not reproduce but remain unexplained.
+No assertion/deadline is relaxed, and no further aggregate loop is planned.
+Native parking/cold reconstruction is the current primary qualification; parallel
+work prepares truthful parked-actor Stop using existing native contracts.
+Native Job process-bound lifetime is committed in `1465793f`;
 inactive-claim cold continuity, protected authority and packaged autonomy remain
 unqualified. Historical results below retain their original scope and failures.
 
@@ -769,6 +772,22 @@ unqualified. Historical results below retain their original scope and failures.
   fixture identity. No constructed service, retained origin graph or self-HTTP
   fallback is authorized. Source checks/review precede any next native run; fresh
   due-time graph/profile/authority qualification remains separately mandatory.
+  The Jobs-only source candidate passes **15 zero-native checks** but its first
+  independent review refuses it for **one P2**: clearing Context only inside the
+  adopted wait hides services while retaining the caller Context in its restoration
+  frame. No active Location-lease extension or eviction failure is inferred.
+  Minimal correction restricts the captured `jobs.start` effect **before** its
+  internal native fork, leaving the child scalar-only and the caller restoration
+  local to admission. Re-review closes **0 findings**, repeats the 15 zero-native
+  checks and adapter parsing, and verifies original baselines/prior evidence;
+  old-boundary mutation fails the new admission-context assertion. Freeze/review:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/park-start-context-source-freeze-uirbZF/independent-source-review.json`,
+  manifest SHA-256 `694eb33ceebaf537290d7901c700f94076ce0ed31ad52298989f77672ce9720f`.
+  Main verifies six candidate hashes and unchanged baseline12/Job10, then explicitly
+  authorizes **one new bounded native parking/cold run** on those exact sources.
+  Actual adoption, inactive retained claim, cold bootstrap and role ACKs await its
+  receipt/review. Parallel source-only work targets guarded native resume and genuine
+  self-user-interruption for Stop; no Stop runtime or production authority is claimed.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
@@ -932,15 +951,27 @@ unqualified. Historical results below retain their original scope and failures.
   `.../mission-navigation-custody-20261007/independent-review/review.md`.
   Evidence:
   `C:/Users/Admin/AppData/Local/Temp/opencode/mission-navigation-custody-20261007/`.
-  One fresh full ordinary **no-capture** aggregate is running at **`7407d303`**
-  after both independent closures. All **2,162 prior input paths** are frozen;
-  only the two reviewed test inputs changed since `82c7644e`. **764 selected cases
-  expected**: +2 held-French-import cases and +1 navigation custody case, no original
-  removal. Original command, assertions and deadlines remain; both external native
-  capture variables are absent. No outcome is claimed before completion. Inputs:
+  The fresh full ordinary **no-capture** aggregate completes at **`7407d303`**
+  after both independent closures. All **2,162 prior input paths** are unchanged;
+  only the two reviewed test inputs changed since `82c7644e`. **764 selected cases**:
+  +2 held-French-import cases and +1 navigation custody case, no original
+  removal. Result: **761 pass / 1 fail / 0 cancelled / 2 skipped**, **2,450.58 s**.
+  Sole failure is `interruption-dock.test.ts:56` fixture readiness (case at line 231),
+  original **15-second** deadline, before request/badge assertions. Original command,
+  assertions and deadlines remain; both external native capture variables are absent.
+  Result: `.../pr866-ui-localized-complete-output-20261007.json`. Inputs:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-localized-complete-inputs-20261007.json`;
   log: `.../pr866-ui-localized-complete-20261007.out`;
   job: `sh_117a205a7001O2qz65PqXBWjI8`.
+  Six bounded original-case observations do not reproduce that startup failure.
+  A failure-only dock diagnostic candidate is retained **uncommitted/unreviewed**;
+  original readiness conditions/deadlines and all 17 bodies remain. Its 17 originals
+  pass, but its new diagnostic initially fails before a ledger metadata correction;
+  later individual checks do not constitute a fresh full-file pass. No root fix or
+  aggregate retry is claimed. Evidence:
+  `.../pr866-dock-diagnostic-final-output-20261007.json`.
+  Following the user's priority correction, browser diagnosis is secondary and no
+  new full aggregate is launched; work proceeds on native parking/cold/Stop gates.
   Earlier failed aggregate inputs/log:
   `.../pr866-ui-diagnostic-complete-inputs-20261007.json` and
   `.../pr866-ui-diagnostic-complete-20261007.out`;
