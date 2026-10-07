@@ -1,7 +1,8 @@
 # Isolated native F6 check. Never launches CodeNomad, OpenCode or a user profile.
-param([switch]$Baseline, [switch]$Decorated, [switch]$Capture)
+param([switch]$Baseline, [switch]$Decorated, [switch]$Capture, [switch]$CheckStoppedHeartbeat)
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'This regression requires Windows.' }
+if ($Baseline -and $CheckStoppedHeartbeat) { throw 'The heartbeat negative check requires the fixed fixture.' }
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location "$root/packages/tauri-app/src-tauri"
 try { cargo build --example f6_windows; if ($LASTEXITCODE) { throw 'Fixture build failed.' } }
@@ -65,9 +66,22 @@ $launch = @{FilePath=$exe;PassThru=$true;RedirectStandardOutput=$log;RedirectSta
 $arguments = @()
 if (-not $Baseline) { $arguments += '--handled' }
 if ($Decorated) { $arguments += '--decorated' }
+if ($CheckStoppedHeartbeat) { $arguments += '--stop-heartbeats' }
 if ($arguments.Count) { $launch.ArgumentList=$arguments }
 $previous = [IsolatedF6Input]::GetForegroundWindow()
-$process = Start-Process @launch
+$conflictingProfile = Join-Path ([IO.Path]::GetTempPath()) "opencode/issue875-conflicting-$([guid]::NewGuid().ToString('N'))"
+[void][IO.Directory]::CreateDirectory($conflictingProfile)
+$savedProfileOverride = $env:WEBVIEW2_USER_DATA_FOLDER
+$savedArgumentsOverride = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+try {
+  # These deliberately conflicting *temporary* overrides must never be used.
+  $env:WEBVIEW2_USER_DATA_FOLDER = $conflictingProfile
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--user-data-dir=$conflictingProfile"
+  $process = Start-Process @launch
+} finally {
+  $env:WEBVIEW2_USER_DATA_FOLDER = $savedProfileOverride
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $savedArgumentsOverride
+}
 $oldDpi = [IsolatedF6Input]::SetThreadDpiAwarenessContext([IntPtr](-4))
 try {
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -108,7 +122,11 @@ try {
   $output = Get-Content $log -Raw
   $output
   Get-Content "$log.err"
-  if (-not $Baseline -and $output -notmatch 'RESULT passed=true') { throw "F6 native/DOM check failed: $log" }
+  if ($output -notmatch 'EFFECTIVE_PROFILE=' -or @(Get-ChildItem $conflictingProfile -Force).Count) { throw 'Inherited override escaped fixture profile isolation.' }
+  if ($CheckStoppedHeartbeat) {
+    if ($output -notmatch 'RESULT passed=false' -or $output -notmatch 'f6=3 protected=3 dom_f6=3 other_enabled=1 dom_other=1 process_failed=0 heartbeats=\d+ live_intervals=0') { throw "Stopped heartbeat did not fail liveness independently: $log" }
+    'NEGATIVE CHECK: stopped post-input heartbeats correctly fail the fixture.'
+  } elseif (-not $Baseline -and $output -notmatch 'RESULT passed=true') { throw "F6 native/DOM check failed: $log" }
 } finally {
   # Only the process created above is allowed to close; never touch desktop/daemon.
   if (-not $process.HasExited) { [void]$process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }

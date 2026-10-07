@@ -23,11 +23,28 @@ fn main() {
 
     let handled = std::env::args().any(|arg| arg == "--handled");
     let decorated = std::env::args().any(|arg| arg == "--decorated");
+    let stop_heartbeats = std::env::args().any(|arg| arg == "--stop-heartbeats");
     let profile = tempfile::Builder::new()
         .prefix("issue875-f6-")
         .tempdir_in(std::env::temp_dir().join("opencode"))
         .unwrap()
         .keep();
+    // Environment overrides take precedence over builder/registry profile values.
+    // Sanitize before starting threads, including direct `cargo run` invocation.
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("WEBVIEW2_")
+        {
+            std::env::remove_var(key);
+        }
+    }
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &profile);
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--remote-debugging-address=127.0.0.1 --remote-debugging-port=0",
+    );
     let keys = Arc::new(AtomicU32::new(0));
     let failures = Arc::new(AtomicU32::new(0));
     let heartbeats = Arc::new(AtomicU32::new(0));
@@ -38,7 +55,7 @@ fn main() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
     thread::spawn(move || {
-        let html = "<!doctype html><title>F6 fixture</title><body style='background:white;color:black'><h1>Isolated F6 test</h1><input autofocus value='keyboard remains here'><button>Button</button><p id='heartbeat'>0</p><script>addEventListener('keydown',e=>{if(['F6','F8'].includes(e.key))window.chrome.webview.postMessage(e.key)});setInterval(()=>{document.querySelector('#heartbeat').textContent=Date.now();window.chrome.webview.postMessage('heartbeat')},100)</script></body>";
+        let html = "<!doctype html><title>F6 fixture</title><body style='background:white;color:black'><h1>Isolated F6 test</h1><input autofocus value='keyboard remains here'><button>Button</button><p id='heartbeat'>0</p><script>const pulse=setInterval(()=>{document.querySelector('#heartbeat').textContent=Date.now();window.chrome.webview.postMessage('heartbeat')},100);addEventListener('keydown',e=>{if(['F6','F8'].includes(e.key))window.chrome.webview.postMessage(e.key);if(e.key==='F8'&&__STOP__)clearInterval(pulse)});</script></body>".replace("__STOP__", if stop_heartbeats { "true" } else { "false" });
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
             stream
@@ -53,6 +70,7 @@ fn main() {
         profile.display()
     );
     tauri::Builder::default().setup(move |app| {
+        let expected_profile = profile.clone();
         let window = WebviewWindowBuilder::new(app, "f6-fixture", WebviewUrl::External(url.parse().unwrap()))
             .title("Isolated F6 fixture — no CodeNomad session")
             .additional_browser_args("--remote-debugging-address=127.0.0.1 --remote-debugging-port=0")
@@ -71,6 +89,12 @@ fn main() {
             let mut version = Default::default();
             platform.environment().BrowserVersionString(&mut version).unwrap();
             println!("RUNTIME={}", CoTaskMemPWSTR::from(version));
+            let environment7 = platform.environment().cast::<ICoreWebView2Environment7>().unwrap();
+            let mut actual_profile = Default::default();
+            environment7.UserDataFolder(&mut actual_profile).unwrap();
+            let actual_profile = CoTaskMemPWSTR::from(actual_profile).to_string();
+            assert_eq!(std::fs::canonicalize(&actual_profile).unwrap(), std::fs::canonicalize(&expected_profile).unwrap(), "WebView2 escaped the isolated profile");
+            println!("EFFECTIVE_PROFILE={actual_profile}");
             let core = controller.CoreWebView2().unwrap();
             let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else { return Ok(()) };
@@ -125,11 +149,20 @@ fn main() {
         println!("READY PID={} HWND={}", std::process::id(), window.hwnd()?.0 as usize);
         let handle = app.handle().clone();
         thread::spawn(move || {
+            let mut previous_post_input_heartbeat = None;
+            let mut live_intervals = 0;
             for _ in 0..12 {
                 thread::sleep(Duration::from_secs(1));
-                println!("STATE f6={} protected={} dom_f6={} other_enabled={} dom_other={} process_failed={} heartbeats={}", keys.load(Ordering::SeqCst), protected.load(Ordering::SeqCst), dom_keys.load(Ordering::SeqCst), untouched.load(Ordering::SeqCst), dom_other.load(Ordering::SeqCst), failures.load(Ordering::SeqCst), heartbeats.load(Ordering::SeqCst));
+                let heartbeat = heartbeats.load(Ordering::SeqCst);
+                if dom_other.load(Ordering::SeqCst) > 0 {
+                    if let Some(previous) = previous_post_input_heartbeat {
+                        live_intervals = if heartbeat > previous { live_intervals + 1 } else { 0 };
+                    }
+                    previous_post_input_heartbeat = Some(heartbeat);
+                }
+                println!("STATE f6={} protected={} dom_f6={} other_enabled={} dom_other={} process_failed={} heartbeats={} live_intervals={live_intervals}", keys.load(Ordering::SeqCst), protected.load(Ordering::SeqCst), dom_keys.load(Ordering::SeqCst), untouched.load(Ordering::SeqCst), dom_other.load(Ordering::SeqCst), failures.load(Ordering::SeqCst), heartbeat);
             }
-            let passed = !handled || (protected.load(Ordering::SeqCst) >= 3 && dom_keys.load(Ordering::SeqCst) >= 3 && untouched.load(Ordering::SeqCst) > 0 && dom_other.load(Ordering::SeqCst) > 0 && failures.load(Ordering::SeqCst) == 0);
+            let passed = !handled || (protected.load(Ordering::SeqCst) >= 3 && dom_keys.load(Ordering::SeqCst) >= 3 && untouched.load(Ordering::SeqCst) > 0 && dom_other.load(Ordering::SeqCst) > 0 && failures.load(Ordering::SeqCst) == 0 && live_intervals >= 2);
             println!("RESULT passed={passed}");
             handle.exit(if passed { 0 } else { 1 });
         });

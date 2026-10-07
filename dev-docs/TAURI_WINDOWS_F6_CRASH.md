@@ -53,6 +53,7 @@ Run in a graphical Windows PowerShell 7 session:
 ```powershell
 ./scripts/test-tauri-f6.ps1
 ./scripts/test-tauri-f6.ps1 -Decorated
+./scripts/test-tauri-f6.ps1 -CheckStoppedHeartbeat
 ```
 
 The isolated Tauri example uses static loopback HTML, a fresh temporary
@@ -63,6 +64,14 @@ F8. They verify disabled browser policy for F6, retained DOM delivery,
 untouched F8 policy/delivery, continuing JavaScript heartbeats and no
 `ProcessFailed`. Both decorated and frameless runs passed on
 `154.0.4258.62`; all 196 Windows Rust host tests passed in serial mode.
+
+The example overrides inherited `WEBVIEW2_*` settings before creating threads
+and verifies WebView2's actual user-data folder. Every runner launch supplies
+conflicting temporary profile/argument overrides and asserts they remain
+unused. Success requires advancing heartbeats in the final two post-input
+intervals, after F8 confirms the last input reached the DOM. The negative
+check stops only those heartbeats after F8 and must fail liveness despite
+passing keyboard-policy/delivery checks and a responsive native host.
 
 `-Baseline` omits the mitigation and sends one F6. The minimal baseline
 did **not** reproduce the installed-app crash. These native checks verify
