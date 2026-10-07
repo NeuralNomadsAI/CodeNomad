@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js"
+import { For, Show, createComputed, createEffect, createSignal, onCleanup, type JSX } from "solid-js"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { useI18n } from "../lib/i18n"
 import { createMissionListActions } from "./mission-list-item-actions"
@@ -26,6 +26,17 @@ export function MissionListItem(props: MissionListItemProps) {
   const secondary = () => actions.inline().filter(item => item.key !== "read")
   let row!: HTMLDivElement, footer!: HTMLDivElement, status!: HTMLDivElement, inline!: HTMLDivElement, pinned!: HTMLDivElement
   let frame = 0, focusFrame = 0, disposed = false, menuOpen = false
+  createComputed(() => {
+    secondary()
+    const focused = document.activeElement
+    if (focused instanceof HTMLButtonElement && inline?.contains(focused)) queueMicrotask(() => {
+      // Moving a keyed DOM node can blur it. Preserve only focus lost to that
+      // move, never focus deliberately taken by a reader or an open menu.
+      if (!disposed && focused.isConnected && !focused.disabled && !collapsed() && document.activeElement === document.body) {
+        focused.focus({ preventScroll: true })
+      }
+    })
+  })
   const measure = () => {
     frame = 0
     if (disposed || !row.isConnected || !row.clientWidth) return

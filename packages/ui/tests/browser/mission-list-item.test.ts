@@ -257,10 +257,11 @@ test("fresh keyed descriptors preserve focused inline buttons and use all latest
     await button!.focus()
     await page.evaluate(() => {
       const fixture = (window as any).missionListFixture
-      fixture.refresh(); fixture.reverse(); fixture.checked(true); fixture.disabled(true)
+      fixture.refresh(); fixture.reverse(true); fixture.checked(true); fixture.disabled(true)
     })
     await page.waitForTimeout(100)
     assert.equal(await button!.evaluate(e => e.isConnected && e === document.activeElement), true)
+    assert.equal(await button!.evaluate(e => e === e.parentElement?.lastElementChild), true)
     assert.match((await button!.getAttribute("aria-label"))!, / 1$/)
     assert.equal(await button!.getAttribute("aria-description"), "generation 1")
     const edit = page.locator(`${row} .mission-list-inline button[aria-label="Edit mission 1"]`)
@@ -288,11 +289,15 @@ test("open menus retain keyed focused items on refresh, use latest actions, and 
     await width(page, 170, true)
     const inline = await page.locator(`${row} .mission-list-inline button`).nth(0).elementHandle()
     await page.locator(trigger).click()
+    // Kobalte defers opening autofocus; let it finish before assigning the focus
+    // whose keyed identity this test expects refresh/reordering to preserve.
+    await page.waitForFunction(() => document.activeElement?.classList.contains("action-overflow-content"))
     const item = await page.getByRole("menuitem").nth(0).elementHandle()
     await item!.focus()
-    await page.evaluate(() => { (window as any).missionListFixture.refresh(); (window as any).missionListFixture.reverse() })
+    await page.evaluate(() => { (window as any).missionListFixture.refresh(); (window as any).missionListFixture.reverse(true) })
     await page.waitForTimeout(100)
     assert.equal(await item!.evaluate(e => e.isConnected && e === document.activeElement), true)
+    assert.equal(await page.getByRole("menuitem").last().getAttribute("id"), await item!.getAttribute("id"))
     assert.equal(await item!.getAttribute("aria-description"), "generation 1")
     assert.match((await item!.textContent())!, / 1$/)
     assert.equal(await page.locator(`${row} .mission-list-inline button svg`).count(), 4)
