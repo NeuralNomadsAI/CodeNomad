@@ -296,6 +296,24 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   Permanent arbitrary-writer exclusion, independently protected rollback checkpoint
   and positive restart requalification remain separate gates. A protected signer/
   checkpoint candidate is being composed outside DB; none is production-enabled.
+- **`3e205b52`** adds the opt-in private **protected public signer/checkpoint proof**
+  on real 2.0.24, independently closed with **0 findings**. All **16 reviewed input
+  hashes** match. Public Ed25519 signature/digest checks deny absent/replaced trust,
+  invalid signatures and wrong public signer. A precommit tear rolls metadata back;
+  lost RPC acknowledgement after commit preserves the protected original uncertain
+  reservation without replay. Restoring **complete older valid SQLite bytes** is
+  rejected by the independently stored checkpoint, including an older validly
+  signed epoch after an explicit fixture-human Pause. No private key is exported
+  or used during a native passage, and no CodeNomad backend is attached. Receipt:
+  `C:/Users/Admin/AppData/Local/missions-protected-proof-UEoOzR/fixture/results.json`.
+  This is a proof of existing primitives, **not a production authority producer**:
+  the existing CAS accepts only a secret-bearing one-shot document; sequential
+  `HostStorage.atomic` is not public cross-resource CAS; the genuine async family
+  fence is rejected at final guard **4**; native signer provenance still depends
+  on backend qualification. Explicit human fixture re-enrollment after DB restore
+  is not autonomous restart acceptance. Arbitrary-writer exclusion and power-loss
+  durability remain unqualified. A narrowly typed public checkpoint/CAS seam is
+  next work, independent of the frozen full server aggregate.
 - Native-startup qualification uses a read-copied **2.0.24** artifact and genuinely
   private XDG managed registration, with actual start/restart and preserved sentinel.
   Persisted ENV nonce/hash reaches each daemon; **Node `--import`/`--require` and
@@ -383,7 +401,14 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   the supervisor can claim sentinel closure from a kill request without awaiting
   owned close acknowledgements, and acceptance can attribute generic cancellation/
   claim clearing to automatic inactivity without mandatory native provenance.
-  Both are reproduced by memory-only negative probes. Correction is active;
+  Both are reproduced by memory-only negative probes. New slow-fixture sources
+  now require worker/fork/native close acknowledgements and mandatory exact-root
+  native eviction provenance; old-fail/new-pass local checks and generated-adapter
+  syntax checks pass with **0 native operations**. Independent closure is pending,
+  including negative pre-service cleanup/readiness entry paths. All **12 reviewed
+  baseline files remain unchanged**. Source/check receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-expiry-p2-validation-20261007-v2.json`.
+  These checks do not prove execution of the patched 63-minute probe;
   current running old-source output remains **unqualified**, even if its initial
   outcome says success. Preserve that receipt unchanged and require separately
   qualified native event/log provenance and acknowledged cleanup. Automatic

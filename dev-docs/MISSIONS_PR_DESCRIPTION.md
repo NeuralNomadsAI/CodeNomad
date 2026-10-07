@@ -243,6 +243,7 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Admission directement dans OpenCode | Commit local `e63c182c` ; 13/13 auteur/maître/reviewer, deux défauts d'approbation corrigés et clôturés. Fixture réelle 2.0.24 du helper haut niveau : ENV et prompt/synthetic admis sans backend ni modification OpenCode. Writer/gate injectés, Location chargée ; autorité native complète et réveil froid encore à prouver |
 | Commit de métadonnées natif | Commit local `6ba741c4` ; transaction réelle OpenCode 2.0.24, rollback après écriture et exclusion par une claim native concurrente. P1 de retrait tardif corrigé et clôturé indépendamment ; ce n'est pas encore un producteur d'autorité permanent |
 | Incarnation native gérée exacte | Commit local `65dd66a4` ; identité réelle du service/processus/exécutable/DB, challenge de stockage, 7 rollbacks post-écriture, concurrent standalone même DB refusé. Revue clôturée sans finding ; restart refuse l'enrollment devenu stale, sans réautoriser. Exclusion permanente, checkpoint indépendant et requalification positive restent à terminer |
+| Signataire public et checkpoint indépendant | Fixture opt-in `3e205b52`, vrai 2.0.24 : signature vérifiée, tears avant/après commit et restauration complète de DB valide refusée, opération incertaine conservée sans replay. Revue sans finding, 16 empreintes vérifiées. CAS public, fence famille synchrone et provenance native encore à composer ; pas de gate de production |
 | Activation à froid du plugin | Redémarrage privé réel 2.0.24 : une claim enregistrée recharge le plugin sans demande de Location après boot. L'outil est marqué aborted, pas repris ; deux requêtes modèle. Activation prouvée, programmation/continuité encore non qualifiées |
 | Callback natif de veille | Fixtures opt-in `bdd6f874`, probe privé 2.0.24 : hook context attend avant le modèle, vraie claim conservée sur deux reprises, éviction/Park ferme le Scope. 1 admission / 1 outil / 1 requête modèle, sans replay. Revue ciblée clôturée sans finding ; rétention automatique, limite de dix reprises et autorité complète encore à qualifier |
 | Bootstrap desktop ordinaire | Commit local `1f0954da` ; transport borné/privé et publication native des cookies sérialisée/vérifiée. 22 Node et 14 Rust passent ; finding macOS IPv4 corrigé et clôturé, revue sans finding restant. Pas de qualification packagée ni d'activation de la fondation host |
@@ -271,7 +272,9 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
   keepalive ; résultat attendu, **non qualifiant** tant que deux défauts du probe
   ne sont pas clôturés : acquittement réel du nettoyage et provenance native
   obligatoire de l'inactivité. Un signal kill ou une annulation générique ne
-  constituent pas ces preuves. La limite native de
+  constituent pas ces preuves. Nouvelles fixtures corrigées, checks négatifs locaux
+  passent ; revue indépendante encore requise, ancien code exécuté par le probe
+  en cours inchangé. La limite native de
   dix reprises est **par exécution**, réinitialisée par sa terminaison, pas une
   limite permanente de session. Le handover fini autorisé et son ACK incertain
   restent à qualifier. Après éviction, le callback est fermé mais la claim observée
