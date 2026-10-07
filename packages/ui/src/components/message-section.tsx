@@ -1406,11 +1406,12 @@ export default function MessageSection(props: MessageSectionProps) {
                 onClose={closeSearch}
                 title={t("messageSection.search.ariaLabel")}
                 class="message-search-popover"
+              draggable
               inline
               initialFocus={() => searchInputRef}
               >
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
-                  <div class="window-toolbar history-search-toolbar">
+                  <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
                     <div class="history-search-options">
                     <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
                       onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>

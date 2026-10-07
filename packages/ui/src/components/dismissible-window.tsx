@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Show, type JSX } from "solid-js"
+import { Show, createEffect, onCleanup, type JSX } from "solid-js"
 
 /** Persistent non-modal utility window: outside interactions remain available
  * without dismissing it. Toggles identify it via aria-controls. */
@@ -11,15 +11,73 @@ export default function DismissibleWindow(props: {
   description?: string
   class: string
   inline?: boolean
+  draggable?: boolean
   initialFocus?: () => HTMLElement | undefined
   returnFocus?: () => HTMLElement | undefined
   onKeyDown?: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent>
   children: JSX.Element
 }) {
+  let panel: HTMLDivElement | undefined
+  let anchor: HTMLSpanElement | undefined
+  let drag: { id: number; x: number; y: number; left: number; top: number } | undefined
+  const place = (left: number, top: number) => {
+    if (!panel?.isConnected) return
+    const rect = panel.getBoundingClientRect(), viewport = window.visualViewport
+    const x = (viewport?.offsetLeft ?? 0) + 16, y = (viewport?.offsetTop ?? 0) + 16
+    Object.assign(panel.style, {
+      position: "fixed", transform: "none", right: "auto",
+      left: `${Math.max(x, Math.min(left, x + Math.max(0, (viewport?.width ?? innerWidth) - 32 - rect.width)))}px`,
+      top: `${Math.max(y, Math.min(top, y + Math.max(0, (viewport?.height ?? innerHeight) - 32 - rect.height)))}px`,
+    })
+  }
+  const startDrag = (event: PointerEvent) => {
+    const target = event.target as Element
+    if (!props.draggable || !event.isPrimary || event.button !== 0 || !panel
+      || !target.closest("[data-window-drag-handle]")
+      || target.closest("button, input, select, textarea, a, label, [contenteditable]")) return
+    const rect = panel.getBoundingClientRect()
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }
+    panel.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+  const endDrag = (event: PointerEvent) => { if (drag?.id === event.pointerId) drag = undefined }
+  createEffect(() => {
+    if (!props.draggable || !props.open) return
+    const keepVisible = () => {
+      if (panel?.style.position !== "fixed") return
+      const rect = panel.getBoundingClientRect()
+      place(rect.left, rect.top)
+    }
+    window.addEventListener("resize", keepVisible)
+    window.visualViewport?.addEventListener("resize", keepVisible)
+    window.visualViewport?.addEventListener("scroll", keepVisible)
+    onCleanup(() => {
+      drag = undefined
+      window.removeEventListener("resize", keepVisible)
+      window.visualViewport?.removeEventListener("resize", keepVisible)
+      window.visualViewport?.removeEventListener("scroll", keepVisible)
+    })
+  })
   const content = () => (
     <Dialog.Content
+      ref={element => {
+        panel = element
+        if (props.inline && props.draggable) queueMicrotask(() => {
+          // Portal placement escapes transcript clipping while retaining the initial anchor.
+          if (!element.isConnected || !anchor?.parentElement) return
+          const rect = anchor.parentElement.getBoundingClientRect()
+          Object.assign(element.style, { position: "fixed", left: `${rect.left + rect.width / 2}px`,
+            top: `${rect.top + parseFloat(getComputedStyle(element).top)}px` })
+        })
+      }}
       id={props.id}
       class={`modal-surface window-shell ${props.class}`}
+      data-draggable={props.draggable ? "" : undefined}
+      onPointerDown={startDrag}
+      onPointerMove={(event: PointerEvent) => { if (drag && drag.id === event.pointerId) place(drag.left + event.clientX - drag.x, drag.top + event.clientY - drag.y) }}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onLostPointerCapture={endDrag}
       onKeyDown={props.onKeyDown}
       onEscapeKeyDown={event => {
         // Kobalte invokes this only for the topmost layer. Consume the native
@@ -57,12 +115,15 @@ export default function DismissibleWindow(props: {
     </Dialog.Content>
   )
   return (
+    <>
+    <Show when={props.inline && props.draggable}><span ref={anchor} hidden /></Show>
     <Show when={props.open}>
       <Dialog open modal={false} onOpenChange={open => { if (!open) props.onClose() }}>
-        <Show when={props.inline} fallback={<Dialog.Portal>{content()}</Dialog.Portal>}>
+        <Show when={props.inline && !props.draggable} fallback={<Dialog.Portal>{content()}</Dialog.Portal>}>
           {content()}
         </Show>
       </Dialog>
     </Show>
+    </>
   )
 }

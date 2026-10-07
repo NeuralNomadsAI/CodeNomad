@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createRequire } from "node:module"
 import { build } from "esbuild"
-import { chromium, devices, _electron, type ElectronApplication, type Browser } from "playwright"
+import { chromium, devices, _electron, type ElectronApplication, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
@@ -523,6 +523,16 @@ test("content filters join the measured header overflow and restore keyboard foc
   } finally { await page.close() }
 })
 
+async function dragWindow(page: Page, panel: Locator, dx: number, dy: number) {
+  const handle = await panel.locator("[data-window-drag-handle]").boundingBox()
+  assert.ok(handle)
+  await page.mouse.move(handle.x + handle.width - 4, handle.y + 4)
+  await page.mouse.down()
+  await page.mouse.move(handle.x + handle.width - 4 + dx, handle.y + 4 + dy, { steps: 5 })
+  await page.mouse.up()
+  return (await panel.boundingBox())!
+}
+
 for (const kind of ["command-palette", "session-search"]) test(`${kind} stays open outside, marks its toggle, and closes explicitly`, async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
   const errors: string[] = []
@@ -553,6 +563,21 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     assert.notEqual(await trigger.evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)")
     assert.equal(await page.locator(".modal-overlay").count(), 0)
     assert.notEqual(await panel.getAttribute("aria-modal"), "true")
+    const before = (await panel.boundingBox())!, moved = await dragWindow(page, panel, 60, 40)
+    assert.ok(Math.abs(moved.x - before.x - 60) < 1 && Math.abs(moved.y - before.y - 40) < 1, JSON.stringify({ before, moved }))
+    await dragWindow(page, panel, 2000, 2000)
+    await page.setViewportSize({ width: 900, height: 700 })
+    await page.waitForFunction(id => {
+      const r = document.getElementById(id!)!.getBoundingClientRect()
+      return r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight
+    }, id)
+    const bounds = (await panel.boundingBox())!
+    assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 900 && bounds.y + bounds.height <= 700)
+    assert.equal(await panel.locator("[data-window-drag-handle]").evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.right - 4, r.y + 4))
+    }), true, "moved bar remains reachable")
+    await page.setViewportSize({ width: 1800, height: 1000 })
     await trigger.click()
     await panel.waitFor({ state: "hidden" })
     assert.equal(await trigger.getAttribute("aria-expanded"), "false")
@@ -588,6 +613,7 @@ test("search shortcut, session changes and palette execution keep their own auth
     await page.getByRole("searchbox").waitFor()
     assert.equal(await search.getAttribute("aria-expanded"), "true")
     await page.getByRole("searchbox").fill("fixture")
+    await dragWindow(page, page.locator('[role="dialog"][id^="session-search-"]'), 40, 30)
     await page.locator("#outside").click()
     assert.equal(await page.getByRole("searchbox").inputValue(), "fixture")
     await page.evaluate(() => (window as any).fixture.showInfo())
@@ -596,6 +622,8 @@ test("search shortcut, session changes and palette execution keep their own auth
     const palette = page.locator('[role="dialog"][id^="command-palette-"]')
     await palette.waitFor()
     await palette.getByRole("textbox").fill("Fixture command")
+    await dragWindow(page, palette, 40, 30)
+    assert.equal(await palette.getByRole("textbox").inputValue(), "Fixture command")
     await page.keyboard.press("Enter")
     await palette.waitFor({ state: "hidden" })
     assert.equal(await page.evaluate(() => (window as any).fixture.executions()), 1)
@@ -619,6 +647,13 @@ test("compact touch controls can reopen their menu and explicitly toggle a persi
       await action.tap()
       const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
       await panel.waitFor()
+      const bar = (await panel.locator("[data-window-drag-handle]").boundingBox())!, before = (await panel.boundingBox())!
+      const cdp = await context.newCDPSession(page)
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bar.x + bar.width - 4, y: bar.y + 4 }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: bar.x + bar.width - 4, y: bar.y + 34 }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      await cdp.detach()
+      assert.ok(Math.abs((await panel.boundingBox())!.y - before.y - 30) < 1, "top bar supports native touch dragging")
       await page.locator("#outside").tap()
       assert.equal(await panel.isVisible(), true)
       await panel.locator(".window-close-button").tap()
@@ -647,7 +682,9 @@ test("utility windows remain visible and keyboard accessible in RTL", async () =
         assert.ok(host && bounds.x >= host.x && bounds.x + bounds.width <= host.x + host.width, "search is not clipped by the transcript")
       }
       await page.waitForFunction(({ id, selector }) => document.querySelector(`[id="${id}"] ${selector}`) === document.activeElement,
-        { id: await panel.getAttribute("id"), selector: kind === "session-search" ? 'input[type="search"]' : "input" })
+         { id: await panel.getAttribute("id"), selector: kind === "session-search" ? 'input[type="search"]' : "input" })
+      const moved = await dragWindow(page, panel, 45, 35)
+      assert.ok(bounds && Math.abs(moved.x - bounds.x - 45) < 1 && Math.abs(moved.y - bounds.y - 35) < 1, "RTL uses physical pointer coordinates")
       if (process.env.CODENOMAD_HEADER_CAPTURE_DIR) await page.screenshot({ path: `${process.env.CODENOMAD_HEADER_CAPTURE_DIR}/${kind}-rtl.png` })
       await page.keyboard.press("Escape")
       await panel.waitFor({ state: "hidden" })
