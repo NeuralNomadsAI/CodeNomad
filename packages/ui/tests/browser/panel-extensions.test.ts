@@ -292,6 +292,10 @@ test("Extensions is separated, collapsed by default and combines installed/onlin
     assert.equal(await manager.getByRole("button", { name: "Available online", exact: true }).count(), 0)
     const row = manager.getByRole("group", { name: "Session example", exact: true })
     assert.equal(await row.count(), 1, "Installed catalogue entries are deduplicated")
+    for (const button of await manager.locator(".window-icon-button").all()) {
+      const bounds = (await button.boundingBox())!
+      assert.ok(bounds.width >= 24 && bounds.height >= 24, "Shared control context retains accessible icon targets")
+    }
     assert.ok((await row.boundingBox())!.height <= 44, "Installed addons use single-line rows")
     if (captures) await popup.screenshot({ path: path.join(captures, "extensions-expanded.png") })
     await manager.locator(".panel-extension-name").focus()

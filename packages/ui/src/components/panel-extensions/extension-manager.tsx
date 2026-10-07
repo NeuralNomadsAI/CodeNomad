@@ -73,7 +73,7 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
       if (!disposed) setPreview({ ...result, source: { kind: "catalog" }, previousDigest })
     })
   }
-  return <section class="panel-extension-manager" aria-label={t("panelExtensions.title")} aria-busy={loading()}>
+  return <section class="panel-extension-manager window-shell" aria-label={t("panelExtensions.title")} aria-busy={loading()}>
     <input ref={picker} type="file" accept=".zip" hidden disabled={busy()} onChange={event => {
       const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void inspect(file)
     }} />
