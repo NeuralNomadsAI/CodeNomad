@@ -251,7 +251,7 @@ La PR reste ouverte ; la fusion est suspendue à la demande de l'utilisateur.
 | Démarrage froid de la fixture header | Commit local `35af6332` ; cache détenu et préparation Vite existante, 33/33 cas, 7/7 régressions et 3 relances badge, assertions et délai 15 s inchangés. Revue indépendante clôturée ; CI précédente toujours en échec |
 | Propagation d'annulation d'autorité | Commit local `7d292121` ; trois catches préservent la raison exacte du demandeur, autres erreurs natives opaques. 10/10 checks combinés et typecheck, revue indépendante 3/3 sans finding ; aucune réservation/Play admis rejoué ou effacé |
 | Custody du scan worktree rejeté | Commit local `973d775b` ; stoppe les admissions et attend les lectures déjà admises avant le refus original. 10/10 checks et typecheck, revue sans finding avec deux probes de failure-path ; aucune assertion/délai de production relâché |
-| Admission pending chargée seule | `01d63a0b` : 195 → 130 commandes Git, revalidation fraîche pré/post-RPC et drain des lectures refusées. 26/26, typecheck, revue 6/6 sans finding, expiration réelle 30 s sans RPC/publication. Nouvel aggregate complet en cours ; aucune suppression d'assertion ni hausse de délai |
+| Admission pending chargée seule | `01d63a0b` : 195 → 130 commandes Git, revalidation fraîche pré/post-RPC et drain des lectures refusées. 26/26, typecheck, revue 6/6 sans finding, expiration réelle 30 s sans RPC/publication. Aggregate complet 2 370/0/8, 625 inputs inchangés ; aucune suppression d'assertion ni hausse de délai |
 
 Publication Git rétablie : **`01d63a0b`** et les preuves sont poussés jusqu'à
 **`3b40f9b1`**. Les erreurs GitHub Internal Server Error/GraphQL précédentes sont
@@ -288,9 +288,12 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   corrigé aux deux sites : **26/26 checks**, 4 négatifs reproduisent l'ancien défaut,
   **0 lecture Git en vol** au nettoyage, cas original **10,710 s**. Revue finale
   clôturée **6/6 sans finding**, 9 fixtures nettoyées, expiration réelle 30 s sans
-  RPC/publication ; correction **`01d63a0b`**. Nouvel aggregate série complet lancé
-  sur **625 inputs figés**, tous les 623 chemins précédents conservés ; aucun résultat
-  annoncé avant la fin. CAS public et fixtures natives opt-in restent séparés.
+  RPC/publication ; correction **`01d63a0b`**. Nouvel aggregate série complet terminé :
+  **2 378 cas / 2 370 pass / 0 fail / 0 annulé / 8 skipped**, **625 inputs inchangés**,
+  tous les 623 chemins précédents conservés. Huit nouveaux cas broker et quatre
+  famille-sync expliquent l'augmentation, aucun test original retiré. CAS public,
+  ownership Job, réveil froid et fixtures natives opt-in restent séparés ; les trois
+  aggregates en échec antérieurs sont conservés.
   Délai, limites,
   rejet des clones étrangers et fences conservés.
 - Probe natif d'inactivité terminé : **63 minutes** sans polling, prompt ou
@@ -309,6 +312,10 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   limite permanente de session. Le handover fini autorisé et son ACK incertain
   restent à qualifier. Après éviction, le callback est fermé mais la claim observée
   reste non nulle ; seul le Park explicite du probe a établi sa libération.
+  L'essai court suivant a les ACKs natifs mais pas la fermeture complète du
+  superviseur ; il reste **non qualifié**. Revue : **un P2** reproduit, validation
+  asynchrone d'ACK encore en vol lors de la déconnexion IPC. Drain ciblé en cours,
+  aucune seconde admission native avant clôture indépendante.
 - Un propriétaire natif distinct est identifié dans la source exacte : `Job.start`
   adopte le travail dans le Scope du daemon, sans emprunter celui du plugin. Probe
   réel d'éviction/acquisition fraîche/shutdown en préparation. La persistance après
@@ -318,6 +325,12 @@ séparément ; publication ne signifie ni succès de l'aggregate ni autonomie li
   fermeture. Les observations antérieures de Job actif après éviction ne prouvent
   pas son arrêt avec le service. Diagnostic de custody en cours, aucun doublon ou
   probe park-claim lancé ; un Scope frais n'est pas le Scope propriétaire natif.
+  Correction du chemin d'erreur/handle : **6 checks**, dont sortie d'un enfant
+  réellement possédé ; pas encore de nouvelle qualification du daemon natif ni
+  d'ACK historique. Custody physique actuelle réglée séparément : aucun résidu
+  correspondant observé, aucun process tué. Le stop Windows stock termine le
+  processus sans attendre les finalizers ; une preuve de vie liée au processus
+  reste distincte d'une fermeture gracieuse de Scope et des effets incertains.
 - La piste d'un module évalué au boot sans Location n'est pas établie : le receipt
   inspecté était un **claim-timer**, chargé par une acquisition native de Location.
   Découverte des dépendances ≠ exécution. Aucun bootstrap self-HTTP non prouvé ajouté ;

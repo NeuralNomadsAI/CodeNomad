@@ -196,14 +196,21 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   review: `.../pr866-pending-independent-20261007/verification.json`.
   Original read-only measurement:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-readonly-2rYnY0/summary.json`.
-- A fresh **complete ordinary serial server aggregate** is now running at
+- The fresh **complete ordinary serial server aggregate** completed at
   **`01d63a0b`**, with **625 inputs frozen**: all earlier **623 paths retained** plus
   the new shared sync-privacy helper and family regression. Selector remains all
   `packages/server/src/**/*.test.ts`; no original test, assertion or deadline is
   removed. New unwired `native-protected-public.ts` and opt-in `.test.mjs`/startup
   fixtures remain independently qualified, explicitly outside ordinary aggregate
   acceptance; they have no `.ts` callers and may progress without modifying these
-  frozen inputs. No new aggregate outcome is claimed before completion.
+  frozen inputs. Result: **2,378 selected / 2,370 pass / 0 fail / 0 cancelled /
+  8 skipped**, **78 suites**, **1,668.03 s**, all **625 inputs unchanged**. The
+  selected-count increase is eight new broker cases plus four family-sync cases;
+  no original test is dropped. This closes the ordinary server aggregate for
+  these sources, not native opt-in authority, Job ownership, cold scheduling or
+  packaged parity. All three failed historical aggregates remain separately kept.
+  Result and complete-log digest:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-output-20261007.json`.
   Inputs: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-inputs-20261007.json`;
   complete log: `.../pr866-server-serial-broker-625-20261007.out`.
 - Publication was temporarily blocked: ordinary pushes failed Git LFS lock probing;
@@ -214,7 +221,8 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   a GraphQL server error. These failures are preserved. A later bounded push
   **succeeds through `3b40f9b1`**, publishing **`01d63a0b`** and its scoped evidence.
   Description reconciliation is separately verified; publication is not aggregate
-  or autonomy acceptance. The complete ordinary aggregate continues independently.
+  or autonomy acceptance. The complete ordinary aggregate later passes as recorded
+  above; native opt-in qualification remains independent.
 - The paired ordinary desktop bootstrap transport is locally bounded and private:
   exact proof/cookie validation, body drain, redirect/proxy refusal and absolute
   deadlines. A further audit passes **16/16** Node bootstrap/startup checks and
@@ -531,6 +539,20 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   cancellation. Shared PID-observation helpers remain frozen for ongoing Job
   diagnosis; no absent-PID result is upgraded to an ACK. No fresh native lineage
   has yet been launched or qualified by this preflight.
+  A later **one-lineage short cancellation attempt** records real managed restart/
+  stop same-handle exit ACKs, sentinel preservation/close and worker close, but
+  the supervisor parent IPC remains open until the controller deadline; its
+  outcome stays **unqualified**, `confirmed:false`. Receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-cleanup-proof-v4-xfAYO3/attempt-result.json`.
+  After a local IPC-drain correction, independent actual-supervisor review finds
+  **one remaining P2**: worker close can precede asynchronous enrollment/ACK
+  validation and receipt writes; parent disconnect then causes late ACK send
+  `ERR_IPC_CHANNEL_CLOSED`. **13 existing + 5 targeted checks** and owned-child/
+  watcher closure are separate zero-native evidence, not native acceptance.
+  Review: `.../slow-cleanup-independent-20261007/verification.json`.
+  Minimal admitted-work drain is in progress before final publication/disconnect;
+  errors remain fail-closed and deadline receipts monotonic. No second native
+  lineage is authorized before independent closure and current custody disposition.
   Exact 2.0.24 source contracts qualify the restart budget as **per-execution**:
   attempts **1–10** run, attempt **11** terminalizes aborted/releases the claim and
   resets the count. Whole-execution completion resets it; a tool/step completion
@@ -572,6 +594,38 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
   runtime probe is started. Frozen candidate/hash custody:
   `C:/Users/Admin/AppData/Local/Temp/opencode/job-adoption-pending-source-freeze-20261007/manifest.json`.
   All 12 reviewed startup files remain unchanged; production stays disabled.
+  Later diagnosis narrows the failed private root to `missions-startup-8L0cbr`:
+  one due marker, no shutdown finalizer; retained control flow puts the missing-
+  finalizer assertion before an endless cleanup retry, but no exception stack was
+  captured. Corrected adapters preserve a pre-opened real Windows exit-handle
+  witness independently of qualification failure. **6 regression checks** pass,
+  including one actual owned-child handle exit; that child is **not a native
+  daemon qualification**. Original native/worker/sentinel close ACKs remain
+  unconfirmed. A later single bounded OS snapshot settles **current physical
+  custody**: old PID **33912 absent**, **0 private executable/Job-runner candidates**,
+  **0 unreadable candidates**, no termination or native service calls. This does
+  not supply historical ACKs or graceful Scope finalization. Disposition:
+  `.../missions-startup-8L0cbr/current-custody-disposition-1791387938083.json`.
+  No replacement fixture/park probe had run in that receipt. New source/receipt freeze:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/job-exit-handle-correction-freeze-753XQR/manifest.json`.
+  Current residue must be reconciled by exact owned identity; PID absence or a
+  newly observed exit must never retroactively become an old Scope/fork ACK.
+  Exact native Windows stop source explains the finalizer mismatch: CLI stop
+  best-effort shuts down persistent PTY, then `Service.stop` sends `SIGTERM`, polls
+  PID existence/escalates to `SIGKILL`, and removes unchanged registration. It
+  does **not** request or await application Scope closure. Declared Bun/libuv
+  Windows kill implementation uses `TerminateProcess`; changing to SIGINT is not
+  a graceful fix. The probe executable's embedded Bun build is not independently
+  attested by this source review. Preserve the failed graceful-finalizer assertion.
+  A separately labeled stock-stop proof may observe native **process-bound Job
+  lifetime** through a pre-opened exact exit handle; it cannot claim finalizer,
+  descendant-process or external-effect reconciliation. Explicit native Job.cancel
+  is a separate generation-scope contract. Embedded SDK.close awaits its own
+  runtime Scope but is not a remote-daemon API or target substitute; `serve --stdio`
+  cannot be combined with managed `--service`. No public app-shutdown endpoint or
+  registration manipulation is added. Source:
+  `packages/client/src/effect/service.ts:181–206` and
+  `packages/cli/src/commands/handlers/service/stop.ts:10–13`, pinned 2.0.24.
 - Cold-entry scrutiny rejects a specific bootstrap hypothesis: retained
   `missions-startup-JQzXFg/receipt.json` is a **claim-timer** receipt, not an
   independent global-plugin startup. Its restart module/setup hits follow genuine
