@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
+import { createBackendCookieInstaller, exchangeBackendBootstrap } from "./backend-bootstrap"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { ClientStateManager } from "./client-state"
@@ -202,7 +203,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
   const bootstrap = new BackendBootstrapCoordinator(
-    (url, token) => exchangeBootstrapToken(url, token, cli),
+    (url, token, isCurrent) => exchangeBootstrapToken(url, token, cli, isCurrent),
     (url) => {
       backendTargetUrl = url
       for (const record of registry.all()) void navigateBackend(record, url)
@@ -607,23 +608,20 @@ function isIgnorableNavigationError(error: unknown): boolean {
   return text.includes("ERR_ABORTED") || text.includes("ERR_FAILED")
 }
 
-async function exchangeBootstrapToken(baseUrl: string, token: string, cli: CliProcessManager): Promise<boolean> {
-  const target = new URL("/api/auth/token", baseUrl)
-  const body = JSON.stringify({ token })
-  const transport = target.protocol === "https:" ? https : http
-  const result = await new Promise<{ status: number; cookie?: string }>((resolve, reject) => {
-    const request = transport.request(target, { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, (response) => {
-      response.resume()
-      resolve({ status: response.statusCode ?? 0, cookie: response.headers["set-cookie"]?.[0] })
-    })
-    request.on("error", reject); request.end(body)
-  })
-  if (result.status !== 200 || !result.cookie) return false
-  const first = result.cookie.split(";", 1)[0] ?? ""
-  const separator = first.indexOf("=")
-  if (first.slice(0, separator).trim() !== cli.getAuthCookieName()) return false
-  await session.defaultSession.cookies.set({ url: baseUrl, name: cli.getAuthCookieName(), value: decodeURIComponent(first.slice(separator + 1).trim()), httpOnly: true, path: "/", sameSite: "lax" })
-  return true
+// Native-store authority outlives each coordinator generation. Do not reset this
+// queue on restart: a pending native receipt still owns its exact cleanup.
+const installBackendCookie = createBackendCookieInstaller({
+  set: cookie => session.defaultSession.cookies.set(cookie),
+  get: filter => session.defaultSession.cookies.get(filter),
+  remove: (url, name) => session.defaultSession.cookies.remove(url, name),
+})
+
+async function exchangeBootstrapToken(baseUrl: string, token: string, cli: CliProcessManager, isCurrent: () => boolean): Promise<boolean> {
+  const cookieName = cli.getAuthCookieName()
+  const cookie = await exchangeBackendBootstrap(baseUrl, token, cookieName)
+  const current = () => isCurrent() && cli.getAuthCookieName() === cookieName
+  if (!cookie || !current()) return false
+  return installBackendCookie(cookie, current)
 }
 
 if (isMac) app.commandLine.appendSwitch("disable-spell-checking")

@@ -1,4 +1,6 @@
 use crate::managed_node::resolve_bundled_node_binary;
+#[path = "backend_bootstrap.rs"]
+mod backend_bootstrap;
 #[cfg(unix)]
 #[path = "shell_environment.rs"]
 mod shell_environment;
@@ -17,7 +19,6 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(windows)]
 use std::mem::{size_of, zeroed};
-use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -520,19 +521,6 @@ fn augment_launch_url(base_url: &str) -> String {
     )
 }
 
-fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
-    let prefix = format!("{name}=");
-    let cookie_kv = set_cookie.split(';').next()?.trim();
-    if !cookie_kv.starts_with(&prefix) {
-        return None;
-    }
-    let value = cookie_kv.trim_start_matches(&prefix).trim();
-    if value.is_empty() {
-        return None;
-    }
-    Some(value.to_string())
-}
-
 fn is_loopback_http_url(base_url: &str) -> bool {
     let Ok(parsed) = Url::parse(base_url) else {
         return false;
@@ -553,51 +541,7 @@ fn exchange_bootstrap_token(
     token: &str,
     cookie_name: &str,
 ) -> anyhow::Result<Option<String>> {
-    let parsed = Url::parse(base_url)?;
-    let host = parsed.host_str().unwrap_or("127.0.0.1");
-    let port = parsed.port_or_known_default().unwrap_or(80);
-
-    // This is only used for local bootstrap; we assume plain HTTP.
-    let mut stream = TcpStream::connect((host, port))?;
-
-    let body = format!("{{\"token\":\"{}\"}}", token);
-    let request = format!(
-        "POST /api/auth/token HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.as_bytes().len(),
-        body
-    );
-
-    stream.write_all(request.as_bytes())?;
-    stream.flush()?;
-
-    let mut response = String::new();
-    stream.read_to_string(&mut response)?;
-
-    let (raw_headers, _rest) = response
-        .split_once("\r\n\r\n")
-        .or_else(|| response.split_once("\n\n"))
-        .unwrap_or((response.as_str(), ""));
-
-    let mut lines = raw_headers.lines();
-    let status_line = lines.next().unwrap_or("");
-    if !status_line.contains(" 200 ") {
-        return Ok(None);
-    }
-
-    for line in lines {
-        // handle case-insensitive header name
-        if let Some(value) = line.strip_prefix("Set-Cookie:") {
-            if let Some(session_id) = extract_cookie_value(value.trim(), cookie_name) {
-                return Ok(Some(session_id));
-            }
-        } else if let Some(value) = line.strip_prefix("set-cookie:") {
-            if let Some(session_id) = extract_cookie_value(value.trim(), cookie_name) {
-                return Ok(Some(session_id));
-            }
-        }
-    }
-
-    Ok(None)
+    backend_bootstrap::exchange_bootstrap_token(base_url, token, cookie_name)
 }
 
 pub(crate) fn local_session_cookie(
@@ -619,20 +563,55 @@ pub(crate) fn local_session_cookie(
 }
 
 fn set_session_cookie(
+    manager: &CliProcessManager,
+    generation: u64,
     app: &AppHandle,
     base_url: &str,
     cookie_name: &str,
     session_id: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let cookie = local_session_cookie(base_url, cookie_name, session_id)?;
+    let windows = app.state::<crate::local_windows::LocalWindows>().records()
+        .into_iter().filter_map(|record| app.get_webview(&record.label)).collect::<Vec<_>>();
+    let app = app.clone();
+    let manager = manager.clone();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let authority = manager.clone();
+    manager.cookie_publication.run_until(deadline, move |publication| {
+        let current_manager = authority.clone();
+        let current_publication = publication.clone();
+        let current: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move ||
+            current_manager.is_current_generation(generation) && current_publication.available(deadline));
+        backend_bootstrap::publish_verified_cookies(&publication, &cookie, windows.len(), || current(),
+            // Read on the worker, never in a synchronous native event callback.
+            // Wry's macOS URL filter hides IPv4 cookies; ownership matching is exact.
+            |index| windows[index].cookies().map_err(Into::into),
+            |index| change_native_cookie(&app, &windows[index], cookie.clone(), Some(current.clone())),
+            |index, cookie| change_native_cookie(&app, &windows[index], cookie, None).map(|_| ()),
+        )
+    })
+}
 
-    for record in app.state::<crate::local_windows::LocalWindows>().records() {
-        if let Some(win) = app.get_webview(&record.label) {
-            win.set_cookie(cookie.clone())?;
-        }
-    }
-
-    Ok(())
+fn change_native_cookie<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    window: &tauri::Webview<R>,
+    cookie: Cookie<'static>,
+    current: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+) -> anyhow::Result<bool> {
+    let window = window.clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let result = if let Some(current) = current {
+            if current() { window.set_cookie(cookie).map(|_| true) } else { Ok(false) }
+        } else {
+            // Exact stale-cookie cleanup does not require the retired generation.
+            window.delete_cookie(cookie).map(|_| true)
+        };
+        let _ = sender.send(result);
+    })?;
+    // CookiePublication bounds the caller's receipt wait, retaining this worker
+    // and its serial ownership if a native callback/readback finishes late.
+    receiver.recv().map_err(|_| anyhow::anyhow!("Native cookie callback unavailable"))?.map_err(Into::into)
 }
 
 fn generate_auth_cookie_name() -> String {
@@ -822,6 +801,7 @@ pub struct CliProcessManager {
     job: Arc<Mutex<Option<WindowsJobObject>>>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
     local_access: Arc<Mutex<Option<LocalCliAccess>>>,
+    cookie_publication: Arc<backend_bootstrap::CookiePublication>,
     lifecycle: Arc<Mutex<()>>,
     generation_authority: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
@@ -838,6 +818,7 @@ impl CliProcessManager {
             job: Arc::new(Mutex::new(None)),
             bootstrap_token: Arc::new(Mutex::new(None)),
             local_access: Arc::new(Mutex::new(None)),
+            cookie_publication: Arc::new(backend_bootstrap::CookiePublication::default()),
             lifecycle: Arc::new(Mutex::new(())),
             generation_authority: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
@@ -1582,13 +1563,9 @@ impl CliProcessManager {
             } else {
                 match exchange_bootstrap_token(&base_url, &token, &auth_cookie_name) {
                     Ok(Some(session_id)) => {
-                        let cookie_result = manager.with_current_generation(generation, || {
-                            set_session_cookie(app, &base_url, &auth_cookie_name, &session_id)
-                        });
-                        if cookie_result.is_none() {
-                            return;
-                        }
-                        if let Err(err) = cookie_result.unwrap() {
+                        let cookie_result = set_session_cookie(manager, generation, app, &base_url, &auth_cookie_name, &session_id);
+                        if matches!(cookie_result, Ok(false)) { return; }
+                        if let Err(err) = cookie_result {
                             log_line(&format!("failed to set session cookie: {err}"));
                             navigate_main(manager, generation, app, &format!("{base_url}/login"));
                         } else {
@@ -2116,6 +2093,34 @@ mod tests {
         assert!(!is_loopback_http_url("https://localhost:3000"));
         assert!(!is_loopback_http_url("http://remote.example:3000"));
         assert!(!is_loopback_http_url("http://user@localhost:3000"));
+    }
+
+    #[test]
+    fn native_cookie_callback_rechecks_manager_generation_and_mock_set_is_not_a_receipt() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "cookie-receipt-fixture", tauri::WebviewUrl::default())
+            .build().unwrap();
+        let webview = app.get_webview(window.label()).unwrap();
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        let publication = manager.cookie_publication.clone();
+        let callback_manager = manager.clone();
+        let current = Arc::new(move || {
+            // Reset at callback execution, after dispatch admission.
+            callback_manager.advance_generation();
+            callback_manager.is_current_generation(generation)
+        });
+        let cookie = local_session_cookie("http://127.0.0.1:1234", "fixture-cookie", "owned").unwrap();
+        assert!(!change_native_cookie(app.handle(), &webview, cookie.clone(), Some(current)).unwrap());
+        assert!(Arc::ptr_eq(&publication, &manager.cookie_publication));
+        let result = backend_bootstrap::publish_verified_cookies(&publication, &cookie, 1, || true,
+            |_| webview.cookies_for_url("http://127.0.0.1:1234".parse().unwrap()).map_err(Into::into),
+            |_| change_native_cookie(app.handle(), &webview, cookie.clone(), Some(Arc::new(|| true))),
+            |_, cookie| change_native_cookie(app.handle(), &webview, cookie, None).map(|_| ()),
+        );
+        assert!(result.unwrap_err().to_string().contains("installation was not confirmed"));
+        assert!(manager.local_cli_access().is_none());
     }
 
     #[test]

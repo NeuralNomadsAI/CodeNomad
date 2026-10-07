@@ -30,7 +30,7 @@ export class BackendBootstrapCoordinator {
   private inFlight: Promise<void> | undefined
 
   constructor(
-    private readonly exchange: (url: string, token: string) => Promise<boolean>,
+    private readonly exchange: (url: string, token: string, isCurrent: () => boolean) => Promise<boolean>,
     private readonly navigate: (url: string) => void | Promise<void>,
     private readonly reportError: (error: unknown) => void = () => {},
   ) {}
@@ -61,7 +61,7 @@ export class BackendBootstrapCoordinator {
     const generation = this.generation
     const url = this.ready.url
     const token = this.token.value
-    this.inFlight = this.exchange(url, token).then(
+    this.inFlight = this.exchange(url, token, () => this.generation === generation).then(
       (accepted) => this.generation === generation ? this.navigate(accepted ? url : `${url}/login`) : undefined,
       (error) => {
         this.reportError(error)
