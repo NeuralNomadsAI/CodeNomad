@@ -193,7 +193,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
   const close = () => { showSessionChat(props.scope); updateMissionProjectView(props.scope, { reader: undefined }) }
-  return <section ref={root} class="mission-reader window-shell" aria-label={t("missions.control.reports.title")}
+   return <section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">
       <h2 class="window-title">{title()}</h2>

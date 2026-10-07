@@ -301,7 +301,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                   })}
                   t={props.t}
                 />
-              <Show when={selected().id} keyed>{id => <MissionLifecycleControls instanceId={props.instanceId} mission={missions().find(mission => mission.id === id)!} disabled={Boolean(editor())} />}</Show>
                 <MissionAttention mission={selected()} family={family(selected().id)} instanceId={props.instanceId} onOpenActor={async (id, request) => {
                  const origin = navigationOrigin()
                  await openActor(id, origin, () => {
@@ -311,6 +310,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                      focusInterruption(origin.instanceId, id, request.id, request.kind)
                  })
                 }} />
+              <Show when={selected().id} keyed>{id => <MissionLifecycleControls instanceId={props.instanceId} mission={missions().find(mission => mission.id === id)!} disabled={Boolean(editor())} />}</Show>
                 <MissionBriefing instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
                   reading={isReading({ missionId: selected().id, kind: "overview" })}
                  disabled={messagingDisabled()}

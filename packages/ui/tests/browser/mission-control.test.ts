@@ -624,6 +624,8 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-journey", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
     const attention = page.getByRole("button", { name: /^Your response is needed/ })
     await attention.waitFor()
+    assert.equal(await attention.evaluate(element => Boolean(element.closest(".mission-disclosure")?.compareDocumentPosition(document.querySelector(".mission-lifecycle")!) & Node.DOCUMENT_POSITION_FOLLOWING)), true,
+      "human decisions precede lifecycle controls")
     assert.equal(await attention.locator(".mission-attention-count").innerText(), "1")
     await page.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
     await capture("human-request-mobile", 390, "390px", true)

@@ -54,6 +54,7 @@ test("direct result reading preserves retained late sources and hides technical 
     await page.evaluate(() => (window as any).resultReader.show("report", "late"))
     const reader = page.locator(".mission-reader")
     await reader.getByText("Retained late result", { exact: true }).waitFor()
+    assert.equal(await reader.getAttribute("aria-label"), "Retired review")
     assert.deepEqual(await reader.getByRole("heading", { level: 3 }).allTextContents(), ["Summary", "Recommended next moves", "Evidence"])
     assert.equal(await reader.locator("details").evaluate(element => (element as HTMLDetailsElement).open), false)
     assert.equal(await reader.locator("pre").isVisible(), false)
@@ -80,6 +81,7 @@ test("mission outcome precedes the original objective in the overview reader", a
     await page.evaluate(() => (window as any).resultReader.show("overview"))
     const reader = page.locator(".mission-reader")
     await reader.getByText("Verified final outcome", { exact: true }).waitFor()
+    assert.equal(await reader.getAttribute("aria-label"), en["missions.control.overview"])
     assert.deepEqual(await reader.getByRole("heading", { level: 3 }).allTextContents(), ["Summary", "Objective"])
   } finally { await page.close() }
 })

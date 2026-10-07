@@ -1,6 +1,6 @@
 # Missions refactor: integration qualification record
 
-## Current delivery index — 2026-10-07
+## Current delivery index — 2026-10-08
 
 The reintroduction is open in [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
 on `missions-native-subsessions-20261003`. Its feature-first delivery contract is
@@ -24,11 +24,12 @@ profile/environment, authority, storage and cold scheduling in OpenCode.
 fixture startup at its original 15-second deadline. The locale fixture correction
 passes; earlier Copy/network failures did not reproduce but remain unexplained.
 No assertion/deadline is relaxed, and no further aggregate loop is planned.
-Native parking/cold reconstruction is the current primary qualification; parallel
-work prepares truthful parked-actor Stop using existing native contracts.
+Native parking/cold reconstruction has a bounded accepted fixture receipt below;
+truthful parked-actor Stop still requires its original-generation fence and native
+retirement qualification.
 Native Job process-bound lifetime is committed in `1465793f`;
-inactive-claim cold continuity, protected authority and packaged autonomy remain
-unqualified. Historical results below retain their original scope and failures.
+production protected authority, finite passage completion and packaged autonomy
+remain unqualified. Historical results below retain their original scope and failures.
 
 - Published head at the start of this update: `cfea513b`; corrections now pushed
   through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
@@ -788,6 +789,18 @@ unqualified. Historical results below retain their original scope and failures.
   Actual adoption, inactive retained claim, cold bootstrap and role ACKs await its
   receipt/review. Parallel source-only work targets guarded native resume and genuine
   self-user-interruption for Stop; no Stop runtime or production authority is claimed.
+- The subsequently corrected shutdown observer accepted `idle_outcome: null` only
+  with a shutdown event and an inactive retained claim. One independently reviewed
+  bounded native run (**43.647 s, zero findings**) observed one prompt/ACK, two
+  running Job ACKs, two healthy shutdown-classified interruptions, inactive eviction
+  while the Job remained running, and one cold reconstruction with the same pending
+  ID, deadline and claim. There was no second prompt/root demand, provider call,
+  model HTTP request, due marker or wait expiry. Receipt SHA-256
+  `4346da4e0cff9f577bb8f50a3838057dca8e09066ca8fe23584c809c6e3e5100`:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/park-observer-native-execution-KveoLy/Temp/opencode/missions-startup-HLEiWG/receipt.json`.
+  This qualifies bounded fixture parking/cold entry, **not** Stop, scheduling,
+  standing authority, passage completion or packaged autonomy. The prior `QDipBM`
+  observer-negative receipt remains unchanged.
 - `32c308a1` fixes actual inline keyed-reorder focus loss and synchronizes the test
   with Kobalte's deferred opening autofocus. **9/9 focused**, both focus cases five
   consecutive runs and independent **9/9 / 0 findings**. The complete no-capture
