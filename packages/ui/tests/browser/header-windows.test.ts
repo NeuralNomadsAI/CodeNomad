@@ -554,6 +554,19 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays vi
       const r = document.getElementById(id!)!.getBoundingClientRect()
       return r.height > height && r.bottom <= innerHeight && r.top >= 0
     }, { id: await panel.getAttribute("id"), height: before.height })
+    if (kind === "session-search") {
+      await page.setViewportSize({ width: 932, height: 390 })
+      const raised = await dragWindow(page, panel, 0, -2000)
+      assert.ok(raised.height > 390 && raised.y >= 16, "oversized landscape search retains its top bar")
+      assert.equal(await panel.locator(".window-close-button").evaluate(el => {
+        const r = el.getBoundingClientRect()
+        return r.y >= 0 && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+      }), true)
+      const recovered = await dragWindow(page, panel, -40, 40)
+      assert.ok(Math.abs(recovered.x - raised.x + 40) < 1, "the visible bar can still move the oversized search")
+      await panel.locator(".window-close-button").click()
+      await panel.waitFor({ state: "hidden" })
+    }
   } finally { await page.close() }
 })
 
