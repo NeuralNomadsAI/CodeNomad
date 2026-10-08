@@ -21,7 +21,7 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/)
 const databaseSchema = z.object({ file: text, dev: text, ino: text, birthtime: text }).strict()
 const registrationSchema = z.object({ id: z.string().uuid(), version: text, url: text,
   pid: z.number().int().positive().safe(), password: z.string().min(1).max(1024) }).strict()
-const enrollmentSchema = z.object({ version: z.literal(1), namespace: z.string().uuid(),
+export const enrollmentSchema = z.object({ version: z.literal(1), namespace: z.string().uuid(),
   service: registrationSchema.omit({ password: true }).extend({ registrationFile: text, configFile: text,
     executable: text, executableSha256: digest, startIdentity: text }).strict(),
   database: databaseSchema, daemonStorageID: digest }).strict()
@@ -69,11 +69,26 @@ function executableDigest(file: string) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024 * 1024) deny()
   return createHash("sha256").update(readFileSync(file)).digest("hex")
 }
+/** Backend publication fence: compare the service's own private registration,
+ * credentials and native DB file without accepting any authority from HTTP. */
+export function assertNativeManagedOwnerReadback(input: NativeManagedEnrollment): true {
+  const pinned = enrollmentSchema.parse(input)
+  const registration = registrationSchema.parse(privateJSON(pinned.service.registrationFile))
+  const { password, ...safe } = registration
+  const config = z.object({ password: z.string() }).passthrough().parse(privateJSON(pinned.service.configFile))
+  if (!same(safe, { id: pinned.service.id, version: pinned.service.version, url: pinned.service.url, pid: pinned.service.pid })
+    || password !== config.password || !same(databaseIdentity(pinned.database.file), pinned.database)
+    || currentStartIdentity(pinned.service.pid) !== pinned.service.startIdentity
+    || physical(realpathSync(pinned.service.executable)) !== pinned.service.executable
+    || executableDigest(pinned.service.executable) !== pinned.service.executableSha256
+    || authorityDigest(pinned.database) !== pinned.daemonStorageID) deny()
+  return true
+}
 /** Same start-identity encoding as lookupProcess; synchronous because the final
- * native metadata hook cannot accept an async liveness snapshot. Self only. */
-function currentStartIdentity(): string {
+ * native metadata hook cannot accept an async liveness snapshot. */
+function currentStartIdentity(pid = process.pid): string {
   if (process.platform === "linux") {
-    const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8")
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
     const ticks = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19]
     const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()
     if (!ticks || !boot) deny()
@@ -81,7 +96,7 @@ function currentStartIdentity(): string {
   }
   if (process.platform !== "win32") deny()
   const executable = path.join(process.env.SystemRoot || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe")
-  const script = `try { $p = [System.Diagnostics.Process]::GetProcessById(${process.pid}); 'LIVE:' + $p.StartTime.ToUniversalTime().Ticks } catch { 'UNKNOWN' }`
+  const script = `try { $p = [System.Diagnostics.Process]::GetProcessById(${pid}); 'LIVE:' + $p.StartTime.ToUniversalTime().Ticks } catch { 'UNKNOWN' }`
   const result = execFileSync(executable, ["-NoProfile", "-NonInteractive", "-Command", script],
     { windowsHide: true, timeout: 3000, maxBuffer: 4096, encoding: "utf8" }).trim()
   if (!/^LIVE:\d+$/.test(result)) deny()
