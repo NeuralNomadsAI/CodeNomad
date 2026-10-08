@@ -1,6 +1,6 @@
 # Missions : contrat de continuité et d'autorisation
 
-Étude initiale : 2026-10-01. État réconcilié : 2026-10-07. Contrat cible,
+Étude initiale : 2026-10-01. État réconcilié : 2026-10-08. Contrat cible,
 **partiellement implémenté, non qualifié pour activation desktop**. L'état des
 preuves et des gates est consigné dans `MISSIONS_REFACTOR_VALIDATION.md`.
 La réintroduction est ouverte dans [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
@@ -15,8 +15,8 @@ avec l'interface **et le serveur intermédiaire CodeNomad fermés**. Un backend
 CodeNomad persistant ne satisfait pas cette cible. Voir la demande transmise et
 conservée dans `MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md`.
 
-L'admission, les autorisations, l'environnement/profil, le stockage, le réveil froid
-et la programmation nécessaires doivent s'exécuter côté OpenCode. Les politiques
+L'admission, les autorisations, l'environnement/profil, le stockage et la
+programmation doivent s'exécuter côté OpenCode. Les politiques
 de sécurité restent obligatoires ; une API manquante est un contrat à implémenter
 et qualifier, pas une raison de substituer un backend permanent. Les travaux host
 déjà réalisés sont conservés et non activés, avec leurs preuves propres ; leurs
@@ -25,6 +25,17 @@ prime sur les propositions de backend persistant historiques ci-dessous.
 L'utilisateur interdit également de modifier OpenCode. L'intégration doit exploiter
 les mécanismes existants du service/plugin et les qualifier ; l'absence d'un domaine
 SDK nommé « persistentSchedule » n'est pas une preuve de nécessité d'extension.
+
+### Portée précisée — 8 octobre 2026
+
+Tant que le service OpenCode tourne, il possède les échéances et les passages
+finis même si CodeNomad et son backend sont fermés. Le sommeil de la machine
+peut entraîner un rattrapage borné dans ce même processus. **Le redémarrage du
+service peut perdre le Job de calendrier en RAM** pendant que CodeNomad est fermé.
+Rouvrir CodeNomad réconcilie l'état natif puis réarme automatiquement les seules
+Missions encore autorisées, sans nouveau Play ni rejeu d'effet incertain.
+L'auto-réveil pendant que CodeNomad reste fermé après redémarrage n'est plus un
+gate de livraison ; les preuves historiques correspondantes restent datées.
 
 ### État actuel : fenêtre, plugin et prochain passage
 
@@ -55,11 +66,10 @@ SDK nommé « persistentSchedule » n'est pas une preuve de nécessité d'extens
   finis**, non un timer choisissant les tâches des agents. Les dépendances,
   sous-agents, inbox et exécutions restent natifs. Un seul passage, un rattrapage
   borné, déduplication durable et non-replay des effets incertains sont requis.
-- Qualification restante : clients et backend CodeNomad fermés, environnement
-  modifié avant échéance, redémarrage du service dans ce même état, Location froide
-  sans `agent.list` ou UI,
-  passage unique et conservation des inputs inconnus. La seule rétention d'un
-  plugin chargé ne prouve pas ces scénarios.
+- Qualification restante : clients et backend CodeNomad fermés avec OpenCode
+  toujours en marche, environnement modifié avant échéance, passage unique,
+  Pause/Stop et conservation des inputs inconnus. La seule rétention d'un plugin
+  chargé ne prouve pas ces scénarios.
 
 Les tableaux détaillés ci-dessous conservent leurs preuves historiques datées ;
 les constats corrigés ici priment sur leurs anciennes descriptions du code.
@@ -76,7 +86,7 @@ les constats corrigés ici priment sur leurs anciennes descriptions du code.
 - UI minimale : conserver le panneau et les actions existants, placer la reprise
   ciblée sur le coordinateur sélectionné et le travail sans rapport ; aucun
   nouvel écran de gestion de l'autorité ou de migration.
-- Sur Windows, la topologie retenue pour l'intégration devient superviseur S
+- Étude historique Windows, non gate de l'autonomie native : la topologie envisagée était superviseur S
   propriétaire du Job de runtime, manager Node M affecté avant reprise et
   backend B héritant du Job au spawn Node normal. Cela conserve le vrai IPC Node
   sans adoption privée de canal. S reste hors du Job de runtime ; le service
@@ -99,8 +109,9 @@ autorisation persistée ne dispense pas de l'environnement complet ni des fences
 
 **Critère d'acceptation :** fermer les clients et le backend CodeNomad ; le service
 OpenCode seul retrouve les racines autorisées et admet exactement un passage,
-avec son profil, ses permissions et ses identités durables. Redémarrer OpenCode
-et répéter sans réveil manuel ni replay d'effet incertain. Les preuves de lancement
+avec son profil, ses permissions et ses identités durables **tant qu'il tourne**.
+Après un redémarrage du service, rouvrir CodeNomad réarme automatiquement le
+calendrier encore autorisé, sans rejouer un effet incertain. Les preuves de lancement
 indépendant d'un backend ne démontrent pas ce parcours.
 
 ## 1. Preuves et limites du contrat natif
@@ -162,14 +173,11 @@ de cette refonte. Ne fixer un nouveau minimum qu'après dépendance démontrée.
 | Plugin seul + snapshot durable d'autorisation | Peu de processus ; journal et transport dans le daemon | Environment/inbox non exposés ; profil/host/WSL/settings frais et Git fences non natifs ; révocation et conflits desktop à reconstruire |
 | Plugin durable + backend partagé persistant | Réutilise environment, auth, ownership, SDK et fences existants | Découpler lifecycle backend/window, restaurer autorités explicites, singleton et settings frais ; parité desktop |
 
-**Recommandation : deuxième option.** Pas un nouveau backend Mission concurrent
-au backend desktop : un seul propriétaire de WorkspaceManager/settings/fences
-par profil, auquel le desktop se rattache. Une petite façade d'admission extraite
-des routes existantes évite de copier leur politique dans le plugin.
-
-Un plugin seul reste une expérience privée, non la cible livrable : même si une
-version future expose environment/inbox/filesystem, cela ne prouve pas la lecture
-du bon profil CodeNomad ni l'exclusion avec les mutations du backend Windows/WSL.
+**Ancienne recommandation, rejetée depuis le 7 octobre :** la deuxième option
+envisageait un backend partagé persistant. Elle ne satisfait pas la cible native
+décrite plus haut et ne doit pas guider la livraison. Ses objections à un plugin
+seul restent des contrôles à qualifier côté OpenCode, pas une autorisation de
+substituer le backend ou d'ignorer le profil et les writers concurrents.
 Une snapshot contenant des variables figées est explicitement rejetée.
 
 ## 3. Invariants observables
@@ -227,8 +235,9 @@ Les nouvelles sessions ne peuvent être créées que dans ces racines autorisée
 avec IDs/contracts déterministes. Un changement de racine/profil exige adoption
 explicite ; jamais « trouver un autre propriétaire disponible ».
 
-La liaison storage/daemon doit survivre à un restart ordinaire sans accepter une
-autre DB au même endpoint. Une identité durable de namespace Mission, créée une
+La liaison storage/daemon doit rester exacte pendant la vie du service et lors
+du réarmement automatique à la réouverture de CodeNomad, sans accepter une autre
+DB au même endpoint. Une identité durable de namespace Mission, créée une
 fois dans le storage natif et relue via challenge typé, est une piste **H**, pas
 une API `ctx.storage.identity` existante. Comparer aussi les identités natives du
 projet/coordinateur et les métadonnées authentifiées de connexion ; restaurer une
@@ -355,9 +364,9 @@ exécution ultérieure ; réutiliser un root actif peut affecter ses prochains s
   reprend pas un coordinateur à partir du silence. Aucun runner de controls.
 
 Arrêt de la machine/daemon/plugin/autorité n'est pas une garantie de liveness.
-Le redémarrage du backend authentifie d'abord la connexion et le registre, puis
-réactive par read les seules locations déjà autorisées si le prototype prouve
-ce chargement. Il réconcilie carte/inbox/activité ; il n'envoie pas un prompt Play.
+Dans l'étude historique du backend, son redémarrage devait authentifier la
+connexion et le registre puis réconcilier carte/inbox/activité, sans prompt Play.
+Cela n'est pas une exigence de reprise automatique du service OpenCode.
 Les tasks dispatching et controls incomplets restent visibles pour retry explicite.
 
 ## 7. Enfants natifs, activité et reprise ciblée
@@ -458,7 +467,7 @@ sans supposer qu'ils comprendront les nouvelles époques. Aucun `location.reload
 automatique : il annule les Forms/permissions. Aucun rollback ne révoque les
 tombstones de la nouvelle génération ou n'en réactive un ancien fallback natif.
 
-## 10. Acceptance tests, exclusivement isolés
+## 10. Essais historiques du backend, exclusivement isolés — non-acceptation native
 
 CLI/config/home/DB/Git project/provider privés, toutes ressources possédées par
 le fixture ; jamais le daemon utilisateur, missions #824 ou fermeture du desktop
@@ -489,9 +498,9 @@ isolées sont implémentées et répétées ; consulter `MISSIONS_REFACTOR_VALID
 pour leur périmètre exact. Aucun résultat partiel ou ancien ne qualifie à lui seul
 la chaîne headless entière ou le nouveau contrat packagé.
 
-## 11. Risques ouverts et plus petit prochain pas
+## 11. Risques de l'étude historique et proposition écartée
 
-**Bloquants de livraison :** lifecycle persistant sans fenêtre aux deux hosts ;
+**Bloquants de l'ancienne proposition backend :** lifecycle persistant sans fenêtre aux deux hosts ;
 autorité singleton et exclusion cross-profile ; lecteur settings fail-closed ;
 authentification des mutations privilégiées RPC ; liaison nativeStorageIdentity ;
 coexistence/rollback de vieux writers. Aucun n'est présenté comme déjà résolu.
@@ -501,13 +510,10 @@ tomber ; inbox/env/selection ne forment pas une transaction ; ACK n'est pas lect
 modèle ; externes hors fences ; Pause ne suspend pas exactement les subprocessus
 et n'offre pas encore de contrôle récursif ; enfant peut ne pas hériter environment.
 
-Plus petit prochain pas : un prototype **privé** root coordinator + root actor +
-provider déterministe, plugin durable et backend unique explicite sans fenêtre.
-Établir grant/revoke, reader settings frais, admission environment→synthetic,
-Pause/Stop et disparition/rattachement du desktop ; montrer provider receipt,
-redaction et refus deux profils. Comparer ensuite la variante plugin-only et les
-enfants avec des preuves de capacités, sans fallback de sécurité. Décision
-architecture après ces gates, puis revue indépendante avant implémentation produit.
+Cette étude proposait un prototype **privé** avec backend unique sans fenêtre,
+pour comparer grant/revoke, settings frais, admission et contrôle. Cette voie est
+écartée comme solution de l'autonomie demandée : les protections qu'elle listait
+doivent être qualifiées dans le service OpenCode, sans backend CodeNomad persistant.
 
 ### Sources consultées
 

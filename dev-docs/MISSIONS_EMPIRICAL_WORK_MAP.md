@@ -6,7 +6,9 @@
 > [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866); dated qualification
 > is indexed in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
 > Retained already-admitted work after closing a window does not prove a scheduled
-> next-day passage or cold-Location recovery. Those remain required delivery gates.
+> next-day passage while OpenCode keeps running. Automatic cold recovery after a
+> service restart is not a delivery gate; reopening CodeNomad must automatically
+> rearm eligible schedules without replaying unknown effects.
 
 Objective: a short native recursive GPT-6.1 Sol mission in a compiled CodeNomad,
 native conversation results without mandatory child business-report copies,

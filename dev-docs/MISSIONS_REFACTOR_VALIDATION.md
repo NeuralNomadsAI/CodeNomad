@@ -16,7 +16,10 @@ was relayed from the cold-restoration subsession and is preserved in
 `MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md`. Host-lifetime work/receipts below
 remain retained, non-activated, separately scoped evidence, not native-plugin
 autonomy acceptance. Active integration assignments now target native admission,
-profile/environment, authority, storage and cold scheduling in OpenCode.
+profile/environment, authority, storage and service-lifetime scheduling in OpenCode.
+As clarified on 2026-10-08, a service restart may lose the in-memory schedule
+Job while CodeNomad is closed. Reopening CodeNomad must reconcile and automatically
+rearm eligible schedules without replay; unattended cold wake is not a release gate.
 
 **Latest scoped status:** ordinary server **2,370 pass / 0 fail / 8 skipped**,
 625 inputs unchanged; latest complete no-capture browser **761 pass / 1 fail /
@@ -25,8 +28,8 @@ fixture startup at its original 15-second deadline. The locale fixture correctio
 passes; earlier Copy/network failures did not reproduce but remain unexplained.
 No assertion/deadline is relaxed, and no further aggregate loop is planned.
 Native parking/cold reconstruction has a bounded accepted fixture receipt below;
-truthful parked-actor Stop still requires its original-generation fence and native
-retirement qualification.
+its automatic-restart target is no longer a delivery gate. Truthful parked-actor
+Stop still requires its original-generation fence and native retirement qualification.
 Native Job process-bound lifetime is committed in `1465793f`;
 production protected authority, finite passage completion and packaged autonomy
 remain unqualified. Historical results below retain their original scope and failures.
@@ -67,9 +70,9 @@ remain unqualified. Historical results below retain their original scope and fai
   File-search retry passes independently; both fixtures now use private Vite caches
   and native close/dispose acknowledgements rather than mutable checkout caches.
 - The Windows lifetime supervisor/service starter/full backend are implemented;
-  resource integrity and detach prototypes are not packaged persistent-launch or
-  cold-Location recurrence qualification. New isolated checks must keep those gates
-  separate, including fresh environment, restart and no admission replay.
+  resource integrity and detach prototypes do not qualify native-plugin
+  service-lifetime scheduling. Keep fresh environment, signed admission and
+  no-replay gates separate from historical backend and cold-restart probes.
 
 ### Parallel implementation follow-up — local, not desktop-enabled
 
@@ -220,7 +223,7 @@ remain unqualified. Historical results below retain their original scope and fai
   8 skipped**, **78 suites**, **1,668.03 s**, all **625 inputs unchanged**. The
   selected-count increase is eight new broker cases plus four family-sync cases;
   no original test is dropped. This closes the ordinary server aggregate for
-  these sources, not native opt-in authority, Job ownership, cold scheduling or
+  these sources, not native opt-in authority, service-owned due admission or
   packaged parity. All three failed historical aggregates remain separately kept.
   Result and complete-log digest:
   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-output-20261007.json`.
@@ -333,7 +336,7 @@ remain unqualified. Historical results below retain their original scope and fai
   Writer trust/exclusion and root-change denial remain **injected**, the Location
   explicitly warmed. Two provider requests show dispatch activity, not successful
   model consumption/completion. Shipping entry/build are unchanged; protected
-  native writer qualification, cold wake and production activation remain open.
+  native writer qualification, service-owned due work and production activation remain open.
   Earlier `QFyvWn` low-level / `GoUGI8` intermediate receipts remain historical.
 - **3/3** entry-lifetime checks pass in author/main: external setup seals out native
   graph services; plugin Scope survives request cleanup but also leaves a stale
@@ -395,8 +398,8 @@ remain unqualified. Historical results below retain their original scope and fai
   keeps DB/enrollment but safely refuses stale ownership. All **8 source hashes**
   match; server typecheck and independent review close with **0 actionable findings**.
   Receipt: `C:/Users/Admin/AppData/Local/missions-managed-owner-YUXUFw/fixture/results.json`.
-  Permanent arbitrary-writer exclusion, independently protected rollback checkpoint
-  and positive restart requalification remain separate gates. A protected signer/
+  Known-writer exclusion and independently protected rollback checks remain delivery
+  gates; positive restart requalification is optional research. A protected signer/
   checkpoint candidate is being composed outside DB; none is production-enabled.
 - **`3e205b52`** adds the opt-in private **protected public signer/checkpoint proof**
   on real 2.0.24, independently closed with **0 findings**. All **16 reviewed input
@@ -472,7 +475,8 @@ remain unqualified. Historical results below retain their original scope and fai
   `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-aOPsBv/receipt.json`.
   Cleanup, sentinel preservation and artifact hashes pass. Module evaluation at
   cold boot is now being distinguished from setup activation; production remains
-  disabled and the cold scheduling gate remains open.
+  disabled. Cold restart remains an unqualified historical scenario, not a
+  delivery gate after the 2026-10-08 service-lifetime clarification.
 - A further module-evaluation probe distinguishes imports from setup: claimed
   restart has **1 entry / 1 bundled-dependency evaluation marker and 1 setup**;
   claim-free restart without Location demand has **0 evaluations / 0 setups over
@@ -612,9 +616,8 @@ remain unqualified. Historical results below retain their original scope and fai
   Actual ownership/eviction/replacement acquisition/shutdown qualification is
   being implemented in a separate private fixture. Generic Job effects/deadlines
   are **not persisted**; native claim recovery is one bootstrap sweep, not a
-  continuous scheduler. Cold wake remains separate; existing native PersistentPty
-  handoff is a possible next contract to qualify, not an ordinary Shell or
-  CodeNomad scheduler substitute. Job source: `packages/core/src/job.ts:178–183,
+  continuous scheduler. Service-owned due-time acquisition still needs fresh
+  authority and environment during the same daemon process. Job source: `packages/core/src/job.ts:178–183,
   252–297,478–480`, Git blob `771c5a79722effe0ae48d072b95c68f5f03be0ee`.
   This is source evidence only, not a runtime pass or production activation.
 - Native Job qualification remains **incomplete**: the latest invocation times
@@ -1024,7 +1027,8 @@ remain unqualified. Historical results below retain their original scope and fai
   `0x2000`. One attempt, exact owned sentinel preserved and then torn down. No
   backend/manager/service starts. This records the harness boundary, not successful
   continuity. Repeat from an authorized ordinary Windows parent before proceeding
-  through cold native wake and packaged Electron/Tauri parity. Current receipt:
+  through its own retained-backend qualification, not as a gate for native-plugin
+  scheduling. Packaged Electron/Tauri service-lifetime parity remains separate. Current receipt:
   `C:/Users/Admin/AppData/Local/Temp/opencode/recurring-continuity-native-dNXg3q/qualification.json`.
 - Fourteen actual Tauri cross-host tests pass, including both historical hosted
   failures. Test-only probe duration/exit diagnostics are added; no production
@@ -2185,25 +2189,30 @@ revert publication did not publish the local durable refactor.
   this document. A bounded zero-finding review never substitutes for native
   qualification or full acceptance.
 
-## Release/integration gates still open
+## Native release gates and retained historical backend track
+
+Items 3 and the backend detach/reattach part of item 5 below belong to the
+separate, non-activated host-lifetime experiment, **not** the OpenCode-only
+Missions release gates. The current target is the live PR #866 description.
 
 1. Real host signer provisioning/rotation, protected grants, multi-profile map
    distribution and managed old-writer/downgrade exclusion.
 2. The private durable native adapter and typed signed effects are implemented,
    with no presence following and no native send fallback; existing desktop rollout
     is unchanged. Bounded integration review and private native adapter validation
-    are complete; protected provisioning and backend admission wiring remain
+     are complete; protected provisioning and native admission wiring remain
     required. New agent-created
    roots and managed-session cleanup are deliberately denied in this adapter.
-3. Native independent launch, manager-owned backend containment and persistent
+ 3. **Historical backend track only:** native independent launch, manager-owned backend containment and persistent
     official service starter, with no shared daemon in backend cleanup.
      The inherited-Job topology closes the combined real-IPC proof frontier, not
      the independent launch, sustained private product channel, outside starter
      or packaged-platform gates. The superseded channel-adoption path is not used.
 4. Protected claim-root provisioning and shared participation of actual admission
    and family mutation routes; conservative crashed claims need explicit repair.
-5. Electron/Tauri packaging and real private detach/reattach/quit/update/session-end
-   fixtures, plus exact macOS process-start identity. No desktop enablement yet.
+ 5. Electron/Tauri packaged OpenCode-plugin and UI parity remains unqualified.
+    Private backend detach/reattach/quit/update/session-end fixtures and the exact
+    macOS process-start identity are separate historical host-lifetime gates.
 6. Packaged/native UI qualification. An earlier full browser suite passes 349
      tests with zero failures and one skipped Electron tab-chrome case; the fresh
      full suite instead has 348 passes, one Changes drag failure and one skip, as

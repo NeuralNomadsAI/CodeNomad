@@ -201,7 +201,7 @@ removal/re-add, damaged storage and lost acknowledgements. It retains 30 referen
 receipts and up to 64 remembered conversation cursors, without deleting native
 transcripts or silently resetting deduplication. This core is not a scheduler
 activation or closed-desktop qualification; owned admission, archive composition,
-cold wake and packaged host integration still need delivery.
+  a service-owned due Job and packaged host integration still need delivery.
 
 ### User-journey regression checks
 
@@ -290,7 +290,7 @@ The authenticated owning backend checks native activity, inbox, descendant inven
 
 ### Refactor qualification status
 
-The independent-of-desktop target and private proof artifacts are documented in `MISSIONS_CONTINUITY_CONTRACT.md`, `MISSIONS_CONTINUITY_SPIKE.md`, `MISSIONS_AUTHORITY_SPIKE.md` and `MISSIONS_HOST_SPIKE.md`. They are not proof of a shipped persistent authorization backend or secure migration. The current product still follows backend presence; full Electron/Tauri detach/reattach, trust provisioning, old-writer exclusion and whole-refactor Gatekeeper acceptance remain separate implementation gates. In particular, interrupting a parent alone cannot prevent a native background child's late notification from waking it.
+The independent-of-desktop target and private proof artifacts are documented in `MISSIONS_CONTINUITY_CONTRACT.md`, `MISSIONS_CONTINUITY_SPIKE.md`, `MISSIONS_AUTHORITY_SPIKE.md` and `MISSIONS_HOST_SPIKE.md`. They are not proof of a shipped persistent authorization backend or secure migration. The current product still follows backend presence; native trust provisioning, known-writer exclusion, service-owned due work, packaged parity and final Gatekeeper acceptance remain open. Electron/Tauri persistent-backend detach/reattach is separate, retained research. Interrupting a parent alone cannot prevent a native background child's late notification from waking it.
 
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads a snapshot after reconnect because native event subscriptions are live-only.
 
