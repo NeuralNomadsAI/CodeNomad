@@ -1,0 +1,60 @@
+name: Publish help
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'docs/help/**'
+      - 'docs/screenshots/workspace-0.20.png'
+      - 'images/CodeNomad-Icon.png'
+      - 'scripts/build-help.mjs'
+      - 'scripts/test-help.mjs'
+      - 'package-lock.json'
+      - '.github/workflows/help-pages.yml'
+  pull_request:
+    paths:
+      - 'docs/help/**'
+      - 'docs/screenshots/workspace-0.20.png'
+      - 'images/CodeNomad-Icon.png'
+      - 'scripts/build-help.mjs'
+      - 'scripts/test-help.mjs'
+      - 'package-lock.json'
+      - '.github/workflows/help-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test scripts/test-help.mjs
+      - run: node scripts/build-help.mjs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/help
+
+  deploy:
+    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: help-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
+        id: deployment

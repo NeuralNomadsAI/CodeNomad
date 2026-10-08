@@ -106,6 +106,8 @@
 
 ## Multi-Language Support (i18n)
 
+- The separate public user guide lives in `docs/help/` and is intentionally English-only for now. `scripts/build-help.mjs` renders its Markdown using the existing `marked` dependency; `docs/help/help.css` owns the standalone site's square, responsive chrome. It does not import the application runtime or add an app locale. Validate it with `npm run test:help`; GitHub Pages publishes `dist/help` through `.github/workflows/help-pages.yml`.
+
 The UI uses a small custom i18n layer (no ICU/messageformat). When building features, never hardcode user-visible strings.
 
 - **Runtime API:** use `useI18n()` in components (`const { t } = useI18n();`) and `tGlobal(...)` in stores/non-component code.
