@@ -377,6 +377,15 @@ remain unqualified. Historical results below retain their original scope and fai
   `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-7CMDEy/results.json`
   and `.../missions-child-environment-fz21n6/results.json`. Commit `6ba741c4`.
   This closes the metadata adapter P1 only; it does not activate autonomous work.
+- On 2026-10-08 an ordinary focused-test command inadvertently selected the
+  existing private `native-authority-provider.test.mjs` **after the user deferred
+  native tests**. It completed against its own isolated 2.0.24 CLI/DB; no current
+  recurrence adapter, cold scheduler or installed product was qualified. The
+  shared daemon PID 10348 and installed Tauri PID 14708 were unchanged, and no
+  fixture OpenCode process remained. Preserve the unchanged receipt at
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-iGW4Sv/results.json`
+  (SHA-256 `ca736c8f473cce0db7f41bc66032ae63a56f31962fbeefb8d244bbd5a1f293f1`);
+  do not repeat this native test before the requested first build.
 - **`65dd66a4`** supplies a separate exact-incarnation native managed-owner seam:
   actual Global/ServerInfo/Database graph, private managed registration and config,
   process start/executable identity and native storage challenge. Trusted enrollment
