@@ -42,6 +42,7 @@ import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
 import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
 import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
 import { registerMissionRecurrenceControlStatus } from "./routes/mission-recurrence-control-status"
+import { registerMissionRecurrenceManual } from "./routes/mission-recurrence-manual"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
@@ -368,10 +369,13 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings })
+  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
+    auth: deps.authManager, bridgeToken: deps.automationBridgeToken })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
     settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
   registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence })
+  registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })

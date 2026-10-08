@@ -1,52 +1,29 @@
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
 import path from "node:path"
 import test from "node:test"
 import { Context, Effect } from "effect"
 import { nativeRecurrenceHandlers, recurrenceConfigDigest, recurrenceScheduleID } from "./native-recurrence-create"
-import { MISSION_LIFECYCLE_TEXT_LIMIT } from "../../missions/lifecycle-input"
 import { recurrenceConfigSchema } from "../../missions/recurrence-contract"
-import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 
-test("direct native CREATE refuses effects 1, 2 and absent budgets before any KV access", async () => {
-  const directory = path.resolve("isolated-direct-recurrence"), project = { id: "project", directory, canonical: directory }
-  const location = { directory, project }
-  const tag = Context.Service<never, unknown>("@opencode/Location")
-  const graph = Context.make(tag, location)
+test("native CREATE rejects direct model/RPC calls without authenticated transport before KV access", async () => {
+  const directory = path.resolve("direct-recurrence-memory"), project = { id: "project", directory, canonical: directory }
+  const location = { directory, project }, graph = Context.make(Context.Service<never, unknown>("@opencode/Location"), location)
   let reads = 0
-  const storage = { get: () => { reads++; throw new Error("native KV must not be read") },
-    scan: () => { reads++; throw new Error("native KV must not be scanned") } }
+  const storage = { get: () => { reads++; throw new Error("No KV access") }, scan: () => { reads++; throw new Error("No scan") } }
   const ctx = { location, storage } as unknown as Parameters<typeof nativeRecurrenceHandlers>[0]
-  const selected = { agent: "agent", model: { providerID: "provider", id: "model" } }
-  const scope = { channel: "stable", configIdentity: path.resolve("profile/config.yaml"),
-    key: createHash("sha256").update(`stable\0${path.resolve("profile/config.yaml")}`).digest("hex") }
-  const base = { template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: scope.key,
-    executionHost: "local", profiles: { coordinator: selected, roles: { specialist: selected } }, taskMode: "native",
-    roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
-    publication: { policy: "disabled", conversationIDs: [] } }
-  const requestID = "direct_low_budget", id = recurrenceScheduleID(project.id, project.canonical, requestID)
-  for (const effects of [1, 2, undefined]) {
-    const config = { ...base, ...(effects === undefined ? {} : { budgets: {
-      effects, nativeCalls: 0, inboxMessages: 0, publications: 0,
-    } }) }
-    const operation = nativeRecurrenceHandlers(ctx).recurrenceCreate({ id, requestID, config,
-      digest: recurrenceConfigDigest(config), directory, scope, executionHost: "local" })
-    await assert.rejects(Effect.runPromise(Effect.provide(operation, graph)),
-      effects === undefined ? /Recurrence creation scope differs/ : /Recurrence needs three fixed effects/)
-    assert.equal(reads, 0, "the deterministic key remains unoccupied")
-  }
-  const oversized = { ...base, consigne: "x".repeat(MISSION_LIFECYCLE_TEXT_LIMIT + 1),
-    budgets: { effects: 3, nativeCalls: 0, inboxMessages: 0, publications: 0 } }
-  await assert.rejects(Effect.runPromise(Effect.provide(nativeRecurrenceHandlers(ctx).recurrenceCreate({ id, requestID,
-    config: oversized, digest: recurrenceConfigDigest(oversized), directory, scope, executionHost: "local" }), graph)))
-  assert.equal(reads, 0, "oversized direct native CREATE must not touch KV")
-  const followed = { ...base, watchedConversationIDs: ["ses_watched"], budgets: { effects: 4, nativeCalls: 0, inboxMessages: 1, publications: 0 } }
-  const limit = recurrenceInputBudget(followed).instructionsMaximum
-  assert.equal(recurrenceConfigSchema.parse({ ...followed, consigne: "x".repeat(limit) }).consigne.length, limit)
-  for (const config of [{ ...followed, budgets: { ...followed.budgets, effects: 3 } },
-    { ...followed, budgets: { ...followed.budgets, inboxMessages: 0 } }, { ...followed, consigne: "x".repeat(limit + 1) }]) {
-    await assert.rejects(Effect.runPromise(Effect.provide(nativeRecurrenceHandlers(ctx).recurrenceCreate({ id, requestID,
-      config, digest: recurrenceConfigDigest(config), directory, scope, executionHost: "local" }), graph)))
-    assert.equal(reads, 0, "source budgets and whole-input overflow fail before any native KV access")
-  }
+  const selection = { agent: "worker", model: { providerID: "provider", id: "model" } }
+  const config = { title: "Review", template: "custom", consigne: "Review", taskMode: "native", clock: { time: "07:00", zone: "UTC" },
+    profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
+    profiles: { coordinator: selection, roles: { specialist: selection } } }
+  recurrenceConfigSchema.parse(config)
+  assert.equal(recurrenceConfigSchema.safeParse({ ...config, budgets: { effects: 3 } }).success, false)
+  assert.equal(recurrenceConfigSchema.safeParse({ ...config, publication: {} }).success, false)
+  const requestID = "request_one", id = recurrenceScheduleID(project.id, project.canonical, requestID)
+  const input = { id, requestID, config, digest: recurrenceConfigDigest(config), directory, scope: {}, executionHost: "local" }
+  await assert.rejects(Effect.runPromise(nativeRecurrenceHandlers(ctx).recurrenceCreate(input).pipe(Effect.provide(graph))))
+  const identity = { sessionID: "auth-disabled", workspaceID: "workspace", scheduleID: id, requestID,
+    expectedRevision: 0, action: "create", configDigest: input.digest, location: { directory }, issuedAt: Date.now(),
+    digest: "0".repeat(64), proof: "0".repeat(64), profileSource: { profileID: "profile", executionHost: "local", configYamlPath: "/config.yaml" } }
+  await assert.rejects(Effect.runPromise(nativeRecurrenceHandlers(ctx).recurrenceCreate({ ...input, transport: identity }).pipe(Effect.provide(graph))))
+  assert.equal(reads, 0)
 })

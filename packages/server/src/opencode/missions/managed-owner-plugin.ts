@@ -13,6 +13,7 @@ import { HUMAN_ANSWER_RPC, type NativeHumanAnswerGate } from "../../missions/hum
 import { acquireNativeHumanAnswers } from "./native-human-answer"
 import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from "./native-recurrence-current"
 import { readNativeRecurrencePage } from "./native-recurrence-reader"
+import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
 
 export const MANAGED_OWNER_RPC_ID = "codenomad.missions.managed-owner"
 export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods: {
@@ -30,6 +31,8 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rp
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
         recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input),
         recurrenceControl: (input: unknown) => controlNativeRecurrence(ctx, input),
+        recurrenceRunNow: (input: unknown) => runNativeRecurrenceNow(ctx, input),
+        recurrenceRunNowStatus: (input: unknown) => readNativeRecurrenceRunNow(ctx, input),
         recurrenceControlStatus: (input: unknown) => readNativeRecurrenceControlStatus(ctx, input) } as typeof handlers
       : handlers)
   return new Proxy(ctx.rpc, { get(target, key) {

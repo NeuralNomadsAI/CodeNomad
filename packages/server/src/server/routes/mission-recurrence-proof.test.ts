@@ -5,7 +5,7 @@ import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 
 test("recurrence proof requires a current real human session, exact request digest and owned Location", async () => {
   const identity = { sessionID: "real-cookie", workspaceID: "workspace", requestID: "http_play_0",
-    location: { directory: "/owned" }, scheduleID: "daily_review", action: "play" as const, expectedRevision: 0, expectedEpoch: 0,
+    location: { directory: "/owned" }, scheduleID: "daily_review", action: "play" as const, expectedRevision: 0,
     profileSource: { profileID: "profile", executionHost: "local", configYamlPath: "/selected/config.yaml" }, issuedAt: Date.now() }
   const body = { ...identity, digest: recurrenceControlRequestDigest(identity) }
   let authEnabled = true, sessionCurrent = true, owned = true
@@ -34,7 +34,7 @@ test("ownership finishing after the original proof deadline never acknowledges h
   let now = issuedAt + 29_900
   const identity = { sessionID: "real-cookie", workspaceID: "workspace", requestID: "http_play_0",
     location: { directory: "/owned" }, scheduleID: "daily_review", action: "play" as const,
-    expectedRevision: 0, expectedEpoch: 0,
+    expectedRevision: 0,
     profileSource: { profileID: "profile", executionHost: "local", configYamlPath: "/private/config.yaml" }, issuedAt }
   const workspace = {}
   const deps = { settings: { getProfileScope: () => ({ key: "profile" }) },

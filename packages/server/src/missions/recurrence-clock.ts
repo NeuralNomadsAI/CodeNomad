@@ -66,3 +66,16 @@ export function latestDailyDue(clockInput: DailyClock, now: number): DailyDue {
   }
   throw new Error("Recurrence civil clock unavailable")
 }
+
+/** First future civil occurrence; skipped civil days have no passage. */
+export function nextDailyDue(clockInput: DailyClock, now: number): DailyDue {
+  const clock = dailyClockSchema.parse(clockInput)
+  const today = civil(formatter(clock.zone), now).day
+  const midnight = Date.parse(`${today}T00:00:00Z`)
+  for (let days = 0; days < 4; days++) {
+    const day = new Date(midnight + days * 86_400_000).toISOString().slice(0, 10)
+    const due = dailyOccurrence(clock, day)
+    if (due && due.at > now) return due
+  }
+  throw new Error("Recurrence civil clock unavailable")
+}

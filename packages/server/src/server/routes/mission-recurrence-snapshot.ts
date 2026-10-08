@@ -6,45 +6,9 @@ import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../mission
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { requestAdmission } from "../request-admission"
-import { recurrenceIDSchema, recurrenceMessageID, RECURRENCE_HISTORY_LIMIT, RECURRENCE_SCHEDULE_LIMIT } from "../../missions/recurrence-contract"
-import { dailyClockSchema } from "../../missions/recurrence-clock"
 import { recurrenceReadInput, recurrenceReadPage } from "../../missions/recurrence-reader-contract"
-import { recurrenceControlRequestSchema, recurrenceNativeControlSchema } from "../../missions/recurrence-control-contract"
+import { recurrenceSnapshotSchema as snapshotSchema } from "../../missions/recurrence-control-contract"
 
-const counter = z.number().int().nonnegative().safe()
-const timestamp = counter.max(Date.parse("9999-12-28T00:00:00Z"))
-const id = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
-const reference = z.object({ passageID: recurrenceIDSchema, messageID: recurrenceIDSchema, dueAt: timestamp, settledAt: timestamp,
-  status: z.enum(["completed", "failed", "stopped", "rejected-before-effect"]),
-  missionID: id.optional(), conversationID: id.optional(), artifactMessageIDs: z.array(id).max(8).optional(),
-}).strict().refine(value => value.messageID === recurrenceMessageID(value.passageID) && value.settledAt >= value.dueAt && (value.status === "rejected-before-effect"
-  ? value.missionID === undefined && value.conversationID === undefined && value.artifactMessageIDs === undefined
-  : value.missionID !== undefined && value.conversationID !== undefined && value.artifactMessageIDs !== undefined))
-const schedule = z.object({ id: recurrenceIDSchema, revision: counter, scheduleRevision: counter,
-  state: z.enum(["running", "paused", "interrupted", "unavailable", "stopped"]), clock: dailyClockSchema,
-  epoch: counter.nullable().optional(),
-  controlCapability: z.object({ version: z.literal(1), actions: z.array(z.enum(["play", "pause", "stop"])).max(3)
-    .refine(actions => new Set(actions).size === actions.length) }).strict().optional(),
-  nativeControl: recurrenceNativeControlSchema.optional(), controlRetry: recurrenceControlRequestSchema.optional(), controlsComplete: z.boolean().optional(),
-  pendingPassageID: recurrenceIDSchema.nullable(), pendingStatus: z.enum(["unknown", "admitted"]).nullable(),
-  pendingAdmission: z.object({ missionID: id, conversationID: id }).strict().nullable(),
-  settledCount: counter, latestResult: reference.nullable(), history: z.array(reference).max(RECURRENCE_HISTORY_LIMIT),
-}).strict().refine(value => value.history.length === Math.min(value.settledCount, RECURRENCE_HISTORY_LIMIT)
-  && (!value.controlCapability || value.epoch !== undefined && value.epoch !== null)
-  && (!value.controlRetry || value.controlRetry.scheduleID === value.id && value.controlRetry.expectedEpoch + 1 === value.epoch
-    && value.controlRetry.action !== "play" && (!value.nativeControl || value.nativeControl.requestID === value.controlRetry.requestID
-      && value.nativeControl.action === value.controlRetry.action))
-  && (value.controlsComplete !== true || !value.nativeControl?.pending.length)
-  && value.scheduleRevision <= value.revision
-  && Boolean(value.pendingPassageID) === Boolean(value.pendingStatus)
-  && (value.pendingStatus === "admitted") === Boolean(value.pendingAdmission)
-  && JSON.stringify(value.latestResult) === JSON.stringify(value.history.at(-1) ?? null)
-  && new Set(value.history.map(item => item.passageID)).size === value.history.length
-  && !value.history.some(item => item.passageID === value.pendingPassageID))
-const snapshotSchema = z.object({ version: z.literal(1), projectID: id, projectCanonical: z.string().min(1).max(4096),
-  location: z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict(),
-  schedules: z.array(schedule).max(RECURRENCE_SCHEDULE_LIMIT),
-}).strict()
 const pageSchema = recurrenceReadPage.extend({ projectCanonical: z.string().min(1).max(4096),
   location: z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict() })
 const pageQuery = z.object({ section: z.coerce.number().int().nonnegative().optional(), page: z.coerce.number().int().nonnegative().optional(),

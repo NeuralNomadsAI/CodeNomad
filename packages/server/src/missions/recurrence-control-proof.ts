@@ -8,8 +8,8 @@ export interface RecurrenceControlProofBody {
   location: { directory: string; workspaceID?: string }
   scheduleID: string
   expectedRevision: number
-  expectedEpoch: number
-  action: "play" | "pause" | "stop"
+  action: "play" | "pause" | "stop" | "resume" | "run-now" | "create"
+  configDigest?: string
   profileSource: { profileID: string; executionHost: string; configYamlPath: string }
   issuedAt: number
   digest: string

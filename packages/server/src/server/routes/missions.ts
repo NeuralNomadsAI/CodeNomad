@@ -15,13 +15,16 @@ import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot
 import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
 import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
+import type { AuthManager } from "../../auth/manager"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
   worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope">
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>
+  auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
+  bridgeToken?: string
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })

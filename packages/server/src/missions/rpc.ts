@@ -8,9 +8,10 @@ import { MISSION_MAX_EVENTS } from "./model"
 import { missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
-import { recurrenceSnapshotOutput, recurrencePassageReadWire } from "./recurrence-reader-contract"
+import { recurrencePassageReadWire } from "./recurrence-reader-contract"
 import { recurrenceScheduleChangedSchema } from "./recurrence-events"
-import { recurrenceNativeControlWire } from "./recurrence-control-contract"
+import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceControlStatusWire, recurrenceControlRequestWire } from "./recurrence-control-contract"
+import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -170,28 +171,33 @@ export const CODENOMAD_MISSIONS_RPC = {
         workspaceID: { type: "string", minLength: 1, maxLength: 200 }, requestID,
         location, digest: { type: "string", minLength: 64, maxLength: 64 },
         scheduleID: { type: "string", minLength: 3, maxLength: 100 },
-        expectedRevision: { type: "integer", minimum: 0 }, expectedEpoch: { type: "integer", minimum: 0 },
-        action: { type: "string", enum: ["play", "pause", "stop"] }, issuedAt: { type: "integer", minimum: 0 },
+        expectedRevision: { type: "integer", minimum: 0 }, retry: { type: "boolean" },
+        action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now"] }, issuedAt: { type: "integer", minimum: 0 },
         profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" },
           configYamlPath: { type: "string" } }, required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
         proof: { type: "string", minLength: 64, maxLength: 64 } },
-        required: ["sessionID", "workspaceID", "requestID", "location", "digest", "scheduleID", "expectedRevision", "expectedEpoch", "action", "issuedAt", "profileSource", "proof"], additionalProperties: false },
+        required: ["sessionID", "workspaceID", "requestID", "location", "digest", "scheduleID", "expectedRevision", "action", "issuedAt", "profileSource", "proof"], additionalProperties: false },
       output: { type: "object", properties: { version: { type: "integer", const: 1 }, scheduleID: { type: "string" }, requestID,
-        revision: { type: "integer" }, state: { type: "string", enum: ["running", "paused", "stopped"] }, epoch: { type: "integer" },
-        controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] }, nativeControl: recurrenceNativeControlWire },
-        required: ["version", "scheduleID", "requestID", "revision", "state", "epoch", "controlsComplete"], additionalProperties: false },
+        revision: { type: "integer" }, expectedRevision: { type: "integer" }, action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now"] },
+        state: { type: "string", enum: ["running", "paused", "stopped"] }, targetsKnown: { type: "boolean" },
+        controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] },
+        targets: { type: "array", maxItems: 32, items: recurrenceNativeControlWire } },
+        required: ["version", "scheduleID", "requestID", "revision", "expectedRevision", "action", "state", "targetsKnown", "targets", "controlsComplete"], additionalProperties: false },
     },
     recurrenceControlStatus: {
-      input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 },
-        requestID, expectedRevision: { type: "integer", minimum: 0 }, expectedEpoch: { type: "integer", minimum: 0 },
-        action: { type: "string", enum: ["play", "pause", "stop"] } },
-        required: ["scheduleID", "requestID", "expectedRevision", "expectedEpoch", "action"], additionalProperties: false },
-      output: { type: "object", properties: { version: { type: "integer", const: 1 }, scheduleID: { type: "string" }, requestID,
-        expectedRevision: { type: "integer" }, epoch: { type: "integer" }, outcome: { type: "string", enum: ["committed", "unknown"] },
-        revision: { type: "integer" }, state: { type: "string", enum: ["running", "paused", "stopped"] },
-        controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] }, nativeControl: recurrenceNativeControlWire },
-        required: ["version", "scheduleID", "requestID", "expectedRevision", "epoch", "outcome"], additionalProperties: false },
+      input: recurrenceControlRequestWire,
+      output: recurrenceControlStatusWire,
     },
+    recurrenceRunNow: {
+      input: { type: "object", properties: { ...RECURRENCE_RUN_NOW_STATUS_INPUT.properties,
+        action: { type: "string", const: "run-now" }, sessionID: { type: "string" }, workspaceID: { type: "string" }, location,
+        profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" }, configYamlPath: { type: "string" } },
+          required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
+        issuedAt: { type: "integer" }, digest: { type: "string" }, proof: { type: "string" } },
+        required: ["scheduleID", "requestID", "expectedRevision", "action", "sessionID", "workspaceID", "location", "profileSource", "issuedAt", "digest", "proof"], additionalProperties: false },
+      output: RECURRENCE_RUN_NOW_OUTPUT,
+    },
+    recurrenceRunNowStatus: { input: RECURRENCE_RUN_NOW_STATUS_INPUT, output: RECURRENCE_RUN_NOW_OUTPUT },
 
     recurrenceCurrent: {
       input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 } }, required: ["scheduleID"], additionalProperties: false },
@@ -216,11 +222,11 @@ export const CODENOMAD_MISSIONS_RPC = {
     recurrenceCreate: {
       input: { type: "object", properties: {
         id: { type: "string" }, requestID: { type: "string" }, digest: { type: "string" },
-        config: { type: "object" }, directory: { type: "string" },
+        config: { type: "object" }, directory: { type: "string" }, transport: { type: "object" },
         scope: { type: "object", properties: { channel: { type: "string" }, configIdentity: { type: "string" }, key: { type: "string" } },
           required: ["channel", "configIdentity", "key"], additionalProperties: false },
         executionHost: { type: "string" },
-      }, required: ["id", "requestID", "digest", "config", "directory", "scope", "executionHost"], additionalProperties: false },
+      }, required: ["id", "requestID", "digest", "config", "directory", "scope", "executionHost", "transport"], additionalProperties: false },
       output: { type: "object", properties: { schedule: { type: ["object", "null"], properties: {
         id: { type: "string" }, revision: { type: "integer" }, state: { type: "string", enum: ["paused", "running", "stopped"] },
         digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" },

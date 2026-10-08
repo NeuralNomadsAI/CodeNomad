@@ -13,11 +13,10 @@ import { missionProfileRoles } from "./playbook-profiles"
 const current = () => true as const
 function config(): RecurrenceConfig {
   const execution = { agent: "worker", model: { providerID: "provider", id: "model", variant: "default" } }
-  return { template: "custom", consigne: "Review the explicitly watched conversations; publish only as authorized.",
+  return { title: "Review", template: "custom", consigne: "Review the explicitly watched conversations.",
     clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
     profiles: { coordinator: execution, roles: { specialist: execution } }, taskMode: "native",
-    roots: [{ mode: "directory-only", directory: "/owned/project" }], watchedConversationIDs: ["ses_watched"],
-    publication: { policy: "draft-only", conversationIDs: [] } }
+    roots: [{ mode: "directory-only", directory: "/owned/project" }], watchedConversationIDs: ["ses_watched"] }
 }
 function accepted(doc: RecurrenceDocument): RecurrenceAdmission {
   return { kind: "accepted", passageID: doc.pending!.passage.id, messageID: doc.pending!.passage.messageID,
@@ -244,20 +243,14 @@ for (const failure of ["before-effect-throw", "after-effect-throw", "wrong-ack",
   })
 }
 
-test("exact proved pre-effect rejection releases slot but never replays its daily identity", async () => {
+test("ended-without-report is a terminal reference, not a pre-effect rejection proof", async () => {
   const f = await fixture()
-  let effects = 0
-  f.admission.admit = async doc => {
-    effects++
-    return { kind: "rejected-before-effect", passageID: doc.pending!.passage.id, messageID: doc.pending!.passage.messageID,
-      effect: "none", proofID: "owned_rejection_proof" }
-  }
-  assert.equal(await f.runner().tick("daily_review"), "rejected-before-effect")
+  assert.equal(await f.runner().tick("daily_review"), "accepted")
+  const doc = (await f.store.read("daily_review"))!
+  await f.store.finish(doc.id, { ...terminal(doc), outcome: "ended-without-report" }, f.now, current)
   assert.equal((await f.store.read("daily_review"))!.pending, null)
   assert.equal(await f.runner().tick("daily_review"), "not-due")
-  f.now += 86_400_000
-  assert.equal(await f.runner().tick("daily_review"), "rejected-before-effect")
-  assert.equal(effects, 2)
+  assert.equal((await f.store.read("daily_review"))!.history.at(-1)!.result.outcome, "ended-without-report")
 })
 
 test("Pause/Stop block triggers but preserve results; terminal Stop cannot resume", async () => {

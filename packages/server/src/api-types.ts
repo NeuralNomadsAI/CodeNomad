@@ -39,21 +39,15 @@ export interface MissionRecurrenceSnapshot {
   schedules: Array<{
     id: string
     revision: number
-    scheduleRevision: number
-    state: "running" | "paused" | "interrupted" | "unavailable" | "stopped"
+    title: string
+    state: "running" | "paused" | "interrupted" | "stopped"
     clock: { time: string; zone: string }
-    pendingPassageID: string | null
-    /** An admission is not a completed passage. Unknown effects require a human check. */
-    pendingStatus: "unknown" | "admitted" | null
-    pendingAdmission: { missionID: string; conversationID: string } | null
-    settledCount: number
-    /** Zero is a proven fresh unsigned CREATE; null is unavailable authority. */
-    epoch?: number | null
-    /** Supplied only by the qualified native control surface. */
-    controlCapability?: { version: 1; actions: Array<"play" | "pause" | "stop"> }
-    nativeControl?: import("./missions/lifecycle-model").MissionLifecycleOperation
-    controlRetry?: import("./missions/recurrence-control-contract").RecurrenceControlRequest
-    controlsComplete?: boolean
+    nextDueAt: number | null
+    interruptionReason?: "service-restart" | "error"
+    pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
+      missionID?: string; conversationID?: string } | null
+    actions: Array<"play" | "pause" | "stop" | "resume" | "run-now">
+    controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
     latestResult: MissionRecurrenceReceipt | null
     history: MissionRecurrenceReceipt[]
   }>
@@ -72,13 +66,11 @@ export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missio
 /** Bounded native reference receipts only; never the standing instructions, native transcript or authority. */
 export interface MissionRecurrenceReceipt {
   passageID: string
-  messageID: string
   dueAt: number
   settledAt: number
-  status: "completed" | "failed" | "stopped" | "rejected-before-effect"
+  outcome: "completed" | "failed" | "stopped" | "ended-without-report"
   missionID?: string
   conversationID?: string
-  artifactMessageIDs?: string[]
 }
 
 /**

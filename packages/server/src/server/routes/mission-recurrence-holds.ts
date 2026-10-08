@@ -15,7 +15,7 @@ export function captureRecurrenceControlHoldRead(fence: WorktreeDeletionFence, w
   const registry = held.get(fence), id = key(workspaceID, request.scheduleID), record = registry?.get(id)
   if (!record || record.state === "preparing" || record.binding.connection !== connection || !sameLocation(record.binding.location, location)
     || record.binding.requestID !== request.requestID || record.binding.expectedRevision !== request.expectedRevision
-    || record.binding.expectedEpoch !== request.expectedEpoch || record.binding.action !== request.action) return undefined
+    || record.binding.action !== request.action) return undefined
   // Deletion may be queued, but cannot enter this originally owned root while
   // its physical permit is retained. This exact read is settlement, not mutation.
   return () => {
@@ -33,8 +33,8 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   if (retry && !previous) throw new Error("Original partial recurrence control hold unavailable; read exact status instead")
   if (previous && (!retry || previous.state !== "partial" || previous.retrying || previous.binding.connection !== binding.connection
     || !sameLocation(previous.binding.location, binding.location) || previous.binding.requestID !== binding.requestID
-    || previous.binding.expectedEpoch !== binding.expectedEpoch || previous.binding.expectedRevision !== binding.expectedRevision
-    || previous.binding.action !== binding.action)) throw new Error("Recurrence control remains uncertain; read its exact signed status")
+    || previous.binding.expectedRevision !== binding.expectedRevision
+    || previous.binding.action !== binding.action)) throw new Error("Recurrence control remains uncertain; read its exact request status")
   if (!previous && registry.size >= 128) throw new Error("Recurrence mutation admission capacity exhausted")
   const release = previous?.release ?? enter()
   if (!release) return undefined
@@ -58,7 +58,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   }
 }
 
-/** An explicit exact signed receipt is positive publication evidence. Missing,
+/** An explicit exact completed request is positive publication evidence. Missing,
  * unknown or mismatched reads can never release a dispatched permit. */
 export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, workspaceID: string,
   location: Binding["location"], request: RecurrenceControlRequest, receipt: RecurrenceControlStatus, connection: ServiceConnection): void {
@@ -66,11 +66,11 @@ export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, wor
   if (!record || record.state === "preparing" || record.binding.connection !== connection) return
   const original = record.binding
   if (!sameLocation(location, original.location) || request.requestID !== original.requestID
-    || request.expectedRevision !== original.expectedRevision || request.expectedEpoch !== original.expectedEpoch
+    || request.expectedRevision !== original.expectedRevision
     || request.action !== original.action || receipt.scheduleID !== original.scheduleID
     || receipt.requestID !== original.requestID || receipt.expectedRevision !== original.expectedRevision
-    || receipt.revision !== original.expectedRevision + 1 || receipt.epoch !== original.expectedEpoch + 1
-    || receipt.state !== (original.action === "play" ? "running" : original.action === "pause" ? "paused" : "stopped")) return
+    || receipt.revision !== original.expectedRevision + 1
+    || original.action !== "run-now" && receipt.state !== (original.action === "play" || original.action === "resume" ? "running" : original.action === "pause" ? "paused" : "stopped")) return
   original.connection.assertCurrent()
   if (receipt.outcome === "committed" && receipt.controlsComplete === true) { registry!.delete(id); record.release() }
   else if (receipt.controlsComplete === false) record.state = "partial"

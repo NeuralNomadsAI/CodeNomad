@@ -30,11 +30,14 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         // without the HTTP observer's cancellation signal/race; its permit is
         // held even when the downstream socket disappears.
         const result = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControl(prepared.body, options) as {
-          requestID: string; scheduleID: string; epoch: number; revision: number; controlsComplete: boolean
+          requestID: string; scheduleID: string; revision: number; controlsComplete: boolean
         }
         if (result.requestID !== prepared.body.requestID || result.scheduleID !== prepared.body.scheduleID
-          || result.epoch !== prepared.body.expectedEpoch + 1 || result.revision !== prepared.body.expectedRevision + 1
+          || result.revision !== prepared.body.expectedRevision + 1
           || typeof result.controlsComplete !== "boolean") throw new Error("Foreign or incomplete control receipt")
+        const { targetsKnown: _known, ...record } = result as typeof result & { targetsKnown?: boolean }
+        recurrenceControlStatusSchema.parse({ expectedRevision: prepared.body.expectedRevision, ...record,
+          outcome: result.controlsComplete ? "committed" : "unknown" })
         if (result.controlsComplete === false) prepared.hold.partial()
         else prepared.hold.settled()
         return result
@@ -42,12 +45,12 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         const body = prepared.body
         const result = recurrenceControlStatusSchema.parse(await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus({
           scheduleID: body.scheduleID, requestID: body.requestID, action: body.action,
-          expectedRevision: body.expectedRevision, expectedEpoch: body.expectedEpoch,
+          expectedRevision: body.expectedRevision,
         }, { ...options, signal: AbortSignal.timeout(10_000) }))
-        if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID || result.epoch !== body.expectedEpoch + 1
+        if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID
           || result.expectedRevision !== body.expectedRevision) throw new Error("Foreign control receipt")
         if (result.outcome === "committed" && result.controlsComplete === true && result.revision === body.expectedRevision + 1
-          && result.state === (body.action === "play" ? "running" : body.action === "pause" ? "paused" : "stopped")) prepared.hold.settled()
+          && result.state === (body.action === "play" || body.action === "resume" ? "running" : body.action === "pause" ? "paused" : "stopped")) prepared.hold.settled()
         else if (result.controlsComplete === false) prepared.hold.partial()
         return reply.code(result.outcome === "committed" ? 200 : 503).send(result)
       }

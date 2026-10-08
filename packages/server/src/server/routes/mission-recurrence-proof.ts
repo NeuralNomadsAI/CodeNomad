@@ -8,8 +8,8 @@ import type { SettingsService } from "../../settings/service"
 const proofSchema = z.object({ sessionID: z.string().min(1).max(256), workspaceID: z.string().min(1).max(200),
   requestID: z.string().min(1).max(128), location: z.object({ directory: z.string().min(1).max(4096),
     workspaceID: z.string().optional() }).strict(), scheduleID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
-  expectedRevision: z.number().int().nonnegative(), action: z.enum(["play", "pause", "stop"]),
-  expectedEpoch: z.number().int().nonnegative(),
+  expectedRevision: z.number().int().nonnegative(), action: z.enum(["play", "pause", "stop", "resume", "run-now", "create"]),
+  configDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   profileSource: z.object({ profileID: z.string(), executionHost: z.string(), configYamlPath: z.string() }).strict(),
   issuedAt: z.number().int().nonnegative(), digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 

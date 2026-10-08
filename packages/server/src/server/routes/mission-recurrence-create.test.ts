@@ -25,7 +25,7 @@ import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 const profile = { agent: "agent", model: { providerID: "provider", id: "model" } }
 const payload = { template: "custom", requestID: "new_schedule", instructions: "Review changes each day", clock: { time: "09:30", zone: "UTC" },
   notes: "  Optional technical context\n<keep verbatim> & do not concatenate  ",
-  watchedConversationIDs: [], budgets: { effects: 3, nativeCalls: 2, inboxMessages: 4, publications: 0 },
+  watchedConversationIDs: [],
   profiles: { coordinator: profile, roles: { specialist: { ...profile, agent: "child" } } }, taskMode: "native" }
 
 test("authenticated recurrence CREATE shares project identity, rejects foreign/changed payload and reconciles lost ACK", async t => {
@@ -116,7 +116,8 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       return args.at(-1)!
     }
     registerMissionRecurrenceCreate(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence(200),
-      settings, wslGit })
+      settings, wslGit, bridgeToken: "fixture-token", auth: { isAuthEnabled: () => true,
+        getSessionFromRequest: () => ({ sessionId: "human-cookie", username: "human" }) } as never })
     const url = "/api/workspaces/workspace/missions/recurrence"
     const post = (body: any) => app.inject({ method: "POST", url, payload: body })
     assert.equal((await post({ ...payload, template: undefined })).statusCode, 400)
@@ -125,14 +126,13 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
     assert.equal((await post({ ...payload, notes: "\0".repeat(20_000) })).statusCode, 400,
       "individually bounded notes that overflow the frozen JSON config are rejected before native admission")
     assert.equal(writes, 0)
-    for (const budgets of [{ ...payload.budgets, effects: 3 }, { ...payload.budgets, effects: 4, inboxMessages: 0 }]) {
-      const response = await post({ ...payload, requestID: "unfunded_source", watchedConversationIDs: ["ses_watched"], budgets })
+    for (const budgets of [{ effects: 3 }, { effects: 4, inboxMessages: 0 }]) {
+      const response = await post({ ...payload, requestID: "old_source_budget", watchedConversationIDs: ["ses_watched"], budgets })
       assert.equal(response.statusCode, 400)
-      assert.equal(response.json().code, "recurrence-source-budget")
-      assert.equal(writes, 0, "unfunded sources cannot reach native creation")
+      assert.equal(writes, 0, "removed allocation fields cannot reach native creation")
     }
     for (const effects of [1, 2]) {
-      assert.equal((await post({ ...payload, budgets: { ...payload.budgets, effects } })).statusCode, 400)
+      assert.equal((await post({ ...payload, budgets: { effects } })).statusCode, 400)
       assert.equal(writes, 0, "an unplayable budget must not reach native creation")
     }
     assert.equal((await post({ ...payload, directory: path.join(root, "outside") })).statusCode, 403)
@@ -202,7 +202,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
     active = canonical
     await t.test("watch moves during final admission await, before native CREATE", async () => {
       afterRead = () => { checkoutReadsAfterRead = 0; moveWatchAtFinalAdmission = true }
-      const response = await post({ ...payload, requestID: "moving_watch", watchedConversationIDs: ["ses_watched"], budgets: { ...payload.budgets, effects: 4 } })
+      const response = await post({ ...payload, requestID: "moving_watch", watchedConversationIDs: ["ses_watched"] })
       assert.equal(response.statusCode, 503, `checkout rechecks: ${checkoutReadsAfterRead}`)
       assert.equal(writes, 2, "moved watch must never reach the native write")
       assert.equal(watchedDirectory, worktree, "move happened during the final awaited admission check")
@@ -290,8 +290,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
     })
     await t.test("watched whole-input room is preflighted before publication and rejected requests remain explicitly retryable", async () => {
       active = canonical; distro = undefined; project.canonical = canonical; watchedDirectory = canonical
-      const followed = { ...payload, requestID: "source_input_boundary", watchedConversationIDs: ["ses_watched"],
-        budgets: { ...payload.budgets, effects: 4, inboxMessages: 1 } }
+      const followed = { ...payload, requestID: "source_input_boundary", watchedConversationIDs: ["ses_watched"] }
       const limit = recurrenceInputBudget({ consigne: "", watchedConversationIDs: followed.watchedConversationIDs,
         roots: [{ directory: canonical }] }).instructionsMaximum
       const before = writes
@@ -304,7 +303,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       assert.equal((await post({ ...followed, instructions: "x".repeat(limit) })).statusCode, 200)
       assert.equal(writes, before + 1)
       const config = recurrenceConfigSchema.parse(createdConfig)
-      assert.equal(config.budgets?.effects, 4); assert.equal(config.budgets?.inboxMessages, 1)
+      assert.equal("budgets" in config, false); assert.equal("publication" in config, false)
       assert.equal(recurrenceInputBudget(config).sufficient, true)
     })
     assert.equal(await readFile(originalConfig, "utf8"), originalBytes, "paused CREATE never edits the original settings source")

@@ -9,7 +9,6 @@ import Fastify from "fastify"
 import pino from "pino"
 import { AuthManager } from "../../auth/manager"
 import { canonicalScope } from "../../host-lifetime/protocol"
-import { recurrenceHumanRequestID } from "../../missions/recurrence-authority-contract"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerMissionRecurrenceControl } from "./mission-recurrence-control"
 import { registerMissionRecurrenceControlStatus } from "./mission-recurrence-control-status"
@@ -31,18 +30,18 @@ for (const neverResolved of [false, true]) test(`HTTP disconnect retains native 
     const profile = canonicalScope("stable", yaml, base, base)
     const auth = new AuthManager({ configPath: base, username: "human", password: "offline", generateToken: false }, pino({ level: "silent" }) as never)
     const human = auth.createSession("human"), workspace = {}, location = { directory }, fence = new WorktreeDeletionFence(10_000)
-    const requestID = recurrenceHumanRequestID("daily_review", 1, "authorize")
+    const requestID = "request_one"
     let dispatched!: () => void
     const started = new Promise<void>(resolve => { dispatched = resolve })
     let writes = 0, reads = 0, positive = false
-    const receipt = { version: 1, scheduleID: "daily_review", requestID, revision: 1, state: "running", epoch: 1, controlsComplete: true }
+    const receipt = { version: 1, scheduleID: "daily_review", requestID, revision: 1, state: "running", controlsComplete: true }
     const client = { location: { get: async () => ({ ...location, project: { id: "project", canonical: directory } }) }, rpc: () => ({
       recurrenceControl: (_input: unknown, options: { signal?: AbortSignal }) => {
         assert.equal(options.signal, undefined, "admitted native WRITE has no HTTP observer cancellation")
         writes++; dispatched(); return nativeWrite
       }, recurrenceControlStatus: async () => {
         reads++
-        return { version: 1, scheduleID: "daily_review", requestID, expectedRevision: 0, epoch: 1,
+        return { version: 1, scheduleID: "daily_review", requestID, expectedRevision: 0,
           outcome: positive ? "committed" : "unknown", ...(positive ? { state: "running", revision: 1, controlsComplete: true } : {}) }
       },
     }) }
@@ -61,7 +60,7 @@ for (const neverResolved of [false, true]) test(`HTTP disconnect retains native 
     registerMissionRecurrenceControlStatus(app, { auth, manager, fence } as never)
     await app.listen({ host: "127.0.0.1", port: 0 })
     const url = "/api/workspaces/owned/missions/recurrence/daily_review/control"
-    const payload = { action: "play", expectedRevision: 0, expectedEpoch: 0, requestID }
+    const payload = { action: "play", expectedRevision: 0, requestID }
     const cookie = `${auth.getCookieName()}=${human.id}`
     const outgoing = httpRequest({ hostname: "127.0.0.1", port: (app.server.address() as { port: number }).port,
       path: url, method: "POST", headers: { "content-type": "application/json", cookie } })

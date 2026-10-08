@@ -1,7 +1,12 @@
 import { Location } from "@opencode/schema/location"
-import { Context, Effect, MutableHashMap, Option, Predicate, Schema, Scope } from "effect"
+import { Cause, Context, Effect, MutableHashMap, Option, Predicate, Schema, Scope } from "effect"
 import { stableToken } from "../../missions/journal"
 import type { RecurrenceRunOutcome } from "../../missions/recurrence-runner"
+import type { RecurrenceDocument } from "../../missions/recurrence-contract"
+import { latestDailyDue, nextDailyDue } from "../../missions/recurrence-clock"
+import { isNewDailyDue } from "../../missions/recurrence-store"
+import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
+import type { Plugin } from "@opencode/plugin/effect"
 
 const jobTag = Context.Service<never, NativeJob>("@opencode/Job")
 const mapTag = Context.Service<never, NativeLocations>("@opencode/example/LocationServiceMap")
@@ -21,15 +26,16 @@ type NativeLocations = {
 }
 export type RecurrenceClockPlacement = Readonly<{
   projectID: string; projectCanonical: string; directory: string; workspaceID?: string; scheduleID: string
-  profileID: string; executionHost: string; epoch: number
+  profileID: string; executionHost: string
+  /** Only the original authenticated manual invocation carries this hint. */
+  manual?: { requestID: string; expectedRevision: number }
 }>
 
 const jobID = (input: RecurrenceClockPlacement) => `codenomad.missions.recurrence:${stableToken(
-  `${input.projectID}\0${input.projectCanonical}\0${input.directory}\0${input.workspaceID ?? ""}\0${input.scheduleID}\0${input.profileID}\0${input.executionHost}\0${input.epoch}`, 32)}`
+  `${input.projectID}\0${input.projectCanonical}\0${input.directory}\0${input.workspaceID ?? ""}\0${input.scheduleID}\0${input.profileID}\0${input.executionHost}`, 32)}`
 
 /** Exact generation read only. Missing native Job is not a license to start it. */
-export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenceClock")(function* (input: RecurrenceClockPlacement) {
-  if (!Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new Error("Invalid recurrence epoch")
+export const readNativeRecurrenceClockStatus = Effect.fn("missions.readNativeRecurrenceClockStatus")(function* (input: RecurrenceClockPlacement) {
   const service = yield* Effect.serviceOption(jobTag)
   const map = yield* Effect.serviceOption(mapTag), origin = yield* Effect.serviceOption(locationTag)
   if (Option.isNone(service) || !Predicate.isFunction(service.value?.get)) throw new Error("Native Job graph unavailable")
@@ -59,27 +65,34 @@ export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenc
   const actual = yield* Schema.decodeUnknownEffect(Schema.Struct({ id: Schema.String, type: Schema.String,
     status: Schema.Literals(["running", "completed", "error", "cancelled"]),
     metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)) }))(found)
-  const metadata = { epoch: input.epoch, projectID: input.projectID, projectCanonical: input.projectCanonical,
+  const metadata = { projectID: input.projectID, projectCanonical: input.projectCanonical,
     directory: input.directory, scheduleID: input.scheduleID,
     ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }),
     profileID: input.profileID, executionHost: input.executionHost }
   if (actual.id !== jobID(input) || actual.type !== "codenomad.missions.recurrence"
     || JSON.stringify(actual.metadata) !== JSON.stringify(metadata)) throw new Error("Recurrence Job generation changed")
-  return actual.status === "running"
+  return actual.status
 })
 
-/** The caller has already committed a signed Play. Job owns this clock, not the
+export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenceClock")(function* (input: RecurrenceClockPlacement) {
+  const status = yield* readNativeRecurrenceClockStatus(input)
+  return status === undefined ? undefined : status === "running"
+})
+
+/** The caller has already committed an authenticated Play. Job owns this clock, not the
  * evictable Location/plugin Scope. A due callback must obtain its fresh authority,
  * passage store and environment from the borrowed graph; the clock grants none. */
 export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurrenceClock")(function* (
   input: RecurrenceClockPlacement,
   due: (graph: Context.Context<never>, assertCurrent: () => true, signal: AbortSignal) => Promise<RecurrenceRunOutcome>,
+  ctx: Pick<Plugin.Context, "storage" | "location">,
+  clock: { now(): number; sleep(ms: number): Effect.Effect<void> } = { now: Date.now, sleep: Effect.sleep },
 ) {
-  if (!Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new Error("Invalid recurrence epoch")
+  const exactCtx = { storage: ctx.storage, location: ctx.location }
   const job = yield* jobTag, locations = yield* mapTag, session = yield* sessionTag
   const ref = Schema.decodeUnknownSync(Location.Ref)({ directory: input.directory,
     ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }) })
-  const id = jobID(input), metadata = { epoch: input.epoch, projectID: input.projectID,
+  const id = jobID(input), metadata = { projectID: input.projectID,
     projectCanonical: input.projectCanonical, directory: input.directory, scheduleID: input.scheduleID,
     ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }),
     profileID: input.profileID, executionHost: input.executionHost }
@@ -89,10 +102,9 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
     return existing
   }
   const run = Effect.scoped(Effect.gen(function* () {
-    // Poll at the next UTC minute. The runner's civil-time clock owns DST and
-    // bounded catch-up when the process wakes from sleep; Job is not persistent.
+    // Each wake borrows and validates a fresh Location graph. No minute polling.
     while (true) {
-      const outcome = yield* Effect.scoped(Effect.gen(function* () {
+      const delay = yield* Effect.scoped(Effect.gen(function* () {
         const graph = yield* locations.contextEffect(ref)
         const location = Schema.decodeUnknownSync(Location.Info)(Context.get(graph, locationTag))
         if (location.directory !== input.directory || location.workspaceID !== input.workspaceID
@@ -100,6 +112,18 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
           || location.project.canonical !== input.projectCanonical) throw new Error("Recurrence Location changed")
         const entry = MutableHashMap.get(locations.rcMap.state.map, ref)
         if (locations.rcMap.state._tag !== "Open" || Option.isNone(entry)) throw new Error("Recurrence Location unavailable")
+        const current = (): true => {
+          const actual = MutableHashMap.get(locations.rcMap.state.map, ref)
+          if (locations.rcMap.state._tag !== "Open" || Option.isNone(actual) || actual.value !== entry.value) throw new Error("Recurrence Location replaced")
+          return true
+        }
+        const source = yield* acquireNativeRecurrenceStore({ storage: exactCtx.storage, location }).pipe(Effect.provide(graph))
+        let document = yield* Effect.promise(() => source.read(input.scheduleID))
+        current()
+        if (!document || document.state !== "running") return null
+        const now = clock.now(), dueAt = recurrenceNextDueAt(document, now)
+        if (!document.pending && dueAt > now) return Math.min(dueAt - now, 3_600_000)
+        const beforeRevision = document.revision
         let pending: Promise<RecurrenceRunOutcome> | undefined
         const invocation = Effect.tryPromise((signal) => {
           pending = due(Context.add(graph, sessionTag, session), () => {
@@ -114,20 +138,33 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         // Job cancellation aborts NEW dispatch immediately. Keep this borrowed
         // graph alive for a bounded original positive ACK/receipt drain; after
         // the deadline its Scope retires and all late effects fail closed.
-        return yield* invocation.pipe(Effect.ensuring(Effect.promise(async () => {
+        yield* invocation.pipe(Effect.ensuring(Effect.promise(async () => {
           if (!pending) return
           await new Promise<void>(resolve => {
             const timer = setTimeout(resolve, 30_000)
             void pending!.then(() => { clearTimeout(timer); resolve() }, () => { clearTimeout(timer); resolve() })
           })
         })))
+        document = yield* Effect.promise(() => source.read(input.scheduleID))
+        current()
+        if (!document || document.state !== "running") return null
+        const after = clock.now()
+        const next = document.pending ? nextDailyDue(document.config.clock, after).at : recurrenceNextDueAt(document, after)
+        if (!document.pending && next <= after && document.revision === beforeRevision) throw new Error("recurrence-passage-state-unknown")
+        return Math.min(next - after, 3_600_000)
       }))
       // A healthy accepted passage stays pending until its terminal archive;
       // polling it never admits another effect, but must not retire tomorrow's Job.
-      if (outcome === "unknown" || outcome === "inactive") return outcome
-      yield* Effect.sleep(60_000 - Date.now() % 60_000)
+      if (delay === null) return "inactive"
+      yield* clock.sleep(Math.max(1, delay))
     }
-  })).pipe(Effect.updateContext((_origin: Context.Context<never>) => Context.empty()))
+  })).pipe(Effect.catchCause(cause => Effect.scoped(Effect.gen(function* () {
+    if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)
+    const graph = yield* locations.contextEffect(ref)
+    const source = yield* acquireNativeRecurrenceStore(exactCtx).pipe(Effect.provide(graph))
+    yield* Effect.promise(() => source.recordClockError(input.scheduleID, () => true)).pipe(Effect.catchCause(() => Effect.void))
+    return yield* Effect.failCause(cause)
+  }))), Effect.updateContext((_origin: Context.Context<never>) => Context.empty()))
   const started = yield* job.start({ id, type: "codenomad.missions.recurrence", metadata, run })
   if (JSON.stringify(started.metadata) !== JSON.stringify(metadata)) {
     throw new Error("Recurrence Job generation changed")
@@ -135,7 +172,12 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
   return started
 })
 
-/** Pause/Stop fences the signed epoch in durable storage before calling this. */
+/** Pause/Stop commits the desired state before calling this. */
 export const cancelNativeRecurrenceClock = Effect.fn("missions.cancelNativeRecurrenceClock")(function* (input: RecurrenceClockPlacement) {
   return yield* (yield* jobTag).cancel(jobID(input))
 })
+
+export function recurrenceNextDueAt(document: RecurrenceDocument, now: number): number {
+  const latest = latestDailyDue(document.config.clock, now)
+  return isNewDailyDue(document, latest) ? latest.at : nextDailyDue(document.config.clock, now).at
+}

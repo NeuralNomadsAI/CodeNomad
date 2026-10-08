@@ -22,8 +22,8 @@ type NativeDatabase = { db: { $client: SqlClient.SqlClient;
   transaction<A>(callback: () => Effect.Effect<A, unknown>, config: { behavior: "immediate" }): Effect.Effect<A, unknown> } }
 
 /** Acquire inside the native effect plugin's own Location/RPC context. This is
- * metadata CAS, NOT an authorization grant: the signed recurrence authority
- * ledger and fresh admission still decide whether any effect can occur. */
+ * metadata CAS, not transport authentication. Human controls use the HMAC
+ * bridge; passage admission still validates its native placement/environment. */
 export const acquireNativeRecurrenceStore = Effect.fn("missions.acquireNativeRecurrenceStore")(function* (
   ctx: Pick<Plugin.Context, "storage" | "location">,
 ) {

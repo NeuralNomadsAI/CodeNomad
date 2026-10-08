@@ -4,7 +4,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import type { SettingsService } from "../../settings/service"
-import { recurrenceBudgetsSchema, recurrenceConfigSchema, type RecurrenceConfig } from "../../missions/recurrence-contract"
+import { recurrenceConfigSchema, recurrenceTitle, type RecurrenceConfig } from "../../missions/recurrence-contract"
 import { dailyClockSchema } from "../../missions/recurrence-clock"
 import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfileCatalog, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
@@ -17,18 +17,18 @@ import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, reconcileRecurrenceCreation } from "./mission-creation-holds"
 import { resolveRecurrenceRoot, type WslGit } from "./mission-recurrence-roots"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../missions/lifecycle-input"
-import { recurrenceInputBudget, recurrenceReadBudget } from "../../missions/recurrence-read-budget"
+import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
+import type { AuthManager } from "../../auth/manager"
+import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
 
 const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   instructions: z.string().trim().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
+  title: z.string().trim().min(1).max(120).optional(),
   notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]),
   directory: z.string().min(1).max(4096).optional(),
   watchedConversationIDs: z.array(z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)).max(32)
     .refine(ids => new Set(ids).size === ids.length),
-  // Native admission reserves create, start and coordinator-message before any
-  // optional calls. Do not publish a schedule that cannot run once authorized.
-  budgets: recurrenceBudgetsSchema.refine(value => value.effects >= 3, "Recurrence needs three fixed effects"),
   profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema,
 }).strict()
@@ -42,9 +42,12 @@ type NativeCreateReply = NativeSummary & { noEffect?: { code: "capacity"; id: st
 /** Authenticated HTTP admission only. The sole native write is a paused CAS
  * schedule; a lost ACK is checked by exact key+digest, never retried blindly. */
 export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { workspaceManager: Manager;
-  settings?: Pick<SettingsService, "getProfileScope">; wslGit?: WslGit;
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>; wslGit?: WslGit;
+  auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">; bridgeToken?: string;
   worktreeDeletionFence?: WorktreeDeletionFence }) {
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions/recurrence", async (request, reply) => {
+    const human = deps.auth?.getSessionFromRequest(request)
+    if (!deps.auth?.isAuthEnabled() || !human || human.sessionId === "auth-disabled" || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
     const lifetime = requestAdmission(request, reply)
     let admission: Awaited<ReturnType<typeof admitMissionCreationLocations>> | undefined
     try {
@@ -53,9 +56,6 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         return reply.code(400).send({ error: "Invalid recurrence creation request" })
       }
       const input = parsed.data, manager = deps.workspaceManager, workspaceID = request.params.id
-      if (!recurrenceReadBudget(input.watchedConversationIDs.length, input.budgets).sufficient) {
-        return reply.code(400).send({ error: "Every followed conversation needs a funded read", code: "recurrence-source-budget" })
-      }
       try { recurrenceStartText({ consigne: input.instructions, template: input.template, taskMode: input.taskMode }) }
       catch { return reply.code(400).send({ error: "Recurrence start input exceeds lifecycle capacity", code: "recurrence-input-capacity" }) }
       if (!input.profiles?.coordinator || missionProfileRoles[input.template].some(role => !input.profiles?.roles?.[role])
@@ -67,7 +67,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       const workspace = manager.get(workspaceID), base = manager.getServiceLocation(workspaceID), fence = deps.worktreeDeletionFence
       if (!workspace || !base) return reply.code(404).send({ error: "Workspace unavailable" })
       if (!fence) return reply.code(503).send({ error: "Recurrence deletion fence unavailable" })
-      if (!deps.settings) return reply.code(503).send({ error: "Recurrence profile unavailable" })
+      if (!deps.settings?.configYamlPathForAuthority) return reply.code(503).send({ error: "Recurrence profile unavailable" })
       const profileScope = deps.settings.getProfileScope(), selectedDistro = manager.getServiceWslDistro(workspaceID)
       const executionHost = selectedDistro ? `wsl:${selectedDistro}` : "local"
       const assertScopeCurrent = () => {
@@ -130,13 +130,12 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       // These labels describe frozen selections/host, not a grant or provisioned
       // authority. Provider credentials and profile YAML never enter the RPC.
       const config: RecurrenceConfig = {
-        consigne: input.instructions, clock: input.clock, template: input.template,
+        title: input.title ?? recurrenceTitle(input.instructions), consigne: input.instructions, clock: input.clock, template: input.template,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
         profileID: profileScope.key, executionHost,
         profiles: input.profiles, taskMode: input.taskMode,
         roots: [root],
-        watchedConversationIDs: input.watchedConversationIDs, budgets: input.budgets,
-        publication: { policy: "disabled", conversationIDs: [] },
+        watchedConversationIDs: input.watchedConversationIDs,
       }
       if (!recurrenceConfigSchema.safeParse(config).success) return reply.code(400).send({ error: "Invalid or oversized recurrence configuration" })
       const id = recurrenceScheduleID(resolved.project.id, resolved.project.canonical, input.requestID)
@@ -176,9 +175,14 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       if (!await watchedCurrent()) throw new Error("Watched conversation moved before recurrence creation")
       check()
       admission.dispatched()
+      const proofIdentity = { sessionID: human.sessionId, workspaceID, requestID: input.requestID, location,
+        scheduleID: id, expectedRevision: 0, action: "create" as const, configDigest: digest,
+        profileSource: { profileID: profileScope.key, executionHost, configYamlPath: deps.settings.configYamlPathForAuthority() }, issuedAt: Date.now() }
+      const proofBody = { ...proofIdentity, digest: recurrenceControlRequestDigest(proofIdentity) }
       // After dispatch, do not abort a native operation on HTTP disconnect.
       const created = await rpc.recurrenceCreate({ id, requestID: input.requestID, digest, config, directory,
-        scope: profileScope, executionHost }, { location, ...locationRequestOptions(location) }) as NativeCreateReply
+        scope: profileScope, executionHost, transport: { ...proofBody, proof: signNativeRecurrenceControl(proofBody, deps.bridgeToken) } },
+        { location, ...locationRequestOptions(location) }) as NativeCreateReply
       if (created.noEffect) {
         if (created.schedule !== null || created.noEffect.code !== "capacity" || created.noEffect.id !== id
           || created.noEffect.requestID !== input.requestID || created.noEffect.digest !== digest

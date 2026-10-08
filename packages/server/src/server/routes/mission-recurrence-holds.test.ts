@@ -2,12 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { holdRecurrenceControl } from "./mission-recurrence-holds"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { recurrenceHumanRequestID } from "../../missions/recurrence-authority-contract"
 
 test("retry without the original partial hold never allocates a new permit or adopts a new connection", () => {
   const fence = new WorktreeDeletionFence()
-  const binding = { workspaceID: "owned", scheduleID: "schedule", requestID: recurrenceHumanRequestID("schedule", 2, "pause"),
-    action: "pause" as const, expectedRevision: 1, expectedEpoch: 1, location: { directory: "/owned" },
+  const binding = { workspaceID: "owned", scheduleID: "schedule", requestID: "request_one",
+    action: "pause" as const, expectedRevision: 1, location: { directory: "/owned" },
     connection: { assertCurrent: () => {} } as never }
   let allocated = 0
   assert.throws(() => holdRecurrenceControl(fence, binding, () => { allocated++; return () => {} }, true), /Original partial.*unavailable/)

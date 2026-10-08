@@ -7,7 +7,6 @@ import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
-import { recurrenceInputBudget, recurrenceReadBudget } from "./recurrence-read-budget"
 
 export const RECURRENCE_STORAGE_PREFIX = "codenomad-missions/recurrence-v1"
 export const RECURRENCE_HISTORY_LIMIT = 30
@@ -27,6 +26,7 @@ export const recurrenceBudgetsSchema = z.object({ effects: counter.min(1).max(64
  * sandbox. Ownership, permissions and publication enforcement belong to the
  * authorized admission composition, not standing-consigne text. */
 export const recurrenceConfigSchema = z.object({
+  title: z.string().trim().min(1).max(120),
   consigne: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
   notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]),
@@ -36,18 +36,9 @@ export const recurrenceConfigSchema = z.object({
   roots: z.array(authorityRootSchema).min(1).max(32).refine(roots =>
     new Set(roots.map(root => root.directory)).size === roots.length),
   watchedConversationIDs: ids,
-  // Every authorized passage must reserve create, start and coordinator-message.
-  // Optional here for old unactivated core fixtures; native CREATE requires it.
-  budgets: recurrenceBudgetsSchema.refine(value => value.effects >= 3, "Recurrence needs three fixed effects").optional(),
-  publication: z.object({ policy: z.enum(["disabled", "draft-only", "authorized-targets"]), conversationIDs: ids }).strict()
-    .refine(value => value.policy === "authorized-targets" ? value.conversationIDs.length > 0 : value.conversationIDs.length === 0),
 }).strict().refine(config => {
   try { recurrenceStartText(config); return true } catch { return false }
 }, "Recurrence start text exceeds lifecycle capacity").refine(config => {
-  return !config.budgets || recurrenceReadBudget(config.watchedConversationIDs.length, config.budgets).sufficient
-}, "Recurrence needs fixed effects and one funded read per watched conversation").refine(config => {
-  return !config.budgets || recurrenceInputBudget(config).sufficient
-}, "Recurrence whole source input exceeds lifecycle capacity").refine(config => {
   const profiles = config.profiles
   if (!profiles?.coordinator || missionProfileRoles[config.template].some(role => !profiles.roles?.[role])) return false
   try { validateMissionProfiles(config.template, profiles) } catch { return false }
@@ -72,34 +63,45 @@ export type RecurrencePassage = z.infer<typeof passageSchema>
 export const recurrenceAdmissionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("accepted"), passageID: recurrenceIDSchema, messageID: recurrenceIDSchema,
     missionID: id, conversationID: id }).strict(),
-  // The authorized adapter may return this ONLY with exact positive evidence
-  // that no external effect occurred. Errors, partial writes and lost ACKs do
-  // not satisfy this contract and must remain uncertain.
-  z.object({ kind: z.literal("rejected-before-effect"), passageID: recurrenceIDSchema, messageID: recurrenceIDSchema,
-    effect: z.literal("none"), proofID: id }).strict(),
 ])
 export type RecurrenceAdmission = z.infer<typeof recurrenceAdmissionSchema>
 const cursorListSchema = z.array(z.object({ conversationID: id, messageID: id,
   locationDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict())
   .refine(items => new Set(items.map(item => item.conversationID)).size === items.length)
 export const recurrenceResultSchema = z.object({ passageID: recurrenceIDSchema, messageID: recurrenceIDSchema,
-  missionID: id, conversationID: id, outcome: z.enum(["completed", "failed", "stopped"]),
+  missionID: id, conversationID: id, outcome: z.enum(["completed", "failed", "stopped", "ended-without-report"]),
   // References only: artifacts/transcripts stay in native conversations.
   artifactMessageIDs: z.array(id).max(8).refine(items => new Set(items).size === items.length),
   cursors: cursorListSchema.refine(items => items.length <= 32),
 }).strict()
 export type RecurrenceResult = z.infer<typeof recurrenceResultSchema>
 const receiptSchema = z.object({ passage: passageSchema, settledAt: timestamp,
-  result: z.union([recurrenceResultSchema.omit({ cursors: true }), recurrenceAdmissionSchema.options[1]]) }).strict()
+  result: recurrenceResultSchema.omit({ cursors: true }) }).strict()
+export const recurrenceControlRecordSchema = z.object({ requestID: recurrenceIDSchema,
+  action: z.enum(["play", "pause", "stop", "resume", "run-now"]), expectedRevision: counter,
+  revision: counter, state: z.enum(["paused", "running", "stopped"]), controlsComplete: z.boolean(),
+  schedulerCancellation: z.enum(["acknowledged", "unknown"]).optional(),
+  targets: z.array(z.object({ sessionID: id, outcome: z.enum(["acknowledged", "unknown"]) }).strict()).max(32),
+  targetsKnown: z.boolean(),
+}).strict()
+export type RecurrenceControlRecord = z.infer<typeof recurrenceControlRecordSchema>
 const documentSchema = z.object({ version: z.literal(1), projectID: id, projectCanonical: z.string().min(1).max(4096),
   id: recurrenceIDSchema, revision: counter, scheduleRevision: counter, createdAt: timestamp,
   state: z.enum(["paused", "running", "stopped"]), config: recurrenceConfigSchema,
+  interruptionReason: z.enum(["service-restart", "error"]).optional(),
+  profileSource: z.object({ profileID: id, executionHost: id, configYamlPath: z.string().min(1).max(4096) }).strict().optional(),
+  // ponytail: 64 exact intents per document; move completed request status to sibling KV keys if this payload ceiling is reached, never evict/replay unknown requests.
+  controls: z.array(recurrenceControlRecordSchema).max(64).default([]),
   lastDaily: dailyDueSchema.nullable(), settledCount: counter,
    cursors: cursorListSchema.refine(items => items.length <= RECURRENCE_CURSOR_LIMIT),
   pending: z.object({ passage: passageSchema, admission: recurrenceAdmissionSchema.options[0].nullable() }).strict().nullable(),
   history: z.array(receiptSchema).max(RECURRENCE_HISTORY_LIMIT),
 }).strict()
 export type RecurrenceDocument = z.infer<typeof documentSchema>
+
+export function recurrenceTitle(instructions: string): string {
+  return instructions.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 120) ?? ""
+}
 
 export function recurrencePassageID(projectToken: string, scheduleID: string, scheduleRevision: number, due: RecurrenceDue): string {
   const dueIdentity = due.kind === "daily" ? `daily:${due.civilDay}` : `manual:${due.expectedRevision}:${due.requestID}`
@@ -117,6 +119,11 @@ export function parseRecurrenceDocument(input: unknown, projectID: string, proje
     || doc.revision < 2 * doc.settledCount + (doc.pending ? 1 : 0)
     || doc.settledCount === 0 && doc.cursors.length !== 0) fail()
   const projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
+  if (new Set(doc.controls.map(item => item.requestID)).size !== doc.controls.length
+    || doc.controls.some(item => item.revision !== item.expectedRevision + 1 || item.revision > doc.revision
+      || new Set(item.targets.map(target => target.sessionID)).size !== item.targets.length
+      || item.controlsComplete && (!item.targetsKnown || item.schedulerCancellation === "unknown"
+        || item.targets.some(target => target.outcome !== "acknowledged")))) fail()
   const passages = [...doc.history.map(receipt => receipt.passage), ...(doc.pending ? [doc.pending.passage] : [])]
   if (new Set(passages.map(passage => passage.id)).size !== passages.length) fail()
   if (doc.lastDaily && (!/^\d{4}-\d{2}-\d{2}$/.test(doc.lastDaily.civilDay)

@@ -10,11 +10,11 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { MISSION_RECURRENCE_CHANGED_EVENT, readRecurrenceScheduleChanged, type RecurrenceScheduleChanged } from "../../missions/recurrence-events"
 
 const config: RecurrenceConfig = {
-  template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+  title: "Review", template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
   profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
     roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },
   taskMode: "native", roots: [{ mode: "directory-only", directory: "/project" }],
-  watchedConversationIDs: [], publication: { policy: "draft-only", conversationIDs: [] },
+  watchedConversationIDs: [],
 }
 const location = { directory: "/project", project: { id: "project", canonical: "/project", directory: "/project" } }
 const encode = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`

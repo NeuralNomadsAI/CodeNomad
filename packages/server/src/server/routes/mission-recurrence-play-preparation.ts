@@ -32,7 +32,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   if (!connection) throw new Error("Native connection unavailable")
   const previousHold = input.retry ? captureRecurrenceControlHoldRead(deps.fence, workspaceID, { directory }, {
     scheduleID: input.scheduleID, requestID: input.requestID, action: input.action,
-    expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch,
+    expectedRevision: input.expectedRevision,
   }, connection) : undefined
   const display = previousHold ?? deps.fence.captureDisplay([base.directory, directory])
   const current = (): true => {
@@ -55,7 +55,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   let hold: ReturnType<typeof holdRecurrenceControl> | undefined
   try {
     hold = holdRecurrenceControl(deps.fence, { scheduleID: input.scheduleID, requestID: input.requestID,
-      action: input.action, expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch,
+      action: input.action, expectedRevision: input.expectedRevision,
       workspaceID, location: { directory }, connection }, () => deps.fence.enter([checkout]), input.retry)
     if (!hold) throw new Error("Worktree deletion in progress")
     const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
@@ -75,10 +75,10 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
     const identity = { sessionID: session.sessionId, workspaceID, requestID: input.requestID,
       location: { directory },
       scheduleID: input.scheduleID, action: input.action, expectedRevision: input.expectedRevision,
-      expectedEpoch: input.expectedEpoch, profileSource, issuedAt: Date.now() }
+      profileSource, issuedAt: Date.now() }
     const body = { ...identity, digest: recurrenceControlRequestDigest(identity) }
     current()
-    return { body: { ...body, proof: signNativeRecurrenceControl(body, deps.bridgeToken) }, current,
+    return { body: { ...body, ...(input.retry ? { retry: true } : {}), proof: signNativeRecurrenceControl(body, deps.bridgeToken) }, current,
       client, location: identity.location, hold, dispose: hold.dispose }
   } catch (error) { hold?.dispose(); throw error }
 }

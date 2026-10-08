@@ -8,7 +8,7 @@ import {
   parseRecurrenceDocument, recurrenceAdmissionSchema, recurrenceConfigSchema, recurrenceIDSchema,
   recurrenceMessageID, recurrencePassageID, recurrenceResultSchema,
   RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_SCHEDULE_LIMIT, RECURRENCE_STORAGE_PREFIX,
-  type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceDue, type RecurrenceResult,
+  type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceDue, type RecurrenceResult, type RecurrenceControlRecord,
 } from "./recurrence-contract"
 
 export type RecurrenceStorage = MissionStorage & {
@@ -73,7 +73,7 @@ export class NativeMissionRecurrenceStore {
       if ((await this.list()).length >= RECURRENCE_SCHEDULE_LIMIT) throw new RecurrenceCreateCapacityError()
       const doc: RecurrenceDocument = { version: 1, projectID: this.projectID, projectCanonical: this.projectCanonical,
         id, revision: 0, scheduleRevision: 0, createdAt: now, state: "paused", config,
-        lastDaily: null, settledCount: 0, cursors: [], pending: null, history: [] }
+        lastDaily: null, settledCount: 0, cursors: [], pending: null, history: [], controls: [] }
       return this.publish(doc, current, null)
     })
   }
@@ -97,6 +97,78 @@ export class NativeMissionRecurrenceStore {
     return this.change(id, expectedRevision, current, doc => {
       if (doc.state === "stopped") throw new Error("Recurrence is terminal")
       doc.state = state
+    })
+  }
+
+  beginControl(id: string, input: Pick<RecurrenceControlRecord, "requestID" | "action" | "expectedRevision">,
+    current: () => true, profileSource?: RecurrenceDocument["profileSource"]): Promise<RecurrenceDocument> {
+    return this.exclusive(async () => {
+      const doc = await this.required(id), prior = doc.controls.find(item => item.requestID === input.requestID)
+      if (prior) {
+        if (prior.action !== input.action || prior.expectedRevision !== input.expectedRevision) throw new Error("Recurrence request conflict")
+        return doc
+      }
+      if (doc.revision !== input.expectedRevision || doc.state === "stopped" || doc.controls.length >= 64
+        || doc.controls.some(item => !item.controlsComplete && !(["resume", "pause", "stop"].includes(input.action)
+          && (item.action === "play" || item.action === "resume" || item.action === "run-now")))) throw new Error("Recurrence control conflict")
+      if (input.action === "play" && (doc.state !== "paused" || doc.pending)) throw new Error("Recurrence cannot play")
+      if (input.action === "run-now" && doc.pending) throw new Error("Recurrence pending")
+      if (profileSource) {
+        if (profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
+          || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence profile changed")
+        doc.profileSource = profileSource
+      }
+      if (input.action === "play" || input.action === "resume") doc.state = "running"
+      if (input.action === "pause") doc.state = "paused"
+      if (input.action === "stop") doc.state = "stopped"
+      delete doc.interruptionReason
+      doc.revision++
+      doc.controls.push({ ...input, revision: doc.revision, state: doc.state, controlsComplete: false,
+        targets: [], targetsKnown: false })
+      return this.publish(doc, current, input.expectedRevision)
+    })
+  }
+
+  recordControl(id: string, input: RecurrenceControlRecord, current: () => true): Promise<RecurrenceDocument> {
+    return this.exclusive(async () => {
+      const doc = await this.required(id), index = doc.controls.findIndex(item => item.requestID === input.requestID)
+      const prior = doc.controls[index]
+      if (!prior || prior.action !== input.action || prior.expectedRevision !== input.expectedRevision
+        || prior.revision !== input.revision || prior.state !== input.state) throw new Error("Recurrence request conflict")
+      if (prior.controlsComplete || canonicalAuthority(prior) === canonicalAuthority(input)) return doc
+      if (prior.targetsKnown && (!input.targetsKnown || canonicalAuthority(prior.targets.map(target => target.sessionID))
+        !== canonicalAuthority(input.targets.map(target => target.sessionID)))
+        || prior.targets.some(target => target.outcome === "acknowledged"
+          && input.targets.find(item => item.sessionID === target.sessionID)?.outcome !== "acknowledged")) throw new Error("Recurrence control targets changed")
+      doc.controls[index] = input
+      doc.revision++
+      return this.publish(doc, current, doc.revision - 1)
+    })
+  }
+
+  recordClockError(id: string, current: () => true): Promise<RecurrenceDocument> {
+    return this.exclusive(async () => {
+      const doc = await this.required(id)
+      if (doc.state !== "running" || doc.interruptionReason === "error") return doc
+      doc.interruptionReason = "error"
+      doc.revision++
+      return this.publish(doc, current, doc.revision - 1)
+    })
+  }
+
+  reserveManual(id: string, requestID: string, expectedRevision: number, now: number,
+    profileSource: NonNullable<RecurrenceDocument["profileSource"]>, current: () => true): Promise<RecurrenceDocument> {
+    return this.change(id, expectedRevision, current, doc => {
+      if (doc.pending || doc.state === "stopped" || doc.controls.length >= 64 || doc.controls.some(item => !item.controlsComplete)
+        || profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
+        || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence manual conflict")
+      doc.profileSource = profileSource
+      const due: RecurrenceDue = { kind: "manual", requestID, expectedRevision, at: now }
+      const passageID = recurrencePassageID(this.projectToken, id, doc.scheduleRevision, due)
+      doc.pending = { passage: { id: passageID, messageID: recurrenceMessageID(passageID), due,
+        scheduleRevision: doc.scheduleRevision, createdAt: now }, admission: null }
+      doc.controls.push({ requestID, expectedRevision, action: "run-now", revision: expectedRevision + 1,
+        state: doc.state, controlsComplete: false, targetsKnown: true, targets: [] })
     })
   }
 
@@ -125,8 +197,7 @@ export class NativeMissionRecurrenceStore {
         if (canonicalAuthority(pending.admission) !== canonicalAuthority(admission)) throw new Error("Recurrence admission conflict")
         return doc
       }
-      if (admission.kind === "accepted") pending.admission = admission
-      else this.settle(doc, admission, now)
+      pending.admission = admission
       doc.revision++
       return this.publish(doc, current, doc.revision - 1)
     })
@@ -148,8 +219,8 @@ export class NativeMissionRecurrenceStore {
     })
   }
 
-  private settle(doc: RecurrenceDocument, result: RecurrenceAdmission & { kind: "rejected-before-effect" } | RecurrenceResult, now: number) {
-    const reference = "cursors" in result ? (({ cursors: _cursors, ...receipt }) => receipt)(result) : result
+  private settle(doc: RecurrenceDocument, result: RecurrenceResult, now: number) {
+    const reference = (({ cursors: _cursors, ...receipt }) => receipt)(result)
     doc.history.push({ passage: doc.pending!.passage, result: reference, settledAt: now })
     doc.history = doc.history.slice(-RECURRENCE_HISTORY_LIMIT)
     doc.settledCount++

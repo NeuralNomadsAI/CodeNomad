@@ -19,8 +19,8 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control/status", async (request, reply) => {
     const session = deps.auth.getSessionFromRequest(request)
     if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") return reply.code(401).send({ error: "Human authentication required" })
-    const parsed = z.object({ requestID: z.string(), action: z.enum(["play", "pause", "stop"]),
-      expectedRevision: z.number(), expectedEpoch: z.number(), directory: z.string().min(1).max(4096).optional() }).strict().safeParse(request.body)
+    const parsed = z.object({ requestID: z.string(), action: z.enum(["play", "pause", "stop", "resume", "run-now"]),
+      expectedRevision: z.number(), directory: z.string().min(1).max(4096).optional() }).strict().safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid exact control status request" })
     const { directory: requestedDirectory, ...identity } = parsed.data
     const input = recurrenceControlRequestSchema.safeParse({ ...identity, scheduleID: request.params.scheduleID })
@@ -52,7 +52,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       current()
       const result = recurrenceControlStatusSchema.parse(raw)
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID
-        || result.expectedRevision !== input.data.expectedRevision || result.epoch !== input.data.expectedEpoch + 1) throw new Error("Foreign control receipt")
+        || result.expectedRevision !== input.data.expectedRevision) throw new Error("Foreign control receipt")
       reconcileRecurrenceControlHold(deps.fence, id, location, input.data, result, connection)
       return result
     } catch {

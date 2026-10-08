@@ -13,10 +13,11 @@ import { z } from "zod"
 import { resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { assertRecurrenceDispatchFeasible } from "../../missions/recurrence-read-budget"
+import { assertRecurrenceBridgeProof, nativeRecurrenceControlInputSchema } from "./native-recurrence-control"
 
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 const requestSchema = Schema.Struct({ id: Schema.String, requestID: Schema.String, digest: Schema.String,
-  config: Schema.Unknown, directory: Schema.String, scope: Schema.Unknown, executionHost: Schema.String })
+  config: Schema.Unknown, directory: Schema.String, scope: Schema.Unknown, executionHost: Schema.String, transport: Schema.Unknown })
 const profileScope = z.object({ channel: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/),
   configIdentity: z.string().min(1).max(4096), key: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 export const recurrenceScheduleID = (projectID: string, canonical: string, requestID: string) =>
@@ -70,15 +71,20 @@ export const nativeRecurrenceHandlers = (ctx: Pick<Plugin.Context, "location" | 
     recurrenceCreate: (raw: unknown) => Effect.gen(function* () {
       const native = yield* location
       const input = yield* Schema.decodeUnknownEffect(requestSchema)(raw)
+      const transport = yield* Schema.decodeUnknownEffect(nativeRecurrenceControlInputSchema)(input.transport)
+      if (transport.action !== "create" || transport.requestID !== input.requestID || transport.scheduleID !== input.id
+        || transport.expectedRevision !== 0 || transport.configDigest !== input.digest || transport.location.directory !== native.directory
+        || transport.location.workspaceID !== native.workspaceID) throw new Error("Recurrence creation transport differs")
+      yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(transport))
       const id = recurrenceIDSchema.parse(input.id)
       if (!/^[A-Za-z0-9_-]{3,100}$/.test(input.requestID)
         || id !== recurrenceScheduleID(native.project.id, native.project.canonical, input.requestID)
         || input.directory !== native.directory) throw new Error("Recurrence creation identity differs")
       const config = recurrenceConfigSchema.parse(input.config)
-      if (!config.budgets || recurrenceConfigDigest(config) !== input.digest || config.roots.length !== 1
-        || config.roots[0].directory !== native.directory || config.publication.policy !== "disabled"
-        || config.publication.conversationIDs.length) throw new Error("Recurrence creation scope differs")
-      assertRecurrenceDispatchFeasible(config, config.budgets)
+      if (recurrenceConfigDigest(config) !== input.digest || config.roots.length !== 1
+        || config.roots[0].directory !== native.directory || transport.profileSource.profileID !== config.profileID
+        || transport.profileSource.executionHost !== config.executionHost) throw new Error("Recurrence creation scope differs")
+      assertRecurrenceDispatchFeasible(config)
       yield* Effect.promise(() => assertNativeRecurrenceCreateScope(native.directory, config, input.scope, input.executionHost))
       const store = yield* acquireNativeRecurrenceStore(ctx)
       const current = () => {
