@@ -287,10 +287,17 @@ export async function setupDurableMissionsPlugin(context: DurableMissionsContext
   }
   let disposeMap: (() => Promise<void>) | undefined
   let registration: { dispose(): Promise<void> } | undefined
-  const dispose = async () => {
+  let disposal: Promise<void> | undefined
+  const dispose = () => {
     active = false; lifetime.abort()
-    await Promise.allSettled([disposeMap?.(), registration?.dispose()])
-    effects.clear()
+    return disposal ??= (async () => {
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => disposeMap?.()), Promise.resolve().then(() => registration?.dispose()),
+      ])
+      effects.clear()
+      const failed = results.find(result => result.status === "rejected")
+      if (failed?.status === "rejected") throw failed.reason
+    })()
   }
   try {
     // Damaged authority is unavailable, never repaired/fallback-authorized.

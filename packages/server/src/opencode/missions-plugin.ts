@@ -30,6 +30,7 @@ import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCata
 import { buildAssignmentPrompt } from "../missions/recipes"
 import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
+import { createMissionWriterRetirement } from "./missions/writer-retirement"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -123,12 +124,21 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
+  // Drain this registration's journal and callback paths; the separate durable
+  // authority RPC and native old-writer inventory still need their own proof.
+  const writer = createMissionWriterRetirement()
+  const tracked = <Args extends unknown[], Result>(callback: (...args: Args) => Promise<Result>) =>
+    (...args: Args) => writer.run(() => callback(...args))
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
   const dispose = async () => {
     active = false
     notificationOutbox?.dispose()
     notificationOutbox = undefined
-    await Promise.allSettled(registrations.map(registration => registration.dispose()))
+    await writer.retire(async () => {
+      const results = await Promise.allSettled(registrations.map(registration => registration.dispose()))
+      const failed = results.find(result => result.status === "rejected")
+      if (failed?.status === "rejected") throw failed.reason
+    })
   }
   let rpcRegistration: Awaited<ReturnType<MissionsPluginContext["rpc"]["register"]>> | undefined
   const control = new MissionControl({
@@ -137,14 +147,19 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       canonical: context.location.project.canonical,
       location: { directory: context.location.directory, workspaceID: context.location.workspaceID },
     },
-    storage: policy ? { get: key => context.storage.get(key), scan: options => context.storage.scan(options), set: async (key, value, current) => {
+    storage: policy ? { get: key => context.storage.get(key), scan: options => context.storage.scan(options), set: (key, value, current) => writer.run(async () => {
       const event = parseMissionEvent(value)
       const publicationFence = event ? await policy.beforeJournalWrite(event) : undefined
       assertActive()
       publicationFence?.()
       current?.()
-      await context.storage.set(key, value)
-    } } : context.storage,
+      await writer.write(() => context.storage.set(key, value))
+    }) } : { get: key => context.storage.get(key), scan: options => context.storage.scan(options),
+      set: (key, value, current) => writer.run(async () => {
+        assertActive()
+        current?.()
+        await writer.write(() => context.storage.set(key, value))
+      }) },
     sessions: context.session,
     isActive: () => active,
     transport,
@@ -162,7 +177,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
 
   try {
     await policy?.configure(control)
-    rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
+    const handlers: Parameters<MissionsPluginContext["rpc"]["register"]>[1] = {
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
       recover: async (input, context) => {
         assertActive()
@@ -194,15 +209,21 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
       update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
+    }
+    rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
+      snapshot: tracked(handlers.snapshot), recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
+      cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),
+      update: tracked(handlers.update), delete: tracked(handlers.delete),
     })
     registrations.push(rpcRegistration)
 
     const tools = await context.tool.transform((draft) => {
+      const add = (definition: Parameters<ToolDraft["add"]>[0]) => draft.add({ ...definition, execute: tracked(definition.execute) })
       draft.namespace({
         name: "mission",
         description: "Declare bounded native tasks and explicit independent-session exceptions through one durable business mission map.",
       })
-      draft.add({
+      add({
         name: "inspect",
         description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, Pocock bug-fix, or Wayfinder mission.",
         input: inspectSchema,
@@ -220,7 +241,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           return textResult(result)
         },
       })
-      draft.add({
+      add({
         name: "delegate",
         description: "Declare one dependency-aware native task without creating or prompting a session. Pass the returned canonical assignmentPrompt to ordinary native subagent calls for ready tasks; run independent ready work in parallel when useful and let children own bounded recursive decomposition within native permissions and configured depth. The coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs.",
         input: delegateSchema,
@@ -245,7 +266,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           return textResult({ ...result, assignmentPrompt: buildAssignmentPrompt(result.mission, task) })
         },
       })
-      draft.add({
+      add({
         name: "revise",
         description: "Revise the current mission plan with a reason and expected revision. Coordinator only. Add newly discovered work, retire/replace tasks or rewrite dependencies atomically; this does not cancel already admitted native execution.",
         input: reviseSchema,
@@ -258,7 +279,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           return textResult(await control.revise(tool.sessionID, parseReviseInput(input)))
         },
       })
-      draft.add({
+      add({
         name: "report",
         description: "Coordinator: settle a declared native task with taskKey and actual returned evidence from ordinary native work, including any child-owned recursive helpers; do not ask descendants for duplicate mission reports. Finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize.",
         input: reportSchema,
@@ -275,7 +296,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
               sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report))
         },
       })
-      draft.add({
+      add({
         name: "briefing",
         description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Inspect the current mission first and pass its revision as basedOnRevision. Explain usable achievements, remaining work, obstacles and the next step in the user's language; reference exact live task keys where relevant. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. Use the requestID from an explicit UI request; otherwise a unique initial briefing ID. On a revision conflict reread before publishing, never replay work.",
         input: missionBriefingSchema,
@@ -291,28 +312,31 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     })
     registrations.push(tools)
 
-    const contextHook = await context.session.hook("context", async (event) => {
+    const contextHook = await context.session.hook("context", (event) => {
       if (!active) return
-      try {
-        const instruction = await control.contextFor(event.sessionID)
-        if (!instruction) return
-        event.system.push({ type: "text", text: instruction })
-        const snapshot = await control.snapshot()
-        const mission = snapshot.missions.find((candidate) => candidate.status === "active"
-          && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
-        if (mission && mission.coordinatorSessionId !== event.sessionID) {
-          delete event.tools.mission_delegate
-          delete event.tools.mission_revise
-          delete event.tools.mission_briefing
+      return writer.run(async () => {
+        try {
+          const instruction = await control.contextFor(event.sessionID)
+          if (!active || !instruction) return
+          event.system.push({ type: "text", text: instruction })
+          const snapshot = await control.snapshot()
+          if (!active) return
+          const mission = snapshot.missions.find((candidate) => candidate.status === "active"
+            && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
+          if (mission && mission.coordinatorSessionId !== event.sessionID) {
+            delete event.tools.mission_delegate
+            delete event.tools.mission_revise
+            delete event.tools.mission_briefing
+          }
+        } catch {
+          // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
         }
-      } catch {
-        // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
-      }
+      })
     })
     registrations.push(contextHook)
     notificationOutbox = new MissionNotificationOutbox(
       `${context.location.project.id}\0${context.location.project.canonical}`,
-      (isActive, after) => control.retryPendingNotifications(isActive, after),
+      (isActive, after) => writer.run(() => control.retryPendingNotifications(isActive, after)),
     )
     notificationOutbox.start()
     return dispose
