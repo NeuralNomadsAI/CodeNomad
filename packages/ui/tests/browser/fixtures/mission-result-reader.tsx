@@ -18,6 +18,8 @@ addInstance({ id: instanceId, folder: scope, port: 0, pid: 0, status: "ready", p
   show: (kind: "overview" | "report", itemId?: string) => updateMissionProjectView(scope, {
     reader: { missionId: "mission", kind, itemId },
   }),
+  showCurrent: () => updateMissionProjectView(scope, { reader: { missionId: "mission", kind: "report", itemId: "late",
+    recurrence: { instanceId, projectID: "project", scheduleID: "schedule", passageID: "passage" } } }),
 }
 render(() => <ConfigProvider><I18nProvider>
   <main class="mission-transcript-surface" style={{ height: "760px" }}>

@@ -188,7 +188,9 @@ for (const action of ["pause", "stop"] as const) {
         return calls.length === 1 ? route.fulfill({ status: 503, json: { code: "control-pending" } }) : route.fulfill({ json: { mission: current } })
       })
       await open(page)
-      await page.getByRole("button", { name: action === "pause" ? "Pause mission" : "Stop mission permanently", exact: true }).click(); await settled(page)
+      await page.getByRole("button", { name: action === "pause" ? "Pause mission" : "Stop mission permanently", exact: true }).click()
+      if (action === "stop") await page.locator(".mission-stop-confirmation button").first().click()
+      await settled(page)
       await page.reload(); await open(page)
       await page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true }).click()
       if (action === "stop") await page.locator(".mission-lifecycle").waitFor({ state: "detached" })
@@ -199,3 +201,32 @@ for (const action of ["pause", "stop"] as const) {
     } finally { await page.close() }
   })
 }
+
+test("Stop is an inline confirmation: cancel and Escape never submit; confirmation submits once", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
+  let current = mission()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/missions**", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current], generatedAt: current.revision, discardedEvents: 0 } })
+      calls.push(route.request().postDataJSON() as Input)
+      current = { ...current, revision: 2, runState: "stopped", status: "stopped" }
+      return route.fulfill({ json: { mission: current } })
+    })
+    await open(page)
+    const stop = page.locator(".mission-lifecycle-actions button").filter({ has: page.locator("svg.lucide-square") })
+    await stop.click()
+    assert.deepEqual(calls, [])
+    await page.locator(".mission-stop-confirmation button").last().click()
+    assert.equal(await stop.getAttribute("aria-expanded"), "false")
+    await stop.click()
+    await page.locator(".mission-stop-confirmation button").first().press("Escape")
+    assert.equal(await stop.getAttribute("aria-expanded"), "false")
+    assert.deepEqual(calls, [])
+    await stop.click()
+    await page.locator(".mission-stop-confirmation button").first().click()
+    await page.locator(".mission-lifecycle").waitFor({ state: "detached" })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].action, "stop")
+  } finally { await page.close() }
+})

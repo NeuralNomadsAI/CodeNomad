@@ -7,7 +7,8 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import type { MissionRecurrenceSnapshot, MissionRecurrenceReadPage } from "../../../server/src/api-types"
+import type { MissionRecurrenceReadPage } from "../../../server/src/api-types"
+import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
 import { missionMarkdownPage } from "../../src/lib/mission-markdown-pages"
 import type {} from "./fixtures/mission-passage-history"
 import { captureMissionView } from "./mission-view-capture"
@@ -30,7 +31,7 @@ test("all ten locales define recurrence reference reader and pending status keys
   const locales = ["en", "fr", "es", "de", "he", "ja", "zh-Hans", "ru", "tr", "ne"]
   const required = ["read", "reader", "latest", "history", "historyEmpty", "referencesOnly", "passage", "due", "settledAt",
     "missionRef", "conversationRef", "messageRef", "artifactRefs", "pending.unknown", "pending.admitted", "readResult", "section", "resultUnavailable",
-    "result.completed", "result.failed", "result.stopped", "result.rejected-before-effect", "retry", "pendingTargets"]
+    "result.completed", "result.failed", "result.stopped"]
   for (const locale of locales) {
     const source = await readFile(new URL(`../../src/lib/i18n/messages/${locale}/missions.ts`, import.meta.url), "utf8")
     for (const key of required) assert.equal(source.split(`"missions.recurrence.${key}":`).length - 1, 1, `${locale}: ${key}`)
@@ -38,16 +39,15 @@ test("all ten locales define recurrence reference reader and pending status keys
 })
 
 const schedule = (id: string): MissionRecurrenceSnapshot["schedules"][number] => {
-  const history = Array.from({ length: 30 }, (_, n) => ({ passageID: `rcp_${id}_${n}`, messageID: `msg_passage_${id}_${n}`, dueAt: 1_000 + n * 10,
-    settledAt: 1_001 + n * 10, status: "completed" as const, missionID: `msn_${n}`, conversationID: `ses_${n}`,
-    artifactMessageIDs: [`msg_artifact_${id}_${n}`] }))
-  return { id, revision: 62, scheduleRevision: 0, state: "paused", clock: { time: "07:00", zone: "UTC" },
-    pendingPassageID: "rcp_pending", pendingStatus: "unknown", pendingAdmission: null, settledCount: 31, latestResult: history.at(-1)!, history }
+  const history = Array.from({ length: 30 }, (_, n) => ({ passageID: `rcp_${id}_${n}`, dueAt: 1_000 + n * 10,
+    settledAt: 1_001 + n * 10, outcome: "completed" as const, missionID: `msn_${n}`, conversationID: `ses_${n}` }))
+  return { id, title: `Daily review ${id.replace("rec_", "")}`, revision: 62, state: "paused", clock: { time: "07:00", zone: "UTC" },
+    nextDueAt: null, actions: [], pending: { passageID: "rcp_pending", status: "uncertain" }, latestResult: history.at(-1)!, history }
 }
 
 test("native reference history uses the shared reader, exact eyes, visible cache demand and no mutation/transcript reads", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 390, height: 800 } })
-  let snapshot: MissionRecurrenceSnapshot = { version: 1, projectID: "project", schedules: [schedule("rec_first"), { ...schedule("rec_second"), pendingPassageID: null, pendingStatus: null }] }
+  let snapshot: MissionRecurrenceSnapshot = { version: 1, projectID: "project", schedules: [schedule("rec_first"), { ...schedule("rec_second"), pending: null }] }
   let reads = 0, fail = false
   const errors: string[] = [], unexpected: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -65,20 +65,20 @@ test("native reference history uses the shared reader, exact eyes, visible cache
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    const firstEye = page.getByRole("button", { name: "Read passage history for rec_first" })
-    const secondEye = page.getByRole("button", { name: "Read passage history for rec_second" })
+    const firstEye = page.getByRole("button", { name: "Read passage history for Daily review first" })
+    const secondEye = page.getByRole("button", { name: "Read passage history for Daily review second" })
     await firstEye.waitFor()
-    assert.equal(await page.getByText("Latest result: Completed (archived)", { exact: true }).count(), 2)
+    assert.equal(await page.getByRole("button", { name: "Daily review first", exact: true }).count(), 1)
     await firstEye.click()
     const reader = page.locator(".mission-reader")
-    await reader.getByText("msg_artifact_rec_first_29", { exact: true }).waitFor()
+    await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor()
     assert.equal(await reader.locator("li").count(), 30)
     await reader.getByRole("alert").getByText(/No substitute result was loaded/).waitFor()
     assert.equal(await firstEye.getAttribute("aria-pressed"), "true")
     assert.equal(await secondEye.getAttribute("aria-pressed"), "false")
     assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 1)
     await secondEye.click()
-    await reader.getByText("msg_artifact_rec_second_29", { exact: true }).waitFor()
+    await reader.getByText("rcp_rec_second_29", { exact: true }).waitFor()
     assert.equal(await firstEye.getAttribute("aria-pressed"), "false")
     assert.equal(await secondEye.getAttribute("aria-pressed"), "true")
     await secondEye.click()
@@ -89,10 +89,11 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     const beforeEye = reads
     await firstEye.click()
     assert.equal(reads, beforeEye, "opening the reader uses the bounded cached snapshot")
-    snapshot = { ...snapshot, schedules: [{ ...snapshot.schedules[0], pendingStatus: "admitted",
-      pendingAdmission: { missionID: "msn_pending", conversationID: "ses_pending" } }, snapshot.schedules[1]] }
+    snapshot = { ...snapshot, schedules: [{ ...snapshot.schedules[0], pending: { passageID: "rcp_pending", status: "running",
+      missionID: "msn_pending", conversationID: "ses_pending" } }, snapshot.schedules[1]] }
+    const refreshed = page.waitForResponse(response => response.url().endsWith("/missions/recurrence"))
     await page.evaluate(() => window.passageHistory.invalidate())
-    await reader.getByText("Passage admitted; terminal result not yet verified.").waitFor()
+    await refreshed
     assert.equal(await reader.locator("li").count(), 30, "admission does not create another final result")
     assert.equal(await firstEye.getAttribute("aria-pressed"), "true", "refresh preserves exact reader identity")
     await page.evaluate(async () => {
@@ -102,23 +103,12 @@ test("native reference history uses the shared reader, exact eyes, visible cache
         addFormToQueue("fixture", { id, sessionID, title, fields: [], location: { directory: "/fixture" } } as never)
       }
     })
-    const decision = page.getByRole("button", { name: "Question: Publish review?" })
-    await decision.waitFor()
-    assert.equal(await page.getByRole("button", { name: /Archived request|Global request/ }).count(), 0)
-    await page.evaluate(() => window.passageHistory.status(true))
-    assert.equal(await page.locator(".interruption-dock").count(), 0, "Status does not host the dock")
-    await decision.click()
-    await page.locator(".interruption-dock:not(.is-collapsed)").waitFor()
-    await page.locator(".interruption-dock .window-title").getByText("ses_pending", { exact: true }).waitFor()
-    assert.deepEqual(await page.evaluate(async () => {
-      const { interruptionFocus } = await import("/src/stores/interruption-navigation.ts")
-      return interruptionFocus()
-    }), { instanceId: "fixture", sessionId: "ses_pending", requestId: "frm_pending", kind: "form" })
+    assert.equal(await page.locator("aside").getByRole("button", { name: /Publish review|Archived request|Global request/ }).count(), 0,
+      "the compact schedule list does not duplicate native request actions")
     await page.evaluate(async () => {
       const { removeFormFromQueue } = await import("/src/stores/forms.ts")
       removeFormFromQueue("fixture", "frm_pending")
     })
-    assert.equal(await decision.count(), 0, "settled native request disappears without inferring no decisions")
     fail = true
     await page.evaluate(() => window.passageHistory.refresh())
     await page.locator("aside").getByText(/Showing the last confirmed snapshot/).waitFor()
@@ -134,18 +124,18 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
     await captureMissionView(page, "archive-reader-390-rtl")
     const geometry = await firstEye.evaluate(node => {
-      const row = node.closest("article")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
+      const row = node.closest(".mission-list-item")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
       return { rowLeft: row.left, rowRight: row.right, eyeLeft: eye.left, eyeRight: eye.right, radius: getComputedStyle(node).borderRadius }
     })
     assert.ok(geometry.eyeLeft >= geometry.rowLeft && geometry.eyeRight <= geometry.rowRight)
     assert.equal(geometry.radius, "0px")
     await page.evaluate(() => window.passageHistory.project("foreign"))
     await reader.getByText("This mission content is no longer available.").waitFor()
-    assert.equal(await reader.getByText("msg_artifact_rec_first_29", { exact: true }).count(), 0)
+    assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 0)
     assert.equal(await firstEye.count(), 0, "foreign project response cannot populate the original list")
     await page.evaluate(() => window.passageHistory.project("project"))
     await firstEye.waitFor()
-    await reader.getByText("msg_artifact_rec_first_29", { exact: true }).waitFor()
+    await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor()
     const beforeStop = reads
     await page.evaluate(async () => {
       const { serverEvents } = await import("/src/lib/server-events.ts")
@@ -196,7 +186,7 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Read passage history for rec_long" }).click()
+    await page.getByRole("button", { name: "Read passage history for Daily review long" }).click()
     const result = page.locator(".mission-recurrence-result")
     await result.getByRole("heading", { name: "Archived summary", exact: true }).waitFor()
     assert.equal(requests.length, 1, "opening loads one page of one archived source, not every report or the transcript")
@@ -219,8 +209,8 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
     await result.getByText("BRIEF END", { exact: false }).waitFor()
     await page.setViewportSize({ width: 390, height: 800 })
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
-    assert.ok(await page.locator(".mission-recurrence-item > button strong").first().evaluate(node => node.getBoundingClientRect().height) < 60,
-      "the pinned eye column must not make the clock wrap one character per line")
+    assert.ok(await page.getByRole("button", { name: "Daily review long", exact: true }).evaluate(node => node.getBoundingClientRect().height) < 60,
+      "the compact title remains readable beside the pinned eye")
     await captureMissionView(page, "archive-reader-390-rtl")
     const narrow = await result.getByRole("combobox").evaluate(node => ({ select: node.getBoundingClientRect().width,
       body: node.closest(".window-body")!.getBoundingClientRect().width, radius: getComputedStyle(node).borderRadius }))
@@ -264,26 +254,26 @@ test("late Location response never installs data into a different reader or list
   })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Read passage history for rec_old" }).click()
-    await page.locator(".mission-reader").getByText("msg_artifact_rec_old_29", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Read passage history for Daily review old" }).click()
+    await page.locator(".mission-reader").getByText("rcp_rec_old_29", { exact: true }).waitFor()
     const secondRead = page.waitForRequest(request => request.url().endsWith("/missions/recurrence"))
     await page.evaluate(() => window.passageHistory.refresh())
     await secondRead
     await page.evaluate(() => window.passageHistory.directory("/other"))
-    await page.getByRole("button", { name: "Read passage history for rec_new" }).waitFor()
+    await page.getByRole("button", { name: "Read passage history for Daily review new" }).waitFor()
     release()
-    await page.getByRole("button", { name: "Read passage history for rec_new" }).click()
-    await page.locator(".mission-reader").getByText("msg_artifact_rec_new_29", { exact: true }).waitFor()
-    assert.equal(await page.getByText("msg_artifact_rec_old_29", { exact: true }).count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Read passage history for rec_old" }).count(), 0)
+    await page.getByRole("button", { name: "Read passage history for Daily review new" }).click()
+    await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor()
+    assert.equal(await page.getByText("rcp_rec_old_29", { exact: true }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Read passage history for Daily review old" }).count(), 0)
   } finally { release(); await page.close() }
 })
 
 test("native calendar archive event updates visible reader/list once; hidden consumers wait for activation", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 960, height: 800 } })
   const sample = schedule("rec_live"), receipt = sample.history.at(-1)!
-  let data: MissionRecurrenceSnapshot["schedules"][number] = { ...sample, revision: 0, settledCount: 0,
-    pendingPassageID: null, pendingStatus: null, pendingAdmission: null, latestResult: null, history: [] }
+  let data: MissionRecurrenceSnapshot["schedules"][number] = { ...sample, revision: 0,
+    pending: null, latestResult: null, history: [] }
   let reads = 0, resultReads = 0, holdNext = false, release!: () => void
   let entered!: () => void
   const enteredRead = new Promise<void>(resolve => { entered = resolve })
@@ -303,7 +293,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
     resultReads++
     const target = new URL(route.request().url()), passageID = target.pathname.split("/").at(-1)!
     const source = data.history.find(item => item.passageID === passageID)!
-    const text = `## Archived result ${data.settledCount}\n\nExact native journal result.`
+    const text = `## Archived result ${data.history.length}\n\nExact native journal result.`
     const result: MissionRecurrenceReadPage = { version: 1, projectID: "project", scheduleID: data.id, passageID,
       missionID: source.missionID!, conversationID: source.conversationID!, revision: 7,
       section: 0, sectionCount: 1, sections: [{ index: 0, label: "summary", title: "", raw: false }],
@@ -313,7 +303,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    const eye = page.getByRole("button", { name: "Read passage history for rec_live", exact: true })
+    const eye = page.getByRole("button", { name: "Read passage history for Daily review live", exact: true })
     await eye.click()
     const reader = page.locator(".mission-reader")
     await reader.getByText("No archived passages yet.").waitFor()
@@ -330,20 +320,20 @@ test("native calendar archive event updates visible reader/list once; hidden con
     assert.equal(reads, beforeProgress, "progress, finite Mission events and malformed/foreign events do not refresh calendars")
     // The right panel is hidden; the central result reader remains an actual visible consumer.
     await page.evaluate(() => window.passageHistory.activate(false))
-    data = { ...data, revision: 4, settledCount: 1, latestResult: receipt, history: [receipt] }
+    data = { ...data, revision: 4, latestResult: receipt, history: [receipt] }
     await page.evaluate(() => { for (const revision of [2, 3, 4]) window.passageHistory.scheduleChanged("rec_live", revision) })
     await reader.getByRole("heading", { name: "Archived result 1", exact: true }).waitFor()
     assert.equal(reads, beforeProgress + 1, "one typed native archive burst produces one bounded snapshot read")
     assert.equal(resultReads, 1, "only the exact newly archived result page is demanded")
     assert.equal(await eye.getAttribute("aria-pressed"), "true")
-    const next = { ...receipt, passageID: "rcp_live_hidden", messageID: "msg_hidden", missionID: "msn_hidden", conversationID: "ses_hidden" }
+    const next = { ...receipt, passageID: "rcp_live_hidden", missionID: "msn_hidden", conversationID: "ses_hidden" }
     await page.evaluate(() => window.passageHistory.readerVisible(false))
     const hiddenReads = reads
-    data = { ...data, revision: 6, settledCount: 2, latestResult: next, history: [receipt, next] }
+    data = { ...data, revision: 6, latestResult: next, history: [receipt, next] }
     await page.evaluate(() => window.passageHistory.scheduleChanged("rec_live", 6))
     await page.waitForTimeout(130)
     assert.equal(reads, hiddenReads, "no consumer visible: retain cache without background reads or a UI scheduler")
-    assert.equal(await page.getByText("Latest result: Completed (archived)", { exact: true }).count(), 1, "hidden list retains confirmed data")
+    assert.equal(await page.getByRole("button", { name: "Daily review live", exact: true }).count(), 1, "hidden list retains confirmed data")
     await page.evaluate(() => { window.passageHistory.activate(true); window.passageHistory.readerVisible(true) })
     await reader.getByRole("heading", { name: "Archived result 2", exact: true }).waitFor()
     assert.equal(reads, hiddenReads + 1, "activation coalesces reader/list demand into one authoritative revalidation")
@@ -402,7 +392,7 @@ test("numeric reader drafts commit on Enter/blur without losing keyboard focus d
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Read passage history for rec_keyboard", exact: true }).click()
+    await page.getByRole("button", { name: "Read passage history for Daily review keyboard", exact: true }).click()
     const result = page.locator(".mission-recurrence-result")
     await result.getByText("Verified artifact section 1, page 1", { exact: true }).waitFor()
     const sectionInput = result.getByRole("spinbutton").nth(0), pageInput = result.getByRole("spinbutton").nth(1)

@@ -6,6 +6,8 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { mkdir } from "node:fs/promises"
+import path from "node:path"
 import type {} from "./fixtures/mission-editor-lifetime"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -225,4 +227,79 @@ test("creation waits for owned defaults and sends their exact snapshot without o
     assert.equal(writes[0].directory, undefined)
     assert.deepEqual(catalogs, []); assert.deepEqual(errors, [])
   } finally { release(); await page.close() }
+})
+
+test("recurring creation shares the draft, prefills its title and picks named conversations without budgets", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 700, height: 1100 } })
+  const errors: string[] = [], searches: URL[] = [], writes: Array<Record<string, unknown>> = []
+  const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
+    roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: {
+    missionProfileDefaults: [{ template: "custom", profiles, taskMode: "independent" }],
+  } } }))
+  await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() === "POST") {
+      writes.push(route.request().postDataJSON())
+      return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown result" } })
+    }
+    return route.fulfill({ json: { version: 1, available: true, projectID: "project", missions: [], schedules: [], generatedAt: 1 } })
+  })
+  await page.route("**/workspaces/fixture/instance/api/location**", route => route.fulfill({ json: {
+    directory: "/fixture", project: { id: "project" },
+  } }))
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const request = new URL(route.request().url()); searches.push(request)
+    return route.fulfill({ json: { data: [{ id: "ses_reference", title: "Daily reference conversation" }], cursor: {} } })
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    assert.equal(await form.locator("details").first().locator("summary").innerText(), "Saved briefs")
+    await form.getByLabel("Objective", { exact: true }).fill("Daily review\nReview the latest work and report changes.")
+    const mode = form.locator("select").filter({ has: page.locator('option[value="recurring"]') })
+    await mode.selectOption("recurring")
+    const title = form.locator('input[maxlength="200"]')
+    assert.equal(await title.inputValue(), "Daily review")
+    assert.equal(await form.locator("textarea").first().inputValue(), "Daily review\nReview the latest work and report changes.")
+    assert.equal(await form.locator('input[type="number"]').count(), 0)
+    assert.doesNotMatch(await form.innerText(), /Publications|Native calls|Effect budget/)
+    assert.equal(await form.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
+    const overrides = form.locator("details").filter({ has: page.locator("summary").filter({ hasText: /^Agents · defaults and overrides$/ }) })
+    assert.equal(await overrides.evaluate(element => (element as HTMLDetailsElement).open), false)
+    await form.locator("textarea").first().fill("Updated daily review\nKeep the reference conversation in context.")
+    assert.equal(await title.inputValue(), "Updated daily review")
+    await title.fill("My daily schedule")
+    await mode.selectOption("once")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Updated daily review\nKeep the reference conversation in context.")
+    await mode.selectOption("recurring")
+    assert.equal(await title.inputValue(), "My daily schedule")
+    await form.locator(".mission-conversation-picker summary").click()
+    await form.getByLabel("Search sessions", { exact: true }).fill("Daily")
+    await form.getByLabel("Daily reference conversation", { exact: true }).check()
+    assert.ok(searches.some(request => request.searchParams.get("search") === "Daily"))
+    assert.ok(searches.every(request => request.searchParams.get("project") === "project"))
+    assert.doesNotMatch(await form.innerText(), /ses_reference/)
+    await form.locator(".mission-conversation-picker summary").click()
+    await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    const captureDirectory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
+    if (captureDirectory) {
+      await mkdir(captureDirectory, { recursive: true })
+      await page.screenshot({ path: path.join(captureDirectory, "creation-recurring.png"), fullPage: true })
+    }
+    await form.getByRole("button", { name: "Save", exact: true }).click()
+    await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    assert.equal(writes.length, 1)
+    assert.equal(writes[0].title, "My daily schedule")
+    assert.equal(writes[0].instructions, "Updated daily review\nKeep the reference conversation in context.")
+    assert.deepEqual(writes[0].watchedConversationIDs, ["ses_reference"])
+    assert.deepEqual(writes[0].profiles, profiles)
+    assert.equal(writes[0].taskMode, "independent")
+    assert.equal("budgets" in writes[0], false)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
 })

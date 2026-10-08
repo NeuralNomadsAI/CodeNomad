@@ -9,6 +9,7 @@ import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
 
@@ -60,8 +61,11 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       }
       return route.fulfill({ json: { available: true, projectID: "project", missions: ordinary ? [ordinary] : [], generatedAt: 1, discardedEvents: 0 } })
     }
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [{ id: "rec_current", revision: 2, scheduleRevision: 1,
-      state: "unavailable", clock: { time: "08:15", zone: "UTC" }, pendingPassageID: passageID, settledCount: passageID ? 0 : 1 }] } })
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [{ id: "rec_current", title: "Daily commit review", revision: 2,
+      state: "interrupted", clock: { time: "08:15", zone: "UTC" }, nextDueAt: null, actions: [],
+      pending: passageID ? { passageID, status: "running", missionID: mission.id, conversationID: "ses_coordinator" } : null,
+      latestResult: passageID ? null : { passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" },
+      history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies MissionRecurrenceSnapshot })
     if (path.endsWith("/rec_current/current")) {
       reads++
       if (!passageID) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_current", passageID: null } })
@@ -90,7 +94,7 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
   })
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
-    await page.getByRole("button", { name: "08:15 · UTC" }).click()
+    await page.getByRole("button", { name: "Daily commit review", exact: true }).click()
     await page.getByText("Review commits", { exact: true }).waitFor()
     assert.equal(reads, 1)
     assert.match(await page.locator(".mission-briefing-objective").innerText(), /Finite recurring review/)
@@ -147,7 +151,7 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts")).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))
     assert.deepEqual(nativeReads, [], "current passage Work reuses only the exact loaded task actor and native parent")
-    await page.getByRole("button", { name: "Technical details", exact: true }).click()
+    await page.getByRole("button", { name: "Technical details", exact: true }).first().click()
     await page.getByRole("button", { name: /Conversations/ }).click()
     await page.getByText("ses_child", { exact: true }).first().waitFor()
     fail = true
@@ -168,7 +172,8 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     passageID = null
     await page.evaluate(() => (window as any).passageFixture.settled())
     await page.getByText("No passage is currently admitted.", { exact: true }).waitFor()
-    await page.getByText("1 settled passages", { exact: true }).waitFor()
+    await page.getByRole("button", { name: /Passage history/, exact: false }).click()
+    await page.getByText("Completed (archived)", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-route-task").count(), 0, "settlement after the final session event removes former passage Work through native invalidation")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("Objective", { exact: true }).fill("One-shot from recurring")

@@ -86,7 +86,7 @@ export function MissionListItem(props: MissionListItemProps) {
   return <div ref={row} class="mission-list-item" data-status={props.statusKind}
     classList={{ "mission-list-item-compact": props.compact, "mission-list-item-selected": props.selected, "mission-list-item-overflow": collapsed() }}>
     <Show when={props.onSelect} fallback={<div class="mission-list-text" title={props.title}>{props.text}</div>}>
-      <button type="button" class="mission-list-text mission-list-select" title={props.title}
+      <button type="button" class="mission-list-text mission-list-select" title={props.title} aria-label={props.title}
         aria-current={props.selected ? "true" : undefined} onClick={() => props.onSelect?.()}>{props.text}</button>
     </Show>
     <div ref={footer} class="mission-list-footer">

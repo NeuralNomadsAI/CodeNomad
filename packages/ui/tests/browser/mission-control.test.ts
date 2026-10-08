@@ -576,12 +576,12 @@ test("mission journey exposes honest progress, real human requests and result-fi
     value.actors = [{ sessionId: "ses_background", title: "Navigation investigator", kind: "specialist", managed: false, roles: ["research"], location: { directory: "fixture" }, joinedAt: 1 }]
     await fixtureCall(page, "seedActor")
     await refresh()
-    await progress.getByText("0 tasks completed · 2 remaining", { exact: true }).waitFor()
-    await progress.getByText("Current activity not confirmed", { exact: true }).waitFor()
+    await progress.getByText("0 tasks completed · 2 tasks remaining", { exact: true }).waitFor()
+    await progress.getByText("Activity unknown", { exact: true }).waitFor()
     assert.equal(await progress.getByText("Active conversations", { exact: true }).count(), 0, "admission is not evidence of running work")
     activity = [{ sessionId: "ses_background", state: "running" }]
     await refresh()
-    await progress.getByText("Conversation activity observed", { exact: true }).waitFor()
+    await progress.getByText("Working", { exact: true }).waitFor()
     await progress.getByRole("button", { name: "Open Navigation investigator", exact: true }).waitFor()
     await capture("during-wide", 1280, "440px")
 
@@ -651,7 +651,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     ]
     value.reports = [blocked, inspectResult, verifyResult, old]
     await refresh()
-    await progress.getByText("2 tasks completed · 0 remaining", { exact: true }).waitFor()
+    await progress.getByText("2 tasks completed · 0 tasks remaining", { exact: true }).waitFor()
     assert.equal(await progress.getByText(old.summary, { exact: false }).count(), 0)
     assert.equal(await progress.getByText(verifyResult.summary, { exact: true }).filter({ visible: true }).count(), 0)
     await openResultHistory(page)
@@ -768,7 +768,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     await page.waitForFunction(() => !(document.querySelector('[aria-label="Pause mission"]') as HTMLButtonElement)?.disabled)
     assert.equal(await play.isDisabled(), true)
     await page.getByRole("button", { name: "Pause mission", exact: true }).click()
-    await page.getByRole("alert").getByText("Control incomplete. Retry or refresh the mission.").waitFor()
+    await page.getByRole("alert").getByText("Action not yet confirmed. Check status before retrying.").waitFor()
     await fixtureCall(page, "mount", false)
     await fixtureCall(page, "mount", true)
     await page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true }).click()
@@ -782,6 +782,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     await page.waitForFunction(() => !(document.querySelector('[aria-label="Pause mission"]') as HTMLButtonElement)?.disabled)
     assert.equal(await play.evaluate(el => el === (window as any).savedPlayControl), true)
     await page.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
+    await page.getByRole("group", { name: "Stop this mission permanently?" }).getByRole("button", { name: "Stop mission permanently", exact: true }).click()
     await page.getByRole("button", { name: "Objective lifecycle", exact: true }).waitFor()
     await missionRows(page).getByText("Stopped", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-lifecycle").count(), 0)
@@ -829,7 +830,7 @@ test("disclosures, mission selection and reader survive native invalidations, re
     await page.locator(".mission-reader").waitFor()
     assert.equal(await reports.getAttribute("aria-expanded"), "true")
     assert.equal(await page.getByRole("button", { name: "Work", exact: true }).getAttribute("aria-expanded"), "false")
-    assert.equal(await missionRows(page).locator('.mission-list-select[aria-current="true"]').innerText(), "Objective two")
+    assert.equal(await missionRows(page).locator('.mission-list-select[aria-current="true"]').innerText(), "One-time Objective two")
     await page.getByRole("button", { name: "Back to chat" }).click()
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.screenshot({ path: screenshotPath("mission-control-browser"), fullPage: true })
@@ -1128,7 +1129,7 @@ test("top-level mission rows expose two-line titles, semantic states, readers an
     }
     assert.equal(await page.locator(".mission-control-header h2, .mission-control-overview").count(), 0)
     assert.equal(await page.getByRole("button", { name: "Missions", exact: true }).count(), 0)
-    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Ask a question", "Give direction", "Technical details", "Recurring schedules"])
+    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Ask a question", "Give direction", "Technical details"])
     assert.equal(await page.getByRole("button", { name: "Technical details", exact: true }).getAttribute("aria-expanded"), "false")
     assert.equal(await page.getByRole("button", { name: "Give direction", exact: true }).getAttribute("aria-expanded"), "false")
     await openTechnicalDetails(page)

@@ -7,6 +7,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
+import { captureMissionView } from "./mission-view-capture"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -59,6 +60,11 @@ test("direct result reading preserves retained late sources and hides technical 
     assert.equal(await reader.locator("details").evaluate(element => (element as HTMLDetailsElement).open), false)
     assert.equal(await reader.locator("pre").isVisible(), false)
     assert.equal(await reader.locator("[data-notification]").isVisible(), false)
+    const summary = reader.locator("article").first()
+    const inset = await summary.evaluate(node => node.getBoundingClientRect().left - node.closest(".window-body")!.getBoundingClientRect().left)
+    assert(inset < 32, `summary must align with reader content, not center a short line (${inset}px)`)
+    assert.equal(await summary.getByRole("spinbutton").count(), 0, "one-page summary has no misleading duplicate page number")
+    await captureMissionView(page, "result-report-desktop")
     await reader.locator("summary").click()
     assert.equal(await reader.locator("[data-notification]").isVisible(), true)
     const artifact = reader.locator("article").filter({ has: page.getByRole("heading", { name: en["missions.control.artifact"], exact: true }) })
@@ -66,6 +72,11 @@ test("direct result reading preserves retained late sources and hides technical 
     await pageInput.fill((await pageInput.getAttribute("max"))!)
     await artifact.getByText(/RAW_TAIL/).waitFor()
     assert((await artifact.locator("pre").textContent())!.length <= 9001)
+    const gap = await artifact.locator(".mission-reader-pagination").evaluate(node => {
+      const text = node.querySelector("span")!.getBoundingClientRect(), input = node.querySelector("input")!.getBoundingClientRect()
+      return input.left - text.right
+    })
+    assert(gap >= 4, "page label and editable page number are visibly separate")
     assert.deepEqual(mutations, [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -99,5 +110,33 @@ test("a historical non-late report is explicitly identified as a previous attemp
     await reader.getByText(en["missions.progress.previousAttempt"], { exact: true }).waitFor()
     await reader.getByText("Retained late result", { exact: true }).waitFor()
     assert.equal(await reader.locator("details").evaluate(element => (element as HTMLDetailsElement).open), false)
+  } finally { await page.close() }
+})
+
+test("a current one-line remote summary has no Page 1 of 11 illusion and aligns with reader prose", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), value = snapshot()
+  try {
+    await page.route("**/api/**", route => {
+      const path = new URL(route.request().url()).pathname
+      if (path.endsWith("/schedule/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", mission: value.missions[0] } })
+      if (path.endsWith("/schedule/current/passage/content")) return route.fulfill({ json: {
+        version: 1, projectID: "project", missionID: "mission", scheduleID: "schedule", passageID: "passage", revision: 2, page: 0, pageCount: 1,
+        sourceText: new URL(route.request().url()).searchParams.get("section") === "summary" ? "Exact current summary" : "Exact section", markdownText: null,
+      } })
+      return route.fulfill({ json: path.endsWith("/missions") ? value : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).resultReader))
+    await page.evaluate(() => (window as any).resultReader.showCurrent())
+    const summary = page.locator(".mission-reader article").first()
+    await summary.getByText("Exact current summary", { exact: true }).waitFor()
+    assert.equal(await summary.getByRole("spinbutton").count(), 0)
+    assert.equal(await summary.locator(".mission-reader-pagination").count(), 0)
+    const inset = await summary.evaluate(node => node.getBoundingClientRect().left - node.closest(".window-body")!.getBoundingClientRect().left)
+    assert(inset < 32)
+    await captureMissionView(page, "current-report-desktop")
+    await page.setViewportSize({ width: 390, height: 800 })
+    await page.evaluate(() => { document.documentElement.dir = "rtl" })
+    await captureMissionView(page, "current-report-390-rtl")
   } finally { await page.close() }
 })

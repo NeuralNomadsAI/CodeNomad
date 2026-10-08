@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
-import type { MissionRecurrenceReadPage, MissionRecurrenceReceipt } from "../../../server/src/api-types"
+import type { MissionRecurrenceReadPage } from "../../../server/src/api-types"
+import type { RecurrenceHistoryItem } from "../stores/mission-recurrence"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
@@ -15,7 +16,7 @@ const labels: Record<MissionRecurrenceReadPage["sections"][number]["label"], str
 }
 
 /** Only mounted visible readers demand a bounded journal page; references remain in the parent on failure. */
-export function MissionRecurrencePassageReader(props: { instanceId: string; scope: string; projectID: string; scheduleID: string; receipt: MissionRecurrenceReceipt }) {
+export function MissionRecurrencePassageReader(props: { instanceId: string; scope: string; projectID: string; scheduleID: string; receipt: RecurrenceHistoryItem }) {
   const { t } = useI18n()
   const [selection, setSelection] = createSignal({ identity: "", section: 0, page: 0 }), [refresh, setRefresh] = createSignal(0)
   const [value, setValue] = createSignal<MissionRecurrenceReadPage>(), [error, setError] = createSignal(false), [loading, setLoading] = createSignal(false)

@@ -1,0 +1,25 @@
+.mission-schedule-detail {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm);
+  border-block-start: 1px solid var(--border-base);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.mission-schedule-detail > p { margin: 0; color: var(--text-secondary); }
+.mission-schedule-detail .window-header { min-width: 0; }
+.mission-schedule-detail .window-title { flex: 1; min-width: 0; }
+.mission-recurrence-history-item {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding-block: var(--space-xs);
+}
+.mission-recurrence-controls [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}

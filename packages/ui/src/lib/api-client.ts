@@ -1,6 +1,7 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
-import type { RecurrenceControlStatus } from "../../../server/src/missions/recurrence-control-contract"
+import type { MissionRecurrenceSnapshot } from "../stores/mission-recurrence"
+import type { RecurrenceAction, RecurrenceControlStatus } from "./mission-recurrence-control"
 import { recurrenceControlStatusInput, type RecurrenceControlIntent } from "./mission-recurrence-control"
 import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
@@ -19,7 +20,6 @@ import type {
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
-  MissionRecurrenceSnapshot,
   MissionRecurrenceReadPage,
   MissionMap,
   OpenCodeUpdateResponse,
@@ -637,8 +637,8 @@ export const serverApi = {
   fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
     return request<MissionRecurrenceSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
   },
-  controlMissionRecurrence(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<Partial<RecurrenceControlStatus>> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
+  controlMissionRecurrence(instanceId: string, scheduleID: string, action: RecurrenceAction, input: RecurrenceControlIntent): Promise<Partial<RecurrenceControlStatus>> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/${action}`, {
       method: "POST", body: JSON.stringify(input),
     })
   },
@@ -653,10 +653,9 @@ export const serverApi = {
       ...(input.revision === undefined ? {} : { revision: String(input.revision) }) })
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/passages/${encodeURIComponent(passageID)}?${query}`, { signal })
   },
-  createMissionRecurrence(instanceId: string, input: { requestID: string; instructions: string;
+  createMissionRecurrence(instanceId: string, input: { requestID: string; title: string; instructions: string;
     notes?: string; template: MissionMap["template"];
     clock: { time: string; zone: string }; watchedConversationIDs: string[];
-    budgets: { effects: number; nativeCalls: number; inboxMessages: number; publications: number };
     profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
   }): Promise<{ schedule: MissionRecurrenceSnapshot["schedules"][number] }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })

@@ -20,6 +20,9 @@ export function MissionProgress(props: {
       ? `missions.control.run.${props.mission.runState}`
       : progress().activeWorkers.length || progress().coordinatorWorking ? "missions.progress.working"
         : idle() ? "missions.tracking.idle" : "missions.progress.unconfirmed"
+  const countText = (kind: "completed" | "remaining", count: number) => <For each={t(`missions.progress.${kind}.${count === 1 ? "one" : "other"}`, { count: "\u0000" }).split("\u0000")}>{(text, index) => <>
+    {index() > 0 && <bdi>{count.toLocaleString(locale())}</bdi>}{text}
+  </>}</For>
   return <section class="mission-progress" aria-label={t("missions.progress.title")}>
     <p class="mission-progress-state" title={props.observedAt ? t("missions.tracking.observed", { date: new Date(props.observedAt).toLocaleString(locale()) }) : undefined}>{t(status())}</p>
     <Show when={props.observedAt}><time class="sr-only" dateTime={new Date(props.observedAt!).toISOString()}>
@@ -27,7 +30,9 @@ export function MissionProgress(props: {
     </time></Show>
     <Show when={progress().tasks.length} fallback={<p>{t(props.mission.runState === "prepared"
       ? "missions.progress.prepared" : "missions.progress.noPlan")}</p>}>
-      <p title={t("missions.tracking.countHint")} aria-description={t("missions.tracking.countHint")}>{t("missions.progress.counts", { completed: progress().completed, remaining: progress().open.length })}</p>
+      <p title={t("missions.tracking.countHint")} aria-description={t("missions.tracking.countHint")}>
+        {countText("completed", progress().completed)}{" · "}{countText("remaining", progress().open.length)}
+      </p>
     </Show>
     <Show when={progress().activeWorkers.length}><div class="mission-progress-tasks"><span>{t("missions.progress.now")}</span>
       <For each={progress().activeWorkers}>{worker => {

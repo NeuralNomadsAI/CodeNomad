@@ -90,6 +90,10 @@
 }
 
 .mission-control > .mission-disclosure { border-top: 1px solid var(--border-base); }
-.mission-lifecycle { display: flex; align-items: center; gap: var(--space-sm); padding-block: var(--space-xs); }
+.mission-lifecycle { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding-block: var(--space-xs); }
 .mission-lifecycle-actions { display: flex; flex-shrink: 0; }
 .mission-lifecycle small { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-lifecycle > .mission-profile-summary { flex-basis: 100%; margin: 0; }
+.mission-lifecycle-actions button { gap: var(--space-xs); }
+.mission-lifecycle-actions .mission-lifecycle-start { width: auto; padding-inline: var(--space-sm); white-space: nowrap; }
+.mission-stop-confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); flex-basis: 100%; font-size: var(--font-size-sm); }

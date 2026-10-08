@@ -1,11 +1,37 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
-import type { MissionRecurrenceSnapshot, MissionRecurrenceCurrent } from "../../../server/src/api-types"
+import type { MissionRecurrenceCurrent } from "../../../server/src/api-types"
+
+export type RecurrenceAction = "play" | "pause" | "stop" | "resume" | "run-now"
+export interface RecurrenceHistoryItem {
+  passageID: string; dueAt: number; settledAt: number
+  outcome: "completed" | "failed" | "stopped" | "ended-without-report"
+  missionID?: string; conversationID?: string
+}
+export interface RecurrenceSchedule {
+  id: string; title: string; clock: { time: string; zone: string }; nextDueAt: number | null
+  state: "paused" | "running" | "interrupted" | "stopped"
+  interruptionReason?: { kind: "service-restart" | "error"; code?: string }
+  pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain"; missionID?: string; conversationID?: string } | null
+  latestResult: RecurrenceHistoryItem | null; history: RecurrenceHistoryItem[]; revision: number
+  actions: RecurrenceAction[]
+  control?: { requestID: string; action: string; status: "pending" | "completed" | "partial" | "unknown" }
+}
+export interface MissionRecurrenceSnapshot { version: 1; projectID: string; schedules: RecurrenceSchedule[] }
 import { readRecurrenceScheduleChanged } from "../../../server/src/missions/recurrence-events"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
+import { copyMissionProfiles } from "./mission-creation-drafts"
+
+export type RecurrenceDraft = Parameters<typeof serverApi.createMissionRecurrence>[1]
+const heldDrafts = new Map<string, Readonly<RecurrenceDraft>>()
+export function uncertainRecurrence(scope: string) { return heldDrafts.get(scope) }
+export function holdRecurrence(scope: string, draft: RecurrenceDraft) {
+  if (!heldDrafts.has(scope)) heldDrafts.set(scope, { ...draft, clock: { ...draft.clock },
+    watchedConversationIDs: [...draft.watchedConversationIDs], profiles: copyMissionProfiles(draft.profiles)! })
+}
 
 interface RecurrenceEntry {
   key: string
