@@ -56,6 +56,7 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
+import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
@@ -168,6 +169,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
+  // Remote Control admission runs before CORS, authentication and routing.
+  const remoteGate = deps.remoteControlManager.gate()
+  app.addHook("onRequest", (request, reply, done) => {
+    if (!gateRemoteRequest(request, reply, remoteGate)) done()
+  })
+
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
   const getSelfOrigins = (): Set<string> => {
     const origins = new Set<string>()
@@ -241,8 +248,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
-    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout"])
-    const publicPagePaths = new Set(["/login"])
+    // Pairing routes answer only through the Remote Control ingress.
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH])
+    const publicPagePaths = new Set(["/login", PAIR_PAGE_PATH])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
     }

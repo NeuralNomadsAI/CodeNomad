@@ -1,60 +1,64 @@
+import type { IncomingMessage, ServerResponse } from "node:http"
+import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tunnel"
 import type {
   RemoteControlDevice,
   RemoteControlPairing,
   RemoteControlStartResponse,
   RemoteControlStatus,
-} from "@codenomad/remote-control-protocol"
-import { encodeBase64, REMOTE_CONTROL_PROTOCOL_VERSION } from "@codenomad/remote-control-protocol"
-import { fetch } from "undici"
+} from "../api-types"
 import type { Logger } from "../logger"
-import { RemoteControlConnector, normalizedRelayUrl, type ConnectorState } from "./connector"
-import type { RemoteControlIdentity } from "./identity"
-import { parseRelayDevices, parseRelayPairing, readRelayJson, type RelayResponse } from "./relay-response"
+import { deviceNameFromUserAgent, pairingFromCode, type RemoteDeviceRegistry } from "./devices"
+import type { RemoteGateDeps } from "./gate"
+import { RemoteIngress } from "./ingress"
+
+// First use provisions the device tunnel and its certificate, which can take a minute.
+const START_TIMEOUT_MS = 5 * 60_000
+
+type OpenTunnel = (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
 
 interface ManagerOptions {
-  identity: RemoteControlIdentity
-  relayUrl: string
-  localUrl: () => string
-  localCookie: () => string
+  registry: RemoteDeviceRegistry
+  /** Routes a decrypted request into the CodeNomad HTTP application. */
+  router: () => ((request: IncomingMessage, response: ServerResponse) => void) | null
   logger: Logger
+  /** Self-hosted OpenTunnel API; the hosted relay when omitted. */
+  tunnelApi?: string
+  openTunnel?: OpenTunnel
 }
 
 export class RemoteControlManager {
-  private state: ConnectorState = "stopped"
+  private readonly ingress: RemoteIngress
+  private tunnel: RemoteTunnel | null = null
+  private starting: Promise<RemoteTunnel> | null = null
+  // Incremented by every stop, so a start still provisioning cannot outlive it.
+  private generation = 0
+  private startingGeneration = -1
+  private enabled = false
   private error: string | undefined
   private lastConnectedAt: string | undefined
-  private enabled = false
-  private pairedDevices = 0
-  private readonly connector: RemoteControlConnector
 
   constructor(private readonly options: ManagerOptions) {
-    normalizedRelayUrl(options.relayUrl)
-    this.connector = new RemoteControlConnector({
-      relayUrl: options.relayUrl,
-      hostId: options.identity.hostId,
-      secret: options.identity.secret,
-      encryptionPrivateKey: options.identity.encryptionPrivateKey,
-      localUrl: options.localUrl,
-      localCookie: options.localCookie,
-      logger: options.logger,
-      onState: (state, error) => {
-        this.state = state
-        this.error = error
-        if (state === "connected") this.lastConnectedAt = new Date().toISOString()
-      },
+    this.ingress = new RemoteIngress((request, response) => {
+      const route = options.router()
+      if (route) route(request, response)
+      else response.writeHead(503).end()
     })
   }
 
   status(): RemoteControlStatus {
-    const relay = normalizedRelayUrl(this.options.relayUrl)
+    const tunnel = this.tunnel
+    const tunnelState = tunnel?.status().state
+    const state: RemoteControlStatus["state"] = !this.enabled
+      ? this.error ? "error" : "stopped"
+      : !tunnel ? "connecting"
+      : tunnelState === "stopped" ? "error"
+      : tunnelState ?? "connecting"
     return {
       manageable: true,
       enabled: this.enabled,
-      state: this.state,
-      hostId: this.options.identity.hostId,
-      relayUrl: relay.origin,
-      remoteUrl: remoteOrigin(relay, this.options.identity.hostId),
-      pairedDevices: this.pairedDevices,
+      state,
+      ...(tunnel ? { remoteUrl: tunnel.url } : {}),
+      pairedDevices: this.options.registry.list().length,
       ...(this.lastConnectedAt ? { lastConnectedAt: this.lastConnectedAt } : {}),
       ...(this.error ? { error: this.error } : {}),
     }
@@ -62,92 +66,114 @@ export class RemoteControlManager {
 
   async start(): Promise<RemoteControlStartResponse> {
     this.enabled = true
-    this.connector.start()
-    await this.waitForConnection()
-    const pairing = await this.createPairing()
-    return { status: this.status(), pairing }
+    this.error = undefined
+    const tunnel = await this.ensureTunnel()
+    return { status: this.status(), pairing: this.pairingFor(tunnel) }
   }
 
-  stop(): RemoteControlStatus {
+  async stop(): Promise<RemoteControlStatus> {
     this.enabled = false
-    this.connector.stop()
+    this.error = undefined
+    this.generation += 1
+    await this.release()
     return this.status()
   }
 
-  async createPairing(): Promise<RemoteControlPairing> {
-    if (!this.connector.isConnected()) throw new Error("Remote Control is not connected")
-    const relay = normalizedRelayUrl(this.options.relayUrl)
-    const response = await fetch(new URL(`/api/hosts/${this.options.identity.hostId}/pair`, relay), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.options.identity.secret}` },
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!response.ok) throw new Error(await relayError(response, "Could not create a pairing link"))
-    const payload = parseRelayPairing(await readRelayJson(response))
-    if (!payload) throw new Error("Relay returned an invalid pairing link")
-    const origin = remoteOrigin(relay, this.options.identity.hostId)
-    const pairingFragment = encodeBase64(new TextEncoder().encode(JSON.stringify({
-      protocol: REMOTE_CONTROL_PROTOCOL_VERSION,
-      token: payload.token,
-      hostPublicKey: this.options.identity.encryptionPublicKey,
-    })))
-    return { url: `${origin}/__codenomad/pair#${encodeURIComponent(pairingFragment)}`, expiresAt: payload.expiresAt }
+  createPairing(): RemoteControlPairing {
+    if (!this.enabled || !this.tunnel) throw new Error("Remote Control is not connected")
+    return this.pairingFor(this.tunnel)
   }
 
-  async devices(): Promise<RemoteControlDevice[]> {
-    const response = await this.hostRequest("devices")
-    const devices = parseRelayDevices(await readRelayJson(response))
-    if (!devices) throw new Error("Relay returned an invalid remote device list")
-    this.pairedDevices = devices.length
-    return devices
+  exchangePairing(code: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+    if (!this.enabled || !this.tunnel) return null
+    return this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent))
   }
 
-  async revokeDevice(deviceId: string): Promise<void> {
-    const response = await this.hostRequest(`devices/${encodeURIComponent(deviceId)}`, "DELETE")
-    if (!response.ok) throw new Error(await relayError(response, "Could not revoke the remote device"))
-    this.pairedDevices = Math.max(0, this.pairedDevices - 1)
+  devices(): RemoteControlDevice[] {
+    return this.options.registry.list()
+  }
+
+  revokeDevice(id: string): boolean {
+    const revoked = this.options.registry.revoke(id)
+    // Revocation also ends live HTTP and SSE connections already admitted.
+    this.ingress.disconnectDevice(id)
+    return revoked
+  }
+
+  gate(): RemoteGateDeps {
+    return {
+      publicHost: () => (this.enabled ? this.tunnel?.hostname ?? null : null),
+      authenticate: (token) => this.options.registry.authenticate(token),
+      assignDevice: (socket, deviceId) => this.ingress.assignDevice(socket, deviceId),
+    }
   }
 
   shutdown(): Promise<void> {
     this.enabled = false
-    return this.connector.shutdown()
+    this.generation += 1
+    return this.release()
   }
 
-  private async hostRequest(path: string, method = "GET") {
-    const relay = normalizedRelayUrl(this.options.relayUrl)
-    const response = await fetch(new URL(`/api/hosts/${this.options.identity.hostId}/${path}`, relay), {
-      method,
-      headers: { Authorization: `Bearer ${this.options.identity.secret}` },
-      signal: AbortSignal.timeout(10_000),
+  private ensureTunnel(): Promise<RemoteTunnel> {
+    if (this.tunnel) return Promise.resolve(this.tunnel)
+    if (this.starting && this.startingGeneration === this.generation) return this.starting
+    // A start abandoned by stop must settle before a new one reuses the ingress.
+    const previous = this.starting?.catch(() => undefined) ?? Promise.resolve()
+    const generation = this.generation
+    const starting: Promise<RemoteTunnel> = previous.then(() => this.open(generation)).finally(() => {
+      if (this.starting === starting) this.starting = null
     })
-    if (!response.ok) throw new Error(await relayError(response, "Remote Control relay request failed"))
-    return response
+    this.starting = starting
+    this.startingGeneration = generation
+    return starting
   }
 
-  private waitForConnection(timeoutMs = 10_000): Promise<void> {
-    if (this.connector.isConnected()) return Promise.resolve()
-    const started = Date.now()
-    return new Promise((resolve, reject) => {
-      const timer = setInterval(() => {
-        if (this.connector.isConnected()) {
-          clearInterval(timer)
-          resolve()
-        } else if (Date.now() - started >= timeoutMs) {
-          clearInterval(timer)
-          reject(new Error(this.error ?? "Timed out connecting to the Remote Control relay"))
-        }
-      }, 50)
-      timer.unref()
-    })
+  private async open(generation: number): Promise<RemoteTunnel> {
+    const openTunnel = this.options.openTunnel ?? (async (options: OpenRemoteTunnelOptions) => (await import("./tunnel-runtime")).openRemoteTunnel(options))
+    try {
+      const target = await this.ingress.start()
+      const tunnel = await openTunnel({
+        route: this.options.registry.route(),
+        target,
+        ...(this.options.tunnelApi ? { api: this.options.tunnelApi } : {}),
+        signal: AbortSignal.timeout(START_TIMEOUT_MS),
+      })
+      if (generation !== this.generation) {
+        await tunnel.close()
+        throw new Error("Remote Control was stopped")
+      }
+      this.tunnel = tunnel
+      this.lastConnectedAt = new Date().toISOString()
+      void tunnel.closed.then((error) => {
+        if (this.tunnel !== tunnel) return
+        this.tunnel = null
+        this.error = error ?? "Remote Control tunnel stopped"
+        this.enabled = false
+        this.options.registry.cancelPairing()
+        void this.ingress.stop()
+        this.options.logger.warn({ err: error }, "Remote Control tunnel stopped")
+      })
+      this.options.logger.info({ url: tunnel.url }, "Remote Control connected")
+      return tunnel
+    } catch (error) {
+      if (generation === this.generation) await this.ingress.stop()
+      if (generation === this.generation && this.enabled) {
+        this.enabled = false
+        this.error = error instanceof Error ? error.message : String(error)
+      }
+      this.options.logger.warn({ err: error }, "Remote Control failed to start")
+      throw error
+    }
   }
-}
 
-function remoteOrigin(relay: URL, hostId: string): string {
-  return `${relay.protocol}//${hostId}.${relay.host}`
-}
+  private async release(): Promise<void> {
+    this.options.registry.cancelPairing()
+    const tunnel = this.tunnel
+    this.tunnel = null
+    await Promise.allSettled([tunnel?.close(), this.ingress.stop()])
+  }
 
-async function relayError(response: RelayResponse, fallback: string): Promise<string> {
-  const payload = await readRelayJson(response).catch(() => null)
-  const error = typeof payload === "object" && payload !== null ? (payload as { error?: unknown }).error : undefined
-  return typeof error === "string" && error.length <= 512 ? error : `${fallback} (HTTP ${response.status})`
+  private pairingFor(tunnel: RemoteTunnel): RemoteControlPairing {
+    return pairingFromCode(tunnel.url, this.options.registry.createPairing())
+  }
 }

@@ -2,11 +2,9 @@
 const fs = require("fs")
 const path = require("path")
 const { spawnSync } = require("child_process")
-const { pathToFileURL } = require("url")
 const { MANAGED_NODE_VERSION } = require("./prepare-node-runtime.cjs")
 
 const requiredPackages = [
-  "@codenomad/remote-control-protocol",
   "yaml",
   "fastify",
   "@fastify/static",
@@ -19,7 +17,6 @@ const requiredPackages = [
   "zod",
   "node-forge",
 ]
-const materializedWorkspacePackages = new Set(["@codenomad/remote-control-protocol"])
 
 function parseArgs(argv) {
   const options = {}
@@ -69,18 +66,17 @@ function run(command, args, options = {}) {
 function smokeServer(resourcesRoot, target) {
   const serverRoot = path.join(resourcesRoot, "server")
   const entrypoint = path.join(serverRoot, "dist", "bin.js")
+  // Remote Control's self-contained OpenTunnel bundle, loaded on demand.
+  const remoteTunnel = path.join(serverRoot, "dist", "remote-control", "tunnel-runtime.js")
   const node = nodeBinary(resourcesRoot, target)
 
-  for (const requiredPath of [node, entrypoint, path.join(serverRoot, "node_modules")]) {
+  for (const requiredPath of [node, entrypoint, remoteTunnel, path.join(serverRoot, "node_modules")]) {
     if (!fs.existsSync(requiredPath)) throw new Error(`Missing packaged runtime path: ${requiredPath}`)
   }
 
   for (const packageName of requiredPackages) {
     const packageRoot = path.join(serverRoot, "node_modules", ...packageName.split("/"))
     if (!fs.existsSync(packageRoot)) throw new Error(`Missing packaged dependency: ${packageName}`)
-    if (materializedWorkspacePackages.has(packageName) && fs.lstatSync(packageRoot).isSymbolicLink()) {
-      throw new Error(`Packaged workspace dependency is still a symbolic link: ${packageName}`)
-    }
   }
 
   console.log(`packaged server static checks ok for ${target}`)
@@ -99,14 +95,13 @@ function smokeServer(resourcesRoot, target) {
 
   const importScript = [
     `for (const name of ${JSON.stringify(requiredPackages)}) await import(name);`,
+    `const tunnel = await import(${JSON.stringify(require("url").pathToFileURL(remoteTunnel).href)});`,
+    "if (typeof tunnel.openRemoteTunnel !== 'function') throw new Error('Remote Control tunnel runtime is incomplete');",
     "console.log('packaged dependency imports ok');",
   ].join(" ")
-  const loaderFileUrl = pathToFileURL(path.join(serverRoot, "dist", "loader.js")).href
-  const registerScript = `import { register } from "node:module"; import { pathToFileURL } from "node:url"; register(${JSON.stringify(loaderFileUrl)}, pathToFileURL("./"));`
-  const loaderArg = `data:text/javascript,${encodeURIComponent(registerScript)}`
 
-  // Resolve from the packaged server with the same loader used by its entrypoint.
-  run(node, ["--import", loaderArg, "--input-type=module", "-e", importScript], { cwd: serverRoot })
+  // Resolve from the packaged server, not the build checkout. The V2 client is ESM-only.
+  run(node, ["--input-type=module", "-e", importScript], { cwd: serverRoot })
 }
 
 function smokeLoadingAssets(loadingRoot) {

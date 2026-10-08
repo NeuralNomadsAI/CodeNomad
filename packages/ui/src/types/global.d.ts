@@ -77,7 +77,7 @@ declare global {
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
     onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
 
-     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
+    showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
     openRemoteWindow?: (payload: {
       id: string
       name: string
@@ -125,7 +125,6 @@ declare global {
   interface Window {
       __CODENOMAD_API_BASE__?: string
       __CODENOMAD_EVENTS_URL__?: string
-      __CODENOMAD_REMOTE_CONTROL__?: { tunnelPath: string }
        __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null

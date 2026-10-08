@@ -4,12 +4,12 @@
 
 ## Features & Capabilities
 
-### 🌍 Remote Control
+### 🌍 Deployment Freedom
 
-- **No inbound exposure**: CodeNomad remains on `127.0.0.1`; no LAN port, VPN, NAT rule, or public OpenCode endpoint is needed.
-- **Outbound relay**: The host establishes one persistent WebSocket connection to the configured Cloudflare relay.
-- **Secure pairing**: One-time links and QR codes expire after ten minutes and issue revocable 30-day device credentials.
-- **Multi-device**: Continue the same CodeNomad sessions from a paired browser, tablet, or laptop.
+- **Remote Access**: Host CodeNomad on a powerful workstation and access it from your lightweight laptop.
+- **Code Anywhere**: Tunnel in via VPN or SSH to code securely from coffee shops or while traveling.
+- **Multi-Device**: The responsive web client works on tablets and iPads, turning any screen into a dev terminal.
+- **Always-On**: Run as a background service so your sessions are always ready when you connect.
 
 ### ⚡️ Workspace Power
 
@@ -46,7 +46,10 @@ To list all CLI options:
 npx @neuralnomads/codenomad --help
 ```
 
-On startup, CodeNomad prints its loopback `Local Connection URL`. Enable Remote Control from Settings to create a pairing link.
+On startup, CodeNomad prints two URLs:
+
+- `Local Connection URL : ...` (used by desktop shells)
+- `Remote Connection URL : ...` (used by browsers/other machines when remote access is enabled)
 
 ### Install Globally
 
@@ -82,6 +85,7 @@ You can configure the server using flags or environment variables:
 | `--tls-cert <path>` | `CLI_TLS_CERT` | TLS certificate (PEM). Requires `--tls-key`. |
 | `--tls-ca <path>` | `CLI_TLS_CA` | Optional CA chain/bundle (PEM) |
 | `--tlsSANs <list>` | `CLI_TLS_SANS` | Additional TLS SANs (comma-separated) |
+| `--host <addr>` | `CLI_HOST` | Interface to bind (default 127.0.0.1) |
 | `--workspace-root <path>` | `CLI_WORKSPACE_ROOT` | Restricts the root path where new workspaces can be opened. Git worktrees are created in `.codenomad/worktrees` inside the project folder. |
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | Allow full-filesystem browsing |
 | `--config <path>` | `CLI_CONFIG` | Config file location |
@@ -97,8 +101,6 @@ You can configure the server using flags or environment variables:
 | `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates |
 | `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true`) |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
-
-Remote Control uses `https://remote.codenomad.neuralnomads.ai` by default. Set `CODENOMAD_REMOTE_CONTROL_RELAY_URL` to use another compatible relay. The shared relay uses Cloudflare Durable Objects WebSocket Hibernation: idle host connections remain reachable without keeping an object active, and application heartbeats are answered without waking it. Protocol v2 encrypts application traffic end to end with directional AES-256-GCM keys derived from an ephemeral browser key, the pinned persistent host key, and fresh per-tunnel challenges; the relay routes ciphertext without receiving the decryption keys.
 
 ### Dev Releases (Advanced)
 
@@ -124,15 +126,28 @@ These environment variables control how CodeNomad checks for dev updates:
 codenomad --https=false --http=true
 ```
 
-- To run both HTTPS and HTTP on loopback:
+- To run both HTTPS (for remote) and HTTP loopback (for desktop):
 
 ```sh
 codenomad --https=true --http=true
 ```
 
-### Remote Control Network Model
+### Remote Access Binding Rules
 
-Both HTTP and HTTPS listeners bind to `127.0.0.1`. Remote Control opens only an outbound host WebSocket and requires no inbound port. It never forwards its device cookie or remote authorization headers to the local server: after host-side decryption, the connector injects a dedicated internal CodeNomad session. OpenCode remains behind CodeNomad's existing authorization, workspace, Git, Yolo, and proxy boundaries.
+- When remote access is enabled (bind host is non-loopback, e.g. `--host 0.0.0.0`):
+  - HTTP listens on `127.0.0.1` only.
+  - HTTPS listens on `--host` (LAN/all interfaces).
+- When remote access is disabled (bind host is loopback, e.g. `--host 127.0.0.1`):
+  - Both HTTP and HTTPS listen on `127.0.0.1`.
+
+### Remote Control
+
+Remote Control reaches CodeNomad from anywhere without an inbound port, VPN or LAN binding. Turn it on in **Settings → Remote**, then scan the one-time pairing link (valid for five minutes) on the other device. It is independent of `--host` direct access; neither falls back to the other.
+
+- **Transport**: CodeNomad claims a random route on the device's shared [OpenTunnel](https://github.com/anomalyco/opentunnel) identity (the default profile, also used by `opencode pair --remote`). The relay forwards ciphertext only; the TLS certificate and its private key stay on this machine. The relay can still observe hostnames, connection timing and sizes. `CODENOMAD_REMOTE_CONTROL_API` selects a self-hosted OpenTunnel API.
+- **Authorization**: Every remote request must carry a paired device's credential, even with `--dangerously-skip-auth`; password login and the token bootstrap are not available remotely. Device credentials are stored hashed in `~/.config/codenomad/remote-control-devices.json`, expire after 30 days without use and can be revoked from Settings, which also ends that device's open streams.
+- **Surface**: Remote Control management, desktop window, SideCar, preview and automation endpoints stay host-only, and remote requests never receive loopback privileges.
+- **Lifetime**: Remote Control stops with the backend. Desktop apps keep the backend running after the last window closes only while Remote Control is enabled.
 
 ### Self-Signed Certificates
 
@@ -162,12 +177,14 @@ Explicitly supplied certificates are not rewritten; their renewal remains your r
 > 2. **Firefox:** Click **Advanced** → **Accept the Risk and Continue**
 > 3. **Alternative:** For local-only development without the warning, run with `--https=false --http=true`
 > 
-> Remote Control does not expose this certificate or require remote devices to trust it; relay traffic uses normal public HTTPS.
+> **Note:** Only accept self-signed certificates for localhost/127.0.0.1 that you control. For remote hosts, use proper TLS certificates.
 
 ### Authentication
 
 - Default behavior: CodeNomad requires a login (username/password) and stores a session cookie in the browser.
-- `--dangerously-skip-auth` / `CODENOMAD_SKIP_AUTH=true` disables the login prompt and treats loopback requests as authenticated. Use it only for isolated local development.
+- `--dangerously-skip-auth` / `CODENOMAD_SKIP_AUTH=true` disables the login prompt and treats all requests as authenticated.
+  Use this only when access is already protected by another layer (SSO proxy, VPN, Coder workspace auth, etc.).
+  If you bind to `0.0.0.0` while skipping auth, anyone who can reach the port can access the API.
 
 #### Setting a password
 
@@ -207,7 +224,7 @@ Manual creation of this file is not recommended unless you have a helper to gene
 
 ### Progressive Web App (PWA)
 
-CodeNomad can be installed as a PWA from a supported browser, including from a paired Remote Control URL.
+When running as a server CodeNomad can also be installed as a PWA from any supported browser, giving you a native app experience just like the Electron installation but executing on the remote server instead.
 
 1. Open the CodeNomad UI in a Chromium-based browser (Chrome, Edge, Brave, etc.).
 2. Click the install icon in the address bar, or use the browser menu → "Install CodeNomad".
@@ -215,7 +232,7 @@ CodeNomad can be installed as a PWA from a supported browser, including from a p
 
 > **TLS requirement**
 > Browsers require a secure (`https://`) connection for PWA installation.
-> Paired Remote Control URLs use the relay's public HTTPS certificate.
+> If you host CodeNomad on a remote machine, use HTTPS. Self-signed certificates generally won't work unless they are explicitly trusted by the device/browser (e.g., via a custom CA).
 
 ### Data Storage
 
@@ -223,9 +240,9 @@ CodeNomad can be installed as a PWA from a supported browser, including from a p
 - **Mutable server state**: `~/.config/codenomad/state.yaml`
 - **Legacy migration input**: `~/.config/codenomad/config.json` is migrated to the YAML files above.
 - **CodeNomad instance data**: `~/.config/codenomad/instances/`
+- **Remote Control route and paired devices**: `~/.config/codenomad/remote-control-devices.json` (credential hashes only)
 - **OpenCode V2 sessions, messages, and service registration**: OpenCode's platform-default global locations.
 - **Desktop restore state**: `~/.codenomad/client-state/v2/`
-- **Remote Control host identity**: `~/.config/codenomad/remote-control.json` (random host ID, relay secret, and P-256 private key; keep private)
 
 CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Allowed profile environment variables and the current `NODE_EXTRA_CA_CERTS` are passed when starting a missing daemon; connecting to an existing daemon does not change its process environment. Separately, CodeNomad applies the profile's complete execution-host environment to the native session before each prompt, custom command, or session shell request, including removal of previously configured values. Legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. See [Session Environment](../../dev-docs/SESSION_ENVIRONMENT.md). WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
 

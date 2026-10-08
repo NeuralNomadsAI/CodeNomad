@@ -614,12 +614,34 @@ export interface RemoteProxySessionCreateResponse {
   windowUrl: string
 }
 
-export type {
-  RemoteControlDevice,
-  RemoteControlPairing,
-  RemoteControlStartResponse,
-  RemoteControlStatus,
-} from "@codenomad/remote-control-protocol"
+export interface RemoteControlStatus {
+  /** False for requests arriving through Remote Control: only the host manages it. */
+  manageable: boolean
+  enabled: boolean
+  state: "stopped" | "connecting" | "connected" | "reconnecting" | "error"
+  /** Public HTTPS origin while the tunnel is connected. */
+  remoteUrl?: string
+  pairedDevices: number
+  lastConnectedAt?: string
+  error?: string
+}
+
+export interface RemoteControlPairing {
+  url: string
+  expiresAt: string
+}
+
+export interface RemoteControlDevice {
+  id: string
+  name: string
+  createdAt: string
+  lastSeenAt: string
+}
+
+export interface RemoteControlStartResponse {
+  status: RemoteControlStatus
+  pairing: RemoteControlPairing
+}
 
 export type WorkspaceEventType =
   | "workspace.created"

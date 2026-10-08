@@ -19,7 +19,7 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 - **🌳 Git worktrees** — Create and select worktrees, move a session with its subsessions, and review Git changes without leaving the workspace.
 - **💬 Rich conversations** — Markdown, code, diffs, tool-result images, configurable reasoning/tool visibility, and `/btw` for a temporary side question.
 - **📎 Files and attachments** — Pick, paste, or drop device files; use `@` references for project files and browse your workspace from the file panel.
-- **🌐 Remote access** — Connect to a CodeNomad server from a desktop client or browser, with password authentication and HTTPS support.
+- **🌐 Remote access** — Connect to a CodeNomad server from a desktop client or browser, with password authentication and HTTPS support. Or turn on **Remote Control** to pair a phone or another computer from anywhere through an [OpenTunnel](https://github.com/anomalyco/opentunnel) relay, without opening ports: TLS ends on your machine.
 - **🧩 Tools and previews** — Monitor native background shells, manage MCP connections and Global/Project plugin activation, and open web tools as SideCars.
 - **🔎 Agent-driven browser previews** — Let your agent open and inspect a visible web preview in Electron or Windows Tauri, without a Developer Mode switch.
 - **🎙️ Voice input and speech** — Dictate prompts and listen to responses.
@@ -61,7 +61,7 @@ The server binds to `127.0.0.1` by default. For remote access, add `--host 0.0.0
 
 > **Self-signed certificate:** On first launch with HTTPS enabled (the default), your browser will show a "Your connection is not private" warning. This is expected — the server generates a local self-signed certificate automatically. Click **Advanced → Proceed to localhost** to continue. For local-only use without the warning, run with `--https=false --http=true`.
 
-See [Server Documentation](packages/server/README.md) for flags, TLS, authentication, and Remote Control.
+See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and remote access.
 
 ### 🧪 Dev Releases
 

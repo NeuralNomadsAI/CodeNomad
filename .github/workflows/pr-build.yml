@@ -82,8 +82,6 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Build Remote Control protocol for UI checks
-        run: npm run build --workspace @codenomad/remote-control-protocol
       - name: Install browser for native pruning UI checks
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium
       - name: Pack and install outside the checkout
@@ -222,22 +220,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Remote Control relay dependencies
-        run: npm ci --prefix packages/cloudflare
-
       - name: Typecheck desktop clients
         run: npm run typecheck
-
-      - name: Typecheck server and Remote Control relay
-        run: >-
-          npm run typecheck --workspace @neuralnomads/codenomad &&
-          npm run typecheck --prefix packages/cloudflare
-
-      - name: Test Remote Control protocol and relay
-        run: >-
-          npm test --workspace @codenomad/remote-control-protocol &&
-          npm test --prefix packages/cloudflare &&
-          npm run test:e2e --prefix packages/cloudflare
 
       - name: Build bundled automation integration
         run: npm run build:automation --workspace @neuralnomads/codenomad

@@ -2,7 +2,6 @@ import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
-import { isLoopbackAddress } from "../../auth/http-auth"
 
 interface RouteDeps {
   authManager: AuthManager
@@ -74,7 +73,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (!deps.authManager.isLoopbackRequest(request)) {
       reply.code(404).send({ error: "Not found" })
       return
     }
@@ -115,7 +114,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (!deps.authManager.isLoopbackRequest(request)) {
       reply.code(404).send({ error: "Not found" })
       return
     }

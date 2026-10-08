@@ -9,8 +9,6 @@ Desktop host -> CodeNomad server -> one shared OpenCode service
                     ^    |
                     |    +-> CodeNomad /api/* and /api/events
                     +------ UI clients through /workspaces/:id/instance/api/*
-
-Paired browser -> Cloudflare Worker/Durable Object <- outbound WebSocket <- CodeNomad server
 ```
 
 There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow bundled `codenomad.automation` plugin is documented in [DEVELOPER_MODE.md](DEVELOPER_MODE.md) and [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
@@ -38,14 +36,6 @@ OpenCode sessions and messages remain shared through the global daemon. Window m
 
 Previews use unguessable capabilities for HTTP and WebSocket traffic. Electron and Windows Tauri local windows open HTTP(S) pages in hardened native child webviews with isolated storage; other clients use the existing capability-scoped iframe proxy. SideCar/browser iframes remain opaque-origin sandboxes without `allow-same-origin`; preview element comments use a source-checked message bridge instead of parent DOM access.
 
-## Remote Control
-
-CodeNomad listens only on `127.0.0.1`. Remote Control is an outbound-only connection from `packages/server/src/remote-control/` to the Cloudflare Worker and one `RemoteControlHost` Durable Object per random host ID. OpenCode is never exposed directly; relayed requests terminate at CodeNomad and continue through its existing authentication, folder, Git, Yolo, and proxy boundaries.
-
-The persistent host identity and P-256 key pair are stored in `remote-control.json` with restricted permissions where supported; legacy identities gain a key pair without changing their host ID or relay secret. The connector authenticates with a bearer secret, while browsers pair through a fragment-token link that expires after ten minutes and pins the host public key. The relay stores only token hashes, issues secure host-scoped device cookies for 30 days, and supports revocation. Remote credentials are stripped only after host-side decryption; the local connector injects a dedicated internal CodeNomad session instead.
-
-Protocol v2 carries HTTP streams and WebSocket messages inside an end-to-end encrypted browser-to-host tunnel. An ephemeral browser P-256 key, a fresh host challenge, ECDH, and HKDF-SHA-256 produce directional AES-256-GCM keys; authenticated counters reject tampering, reordering, and replay across the same or later tunnels. Cloudflare sees host/device routing, sizes, and timing, but receives neither application plaintext nor the host private key. This protects against an honest-but-curious relay and captured tunnel traffic, not an actively malicious Worker operator that replaces the browser bundle before it runs; reviewed releases and Cloudflare account security remain in the trust boundary. Host and remote-client sockets use the Durable Objects WebSocket Hibernation API, with attachment metadata sufficient to recover routing after an object is evicted. Connector heartbeats use Cloudflare's automatic WebSocket response path so idle hosts stay reachable without waking the object. The relay, browser, and connector bound clients, requests, sockets, devices, pairing links, bodies, frames, encrypted queues, unread response data, and outbound buffers; stream HTTP responses with idle timeouts; cancel abandoned work; and reject stale responses after a host reconnect. Electron and Tauri keep the backend alive after the final window closes only while Remote Control is enabled.
-
 ## API Boundaries
 
 CodeNomad control APIs live under `/api/*`. Important routes include:
@@ -54,8 +44,10 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/workspaces/:id/worktrees/:slug/git-status|git-diff|git-stage|git-unstage|git-commit`
 - `/api/events` and `/api/client-connections/pong`
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
-- `/api/remote-control/*`, restricted to local host UI requests
 - `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
+- `/api/remote-control/*`, managed from the host only; `POST /api/remote-control/pair` and `/remote-pair` answer only through Remote Control
+
+Remote Control decrypts tunnelled TLS inside the backend (`@codenomad/remote-tunnel`, bundled into `dist/remote-control/tunnel-runtime.js`) and forwards it to a dedicated loopback ingress. Ingress sockets are classified as remote before parsing, so loopback checks use `isLocalRequest()` rather than peer addresses. `remote-control/gate.ts` admits remote requests before CORS, authentication and routing: exact tunnel `Host`, public `Origin` on mutations, stripped forwarding headers, host-only path denial on the decoded path, then a paired device credential from `devices.ts`.
 
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, validates prompt files, defaults safe requests to the workspace location, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Never trust a browser-supplied worktree path: resolve ownership server-side. Upstream additions require an explicit proxy review and are not available automatically.
 
@@ -84,13 +76,14 @@ Current native events include session lifecycle/output events (`session.created`
 | Browser SSE multiplexing | CodeNomad server |
 | Desktop inspection and CDP feedback | Current CodeNomad desktop host and bundled automation plugin, available at normal startup |
 | Autonomous browser previews | CodeNomad desktop browser controllers and the same bundled automation plugin, independent of Developer Mode |
-| Remote Control relay, pairing, and device credentials | CodeNomad server plus Cloudflare Worker/Durable Object |
+| Remote Control transport | OpenTunnel SDK on the device's shared identity; CodeNomad claims its own route and never deletes the identity |
+| Remote Control pairing, devices and admission | CodeNomad server (`packages/server/src/remote-control/`) |
 
 Session Shell and conversation instructions are native features, not plugins. Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows removal. The proxy verifies Shell `cwd` ownership before ID-scoped operations and preserves native output cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin`, server plugin/background-process and per-workspace runtime paths remain deleted and must not be restored; the narrow bundled automation plugin and session-pruning RPC use native V2 discovery and backend presence.
 
 ## Persistence
 
-CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is migration input only.
+CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is migration input only.
 
 ## Implementation Map
 
