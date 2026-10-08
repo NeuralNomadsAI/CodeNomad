@@ -34,6 +34,35 @@ Native Job process-bound lifetime is committed in `1465793f`;
 production protected authority, finite passage completion and packaged autonomy
 remain unqualified. Historical results below retain their original scope and failures.
 
+### Local assembly receipts — 2026-10-08, not packaged acceptance
+
+The clean local assembly worktree is `missions-assembly-20261008`, separate from
+the published PR head `d0724eca`. These receipts do not qualify the unmerged
+CREATE, Play, due-composition or UI branches and do not authorize installation.
+
+- At `e895e24f`, all top-level `packages/server/src/missions/*.test.ts` were run
+  with `node --conditions=browser --import tsx --test`: **733 pass, 0 fail,
+  0 skips/cancellations**, with no native `.test.mjs` fixture selected. Full output:
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11bf4db520010LHAYhxetFsDGK.out`.
+- At `119443d5`, the succeeded-only native settlement/adapter/authority offline
+  tests passed **25/25**, and server typecheck passed. Settlement requires exact
+  original input, native effect receipts, terminal family evidence, journal and
+  notification completion; its final authority transaction rechecks the native
+  head/claim/inbox. Authority archival precedes exact calendar finish, so a crash
+  between them leaves the original passage pending without replay.
+- The scoped one-shot safety review against `d0724eca` found no actionable
+  P0/P1/P2 regression in the plugin wrapper, presence cleanup or read-only route.
+  This is not the final gatekeeper review of the assembled recurring product.
+- Upstream 2.0.24's active-Location Form/Permission/Shell lists materialize before
+  the 1,024-result check. Unknown/over-bound coverage remains pending; no inactive
+  worktree scan is used. Failed, interrupted, background and unrecognised effect
+  cases are not claimed complete by the succeeded-only observer.
+
+No complete NSIS build or replacement installation has occurred. The requested
+native/private qualification remains deferred until that first complete build;
+the premature isolated source-fixture receipts below remain exceptions, not
+packaged acceptance. The shared daemon and live Mission are not test targets.
+
 - Published head at the start of this update: `cfea513b`; corrections now pushed
   through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
   preferences/task-session policy/depth (`972910fe`) and inactive recurrence core
