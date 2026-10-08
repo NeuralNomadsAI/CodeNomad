@@ -7,6 +7,7 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
 import { observeNativePassageSettlement } from "./native-recurrence-settlement"
+import { settleNativePassageBusiness } from "./native-passage-business"
 import { acquireMissionNativeService } from "./native-service-adapter"
 import { acquireNativePassageObservation } from "./native-passage-observation"
 import type { AutonomousProfileSource } from "./autonomous-environment"
@@ -100,6 +101,7 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
           directory: placement.directory, workspaceID: placement.workspaceID, current, signal })
         if (!result) return "pending"
         await source.finish(scheduleID, result.result, now(), result.current)
+        settleNativePassageBusiness(result.result.conversationID)
         return "settled"
       })).pipe(Effect.catchCause(() => Effect.succeed("pending" as NativePassageWake)))
     }

@@ -146,6 +146,12 @@ export async function prepareNativePassageSession(context: MissionsPluginContext
   selected.current()
 }
 
+/** A settled passage no longer routes business tools; its handle is evicted
+ * immediately rather than waiting for capacity pressure. */
+export function settleNativePassageBusiness(coordinatorSessionID: string) {
+  passages.delete(coordinatorSessionID)
+}
+
 export function retireNativePassageBusiness(location: MissionsPluginContext["location"]) {
   for (const [id, passage] of passages) if (sameLocation(passage.location, location)) passages.delete(id)
 }

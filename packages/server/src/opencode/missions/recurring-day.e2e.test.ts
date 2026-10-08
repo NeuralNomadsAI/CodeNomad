@@ -133,6 +133,21 @@ test("E. Pause cancels wakeups and future admissions; Stop is terminal", async t
   await assert.rejects(f.control("run-now"))
 })
 
+test("I. Seventy sequential daily passages never exhaust the passage business cache", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play")
+  for (let day = 0; day < 70; day++) {
+    await f.advance(DUE + day * DAY)
+    assert.equal(f.starts.length, day + 1, `day ${day} admitted`)
+    await f.model()
+    await f.advance(DUE + day * DAY + 3_600_000)
+    assert.equal((await f.snapshot()).pending, null, `day ${day} settled`)
+  }
+  const done = await f.snapshot()
+  assert.equal(done.history.length, 30)
+  assert.equal(f.errors.length, 0)
+})
+
 test("F. Pending Form prevents settlement; idle without report is not completed", async t => {
   const f = await RecurringDayFixture.open(); t.after(() => f.close())
   await f.create(); await f.control("play"); await f.advance(DUE)
