@@ -165,9 +165,13 @@ incomplete or over-bound coverage. No exact event-log replay proof is required.
 
 Supported outcomes are:
 
-- `completed`: the settled passage has a final report.
-- `failed`: native terminal failure, not guessed from prose or an idle flag.
-- `ended-without-report`: settled native work ended without a final report.
+- `completed`: the settled passage has a final `mission_report(outcome: "completed")`.
+  It stands even if a native failure occurs later during wrap-up.
+- `failed`: either a final business `mission_report(outcome: "failed")`, or a native
+  terminal failure in the family without a completed final report. Never guessed
+  from prose or an idle flag.
+- `ended-without-report`: settled native work ended without a final report and
+  without native terminal failure.
 
 Atomically archive the result, clear pending and update the scheduled `lastDaily`
 in the guarded schedule document. Keep history at ≤30; do not let a crash between

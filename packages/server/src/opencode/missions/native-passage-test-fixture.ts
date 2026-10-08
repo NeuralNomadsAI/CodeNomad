@@ -89,7 +89,7 @@ export async function passageFixture(business = true) {
   const disposeTools = business ? await setupMissionsBusiness(context, id => selectNativePassageBusiness(context, id)) : async () => {}
   return { root, calendar, passage, storage, observation, sessions, states, input, tools, context,
     async start() { const ack = await admitNativeRecurrencePassage(await input()); doc = await calendar.recordAdmission(doc.id, ack, 20, () => true); return doc },
-    async finish() { return tools.get("report")!.execute({ final: true, outcome: "completed", summary: "Finished via real mission tool", evidence: [], next: [] },
+    async finish(outcome: "completed" | "failed" = "completed") { return tools.get("report")!.execute({ final: true, outcome, summary: "Finished via real mission tool", evidence: [], next: [] },
       { sessionID: passage.coordinatorSessionID, messageID: "msg_report", id: "call_report", progress: async () => {} }) },
     set pendingForm(value: boolean) { pendingForm = value }, set crashAfterSend(value: boolean) { crashAfterSend = value },
     counts: () => ({ creates, sends, environments }),
