@@ -38,7 +38,6 @@ import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
-import { registerMissionOwnerEnrollment } from "./routes/mission-owner-enrollment"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import type { PanelExtensionStore } from "../panel-extensions/store"
@@ -83,7 +82,6 @@ interface HttpServerDeps {
   protocol: "http" | "https"
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
-  missionOwnerPrivateRoot?: string
   settings: SettingsService
   fileSystemBrowser: FileSystemBrowser
   eventBus: EventBus
@@ -365,8 +363,6 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  if (deps.missionOwnerPrivateRoot) registerMissionOwnerEnrollment(app, { manager: deps.workspaceManager,
-    privateRoot: deps.missionOwnerPrivateRoot, fence: worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
