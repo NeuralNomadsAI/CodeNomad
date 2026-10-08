@@ -13,10 +13,16 @@ export async function readArchivedRecurrencePage(storage: MissionStorage, docume
   if (!("missionID" in receipt.result)) throw new Error("Archived result unavailable")
   const snapshot = await journal.snapshot()
   const mission = snapshot.missions[0]
+  // Native terminality and business completion are distinct. A quiescent
+  // failure/no-report passage can archive an unfinished business map.
+  const outcome = String(receipt.result.outcome)
+  const statusMatches = mission && (outcome === "completed" ? mission.status === "completed"
+    : outcome === "failed" ? ["active", "failed"].includes(mission.status)
+    : outcome === "ended-without-report" ? mission.status === "active" : mission.status === outcome)
   if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
     || !mission || mission.id !== missionID || mission.projectID !== document.projectID
     || mission.projectCanonical !== document.projectCanonical || mission.coordinatorSessionId !== receipt.result.conversationID
-    || mission.status !== receipt.result.outcome || input.revision !== undefined && input.revision !== mission.revision) {
+    || !statusMatches || input.revision !== undefined && input.revision !== mission.revision) {
     throw new Error("Archived recurrence journal unavailable or changed")
   }
   const history = await journal.events()

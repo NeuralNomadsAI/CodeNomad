@@ -129,7 +129,7 @@ export interface MissionsPluginPolicy {
 }
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
-  policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate): Promise<() => Promise<void>> {
+  policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -243,6 +243,52 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     })
     registrations.push(rpcRegistration)
 
+    if (business) registrations.push({ dispose: await setupMissionsBusiness(context, async sessionID => ({
+      control, readSessionID: sessionID, current: assertActive,
+      beforeTool: (name, input) => policy?.beforeTool(name, input, sessionID) ?? Promise.resolve(),
+    })) })
+    notificationOutbox = new MissionNotificationOutbox(
+      `${context.location.project.id}\0${context.location.project.canonical}`,
+      (isActive, after) => writer.run(() => control.retryPendingNotifications(isActive, after)),
+    )
+    notificationOutbox.start()
+    return dispose
+  } catch (error) {
+    await dispose()
+    throw error
+  }
+}
+
+export interface MissionBusinessRoute {
+  control: MissionControl
+  /** Descendant reads use their verified root; mutations always retain the real caller. */
+  readSessionID: string
+  current(): void
+  beforeTool(name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown): Promise<void>
+}
+
+/** One set of native names. Selection is invocation-scoped, never model-provided storage. */
+export async function setupMissionsBusiness(context: MissionsPluginContext,
+  select: (sessionID: string) => Promise<MissionBusinessRoute | undefined>): Promise<() => Promise<void>> {
+  let active = true
+  const writer = createMissionWriterRetirement(), registrations: Registration[] = []
+  const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
+  const tracked = <Args extends unknown[], Result>(callback: (...args: Args) => Promise<Result>) =>
+    (...args: Args) => writer.run(() => callback(...args))
+  const route = async (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => {
+    assertActive()
+    const selected = await select(sessionID)
+    if (!selected) throw new Error("CodeNomad Missions is no longer available")
+    selected.current()
+    await selected.beforeTool(name, input)
+    assertActive(); selected.current()
+    return selected
+  }
+  const dispose = async () => {
+    active = false
+    await writer.retire(async () => { await Promise.all(registrations.map(registration => registration.dispose())) })
+  }
+  try {
     const tools = await context.tool.transform((draft) => {
       const add = (definition: Parameters<ToolDraft["add"]>[0]) => draft.add({ ...definition, execute: tracked(definition.execute) })
       draft.namespace({
@@ -256,10 +302,10 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
-          await policy?.beforeTool("inspect", input, tool.sessionID)
-          assertActive()
+          const selected = await route(tool.sessionID, "inspect", input)
           await tool.progress({ status: "Reading the mission map" })
-          const result = await control.inspect(tool.sessionID, parseInspectInput(input), tool.id)
+          selected.current()
+          const result = await selected.control.inspect(selected.readSessionID, parseInspectInput(input), tool.id)
           if (object(input).catalog === true) {
             const session = await context.session.get({ sessionID: tool.sessionID })
             result.catalog = await readMissionCatalog(context, session.location.directory)
@@ -280,11 +326,11 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           if (!independent && (value.targetSessionID !== undefined || value.delivery !== undefined)) {
             throw new MissionControlError("Root target/delivery requires an explicit independent execution reason", "invalid-contract")
           }
-          await policy?.beforeTool(independent ? "delegate" : "declare", input, tool.sessionID)
-          assertActive()
+          const selected = await route(tool.sessionID, independent ? "delegate" : "declare", input)
           await tool.progress({ status: independent ? "Delegating independent mission task" : "Declaring native mission task" })
-          if (independent) return textResult(await control.delegate(tool.sessionID, parseDelegateInput(input)))
-          const result = await control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] }))
+          selected.current()
+          if (independent) return textResult(await selected.control.delegate(tool.sessionID, parseDelegateInput(input)))
+          const result = await selected.control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] }))
           const task = result.mission.tasks.find(candidate => candidate.key === result.contract.taskKey)
           if (!task || task.executionMode?.kind !== "native" || task.contractGeneration !== result.contract.generation) {
             throw new MissionControlError("Declared native task context unavailable", "invalid-journal")
@@ -299,10 +345,10 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
-          await policy?.beforeTool("revise", input, tool.sessionID)
-          assertActive()
+          const selected = await route(tool.sessionID, "revise", input)
           await tool.progress({ status: "Revising mission plan" })
-          return textResult(await control.revise(tool.sessionID, parseReviseInput(input)))
+          selected.current()
+          return textResult(await selected.control.revise(tool.sessionID, parseReviseInput(input)))
         },
       })
       add({
@@ -312,13 +358,13 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
-          await policy?.beforeTool("report", input, tool.sessionID)
-          assertActive()
+          const selected = await route(tool.sessionID, "report", input)
           await tool.progress({ status: "Recording mission report" })
+          selected.current()
           const report = parseReportInput(input)
           const reference = object(input).contract
-          return textResult(reference === undefined ? await control.report(tool.sessionID, report)
-            : await control.reportNative({ contract: taskContractReferenceSchema.parse(reference),
+          return textResult(reference === undefined ? await selected.control.report(tool.sessionID, report)
+            : await selected.control.reportNative({ contract: taskContractReferenceSchema.parse(reference),
               sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report))
         },
       })
@@ -329,10 +375,10 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
-          await policy?.beforeTool("briefing", input, tool.sessionID)
-          assertActive()
+          const selected = await route(tool.sessionID, "briefing", input)
           await tool.progress({ status: "Recording project briefing" })
-          return textResult(await control.briefing(tool.sessionID, parseMissionBriefingInput(input)))
+          selected.current()
+          return textResult(await selected.control.briefing(tool.sessionID, parseMissionBriefingInput(input)))
         },
       })
     })
@@ -342,10 +388,22 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       if (!active) return
       return writer.run(async () => {
         try {
-          const instruction = await control.contextFor(event.sessionID)
+          const selected = await select(event.sessionID)
+          if (!selected) {
+            for (const name of ["inspect", "delegate", "revise", "report", "briefing"]) delete event.tools[`mission_${name}`]
+            return
+          }
+          selected.current()
+          const instruction = await selected.control.contextFor(selected.readSessionID)
           if (!active || !instruction) return
+          selected.current()
+          if (selected.readSessionID !== event.sessionID) {
+            event.system.push({ type: "text", text: `You are a native descendant of coordinator ${selected.readSessionID}. Return normal scoped results to your immediate parent; only the coordinator declares, revises, reports or finalizes the business plan. mission.inspect is read-only.` })
+            for (const name of ["delegate", "revise", "report", "briefing"]) delete event.tools[`mission_${name}`]
+            return
+          }
           event.system.push({ type: "text", text: instruction })
-          const snapshot = await control.snapshot()
+          const snapshot = await selected.control.snapshot()
           if (!active) return
           const mission = snapshot.missions.find((candidate) => candidate.status === "active"
             && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
@@ -360,11 +418,6 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       })
     })
     registrations.push(contextHook)
-    notificationOutbox = new MissionNotificationOutbox(
-      `${context.location.project.id}\0${context.location.project.canonical}`,
-      (isActive, after) => writer.run(() => control.retryPendingNotifications(isActive, after)),
-    )
-    notificationOutbox.start()
     return dispose
   } catch (error) {
     await dispose()

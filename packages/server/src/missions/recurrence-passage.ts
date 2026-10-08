@@ -13,7 +13,8 @@ export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocu
   const passage = doc.pending.passage
   const isolated = passageJournal(storage, doc, passage.id, current, now)
   if (doc.pending.admission && doc.pending.admission.missionID !== isolated.missionID) throw new Error("Recurrence mission conflict")
-  return { passageID: passage.id, messageID: passage.messageID, ...isolated }
+  return { passageID: passage.id, messageID: passage.messageID,
+    coordinatorSessionID: `ses_${stableToken(`${isolated.missionID}\0coordinator`, 26)}`, ...isolated }
 }
 
 /** Archived display authority comes only from the exact durable receipt. No
@@ -23,7 +24,9 @@ export function archivedRecurrencePassage(storage: MissionStorage, input: Recurr
   const receipt = doc.history.find(item => item.passage.id === passageID)
   if (!receipt || !("missionID" in receipt.result)) throw new Error("Archived recurrence result unavailable")
   const isolated = passageJournal(storage, doc, receipt.passage.id, () => { throw new Error("Archived recurrence is read-only") })
-  if (receipt.result.missionID !== isolated.missionID) throw new Error("Archived recurrence mission conflict")
+  if (receipt.result.missionID !== isolated.missionID
+    || receipt.result.conversationID !== `ses_${stableToken(`${isolated.missionID}\0coordinator`, 26)}`)
+    throw new Error("Archived recurrence mission conflict")
   return { receipt, ...isolated }
 }
 
@@ -66,6 +69,6 @@ function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passag
       return { entries, ...(page.next === undefined ? {} : { next: entries.at(-1)!.key }) }
     },
   }
-  return { missionID, storage: scoped,
+  return { missionID, inputKey: `${RECURRENCE_STORAGE_PREFIX}/inputs/${projectToken}/${doc.id}/${passageID}`, storage: scoped,
     journal: new MissionJournal(scoped, doc.projectID, doc.projectCanonical, now) }
 }

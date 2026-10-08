@@ -69,7 +69,7 @@ async function fixture() {
   await scope.journal.append({ ...base("evt_created"), type: "mission.created", requestID: scope.passageID,
     projectCanonical: directory, objective: "Archived objective", notes: "Archived notes", template: "custom",
     profiles: config.profiles, taskMode: config.taskMode,
-    coordinator: { sessionID: "ses_coordinator", title: "Coordinator", location: { directory } } })
+    coordinator: { sessionID: scope.coordinatorSessionID, title: "Coordinator", location: { directory } } })
   // >100 actual events exercise journal scan cursors; >32 sections exercise catalogue paging.
   for (let i = 0; i < 34; i++) {
     await scope.journal.append({ ...base(`evt_task_${i}`), type: "task.created",
@@ -86,9 +86,9 @@ async function fixture() {
     artifact: { result: "Exact draft artifact" }, createdAt: reported.createdAt } })
   await scope.journal.append({ ...base("evt_finished"), type: "mission.finished", outcome: "completed", summary: finalSummary })
   await store.recordAdmission(pending.id, { kind: "accepted", passageID: scope.passageID, messageID: scope.messageID,
-    missionID: scope.missionID, conversationID: "ses_coordinator" }, 500, () => true)
+    missionID: scope.missionID, conversationID: scope.coordinatorSessionID }, 500, () => true)
   const archived = await store.finish(pending.id, { passageID: scope.passageID, messageID: scope.messageID,
-    missionID: scope.missionID, conversationID: "ses_coordinator", outcome: "completed", artifactMessageIDs: ["msg_artifact"], cursors: [] }, 600, () => true)
+    missionID: scope.missionID, conversationID: scope.coordinatorSessionID, outcome: "completed", artifactMessageIDs: ["msg_artifact"], cursors: [] }, 600, () => true)
   const snapshot = await scope.journal.snapshot()
   assert.equal(snapshot.discardedEvents, 0)
   const revision = snapshot.missions[0].revision
@@ -148,7 +148,7 @@ test("sealed native archived reader preserves exact paged Markdown, report/evide
   const first = await f.read()
   assert.ok("missionID" in f.archived.history[0].result)
   assert.equal(first.missionID, f.archived.history[0].result.missionID)
-  assert.equal(first.conversationID, "ses_coordinator")
+  assert.equal(first.conversationID, f.archived.history[0].result.conversationID)
   assert.equal(first.revision, f.revision)
   assert.equal(first.sections.length, 32)
   assert.ok(first.sectionCount > 32)

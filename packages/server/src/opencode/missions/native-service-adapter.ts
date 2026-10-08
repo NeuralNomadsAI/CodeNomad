@@ -36,13 +36,13 @@ export type NativeCreateInput = {
   agent: string; model: { providerID: string; id: string; variant?: string }
 }
 export type NativeRootPlacement = Pick<NativeCreateInput, "id" | "agent" | "model" | "metadata"> & {
-  projectID: string; location: { directory: string; workspaceID?: string }
+  projectID: string; parentID?: string; location: { directory: string; workspaceID?: string }
 }
 export type NativeRecurrenceLifecycleCommand = { kind: "synthetic"; input: {
   sessionID: string; id: string; text: string; description: string; delivery: "queue"; resume: true
   metadata: { "codenomad.mission": { version: 1; missionID: string; kind: "lifecycle"; operationID: string;
     taskMode: "native" | "independent";
-    recurrence: { grantID: string; passageID: string; messageID: string; coordinatorSessionID: string } } }
+    recurrence: { grantID?: string; passageID: string; messageID: string; coordinatorSessionID: string } } }
 } }
 const method = Schema.declare<(input: never) => NativeEffect>((value): value is (input: never) => NativeEffect => Predicate.isFunction(value))
 const serviceShape = Schema.Struct({ get: method, create: method, environment: method, prompt: method, synthetic: method, inbox: method })
@@ -54,7 +54,7 @@ const variablesShape = Schema.Record(Schema.String, Schema.String)
  * not a human authorization or protected grant; the admission helper supplies those.
   * Existing Session.create/environment/get/inbox/prompt/synthetic contracts are validated
  * by shape and result codecs, not the runtime version or an invented ctx field. */
-export const acquireMissionNativeService = Effect.fn("missions.acquireNativeService")(function* () {
+export const acquireMissionNativeService = Effect.fn("missions.acquireNativeService")(function* (locationCurrent?: () => true) {
   const found = yield* Effect.serviceOption(sessionTag)
   const origin = yield* Effect.serviceOption(locationTag)
   if (Option.isNone(found) || Option.isNone(origin)) return yield* Effect.fail(new Error("Native Missions service unavailable"))
@@ -65,8 +65,9 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
   const service = found.value as NativeSessionService
   const graph = yield* Effect.context<never>()
   let active = true
-  yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
+  if (!locationCurrent) yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
   const assertCurrent = () => {
+    locationCurrent?.()
     if (!active || Context.get(graph, sessionTag) !== service || Context.get(graph, locationTag) !== origin.value) {
       rejectAuthority("authorization-blocked")
     }
@@ -86,7 +87,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       // before the native Effect, with no intervening asynchronous codec read.
       const result = yield* Effect.suspend(() => {
         options?.signal?.throwIfAborted(); assertCurrent()
-        if (pinned && (!session || session.id !== pinned.id || session.parentID
+        if (pinned && (!session || session.id !== pinned.id || session.parentID !== pinned.parentID
           || session.projectID !== pinned.projectID || session.location.directory !== pinned.location.directory
           || session.location.workspaceID !== pinned.location.workspaceID
           || !matchesExecution(pinned, session) || !isDeepStrictEqual(session.metadata, pinned.metadata))) {

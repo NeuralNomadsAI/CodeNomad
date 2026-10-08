@@ -62,6 +62,22 @@ test("missing/private contract changes fail closed without HTTP fallback or vers
   })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
 })
 
+test("passage handles outlive one wake Scope only while the borrowed Location remains current", async () => {
+  let current = true, effects = 0
+  const service = { get: () => Effect.succeed(info), create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
+    environment: (input: { variables: Record<string, string> }) => Effect.sync(() => { effects++; return input.variables }),
+    prompt: () => Effect.succeed(receipt(command)), synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })) }
+  const native = await Effect.runPromise(Effect.scoped(acquireMissionNativeService(() => {
+    if (!current) throw new Error("Location evicted")
+    return true
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+  await native.environment({ sessionID: info.id, variables: {} }, {}, () => true)
+  assert.equal(effects, 1)
+  current = false
+  await assert.rejects(native.environment({ sessionID: info.id, variables: {} }, {}, () => true), /Location evicted/)
+  assert.equal(effects, 1)
+})
+
 test("authority call-entry rejects false, void, promises and thenables before environment or admission", async () => {
   let effects = 0, assimilated = 0
   const service = { get: () => Effect.succeed(info), create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
