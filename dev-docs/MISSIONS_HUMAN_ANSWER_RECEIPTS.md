@@ -94,14 +94,61 @@ Overflow refuses rather than deleting provenance or guessing. Long-lived project
 will need an explicit archive/read policy before relaxing the 256-receipt ceiling.
 Unknown native outcomes are never TTL-expired or automatically replayed.
 
-This tranche does not relax coordinator-authored readout into native task/report
-authority. The ordinary non-passage one-shot producer remains unqualified unless
-it uses the same current signed native passage/key contract. Parent assembly must
-preserve the gate when composing its newer passage-owned controls.
+The binding is now a strict `one-time` / `recurring` union. Both modes include
+the exact Mission identity in their stable receipt identity; one-time additionally
+binds the accepted decision task/generation/native call. Recurring mode retains
+the original signed passage/grant/epoch and lifecycle/inbox provenance.
+
+One-time Wayfinder reads the owned ordinary `MissionJournal` through its native
+KV namespace, not artifact prose. New answers require the exact active/running
+decision actor, current accepted native call, pending question and matching
+permitted native agent/model profile. A missing shared native profile key may be
+inserted with native CAS only after authenticated original input and all pending
+question checks, in the same reservation transaction. No standing parent, clock
+Job, ghost session, consent dialog or additional gesture is introduced. Read/bind
+never creates a key. Existing Play keys are reused unchanged.
+
+The ordinary coordinator readout verifies the same stored `humanGate` receipt
+before accepting a decision result, while remaining explicitly a coordinator
+business readout: it does not claim native-return delivery or terminate execution.
+Finalization separately requires the accepted native call's observed end and
+rechecks the actual decision actor's receipt.
+
+New-answer admission and original receipt bookkeeping are distinct. `replied`
+records may match a later durable question success after Pause, Stop or immutable
+child archival using their ORIGINAL signed parent bytes, child/grant, original
+input and physical actor. No current authorizing epoch/clock/send privilege is
+borrowed, and reconciliation never calls Form.reply. `reserved`/unknown records
+remain pending even when an identical answer later appears. NativeHumanGate uses
+the same transactional reconciliation/authority check before consuming evidence.
+
+Source-backed flag correction: OpenCode `v2.0.24`
+`packages/core/src/session/runner/publish-llm-event.ts` stores provider-hosted
+provenance in `executed`, not completion. Local question/subagent parts, calls and
+results carry **false**. The shared `isLocalNativeTool` reader predicate rejects
+hosted true/missing flags; completed local status, exact durable IDs/answer/content,
+accepted ancestry and signed receipt remain independently mandatory. The shared
+call observer, human evidence reader and recurrence settlement reader use it.
+
+Parent merge seams: retain MAIN's full `recurrenceInput(child)` implementation,
+including frozen followed-source text, templates/notes and budgets. Human receipt
+checks call `passageInput(child)` for exact startup operation IDs, positive ACKs
+and the full native input digest, not bare consigne. Preserve the actual enclosing
+checkout/family placement helper for nested Locations. No older CREATE producer,
+root-default variant, failure settlement or input/read pipeline is transplanted.
 
 ## Offline checks
 
 - Server and UI typechecks pass.
+- Incremental one-time + historical-denial + local-false source checks: **26/26**
+  human/report checks pass, including ordinary coordinator finish without a
+  standing parent, first-use key CAS, key reuse, mode/mission replay refusal,
+  pre-answer lifecycle/call/sibling/profile refusals and delayed local success
+  after committed Pause/Stop/authority archival with no additional answer/dispatch.
+- Shared observer/human/settlement source-backed regressions passed **80/80**
+  before adding the additional hosted-origin negative observer case.
+- Final incremental shared-reader/proxy/hold regression run: **139/139**;
+  ordinary Form/pending-request UI regressions **25/25**; server/UI typechecks pass.
 - Review corrections: **15/15** focused offline checks (eleven human receipt cases
   using the actual passage producer, including disconnect, parked lost-ACK
   reconciliation and missing lifecycle/ledger refusal, plus four hold regressions).

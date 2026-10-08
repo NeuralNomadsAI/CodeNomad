@@ -1,6 +1,6 @@
 import type { FormDetail, OpenCode, SessionLogOutput, SessionMessageGetOutput } from "@opencode/client"
 import { validateNativeDecisionArtifact, type NativeDecisionProvenance } from "./contracts"
-import type { NativeObservationSource } from "./native-call-observation"
+import { isLocalNativeTool, type NativeObservationSource } from "./native-call-observation"
 import type { HumanAnswerReservation } from "./human-answer"
 
 type SessionClient = ReturnType<typeof OpenCode.make>["session"]
@@ -65,7 +65,7 @@ function questionTool(message: SessionMessageGetOutput, messageID: string, toolI
     || message.content.length > 128) throw new Error("native-message-mismatch")
   const tools = message.content.filter(part => part.type === "tool" && part.id === toolID)
   if (tools.length !== 1 || tools[0].type !== "tool" || tools[0].name !== name
-    || tools[0].executed !== false || tools[0].state.status === "streaming") throw new Error("native-tool-mismatch")
+    || tools[0].state.status === "streaming" || !isLocalNativeTool(tools[0])) throw new Error("native-tool-mismatch")
   return tools[0]
 }
 
@@ -195,7 +195,7 @@ export async function verifyNativeDecisionEvidence(request: NativeDecisionEviden
         if (event.type !== "session.tool.called" && event.type !== "session.tool.success" && event.type !== "session.tool.failed") continue
         if (event.data.assistantMessageID !== request.messageID || event.data.id !== request.toolCallID) continue
         // `executed` means provider-hosted execution, not local completion.
-        if (event.data.executed !== false) throw new Error("native-question-provider-executed")
+        if (!isLocalNativeTool(event.data)) throw new Error("native-question-origin-mismatch")
         if (event.type === "session.tool.called") {
           if (called || answered || event.durable.version !== 1 || !equal(event.data.input, tool.state.input)) {
             throw new Error("native-question-call-conflict")

@@ -10,17 +10,17 @@ function fixture(background = false, error = false) {
     childSessionID: "ses_child", toolName: "subagent" }
   const metadata = { sessionID: target.childSessionID, ...(background ? { status: "running" } : {}) }
   const called: SessionToolCalled = { id: "native_called", created: 10, type: "session.tool.called", durable: { aggregateID: "agg_parent", seq: 1, version: 1 },
-    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", input: { background }, executed: true } }
+    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", input: { background }, executed: false } }
   const success: SessionToolSuccess = { id: "native_success", created: 11, type: "session.tool.success", durable: { aggregateID: "agg_parent", seq: 2, version: 2 },
-    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", executed: true, metadata, content: [{ type: "text", text: "Native result" }] } }
+    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", executed: false, metadata, content: [{ type: "text", text: "Native result" }] } }
   const failed: SessionToolFailed = { id: "native_failure", created: 11, type: "session.tool.failed", durable: { aggregateID: "agg_parent", seq: 2, version: 2 },
-    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", executed: true, metadata, error: { type: "Failure", message: "Actual failure" } } }
+    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", executed: false, metadata, error: { type: "Failure", message: "Actual failure" } } }
   const started: SessionExecutionStarted = { id: "native_start", created: 12, type: "session.execution.started", durable: { aggregateID: "agg_child", seq: 1, version: 1 }, data: { sessionID: "ses_child" } }
   const succeeded: SessionExecutionSucceeded = { id: "native_done", created: 13, type: "session.execution.succeeded", durable: { aggregateID: "agg_child", seq: 2, version: 1 }, data: { sessionID: "ses_child" } }
   const childFailed: SessionExecutionFailed = { ...succeeded, type: "session.execution.failed", data: { sessionID: "ses_child", error: { type: "Failure", message: "Failed" } } }
   const interrupted: SessionExecutionInterrupted = { ...succeeded, type: "session.execution.interrupted", data: { sessionID: "ses_child", reason: "user" } }
   const message: SessionMessageGetOutput = { id: "msg_parent", type: "assistant", agent: "parent-agent", model: { providerID: "provider", id: "parent-model", variant: "parent-only" },
-    time: { created: 9 }, content: [{ type: "tool", id: "call_child", name: "subagent", executed: true, time: { created: 9, completed: 11 },
+    time: { created: 9 }, content: [{ type: "tool", id: "call_child", name: "subagent", executed: false, time: { created: 9, completed: 11 },
       state: error ? { status: "error", input: { background }, metadata, error: { type: "Failure", message: "Actual failure" } }
         : { status: "completed", input: { background }, metadata, content: [{ type: "text", text: "Native result" }] } }] }
   const logs = new Map<string, SessionLogOutput[]>([["ses_parent", [called, error ? failed : success]], ["ses_child", [started, succeeded]]])
@@ -80,6 +80,17 @@ test("the ABI's executed flag is not guessed to mean child identity or completio
   const result = await readNativeCallObservation(f.client, f.target, f.options())
   assert.equal(result.complete, true)
   assert.equal(result.observations.find(item => item.kind === "tool-ended")?.kind, "tool-ended")
+})
+
+test("provider-hosted or missing origin flags cannot become local native delegation evidence", async () => {
+  for (const at of ["part", "called", "result"] as const) {
+    const f = fixture()
+    if (at === "part" && f.message.type === "assistant" && f.message.content[0].type === "tool") f.message.content[0].executed = true
+    else if (at === "called") f.called.data.executed = true
+    else f.success.data.executed = true
+    const result = await readNativeCallObservation(f.client, f.target, f.options())
+    assert.equal(result.complete, false); assert.deepEqual(result.observations, [])
+  }
 })
 
 test("durable running launch metadata can refine unknown mode but cannot prove background child completion", async () => {

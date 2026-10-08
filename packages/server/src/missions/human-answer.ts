@@ -10,21 +10,26 @@ export const HUMAN_ANSWER_POLICY = "codenomad.missions.human-answer/signed-v1"
 const id = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const location = z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict()
-export const humanAnswerProofSchema = z.object({
-  cookieSessionID: z.string().min(1).max(256), workspaceID: z.string().min(1).max(200),
-  username: z.string().min(1).max(256), sessionID: id, formID: id, coordinatorSessionID: id,
-  scheduleID: id, passageID: id, grantID: id, epoch: z.number().int().positive().safe(),
+const commonBinding = z.object({
+  missionID: id, sessionID: id, formID: id, coordinatorSessionID: id,
   projectID: id, projectCanonical: z.string().min(1).max(4096), location,
   namespace: id, daemonStorageID: id,
-  profileID: id, executionHost: id, answer: z.record(z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])),
-  issuedAt: z.number().int().nonnegative().safe(),
+  profileID: id, executionHost: id,
 }).strict()
+export const oneTimeHumanBindingSchema = commonBinding.extend({ mode: z.literal("one-time"),
+  taskKey: id, generation: z.number().int().positive().safe(), nativeCall: nativeDecisionProvenance.shape.nativeCall }).strict()
+export const recurringHumanBindingSchema = commonBinding.extend({ mode: z.literal("recurring"),
+  scheduleID: id, passageID: id, grantID: id, epoch: z.number().int().positive().safe() }).strict()
+const workspace = { workspaceID: z.string().min(1).max(200) }
+const authentication = { ...workspace, cookieSessionID: z.string().min(1).max(256), username: z.string().min(1).max(256),
+  answer: z.record(z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])), issuedAt: z.number().int().nonnegative().safe() }
+export const humanAnswerProofSchema = z.discriminatedUnion("mode", [oneTimeHumanBindingSchema.extend(authentication).strict(), recurringHumanBindingSchema.extend(authentication).strict()])
 export type HumanAnswerProof = z.infer<typeof humanAnswerProofSchema>
 export const humanAnswerRpcInputSchema = z.object({ body: humanAnswerProofSchema, proof: hash }).strict()
-export const humanAnswerQuerySchema = humanAnswerProofSchema.omit({ cookieSessionID: true, username: true, issuedAt: true, answer: true })
+export const humanAnswerQuerySchema = z.discriminatedUnion("mode", [oneTimeHumanBindingSchema.extend(workspace).strict(), recurringHumanBindingSchema.extend(workspace).strict()])
 export const humanAnswerResultSchema = z.object({ status: z.enum(["pending", "replied", "settled"]), identity: id }).strict()
 export const humanAnswerBindingInputSchema = z.object({ sessionID: id, formID: id, profileID: id, executionHost: id }).strict()
-export const humanAnswerBindingSchema = humanAnswerQuerySchema.omit({ workspaceID: true })
+export const humanAnswerBindingSchema = z.discriminatedUnion("mode", [oneTimeHumanBindingSchema, recurringHumanBindingSchema])
 export const humanDecisionRequestSchema = nativeDecisionProvenance.extend({ question: z.string().min(1).max(20000),
   answer: z.union([z.string().min(1).max(20000), z.array(z.string().min(1).max(20000)).min(1).max(32)]),
   projectID: id, directory: z.string().min(1).max(4096), delegationToolName: z.enum(["subagent", "task"]) }).strict()

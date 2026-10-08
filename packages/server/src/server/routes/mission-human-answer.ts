@@ -48,7 +48,6 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
     missionRoot = !!marker && typeof marker === "object" && !Array.isArray(marker)
     break
   }
-  if (!missionRoot) return undefined // Ordinary/global/non-Mission Forms are unchanged.
   const human = deps.auth.getSessionFromRequest(request)
   if (!deps.auth.isAuthEnabled() || !human || human.sessionId === "auth-disabled") throw new Error("Human authentication required")
   const current = () => {
@@ -61,10 +60,18 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
   current()
   const options = { location: { directory: ownedLocation!.directory }, ...locationRequestOptions(ownedLocation!), signal }
   const rpc = client.rpc(HUMAN_ANSWER_RPC)
-  const rawBinding = await rpc.binding({ sessionID, formID, profileID: profile.key,
-    executionHost: distro ? `wsl:${distro}` : "local" }, options)
+  let rawBinding
+  try { rawBinding = await rpc.binding({ sessionID, formID, profileID: profile.key,
+    executionHost: distro ? `wsl:${distro}` : "local" }, options) }
+  catch (error) {
+    // An absent plugin on a genuinely unmarked ordinary conversation preserves
+    // ordinary Forms. Actual lookup/refusal errors never provide empty coverage.
+    const tag = error && typeof error === "object" && "type" in error ? error.type : undefined
+    if (!missionRoot && ["rpc.unavailable", "rpc.method_not_found"].includes(String(tag))) return undefined
+    throw error
+  }
   current()
-  if (rawBinding === null) return undefined // Native ledger + bounded lifecycle reads positively excluded recurrence.
+  if (rawBinding === null) return undefined // Native recurrence + ordinary journal reads positively excluded Mission decisions.
   const binding = humanAnswerBindingSchema.parse(rawBinding)
   if (binding.coordinatorSessionID !== id || !sameLocation(binding.location, ownedLocation!)) throw new Error("Human answer passage changed")
   const body = humanAnswerProofSchema.parse({ ...binding, workspaceID, cookieSessionID: human.sessionId,
@@ -73,7 +80,7 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
   const { cookieSessionID: _, username: _username, issuedAt: _issuedAt, answer, ...target } = body
   const identity = humanAnswerIdentity(target)
   const heldBinding = { key: `human-answer:${identity}`, workspaceID, projectID: binding.projectID,
-    missionID: `passage:${binding.passageID}`, sessionID, connection, locations: admission.locations,
+    missionID: binding.missionID, sessionID, connection, locations: admission.locations,
     requestDigest: authorityDigest({ target, answer }) }
   const previous = reconcileMissionCreationHold(admission.fence, heldBinding)
   if (previous) {

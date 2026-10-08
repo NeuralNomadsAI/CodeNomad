@@ -27,12 +27,12 @@ async function fixture(background = false) {
   await journal.append({ ...base("evt_bound", 3), type: "task.native-bound", taskKey: "work", actor: { sessionID: "ses_child", title: "Child", managed: true, location }, binding })
   const metadata = { sessionID: "ses_child", ...(background ? { status: "running" } : {}) }
   const called: SessionToolCalled = { type: "session.tool.called", id: "native_called", created: 10, durable: { aggregateID: "agg_parent", seq: 1, version: 1 },
-    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", input: { background }, executed: true } }
+    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", input: { background }, executed: false } }
   const success: SessionToolSuccess = { type: "session.tool.success", id: "native_success", created: 11, durable: { aggregateID: "agg_parent", seq: 2, version: 2 },
-    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", metadata, executed: true, content: [{ type: "text", text: "Native result" }] } }
+    data: { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child", metadata, executed: false, content: [{ type: "text", text: "Native result" }] } }
   const logs = new Map<string, SessionLogOutput[]>([["ses_parent", [called, success]], ["ses_child", []]])
   const message: SessionMessageGetOutput = { type: "assistant", id: "msg_parent", time: { created: 9 }, agent: "parent", model: { providerID: "provider", id: "parent" },
-    content: [{ type: "tool", id: "call_child", name: "subagent", executed: true, time: { created: 9, completed: 11 },
+    content: [{ type: "tool", id: "call_child", name: "subagent", executed: false, time: { created: 9, completed: 11 },
       state: { status: "completed", input: { background }, metadata, content: [{ type: "text", text: "Native result" }] } }] }
   let reads = 0, writes = 0, validateCount = 0
   let duringRead: (() => void) | undefined, duringAppend: (() => void) | undefined

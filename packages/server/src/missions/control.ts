@@ -89,7 +89,7 @@ export class MissionControl {
   }
 
   private async verifyHumanDecision(mission: MissionMap, taskKey: string, sessionID: string,
-    call: import("./model").MissionNativeBinding, artifact: import("./model").MissionJsonValue | undefined): Promise<void> {
+    call: import("./model").MissionNativeBinding, artifact: import("./model").MissionJsonValue | undefined): Promise<import("./human-answer").HumanAnswerReservation> {
     if (!this.options.humanGate) throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
     const provenance = validateNativeDecisionArtifact({ contract: { missionID: mission.id, taskKey, generation: call.generation },
       call, sessionID, artifact })
@@ -103,6 +103,7 @@ export class MissionControl {
       || receipt.binding.formID !== provenance.formID || receipt.messageID !== provenance.messageID
       || receipt.toolCallID !== provenance.toolCallID || !isDeepStrictEqual(receipt.answer[provenance.fieldKey], provenance.answer))
       throw new MissionControlError("Exact native human-decision receipt unavailable", "policy-unqualified")
+    return receipt
   }
 
   /** A point-in-time readout only: no task result, prompt, notification or profile change. */
@@ -808,8 +809,11 @@ export class MissionControl {
         && mission.tasks.some(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
         for (const task of mission.tasks.filter(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
           const report = task.report
-          if (!report?.nativeCall) throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
-          await this.verifyHumanDecision(mission, task.key, report.sessionId, report.nativeCall, report.artifact)
+          const call = report?.nativeCall ?? (report?.delivery === "coordinator-readout" ? task.nativeExecution?.binding : undefined)
+          if (!report || !call) throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
+          const source = report.delivery === "coordinator-readout" ? task.actorSessionId : report.sessionId
+          if (!source) throw new MissionControlError("Exact native decision actor unavailable", "policy-unqualified")
+          await this.verifyHumanDecision(mission, task.key, source, call, report.artifact)
         }
       }
       if (mission.tasks.some(hasUnsettledNativeExecution)) {
@@ -844,7 +848,14 @@ export class MissionControl {
 
     const declared = input.taskKey && mission.tasks.find(task => task.key === input.taskKey)
     if (!native && sessionID === mission.coordinatorSessionId && declared && declared.executionMode?.kind === "native") {
-      const readout = coordinatorReadout(snapshot, mission, declared, input, this.timestamp(snapshot))
+      let humanReceipt: import("./human-answer").HumanAnswerReservation | undefined
+      if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed") {
+        const call = declared.nativeExecution?.binding
+        if (!call || !declared.actorSessionId || call.generation !== declared.contractGeneration)
+          throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
+        humanReceipt = await this.verifyHumanDecision(mission, declared.key, declared.actorSessionId, call, input.artifact)
+      }
+      const readout = coordinatorReadout(snapshot, mission, declared, input, this.timestamp(snapshot), humanReceipt)
       if (readout.existing) return { disposition: "existing", mission }
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved during readout", "foreign-session")

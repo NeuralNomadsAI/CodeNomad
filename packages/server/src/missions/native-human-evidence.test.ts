@@ -74,6 +74,10 @@ test("exact actual Form/session/message/tool plus durable call/answer is observa
 })
 
 const failures: Array<[string, (f: ReturnType<typeof fixture>) => void]> = [
+  ["hosted question is not local proof", f => { f.questionPart.executed = true }],
+  ["hosted delegation is not local proof", f => { f.delegationPart.executed = true }],
+  ["hosted called event is not local proof", f => { f.called.data.executed = true }],
+  ["hosted result event is not local proof", f => { f.success.data.executed = true }],
   ["foreign Form", f => { f.form.id = "form_foreign" }],
   ["foreign Form session", f => { f.form.sessionID = "ses_foreign" }],
   ["foreign Form message", f => { f.form.metadata.tool.messageID = "msg_other" }],

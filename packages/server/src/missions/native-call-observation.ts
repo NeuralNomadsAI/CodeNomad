@@ -32,6 +32,10 @@ export type NativeCallReadResult = {
   profileObservation: "unknown"
 }
 
+/** V2 publish-llm-event.ts: `executed` means provider-hosted, NOT success.
+ * Local question/subagent calls and their durable results carry false. */
+export function isLocalNativeTool(value: { executed?: unknown }): boolean { return value.executed === false }
+
 const record = (input: unknown): input is Record<string, unknown> => Boolean(input) && typeof input === "object" && !Array.isArray(input)
 const id = (input: unknown): input is string => typeof input === "string" && input.length > 0 && input.length <= 240 && !/[\s\x00-\x1f\x7f]/.test(input)
 const only = (input: Record<string, unknown>, keys: string[]) => Object.keys(input).every(key => keys.includes(key))
@@ -158,7 +162,7 @@ export async function readNativeCallObservation(client: NativeCallReadClient, ta
     if (tools.length !== 1) throw new Error("Native tool identity ambiguous/missing")
     const tool = tools[0]
     if (tool.type !== "tool" || tool.name !== target.toolName || tool.state.status === "streaming"
-      || tool.state.metadata?.sessionID !== target.childSessionID) throw new Error("Native child correlation unavailable")
+      || !isLocalNativeTool(tool) || tool.state.metadata?.sessionID !== target.childSessionID) throw new Error("Native child correlation unavailable")
     const input = tool.state.input
     if (input.background === false && tool.state.metadata?.status === "running") throw new Error("Native launch mode conflict")
     // No missing-input/default profile or background-mode inference.
@@ -170,8 +174,7 @@ export async function readNativeCallObservation(client: NativeCallReadClient, ta
     for (const event of parent.events) {
       if (event.type !== "session.tool.called" && event.type !== "session.tool.success" && event.type !== "session.tool.failed") continue
       if (event.data.assistantMessageID !== target.binding.parentMessageID || event.data.id !== target.binding.toolCallID) continue
-      // The public ABI declares this flag but does not qualify it as child/job identity.
-      if (typeof event.data.executed !== "boolean" || event.durable.version !== (event.type === "session.tool.called" ? 1 : 2)) throw new Error("Native tool schema mismatch")
+      if (!isLocalNativeTool(event.data) || event.durable.version !== (event.type === "session.tool.called" ? 1 : 2)) throw new Error("Native tool schema mismatch")
       if (event.type === "session.tool.called" && !record(event.data.input)) throw new Error("Native tool input missing")
       if (event.type === "session.tool.called" && event.data.input.background !== input.background) throw new Error("Native tool input conflict")
       const source = { id: event.id, sessionID: event.data.sessionID, aggregateID: event.durable.aggregateID, seq: event.durable.seq, created: event.created }

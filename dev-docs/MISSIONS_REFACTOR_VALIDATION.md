@@ -44,6 +44,23 @@ Current acceptance ledger at `c677303c` (checks refer to the recorded receipts b
 The next delivery closes the last row end-to-end. Do not promote branch-local
 checks into a completed row or start another independent implementation stream.
 
+Frozen handoffs received (not new validation):
+- `missions-run-now-20261008`, HEAD `119443d5`: activation/status/proof changes
+  preserved uncommitted. The prior 64-test pass predates the latest adaptations;
+  current integration is incomplete and unvalidated.
+- `missions-artifact-lifetime-20261008`, HEAD `dee5eb71`: open merge and local
+  product adaptations preserved. Six index conflicts remain; the last typecheck
+  failed and subsequent corrections were not rerun. Consume the reviewed artifact
+  delta selectively from the reference, not this incomplete tree as a replacement.
+- `missions-human-answer-receipt-20261008`: frozen increment preserved in
+  `c522b4ae`. Central integration retains the reference's full composed source input
+  and physical routing helpers. Focused common observation/reconciliation and
+  actual-shaped answer tests pass **102/102**, with server typecheck passing.
+  This covers native-task one-time Wayfinder readout/finalization and positive
+  recurring answer evidence after Pause/Stop/archive, including unknown-reply
+  retention. It does not qualify independent-root decision provenance or the
+  complete service-owned business/tool lifetime journey.
+
 **Authoritative target clarification (2026-10-07):** Missions runs autonomously
 inside the OpenCode service with both CodeNomad UI and its intermediary backend
 closed. A persistent CodeNomad backend is not a substitute. The actual user request

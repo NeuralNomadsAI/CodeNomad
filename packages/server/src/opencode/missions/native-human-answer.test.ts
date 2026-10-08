@@ -17,7 +17,8 @@ import { stableToken } from "../../missions/journal"
 import { MissionJournal, type MissionStorage } from "../../missions/journal"
 import { MissionControl } from "../../missions/control"
 import type { MissionJsonValue } from "../../missions/model"
-import { deriveRecurrenceChild, recurrenceHumanRequestID, recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY } from "../../missions/recurrence-authority-contract"
+import { deriveRecurrenceChild, recurrenceHumanRequestID, recurrenceStandingSigningBytes, recurrenceAuthorityDigest, RECURRENCE_AUTHORITY_POLICY, type SignedRecurrenceStandingIntent } from "../../missions/recurrence-authority-contract"
+import { controlOperationID } from "../../missions/receipt-identity"
 import { recurrenceMessageID, recurrencePassageID, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { NativeRecurrenceAuthorityStore } from "../../missions/recurrence-authority-store"
 import { humanAnswerIdentity, humanAnswerProof, type HumanAnswerProof, type HumanAnswerReservation } from "../../missions/human-answer"
@@ -33,6 +34,7 @@ import { acquireNativeHumanAnswers } from "./native-human-answer"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 import type { NativeStandingSigner } from "./native-recurrence-adapter"
+import { applyNativeStandingDecision } from "./native-recurrence-adapter"
 import type { MissionNativeService } from "./native-service-adapter"
 
 const encode = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
@@ -42,7 +44,7 @@ function deferred() {
   return { promise, resolve }
 }
 
-async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
+async function fixture(options: { watched?: boolean; nested?: boolean; oneTime?: boolean; existingKey?: boolean } = {}) {
   const temporary = await mkdtemp(path.join(process.env.TEMP ?? process.cwd(), "human-answer-offline-"))
   const oldLocal = process.env.LOCALAPPDATA
   process.env.LOCALAPPDATA = temporary
@@ -91,12 +93,14 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
     },
   }
   const store = new NativeRecurrenceAuthorityStore(storage, scope)
-  put(store.key, { version: 1, scope, revision: 0, parent, child: null, settledSequence: 0, lastArchiveDigest: null })
-  put(`${store.parentKey}/parents/1`, parent)
+  if (!options.oneTime) {
+    put(store.key, { version: 1, scope, revision: 0, parent, child: null, settledSequence: 0, lastArchiveDigest: null })
+    put(`${store.parentKey}/parents/1`, parent)
+  }
   put(`${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`, scope.namespace)
-  put(`${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence-signer/profile`, keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"))
+  if (!options.oneTime || options.existingKey) put(`${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence-signer/profile`, keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"))
   const sourceKey = "fixture-source"
-  put(sourceKey, document)
+  if (!options.oneTime) put(sourceKey, document)
   let ownerLive = true, created = 0, admitted = 0
   const owner = { namespace: scope.namespace, daemonStorageID: scope.daemonStorageID,
     assertCurrent: (): true => { assert(ownerLive); assert.equal(get(`${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`), scope.namespace); return true } }
@@ -111,12 +115,13 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
       try { const result = await operation(); current(); db.exec("COMMIT"); return result }
       catch (error) { db.exec("ROLLBACK"); throw error }
     } } as unknown as NativeRecurrenceAuthorityProvider
+  let protectedParent: SignedRecurrenceStandingIntent = parent
   const signer: NativeStandingSigner = {
     readSigners: async () => [{ ...parentBody, publicKey: keys.publicKey, policy: "codenomad.missions.authority/signed-v1", qualification: "qualified" }],
     assertSignerCurrent: snapshot => { owner.assertCurrent(); assert.equal(snapshot.signerDigest, signerDigest); return true },
-    assertProtectedCurrent: request => { owner.assertCurrent(); assert.deepEqual(request.parent, parent);
+    assertProtectedCurrent: request => { owner.assertCurrent(); assert.deepEqual(request.parent, protectedParent);
       assert.deepEqual(request.ledger, get(store.key)); return true },
-    captureHumanIntent: () => { throw new Error("No human Play during passage execution") },
+    captureHumanIntent: signed => () => { owner.assertCurrent(); assert.deepEqual(signed, protectedParent); return true },
   }
   const nativeGet = async ({ sessionID }: { sessionID: string }) => {
     const row = db.prepare("SELECT * FROM session_v2 WHERE id=?").get(sessionID) as { id: string; parent_id: string | null; directory: string; metadata: string; title: string; agent: string; model: string }
@@ -149,14 +154,40 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
       return { id: input.id, sessionID: input.sessionID, type: "synthetic", delivery: input.delivery, payload,
         time: { created: DateTime.makeUnsafe(1) } }
     } } as unknown as MissionNativeService
-  const passage = await admitNativeRecurrencePassage({ document, provider, storage, signer, owner, native: service,
-    profile: parentBody.profileSource, signal: new AbortController().signal, settlementSignal: new AbortController().signal,
-    beforeEffect: async () => owner.assertCurrent })
-  assert.equal(passage.conversationID, grant.coordinatorSessionID); assert.equal(created, 1); assert.equal(admitted, 1)
+  let ordinaryControl: MissionControl | undefined, ordinaryJournal: MissionJournal | undefined
+  let native!: Effect.Success<ReturnType<typeof acquireNativeHumanAnswers>>
+  if (options.oneTime) {
+    // Existing ordinary native conversation, not a standing parent or ghost root.
+    await service.create({ id: grant.coordinatorSessionID, title: "Ordinary conversation", location: { directory },
+      agent: "worker", model: config.profiles.coordinator.model, metadata: {} }, { signal: new AbortController().signal }, owner.assertCurrent)
+    ordinaryControl = new MissionControl({ storage, project: { id: "project", canonical: directory, location: { directory } },
+      sessions: { get: nativeGet, create: async () => { throw new Error("No ghost session") }, prompt: async () => { throw new Error("No prompt") }, synthetic: async () => {} },
+      humanGate: request => native.verify(request) })
+    const made = await ordinaryControl.create({ requestID: grant.passage.id, objective: "Choose the seam", template: "wayfinder",
+      coordinatorSessionID: grant.coordinatorSessionID, profiles: { coordinator: config.profiles.coordinator,
+        roles: { decision: config.profiles.roles.specialist } } })
+    assert.equal(made.mission.id, grant.missionID)
+    ordinaryJournal = new MissionJournal(storage, "project", directory)
+  } else {
+    const passage = await admitNativeRecurrencePassage({ document, provider, storage, signer, owner, native: service,
+      profile: parentBody.profileSource, signal: new AbortController().signal, settlementSignal: new AbortController().signal,
+      beforeEffect: async () => owner.assertCurrent })
+    assert.equal(passage.conversationID, grant.coordinatorSessionID)
+  }
+  assert.equal(created, 1); assert.equal(admitted, options.oneTime ? 0 : 1)
   const rootCreated = await nativeGet({ sessionID: grant.coordinatorSessionID })
-  assert.deepEqual(rootCreated.metadata, { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "coordinator", role: "coordinator" } })
+  assert.deepEqual(rootCreated.metadata, options.oneTime ? {} : { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "coordinator", role: "coordinator" } })
   for (const id of ["ses_child", "ses_sibling"]) db.prepare("INSERT INTO session_v2 VALUES(?,?,?, ?,NULL,'{}','Child','worker',?)")
     .run(id, grant.coordinatorSessionID, "project", directory, JSON.stringify(config.profiles.roles.specialist.model))
+  if (ordinaryJournal && ordinaryControl) {
+    const mission = (await ordinaryControl.snapshot()).missions[0]
+    await ordinaryJournal.append({ version: 1, id: "decision_created", type: "task.created", missionID: mission.id,
+      projectID: "project", createdAt: mission.createdAt + 1, task: { id: "tsk_decision", key: "decision", title: "Decision", brief: "Ask the human",
+        role: "decision", execution: config.profiles.roles.specialist, executionMode: { kind: "native", parentTaskKey: null }, blockedBy: [] } })
+    await ordinaryJournal.append({ version: 1, id: "decision_bound", type: "task.native-bound", missionID: mission.id, projectID: "project",
+      createdAt: mission.createdAt + 2, taskKey: "decision", binding: { generation: 1, parentSessionID: grant.coordinatorSessionID,
+        parentMessageID: "msg_delegate", toolCallID: "call_delegate" }, actor: { sessionID: "ses_child", title: "Child", location: { directory }, managed: true } })
+  }
   const input = { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }
   const form = { id: "frm_actual", sessionID: "ses_child", title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_question", id: "call_question" } },
     fields: [{ key: "q0", type: "string", title: "Seam", description: "Choose the seam?", custom: true,
@@ -165,7 +196,8 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
   let delayReply = false, loseRpcAck = false
   const replyStarted = deferred(), replyRelease = deferred(), rpcFinished = deferred(), observerClosed = deferred()
   const part = { type: "tool", name: "question", id: "call_question", executed: false, state: { status: "running", input } }
-  const message = () => db.prepare("INSERT OR REPLACE INTO session_message VALUES(?,?,?,?)").run("msg_question", "ses_child", "assistant", JSON.stringify({ content: [part] }))
+  const message = () => db.prepare("INSERT OR REPLACE INTO session_message VALUES(?,?,?,?)").run("msg_question", "ses_child", "assistant",
+    JSON.stringify({ agent: "worker", model: config.profiles.roles.specialist.model, content: [part] }))
   message()
   db.prepare("INSERT INTO session_message VALUES(?,?,?,?)").run("msg_delegate", grant.coordinatorSessionID, "assistant", JSON.stringify({
     content: [{ type: "tool", name: "subagent", id: "call_delegate", executed: false, state: { status: "running", input: {}, metadata: { sessionID: "ses_child" } } }] }))
@@ -208,7 +240,12 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
   registerAutomationPluginRoute(app, { authManager: auth, bridgeToken: registration.token,
     workspaceManager: manager, settings, nativeParent: {}, developerCdp: {} } as never)
-  const native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location } as never), graph))
+  let refusedProfile = false
+  native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location,
+    session: { get: (input: { sessionID: string }) => Effect.promise(() => nativeGet(input)) },
+    agent: { list: () => Effect.sync(() => ({ data: [{ id: "worker", mode: refusedProfile ? "primary" : "all", hidden: false }] })) },
+    model: { list: () => Effect.succeed({ data: [{ providerID: "provider", id: "model", enabled: true, capabilities: { tools: true }, variants: [] }] }) },
+  } as never), graph))
   let ordinaryReplies = 0, settleOrdinary = false
   Object.assign(connection.client, { rpc: () => ({ ...native, reply: async (input: unknown, options?: { signal?: AbortSignal }) => {
     assert.equal(options?.signal, undefined, "dispatched native answer is not cancelled by its HTTP observer")
@@ -238,10 +275,13 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
   await app.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}/api/opencode-plugin/automation`
   const disposeBridge = await publishAutomationBridge(registration)
-  const binding = { sessionID: "ses_child", formID: form.id, coordinatorSessionID: grant.coordinatorSessionID,
-    scheduleID: "watch", passageID, grantID: grant.grantID, epoch: 1, projectID: "project", projectCanonical: checkout,
+  const common = { missionID: grant.missionID, sessionID: "ses_child", formID: form.id, coordinatorSessionID: grant.coordinatorSessionID,
+    projectID: "project", projectCanonical: checkout,
     location: { directory }, profileID: "profile", executionHost: "local", workspaceID: "workspace",
     namespace: scope.namespace, daemonStorageID: scope.daemonStorageID }
+  const binding = options.oneTime ? { ...common, mode: "one-time" as const, taskKey: "decision", generation: 1,
+    nativeCall: { generation: 1, parentSessionID: grant.coordinatorSessionID, parentMessageID: "msg_delegate", toolCallID: "call_delegate" } }
+    : { ...common, mode: "recurring" as const, scheduleID: "watch", passageID, grantID: grant.grantID, epoch: 1 }
   const body: HumanAnswerProof = { ...binding, cookieSessionID: cookie.id, username: "human", answer: { q0: "Module" }, issuedAt: Date.now() }
   const submit = () => { body.issuedAt = Date.now(); return native.reply({ body, proof: humanAnswerProof(body, registration.token) }) }
   const receiptKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/human-answers/${stableToken("project", 24)}/${humanAnswerIdentity(binding)}`
@@ -250,7 +290,29 @@ async function fixture(options: { watched?: boolean; nested?: boolean } = {}) {
     sessionID: "ses_child", formID: form.id, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0",
     projectID: "project", directory, delegationToolName: "subagent", question: "Choose the seam?", answer: "Module" }
   const requestUrl = `http://127.0.0.1:${(app.server.address() as { port: number }).port}/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`
-  return { native, body, binding, grant, parent, form, db, submit, get, receiptKey, cookie, part, finish, decision, sessionClient, fence, store,
+  return { native, body, binding, grant, parent, form, db, submit, get, put, receiptKey, cookie, part, finish, decision, sessionClient, fence, store,
+    ordinaryControl, ordinaryJournal, refuseProfile: () => { refusedProfile = true },
+    denyRecurring: async (action: "pause" | "stop" | "archive") => {
+      const old = (await store.read())!
+      const body = { ...parentBody, epoch: old.parent.body.epoch + 1, expectedRevision: old.revision,
+        action: action === "pause" ? "pause" as const : "revoke" as const,
+        requestID: recurrenceHumanRequestID("watch", old.parent.body.epoch + 1, action === "pause" ? "pause" : "revoke") }
+      protectedParent = { body, signature: sign(null, recurrenceStandingSigningBytes(body), keys.privateKey).toString("base64") }
+      await applyNativeStandingDecision({ provider, signer, owner }, protectedParent, new AbortController().signal)
+      if (action === "archive") {
+        const hot = (await store.read())!, child = hot.child!
+        const archive = { version: 1 as const, child, previousArchiveDigest: hot.lastArchiveDigest,
+          settlement: { grantID: child.grant.grantID, evidenceID: "native_terminal", outcome: "stopped" as const,
+            effects: child.effects.map(effect => effect.receipt!), nativeIdle: true as const, controlsSettled: true as const,
+            notificationsSettled: true as const, derivedCallsEnded: true as const } }
+        await provider.transact(owner.assertCurrent, async () => {
+          await store.archiveChild(archive, owner.assertCurrent)
+          await store.transaction(hot.revision, async before => ({ document: { ...before!, revision: before!.revision + 1,
+            child: null, settledSequence: child.grant.sequence, lastArchiveDigest: recurrenceAuthorityDigest(archive) },
+            result: undefined, assertCurrent: owner.assertCurrent }))
+        })
+      }
+    },
     beginHttpAnswer: () => {
       const request = http.request(requestUrl, { method: "POST", agent: false, headers: { "content-type": "application/json",
         cookie: `${auth.getCookieName()}=${cookie.id}`, "x-codenomad-human-answer": "1" } })
@@ -310,6 +372,109 @@ for (const nested of [false, true]) test(`watched passage human evidence validat
     await assert.rejects(f.native.verify(f.decision), /Original native passage message mismatch/)
     assert.equal(f.counts().replies, 1)
   } finally { await f.dispose() }
+})
+
+test("ordinary one-time Wayfinder uses the same profile key, no standing parent, and exact journal humanGate to finish", async () => {
+  const f = await fixture({ oneTime: true })
+  try {
+    const key = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence-signer/profile`
+    assert.equal(f.get(key), undefined)
+    assert.equal(await f.native.binding({ sessionID: "ses_child", formID: f.form.id, profileID: "profile", executionHost: "local" }).then(value => value?.mode), "one-time")
+    assert.equal(f.get(key), undefined, "ordinary binding/read cannot provision signing authority")
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%/parents/%'").get()!.count, 0)
+    assert.equal((await f.proxySubmit()).statusCode, 200)
+    assert.equal(typeof f.get(key), "string")
+    const receipt = await f.native.verify(f.decision)
+    assert.equal(receipt.binding.mode, "one-time"); assert.equal(receipt.state, "settled")
+    const savedKey = f.get(key)
+    assert.equal((await f.proxySubmit()).statusCode, 200); assert.equal(f.get(key), savedKey); assert.equal(f.counts().replies, 1)
+    const { question, answer, projectID: _, directory: _directory, delegationToolName: _name, ...provenance } = f.decision
+    const report = { missionID: f.grant.missionID, taskKey: "decision", outcome: "completed" as const,
+      summary: "Human chose the seam", evidence: [], next: [], final: false, artifact: { kind: "decision", question, answer, provenance } }
+    assert.equal((await f.ordinaryControl!.report(f.grant.coordinatorSessionID, report)).disposition, "reported")
+    // Business readout is not executor termination. Observe the accepted native
+    // call end separately before final completion, using the normal journal path.
+    const mission = (await f.ordinaryControl!.snapshot()).missions[0]
+    await f.ordinaryJournal!.append({ version: 1, id: "decision_returned", type: "task.native-returned", missionID: mission.id,
+      projectID: "project", createdAt: mission.updatedAt + 1, taskKey: "decision", childSessionID: "ses_child", binding: f.decision.nativeCall })
+    assert.equal((await f.ordinaryControl!.report(f.grant.coordinatorSessionID, { ...report, final: true })).disposition, "finished")
+    f.expire(); await f.closeBackend()
+    assert.equal((await f.native.verify(f.decision)).identity, receipt.identity)
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%/parents/%'").get()!.count, 0)
+  } finally { await f.dispose() }
+})
+
+test("one-time refuses inactive/stopped, wrong current call, sibling and refused profile before native answer or key provisioning", async () => {
+  for (const refusal of ["pause", "stop", "call", "sibling", "profile"] as const) {
+    const f = await fixture({ oneTime: true })
+    try {
+      if (refusal === "pause" || refusal === "stop") {
+        const mission = (await f.ordinaryControl!.snapshot()).missions[0]
+        await f.ordinaryJournal!.append({ version: 1, id: controlOperationID(mission.id, refusal), type: "mission.control-requested",
+          missionID: mission.id, projectID: "project", requestID: refusal, expectedRevision: mission.revision, action: refusal,
+          targets: [{ sessionID: f.grant.coordinatorSessionID, location: f.binding.location }], createdAt: mission.updatedAt + 1 })
+      } else if (refusal === "profile") f.refuseProfile()
+      else if (refusal === "sibling") f.body.sessionID = "ses_sibling"
+      else {
+        f.db.prepare("UPDATE session_message SET data=? WHERE id='msg_delegate'").run(JSON.stringify({ content: [{ type: "tool", name: "subagent",
+          id: "call_other", executed: false, state: { status: "running", input: {}, metadata: { sessionID: "ses_child" } } }] }))
+      }
+      await assert.rejects(f.submit())
+      assert.equal(f.counts().replies, 0); assert.equal(f.get(f.receiptKey), undefined)
+      assert.equal(f.get(`${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence-signer/profile`), undefined)
+    } finally { await f.dispose() }
+  }
+})
+
+test("one-time reuses existing Play key and never replays a receipt under another mode/mission", async () => {
+  const f = await fixture({ oneTime: true, existingKey: true })
+  try {
+    const key = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence-signer/profile`, before = f.get(key)
+    await f.submit(); assert.equal(f.get(key), before)
+    const forged = { ...f.binding, mode: "recurring", scheduleID: "watch", passageID: f.grant.passage.id, grantID: f.grant.grantID, epoch: 1 }
+    await assert.rejects(f.native.reconcile(forged))
+    await assert.rejects(f.native.reconcile({ ...f.binding, missionID: "msn_foreign" }))
+    assert.equal(f.counts().replies, 1)
+  } finally { await f.dispose() }
+})
+
+test("original positive reply reconciles delayed local question success after Pause/Stop/child archive, without dispatch or replay", async () => {
+  for (const action of ["pause", "stop", "archive"] as const) {
+    const f = await fixture()
+    try {
+      f.defer()
+      assert.equal((await f.submit()).status, "replied")
+      const identity = f.get(f.receiptKey).identity
+      await f.denyRecurring(action)
+      f.finish(); f.expire(); await f.closeBackend()
+      assert.equal((await f.native.reconcile(f.binding)).status, "settled")
+      assert.equal((await f.native.verify(f.decision)).identity, identity)
+      assert.equal(f.get(f.receiptKey).binding.epoch, 1); assert.equal(f.counts().replies, 1)
+      assert.equal(f.db.prepare("SELECT count(*) AS count FROM session_message WHERE type='synthetic'").get()!.count, 1)
+    } finally { await f.dispose() }
+  }
+})
+
+test("reserved unknown native answer remains pending after denying epoch; hosted true is never local human proof", async () => {
+  const f = await fixture()
+  try {
+    f.loseNativeReturn(); await assert.rejects(f.submit())
+    const identity = f.get(f.receiptKey).identity
+    await f.denyRecurring("pause")
+    assert.equal((await f.native.reconcile(f.binding)).status, "pending")
+    await assert.rejects(f.native.verify(f.decision))
+    assert.equal(f.get(f.receiptKey).state, "reserved"); assert.equal(f.get(f.receiptKey).identity, identity)
+    assert.equal(f.counts().replies, 1)
+  } finally { await f.dispose() }
+  const hosted = await fixture({ oneTime: true })
+  try {
+    hosted.part.executed = true
+    hosted.db.prepare("UPDATE session_message SET data=? WHERE id='msg_question'").run(JSON.stringify({
+      agent: "worker", model: { providerID: "provider", id: "model" }, content: [hosted.part] }))
+    await assert.rejects(hosted.submit())
+    assert.equal(hosted.counts().replies, 0); assert.equal(hosted.get(hosted.receiptKey), undefined)
+    assert.equal(hosted.get(`${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence-signer/profile`), undefined)
+  } finally { await hosted.dispose() }
 })
 
 test("real owned proxy routes dock answers to native fixed RPC; programmatic reply cannot produce human proof", async () => {

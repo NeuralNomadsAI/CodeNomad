@@ -5,10 +5,12 @@ import { validateMissionReportArtifact } from "./contracts"
 import { stableToken } from "./journal"
 import { missionIsRunning } from "./lifecycle-model"
 import type { MissionMap, MissionReport, MissionSnapshot, MissionTask } from "./model"
+import type { HumanAnswerReservation } from "./human-answer"
+import { sameNativeCall } from "./native-report-provenance"
 
 /** Coordinator-authored business evidence, not a receipt from native execution. */
 export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMap, task: MissionTask,
-  input: MissionReportInput, createdAt: number): { report: MissionReport; existing: boolean } {
+  input: MissionReportInput, createdAt: number, humanReceipt?: HumanAnswerReservation): { report: MissionReport; existing: boolean } {
   if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable) {
     throw new MissionControlError("Damaged Mission journal cannot authorize coordinator readout", "invalid-journal")
   }
@@ -20,7 +22,11 @@ export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMa
   }
   // Preserve the stronger human-consent gate; a coordinator summary is not Form proof.
   if (mission.template === "wayfinder" && task.role === "decision" && input.outcome === "completed") {
-    throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
+    if (!humanReceipt || humanReceipt.state !== "settled" || humanReceipt.principal.kind !== "codenomad-human"
+      || humanReceipt.binding.missionID !== mission.id || humanReceipt.binding.sessionID !== task.actorSessionId
+      || humanReceipt.binding.mode === "one-time" && (humanReceipt.binding.taskKey !== task.key
+        || humanReceipt.binding.generation !== task.contractGeneration || !sameNativeCall(humanReceipt.binding.nativeCall, task.nativeExecution?.binding)))
+      throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
   }
   let artifact
   try { artifact = validateMissionReportArtifact({ template: mission.template, role: task.role,
