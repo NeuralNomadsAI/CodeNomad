@@ -389,6 +389,23 @@ remain unqualified. Historical results below retain their original scope and fai
   `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-iGW4Sv/results.json`
   (SHA-256 `ca736c8f473cce0db7f41bc66032ae63a56f31962fbeefb8d244bbd5a1f293f1`);
   do not repeat this native test before the requested first build.
+- A second native test was run prematurely during the 2026-10-08 recurring Play
+  work, after a server/plugin source build but **before the requested first
+  complete NSIS build**. The command was `node scripts/test-missions-native.mjs
+  'C:\Users\Admin\AppData\Roaming\npm\node_modules\@opencode\cli\bin\opencode.exe'`.
+  Its isolated OpenCode 2.0.24 service (PID 36796, loopback port 54672) used
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-I0kyjB/fixture.db`
+  and separate HOME/XDG/config paths; the retained `receipt.json` in that folder
+  reports **16 passed, 0 failed gates**, 32 fixture-provider requests and an
+  owned-service SIGTERM on exit. The isolated bundle's SHA-256 was
+  `DEC64C137FE3036D8F554F089E9699F2DDF2DC02F6318BEF48C22F4F438C0CD9`.
+  Source HEAD was `223e897afe2294c9ea317587e9045ae27a1ca9fc` with uncommitted
+  Play changes, not a frozen tree. A prior `opencode.cmd` attempt failed with
+  `EINVAL` before fixture startup. The script and receipt show no contact with
+  the shared daemon, installed Tauri app or live Mission, but their historical
+  process state was not independently rechecked. This is **not** packaged or
+  production autonomy acceptance; do not repeat private native fixtures before
+  the complete build.
 - **`65dd66a4`** supplies a separate exact-incarnation native managed-owner seam:
   actual Global/ServerInfo/Database graph, private managed registration and config,
   process start/executable identity and native storage challenge. Trusted enrollment
