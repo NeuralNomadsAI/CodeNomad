@@ -55,6 +55,8 @@ export function nativeRecurrenceAdapter(input: {
   observeSettlement?: RecurrenceAuthorityAdapter["observeSettlement"]
 }): RecurrenceAuthorityAdapter {
   const { provider, signer } = input, store = provider.store
+  // Adapter/provider-local discovery contracts, not signer or epoch approvals.
+  // Reuse only an exact root binding; each boundary still invokes its fresh fence.
   const signerRoots = new Map<string, () => string>()
   const owner = (): true => {
     assertSynchronousAuthorityGuard(input.owner.assertCurrent, "policy-unqualified")
@@ -72,7 +74,7 @@ export function nativeRecurrenceAdapter(input: {
     for (const root of roots) {
       if (root.mode !== "git" || physical(realpathSync(root.directory)) !== root.checkout
         || physical(realpathSync(root.family)) !== root.family
-        || (fences.get(root.directory)?.() ?? readFamilyAuthorityIdentitySync(root.directory)) !== root.family)
+        || (fences.get(canonicalAuthority(root))?.() ?? readFamilyAuthorityIdentitySync(root.directory)) !== root.family)
         rejectAuthority("binding-mismatch")
     }
     return true
@@ -90,7 +92,10 @@ export function nativeRecurrenceAdapter(input: {
   return {
     readSigners: async () => {
       owner(); const signers = await signer.readSigners()
-      for (const root of signers.flatMap(signer => signer.roots)) signerRoots.set(root.directory, await createFamilyAuthorityIdentityFence(root.directory))
+      for (const root of signers.flatMap(signer => signer.roots)) {
+        const binding = canonicalAuthority(root)
+        if (!signerRoots.has(binding)) signerRoots.set(binding, await createFamilyAuthorityIdentityFence(root.directory))
+      }
       owner(); return signers
     },
     assertSignerCurrent: snapshot => { owner(); rootCurrent(snapshot.roots, signerRoots); return assertSynchronousAuthorityGuard(() => signer.assertSignerCurrent(snapshot), "untrusted-signer") },
@@ -106,11 +111,13 @@ export function nativeRecurrenceAdapter(input: {
       // every exact physical checkout/family, not a directory prefix or a label.
       const roots = new Map<string, () => string>()
       for (const root of request.parent.body.roots) {
-        const fence = signerRoots.get(root.directory) ?? await createFamilyAuthorityIdentityFence(root.directory)
+        const binding = canonicalAuthority(root)
+        const fence = signerRoots.get(binding) ?? await createFamilyAuthorityIdentityFence(root.directory)
         if (root.mode !== "git" || physical(await realpath(root.directory)) !== root.checkout
           || physical(await realpath(root.family)) !== root.family || fence() !== root.family)
           rejectAuthority("binding-mismatch")
-        roots.set(root.directory, fence)
+        signerRoots.set(binding, fence)
+        roots.set(binding, fence)
       }
       const actualSource = provider.readCurrent(provider.sourceKey)
       if (actualSource === undefined) rejectAuthority("observation-unavailable")

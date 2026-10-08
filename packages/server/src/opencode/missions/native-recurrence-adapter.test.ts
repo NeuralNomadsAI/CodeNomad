@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { generateKeyPairSync, sign } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
-import { realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -289,4 +289,95 @@ test("native standing human CAS checks signer, protected decision, physical fami
     human = false; await assert.rejects(applyNativeStandingDecision(input, protectedParent, new AbortController().signal))
     human = true; live = false; await assert.rejects(applyNativeStandingDecision(input, protectedParent, new AbortController().signal))
   } finally { await rm(temporary, { recursive: true, force: true }) }
+})
+
+test("one adapter reuses exact root discovery without caching signer, provider or physical authority", async t => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "opencode", "recurrence-root-reuse-"))
+  const environment = { ...process.env }
+  try {
+    for (const key of Object.keys(process.env)) if (key.toUpperCase().startsWith("GIT_")) delete process.env[key]
+    process.env.GIT_CONFIG_NOSYSTEM = "1"
+    process.env.GIT_CONFIG_GLOBAL = path.join(temporary, "absent-global")
+    const trace = path.join(temporary, "trace.json")
+    process.env.GIT_TRACE2_EVENT = trace.replaceAll("\\", "/")
+    const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { windowsHide: true, stdio: "pipe" })
+    const directory = path.join(realpathSync(temporary), "checkout"), other = path.join(realpathSync(temporary), "other")
+    git(temporary, "init", "-q", directory); git(temporary, "init", "-q", other)
+    const family = await readFamilyAuthorityIdentity(directory), otherFamily = await readFamilyAuthorityIdentity(other)
+    const root = { mode: "git" as const, directory, checkout: physical(directory), family }
+    const scope = { namespace: "9f6f590e-271d-477f-8c02-7a6a119d63b9", projectID: "project", projectCanonical: directory,
+      profileID: "profile", executionHost: "host", scheduleID: "watch", daemonStorageID: "native" }
+    const keys = generateKeyPairSync("ed25519")
+    const initial: ProvisionedAuthoritySigner = { ...scope, authorityID: "authority", keyID: "key", roots: [root],
+      publicKey: keys.publicKey, provisioningGeneration: "generation", policy: MISSION_AUTHORITY_POLICY, qualification: "qualified" }
+    let signer = initial, providerLive = true, signerReads = 0
+    const store = new NativeRecurrenceAuthorityStore({ get: async () => undefined,
+      set: async () => { throw Error("No fixture writes") }, scan: async () => { throw Error("No broad scans") } }, scope)
+    const provider = { store, daemonStorageID: scope.daemonStorageID, location: {
+      directory, projectID: scope.projectID, projectCanonical: directory },
+      assertCurrent: () => { assert(providerLive, "provider-retired"); return true },
+    } as unknown as NativeRecurrenceAuthorityProvider
+    const trust: NativeStandingSigner = {
+      readSigners: async () => { signerReads++; return [signer] },
+      assertSignerCurrent: snapshot => { assert.equal(snapshot.provisioningGeneration, signer.provisioningGeneration, "signer-changed"); return true },
+      assertProtectedCurrent: () => true, captureHumanIntent: () => () => true,
+    }
+    const input = { provider, signer: trust, owner: { namespace: scope.namespace, daemonStorageID: scope.daemonStorageID, assertCurrent: () => true as const } }
+    const adapter = nativeRecurrenceAdapter(input)
+    const snapshot = () => ({ ...signer, signerDigest: authoritySignerDigest(signer.publicKey) })
+    const starts = () => readFileSync(trace, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.event === "start").length
+    await adapter.readSigners()
+    writeFileSync(trace, "")
+    const at = performance.now()
+    for (let i = 0; i < 10; i++) { await adapter.readSigners(); assert.equal(adapter.assertSignerCurrent(snapshot()), true) }
+    t.diagnostic(`10 repeated signer reads/current-root checks: ${(performance.now() - at).toFixed(1)}ms, ${starts()} Git processes`)
+    assert.equal(starts(), 0, "repeat authentication must not reacquire unchanged root discovery")
+    assert.equal(signerReads, 11, "native signer reads must not be cached")
+
+    signer = { ...initial, provisioningGeneration: "new-generation" }
+    await adapter.readSigners()
+    assert.throws(() => adapter.assertSignerCurrent({ ...initial, signerDigest: authoritySignerDigest(initial.publicKey) }), /untrusted-signer/)
+    assert.equal(adapter.assertSignerCurrent(snapshot()), true)
+    assert.equal(starts(), 0, "signer generation is freshly checked, not a physical-root cache key")
+    for (const changed of [{ ...root, checkout: root.checkout + ".different" }, { ...root, family: otherFamily }]) {
+      signer = { ...initial, roots: [changed] }
+      writeFileSync(trace, "")
+      await adapter.readSigners()
+      assert(starts() > 0, "changed binding at the same directory requires new acquisition")
+      assert.throws(() => adapter.assertSignerCurrent(snapshot()), /binding-mismatch/)
+    }
+    signer = initial
+    const entry = path.join(directory, ".git"), saved = entry + ".saved"
+    renameSync(entry, saved)
+    try {
+      writeFileSync(entry, `gitdir: ${otherFamily.replaceAll("\\", "/")}\n`)
+      await adapter.readSigners()
+      assert.throws(() => adapter.assertSignerCurrent(snapshot()), /family-identity-unavailable|binding-mismatch/)
+    } finally { unlinkSync(entry); renameSync(saved, entry) }
+    assert.equal(adapter.assertSignerCurrent(snapshot()), true)
+    const config = path.join(family, "config"), original = readFileSync(config), redirected = path.join(temporary, "redirected")
+    mkdirSync(redirected)
+    try {
+      git(directory, "config", "core.worktree", redirected)
+      await adapter.readSigners()
+      assert.throws(() => adapter.assertSignerCurrent(snapshot()), /family-identity-unavailable|binding-mismatch/)
+    } finally { writeFileSync(config, original) }
+    try {
+      process.env.GIT_COMMON_DIR = otherFamily
+      await adapter.readSigners()
+      assert.throws(() => adapter.assertSignerCurrent(snapshot()), /family-identity-unavailable|binding-mismatch/)
+    } finally { delete process.env.GIT_COMMON_DIR }
+    assert.equal(adapter.assertSignerCurrent(snapshot()), true)
+    writeFileSync(trace, "")
+    const replacement = nativeRecurrenceAdapter({ ...input, provider: { ...provider } })
+    await replacement.readSigners()
+    assert(starts() > 0, "a different adapter/provider lifetime must acquire its own discovery contract")
+    providerLive = false
+    await assert.rejects(adapter.readSigners(), /provider-retired/)
+    assert.throws(() => adapter.assertSignerCurrent(snapshot()), /provider-retired/)
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in environment)) delete process.env[key]
+    Object.assign(process.env, environment)
+    await rm(temporary, { recursive: true, force: true })
+  }
 })
