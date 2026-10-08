@@ -11,14 +11,19 @@ import {
   type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceDue, type RecurrenceResult,
 } from "./recurrence-contract"
 
+export type RecurrenceStorage = MissionStorage & {
+  /** Native SQLite adapters enforce this inside BEGIN IMMEDIATE; null means create. */
+  compareAndSet?(key: string, value: MissionJsonValue, expectedRevision: number | null, current: () => true): Promise<void>
+}
+
 /** Native JSON only. All mutators require the owning authorized host/route;
- * this module supplies durability, not grants. Native get/set is NOT cross-host
- * CAS: protected single-writer host ownership remains a mandatory integration
- * gate. runMissionExclusive spans plugin incarnations in the same JS process. */
+ * this module supplies durability, not grants. Plain native get/set is NOT CAS;
+ * production must use a conditional adapter. In-process exclusion only coalesces
+ * plugin incarnations sharing this JS process. */
 export class NativeMissionRecurrenceStore {
   readonly projectToken: string
   private readonly prefix: string
-  constructor(private readonly storage: MissionStorage, readonly projectID: string, readonly projectCanonical: string) {
+  constructor(private readonly storage: RecurrenceStorage, readonly projectID: string, readonly projectCanonical: string) {
     if (!projectID.trim() || projectID.length > 240 || !projectCanonical || projectCanonical.length > 4096) throw new Error("Invalid recurrence project")
     this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
     this.prefix = `${RECURRENCE_STORAGE_PREFIX}/project/${this.projectToken}/`
@@ -63,7 +68,7 @@ export class NativeMissionRecurrenceStore {
       const doc: RecurrenceDocument = { version: 1, projectID: this.projectID, projectCanonical: this.projectCanonical,
         id, revision: 0, scheduleRevision: 0, createdAt: now, state: "paused", config,
         lastDaily: null, settledCount: 0, cursors: [], pending: null, history: [] }
-      return this.publish(doc, current)
+      return this.publish(doc, current, null)
     })
   }
 
@@ -117,7 +122,7 @@ export class NativeMissionRecurrenceStore {
       if (admission.kind === "accepted") pending.admission = admission
       else this.settle(doc, admission, now)
       doc.revision++
-      return this.publish(doc, current)
+      return this.publish(doc, current, doc.revision - 1)
     })
   }
 
@@ -132,7 +137,7 @@ export class NativeMissionRecurrenceStore {
       this.settle(doc, result, now)
       doc.cursors = [...new Map([...doc.cursors, ...result.cursors].map(cursor => [cursor.conversationID, cursor])).values()]
       doc.revision++
-      return this.publish(doc, current)
+      return this.publish(doc, current, doc.revision - 1)
     })
   }
 
@@ -153,7 +158,7 @@ export class NativeMissionRecurrenceStore {
       if (!Number.isSafeInteger(expected) || doc.revision !== expected) throw new Error("Recurrence revision conflict")
       update(doc)
       doc.revision++
-      return this.publish(doc, current)
+      return this.publish(doc, current, expected)
     })
   }
   private async required(id: string) {
@@ -165,12 +170,14 @@ export class NativeMissionRecurrenceStore {
     return runMissionExclusive(`recurrence-mutation:${this.projectToken}`, operation)
   }
   private key(id: string) { return `${this.prefix}${recurrenceIDSchema.parse(id)}` }
-  private async publish(doc: RecurrenceDocument, current: () => true): Promise<RecurrenceDocument> {
+  private async publish(doc: RecurrenceDocument, current: () => true, expectedRevision: number | null): Promise<RecurrenceDocument> {
     const parsed = parseRecurrenceDocument(doc, this.projectID, this.projectCanonical, doc.id)
     const bytes = canonicalAuthority(parsed, RECURRENCE_MAX_BYTES)
     const fence = () => assertSynchronousAuthorityGuard(current, "policy-unqualified")
     fence()
-    await this.storage.set(this.key(doc.id), JSON.parse(bytes) as MissionJsonValue, fence)
+    const value = JSON.parse(bytes) as MissionJsonValue
+    if (this.storage.compareAndSet) await this.storage.compareAndSet(this.key(doc.id), value, expectedRevision, fence)
+    else await this.storage.set(this.key(doc.id), value, fence)
     // A failed/partial/foreign publication never reaches external admission.
     const saved = await this.required(doc.id)
     if (canonicalAuthority(saved, RECURRENCE_MAX_BYTES) !== bytes) throw new Error("Recurrence publication unknown")
