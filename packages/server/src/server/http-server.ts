@@ -5,8 +5,8 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { connect as connectTcp, isIP, type Socket } from "net"
 import path from "path"
-import type { Readable } from "stream"
-import { connect as connectTls, type TLSSocket } from "tls"
+import { PassThrough, type Readable } from "stream"
+import { checkServerIdentity, connect as connectTls, type TLSSocket } from "tls"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
@@ -54,6 +54,7 @@ import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
+import { PreviewWebSocketResponse } from "../previews/websocket-response"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
@@ -226,9 +227,15 @@ export function createHttpServer(deps: HttpServerDeps) {
     contentTypesToEncode: [],
     undici: {
       connections: 16,
-      pipelining: 1,
+      // Nested Undici 5.x is affected by GHSA-35p6-xmwp-9g52. Until the
+      // dependency can be replaced, disable reuse of untrusted upstream sockets.
+      pipelining: 0,
       bodyTimeout: 0,
       headersTimeout: 0,
+      // reply-from defaults verification off. Preview targets (including localhost)
+      // must verify both the certificate chain and the requested hostname.
+      connect: { rejectUnauthorized: true, checkServerIdentity },
+      maxRedirections: 0,
     },
   })
 
@@ -1942,7 +1949,7 @@ async function proxyPreviewRequest(args: {
     publicBase,
     logContext: { previewToken: token },
     errorMessage: "Preview proxy failed",
-    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin, publicBase),
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl, publicBase),
   })
 }
 
@@ -1973,7 +1980,7 @@ async function proxyPreviewAssetRequest(args: {
     publicBase: args.previewManager.buildProxyBasePath(args.token),
     logContext: { previewToken: args.token, previewFallback: true },
     errorMessage: "Preview proxy failed",
-    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl.origin),
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl),
   })
 }
 
@@ -1991,7 +1998,7 @@ async function proxyPreviewTargetRequest(args: {
   let responseKind: "html" | "css" | "js" | null = null
   await args.reply.from(args.targetUrl, {
     rewriteRequestHeaders: (_originalRequest, headers) => {
-      const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
+      const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin, { stripCookies: true })
       delete next["accept-encoding"]
       return next
     },
@@ -2209,8 +2216,14 @@ function proxyTargetWebSocketUpgrade(args: {
 }) {
   const { request, socket, head, targetUrl, logger, logContext, proxyLabel, stripCookies } = args
   const { socket: upstream, readyEvent } = createSideCarUpstreamSocket(targetUrl)
+  const response = stripCookies ? new PreviewWebSocketResponse(request.headers["sec-websocket-key"]) : undefined
+  // Read enough to observe an early client disconnect, but do not send frames
+  // upstream before admission. Backpressure bounds the pending client stream.
+  const pendingClient = response ? new PassThrough({ highWaterMark: 16 * 1024 }) : undefined
 
   const closeBoth = () => {
+    response?.destroy()
+    pendingClient?.destroy()
     if (!socket.destroyed) {
       socket.destroy()
     }
@@ -2221,7 +2234,9 @@ function proxyTargetWebSocketUpgrade(args: {
 
   upstream.once("error", (error) => {
     logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to proxy ${proxyLabel} websocket`)
-    rejectUpgrade(socket, 502, "Bad Gateway")
+    if (response?.admitted) closeBoth()
+    else rejectUpgrade(socket, 502, "Bad Gateway")
+    response?.destroy()
     if (!upstream.destroyed) {
       upstream.destroy()
     }
@@ -2229,19 +2244,38 @@ function proxyTargetWebSocketUpgrade(args: {
 
   socket.once("error", (error) => {
     logger.debug({ ...logContext, err: error }, `${proxyLabel} websocket client socket errored`)
-    if (!upstream.destroyed) {
-      upstream.destroy()
-    }
+    closeBoth()
   })
+
+  if (response) {
+    pendingClient!.once("error", closeBoth)
+    if (head.length > 0) pendingClient!.write(head)
+    socket.pipe(pendingClient!)
+    // A WebSocket is not a half-open HTTP stream. A disconnected client must
+    // release even a peer that ignores FIN, before or after admission.
+    socket.once("end", closeBoth)
+    response.once("error", (error) => {
+      logger.error({ ...logContext, err: error }, "Rejected preview websocket response")
+      if (response.admitted) closeBoth()
+      else {
+        rejectUpgrade(socket, 502, "Bad Gateway")
+        upstream.destroy()
+      }
+    })
+    response.once("accepted", () => {
+      if (!socket.destroyed && !upstream.destroyed) pendingClient!.pipe(upstream)
+    })
+    upstream.pipe(response).pipe(socket)
+  }
 
   upstream.once(readyEvent, () => {
     try {
       upstream.write(buildSideCarWebSocketRequest(request, targetUrl, { stripCookies }))
-      if (head.length > 0) {
-        upstream.write(head)
+      if (!response) {
+        if (head.length > 0) upstream.write(head)
+        upstream.pipe(socket)
+        socket.pipe(upstream)
       }
-      upstream.pipe(socket)
-      socket.pipe(upstream)
     } catch (error) {
       logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to forward ${proxyLabel} websocket upgrade`)
       closeBoth()
@@ -2249,14 +2283,26 @@ function proxyTargetWebSocketUpgrade(args: {
   })
 
   upstream.once("close", () => {
+    if (response) {
+      if (!response.admitted) {
+        rejectUpgrade(socket, 502, "Bad Gateway")
+        response.destroy()
+      } else if (!upstream.readableEnded) closeBoth()
+      // A graceful EOF must drain the response transform and writable client;
+      // destroying either here would discard frames buffered by backpressure.
+      return
+    }
     if (!socket.destroyed) {
       socket.end()
     }
   })
 
   socket.once("close", () => {
+    response?.destroy()
+    pendingClient?.destroy()
     if (!upstream.destroyed) {
-      upstream.end()
+      if (response) upstream.destroy()
+      else upstream.end()
     }
   })
 }
@@ -2266,9 +2312,11 @@ function createSideCarUpstreamSocket(targetUrl: URL): { socket: Socket | TLSSock
   if (targetUrl.protocol === "https:") {
     return {
       socket: connectTls({
-        host: targetUrl.hostname,
+        host: stripHostBrackets(targetUrl.hostname),
         port,
-        servername: targetUrl.hostname,
+        servername: isIP(stripHostBrackets(targetUrl.hostname)) ? undefined : targetUrl.hostname,
+        rejectUnauthorized: true,
+        checkServerIdentity,
       }),
       readyEvent: "secureConnect",
     }
@@ -2296,7 +2344,7 @@ function buildSideCarWebSocketRequest(
     if (!key || value === undefined) continue
     const lower = key.toLowerCase()
     if (blockedHeaders.has(lower)) continue
-    if (options?.stripCookies && lower === "cookie") continue
+    if (options?.stripCookies && (lower === "cookie" || lower === "cookie2")) continue
     if (lower === "origin") {
       headerLines.push(`Origin: ${targetUrl.origin}\r\n`)
       continue
@@ -2322,11 +2370,11 @@ function isWebSocketUpgradeRequest(request: import("http").IncomingMessage): boo
 }
 
 function rejectUpgrade(socket: Socket, statusCode: number, statusText: string) {
-  if (socket.destroyed) {
+  if (socket.destroyed || socket.writableEnded) {
     return
   }
-  socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
-  socket.destroy()
+  socket.end(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+  socket.destroySoon()
 }
 
 function rewriteSideCarResponseHeaders(
@@ -2368,7 +2416,7 @@ function rewriteSideCarResponseHeaders(
 function rewritePreviewResponseHeaders(
   headers: Record<string, string | string[] | undefined>,
   token: string,
-  targetOrigin: string,
+  targetUrl: URL,
   publicBase = `/previews/${encodeURIComponent(token)}`,
 ) {
   const next = { ...headers }
@@ -2377,6 +2425,8 @@ function rewritePreviewResponseHeaders(
   delete next["content-security-policy-report-only"]
   delete next["set-cookie"]
   delete next["set-cookie2"]
+  // Refresh can navigate directly around the credential-stripping proxy.
+  delete next.refresh
 
   const locationHeader = next.location
   const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
@@ -2384,25 +2434,23 @@ function rewritePreviewResponseHeaders(
     return next
   }
 
-  if (location.startsWith("//")) {
-    const parsed = new URL(location, targetOrigin)
-    next.location = parsed.origin === targetOrigin
-      ? `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
-      : parsed.href
-    return next
-  }
-  if (location.startsWith("/")) {
-    next.location = `${publicBase}${location}`
-    return next
-  }
-
   try {
-    const parsed = new URL(location)
-    if (parsed.origin === targetOrigin) {
+    // Resolve all relative, dot-segment and backslash variants against the
+    // actual upstream path before projecting them into the capability path.
+    const parsed = new URL(location, targetUrl)
+    if (parsed.origin === targetUrl.origin) {
       next.location = `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
+    } else {
+      // Browser cookies are scoped by host, not port. A direct redirect to a
+      // different port on CodeNomad's host would leak its Path=/ auth cookie.
+      // Pin redirects to the preview target too: a reverse proxy may rewrite
+      // Host, so the backend cannot reliably identify the browser's cookie host.
+      // A 3xx without Location remains an inert upstream response.
+      delete next.location
     }
   } catch {
-    // Relative redirects should continue to resolve against the current preview path.
+    // Malformed redirect destinations must not escape the proxy boundary.
+    delete next.location
   }
 
   return next
@@ -2411,6 +2459,7 @@ function rewritePreviewResponseHeaders(
 function sanitizeSideCarProxyRequestHeaders(
   headers: Record<string, string | string[] | undefined>,
   targetOrigin: string,
+  options?: { stripCookies?: boolean },
 ): Record<string, string | string[] | undefined> {
   const blockedHeaders = getBlockedSideCarRequestHeaders()
   const next: Record<string, string | string[] | undefined> = {}
@@ -2418,6 +2467,8 @@ function sanitizeSideCarProxyRequestHeaders(
   for (const [key, value] of Object.entries(headers)) {
     if (!value) continue
     if (blockedHeaders.has(key.toLowerCase())) continue
+    // Preview cookies belong to CodeNomad's origin, not the untrusted target.
+    if (options?.stripCookies && (key.toLowerCase() === "cookie" || key.toLowerCase() === "cookie2")) continue
     next[key] = value
   }
 

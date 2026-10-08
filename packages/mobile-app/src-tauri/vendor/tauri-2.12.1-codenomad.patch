@@ -1,0 +1,112 @@
+--- a/build.rs
++++ b/build.rs
+@@ -4,6 +4,8 @@
+ 
+ use heck::AsShoutySnakeCase;
+ use tauri_utils::write_if_changed;
++
++mod codenomad_ios_abi_guard;
+ 
+ use std::{
+   collections::BTreeMap,
+@@ -248,6 +250,9 @@
+ }
+ 
+ fn main() {
++  if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
++    codenomad_ios_abi_guard::verify();
++  }
+   let mut checked_features = Vec::new();
+   let custom_protocol = has_feature(&mut checked_features, "custom-protocol");
+   let dev = !custom_protocol;
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -291,6 +291,9 @@
+ [build-dependencies.heck]
+ version = "0.5"
+ 
++[build-dependencies.sha2]
++version = "=0.10.9"
++
+ [build-dependencies.tauri-build]
+ version = "2.7.1"
+ default-features = false
+--- a/mobile/ios-api/Package.swift
++++ b/mobile/ios-api/Package.swift
+@@ -20,7 +20,7 @@
+   ],
+   dependencies: [
+     // Dependencies declare other packages that this package depends on.
+-    .package(name: "SwiftRs", url: "https://github.com/Brendonovich/swift-rs", from: "1.0.0")
++    .package(name: "SwiftRs", url: "https://github.com/Brendonovich/swift-rs", .revision("f64a4514de07f450ec5b6aa297624cd3479d9579"))
+   ],
+   targets: [
+     // Targets are the basic building blocks of a package. A target can define a module or a test suite.
+--- a/mobile/ios-api/Sources/Tauri/Tauri.swift
++++ b/mobile/ios-api/Sources/Tauri/Tauri.swift
+@@ -135,11 +135,11 @@
+ 
+ @_cdecl("run_plugin_command")
+ func runCommand(
+-  id: Int,
++  id: Int32,
+   name: SRString,
+   command: SRString,
+   data: SRString,
+-  callback: @escaping @convention(c) (Int, Bool, UnsafePointer<CChar>) -> Void,
++  callback: @escaping @convention(c) (Int32, Int32, UnsafePointer<CChar>) -> Void,
+   sendChannelData: @escaping @convention(c) (UInt64, UnsafePointer<CChar>) -> Void
+ ) {
+   let callbackId: UInt64 = 0
+@@ -148,7 +148,7 @@
+     command: command.toString(), callback: callbackId, error: errorId,
+     sendResponse: { (fn: UInt64, payload: String?) -> Void in
+       let success = fn == callbackId
+-      callback(id, success, payload ?? "null")
++      callback(id, success ? 1 : 0, payload ?? "null")
+     },
+     sendChannelData: { (id: UInt64, payload: String) -> Void in
+       sendChannelData(id, payload)
+--- /dev/null
++++ b/codenomad_ios_abi_guard.rs
+@@ -0,0 +1,24 @@
++// CodeNomad local integration guard; upstream Tauri is MIT OR Apache-2.0.
++// Runs before the upstream iOS Swift library linker, including direct Cargo builds.
++use sha2::{Digest, Sha256};
++use std::{env, fs, path::Path};
++
++pub fn verify() {
++  let root = env::var("CARGO_MANIFEST_DIR").expect("Tauri manifest directory");
++  let version = env::var("CARGO_PKG_VERSION").expect("Tauri version");
++  verify_at(Path::new(&root), &version);
++}
++
++pub fn verify_at(root: &Path, version: &str) {
++  assert_eq!(version, "2.12.1", "CodeNomad iOS ABI patch version drift");
++  for line in include_str!("codenomad-ios-abi.sha256").lines() {
++    let (expected, relative) = line.split_once("  ").expect("ABI hash receipt");
++    let path = root.join(relative);
++    println!("cargo:rerun-if-changed={}", path.display());
++    let bytes = fs::read(&path).expect("CodeNomad iOS ABI input missing");
++    let actual = format!("{:x}", Sha256::digest(&bytes));
++    assert_eq!(actual, expected, "CodeNomad iOS ABI input drift: {relative}");
++  }
++  println!("cargo:rerun-if-changed=codenomad_ios_abi_guard.rs");
++  println!("cargo:rerun-if-changed=codenomad-ios-abi.sha256");
++}
+--- /dev/null
++++ b/codenomad-ios-abi.sha256
+@@ -0,0 +1,13 @@
++b529ac117054acd98fe38f554460efba5acb7f77d6e7c9ae88df832bb9927f9d  Cargo.toml
++82903f5593c97180dcf89d6be4d1aa42f771a400cf0b14406256417b7c3f31e8  build.rs
++c5dec514616e24eb39419985f48de428449eb9a4e46884a98130c6c35f938c05  src/ios.rs
++5079199081a851b68a8caec5696f0703aecf79786497700ba5b62bfa2781013d  src/plugin/mobile.rs
++77d1eb6e485cdd6e119f98a29624fbb676f8d79df87153fcdde8ef7ffbe860b6  mobile/ios-api/Package.swift
++850e8239ccb561ea7177f0f66b33d5b63e97faeefcb79b60640007934c3894a4  mobile/ios-api/Sources/Tauri/Channel.swift
++afc9ee63daafe1754969b6dfd104d49d2ca09fd41e7c6343063c13d9e56f7d3e  mobile/ios-api/Sources/Tauri/Invoke.swift
++a22a4bad5788132955a63160bda00eeb62a6e138993d46504f6f96e2fb94246d  mobile/ios-api/Sources/Tauri/JsonValue.swift
++bce9da78d74d495a2d05176cb0b68bd9a40ebfcac8c8e9cb1678d4ca142bd653  mobile/ios-api/Sources/Tauri/JSTypes.swift
++9624719792f6ce0baf6df0aaf2928efc8c0aef77972a3fb638ce67e3a6dfb918  mobile/ios-api/Sources/Tauri/Logger.swift
++e5d2e0e6f6c178b0ea2745dcd88f68b6a142154c3b245845bb6b9026b3a76d69  mobile/ios-api/Sources/Tauri/Plugin/Plugin.swift
++595f7c8bb38e3e29745f2728d356463f87f732f2c3805cf038cfba23248d2433  mobile/ios-api/Sources/Tauri/Tauri.swift
++c12b2a5a3bde289c45dd6c348cc41d7072c81a1559eac76339ea061c4fa5d89c  mobile/ios-api/Sources/Tauri/UiUtils.swift

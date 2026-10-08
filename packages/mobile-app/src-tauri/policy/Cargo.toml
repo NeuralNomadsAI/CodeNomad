@@ -1,0 +1,11 @@
+[package]
+name = "codenomad-mobile-policy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+url = "2"
+
+[dev-dependencies]
+serde_json = "1"

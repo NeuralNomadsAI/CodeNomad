@@ -9,7 +9,8 @@
       "packages/server",
       "packages/ui",
       "packages/electron-app",
-      "packages/tauri-app"
+      "packages/tauri-app",
+      "packages/mobile-app"
     ]
   },
   "scripts": {
@@ -19,6 +20,9 @@
     "build": "npm run build --workspace @neuralnomads/codenomad-electron-app",
     "build:tauri": "npm run build --workspace @codenomad/tauri-app",
     "build:ui": "npm run build --workspace @codenomad/ui",
+    "build:mobile": "npm run build --workspace @codenomad/mobile-app",
+    "typecheck:mobile": "npm run typecheck --workspace @codenomad/mobile-app",
+    "test:mobile": "npm run test --workspace @codenomad/mobile-app",
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
@@ -29,14 +33,15 @@
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
-    "baseline-browser-mapping": "^2.9.11"
+    "baseline-browser-mapping": "^2.11.0",
+    "rollup": "4.59.0"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "4.52.5",
-    "@rollup/rollup-darwin-x64": "4.52.5",
-    "@rollup/rollup-linux-arm64-gnu": "4.52.5",
-    "@rollup/rollup-linux-x64-gnu": "4.52.5",
-    "@rollup/rollup-win32-arm64-msvc": "4.52.5",
-    "@rollup/rollup-win32-x64-msvc": "4.52.5"
+    "@rollup/rollup-darwin-arm64": "4.59.0",
+    "@rollup/rollup-darwin-x64": "4.59.0",
+    "@rollup/rollup-linux-arm64-gnu": "4.59.0",
+    "@rollup/rollup-linux-x64-gnu": "4.59.0",
+    "@rollup/rollup-win32-arm64-msvc": "4.59.0",
+    "@rollup/rollup-win32-x64-msvc": "4.59.0"
   }
 }

@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- NSC is authoritative on every supported API (26+), including debug. -->
+    <application android:networkSecurityConfig="@xml/codenomad_mobile_network_security" />
+</manifest>

@@ -1,0 +1,30 @@
+[package]
+name = "codenomad-mobile"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "codenomad_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[workspace]
+members = ["policy", "recovery"]
+exclude = ["vendor/tauri-2.12.1"]
+resolver = "2"
+
+# Source-owned iOS C ABI correction; scoped to this separate mobile workspace.
+[patch.crates-io]
+tauri = { path = "vendor/tauri-2.12.1" }
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = [] }
+codenomad-mobile-policy = { path = "policy" }
+tauri-plugin-mobile-recovery = { path = "recovery" }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

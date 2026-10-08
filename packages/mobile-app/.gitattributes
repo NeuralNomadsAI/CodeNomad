@@ -1,0 +1,2 @@
+# Preserve verified upstream archive bytes and the native ABI integrity receipt.
+src-tauri/vendor/** -text

@@ -55,7 +55,7 @@ before(async () => {
     plugins: [solid(), { name: "auth-fixture", configureServer(s) {
       s.middlewares.use("/auth-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/auth-fixture", '<html><body><div id="root" style="margin:24px"></div><script type="module" src="/tests/browser/fixtures/auth-recovery.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml("/auth-fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root" style="margin:24px"></div><script type="module" src="/tests/browser/fixtures/auth-recovery.tsx"></script></body></html>'))
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: { "/api": target, "/workspaces": target } },
@@ -70,10 +70,18 @@ after(async () => {
   await server?.close()
   await backend?.close()
 })
-async function setup(width = 1100) {
+async function setup(width = 1100, companion = false) {
   offline = false
   restart()
-  const page = await browser.newPage({ locale: "en-US", viewport: { width, height: 800 } })
+  const page = await browser.newPage({ locale: "en-US", viewport: { width, height: companion ? 640 : 800 },
+    ...(companion ? { isMobile: true, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 15; Mobile) Tauri/2.0" } : {}) })
+  // Raw script avoids tsx's function-name helpers in serialized init callbacks.
+  if (companion) await page.addInitScript(`
+    window.nativeCalls = [];
+    const invoke = async command => { window.nativeCalls.push(command); throw Error('Unexpected native call: ' + command) };
+    Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: 'web', __CODENOMAD_WINDOW_CONTEXT__: 'remote',
+      __TAURI__: { core: { invoke } }, __TAURI_INTERNALS__: { invoke } });
+  `)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.request.post(`${url}/api/auth/login`, { data: { username: "fixture", password: "fixture-only" } })
@@ -167,5 +175,40 @@ test("API expiry recovery works above an error dialog and accepts login renewed 
     await dialog.waitFor({ state: "hidden" })
     assert.equal(loginCount, beforeLogin + 1)
     assert.equal(mutationAttempts, beforeMutations + 1, "Recovery must not replay the failed project creation")
+  } finally { await page.close() }
+})
+
+test("hosted mobile login preserves drafts and reconnects without replaying a failed mutation", async () => {
+  const { page, errors } = await setup(360, true)
+  try {
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.runtimeEnv),
+      { host: "web", platform: "mobile", windowContext: "remote" })
+    const composer = page.locator(".prompt-input-container textarea").first()
+    await composer.fill("MOBILE_UNSENT_DRAFT")
+    await page.evaluate(() => (window as any).fixture.attach())
+    const opens = await page.evaluate(() => (window as any).fixture.opens())
+    const beforeMutations = mutationAttempts, beforeLogin = loginCount, previousUrl = page.url()
+    // Expire only the cookie, retaining SSE until API recovery takes ownership.
+    auth = newAuth()
+    await page.evaluate(() => (window as any).fixture.openProject())
+    const dialog = page.getByRole("dialog", { name: "Sign in to CodeNomad again" })
+    await dialog.waitFor()
+    const box = await dialog.boundingBox()
+    assert.ok(box && box.x >= 0 && box.x + box.width <= 360 && box.y >= 0 && box.y + box.height <= 640,
+      `Recovery must fit the mobile viewport: ${JSON.stringify(box)}`)
+    await dialog.getByLabel("Username", { exact: true }).fill("fixture")
+    await dialog.getByLabel("Password", { exact: true }).fill("fixture-only")
+    await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    await page.waitForFunction(n => (window as any).fixture.opens() > n, opens)
+    await composer.waitFor({ state: "hidden" })
+    await page.evaluate(() => (window as any).fixture.seed("mobile-reopened-fixture"))
+    await page.waitForFunction(() => (document.querySelector(".prompt-input-container textarea") as HTMLTextAreaElement)?.value === "MOBILE_UNSENT_DRAFT")
+    assert.equal(await page.evaluate(() => (window as any).fixture.attachments()), 1)
+    assert.equal(page.url(), previousUrl)
+    assert.equal(loginCount, beforeLogin + 1)
+    assert.equal(mutationAttempts, beforeMutations + 1, "Explicit login must not replay project creation")
+    assert.deepEqual(await page.evaluate(() => (window as any).nativeCalls), [])
+    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

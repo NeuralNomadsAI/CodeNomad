@@ -1,0 +1,25 @@
+{
+  "valid": [
+    ["https://example.com", "https://example.com/"],
+    ["HTTPS://EXAMPLE.COM:443/", "https://example.com/"],
+    ["https://server.example:8443/", "https://server.example:8443/"],
+    ["https://192.168.1.10:8443", "https://192.168.1.10:8443/"],
+    ["https://[fd00::2]:8443/", "https://[fd00::2]:8443/"],
+    ["https://xn--bcher-kva.example", "https://xn--bcher-kva.example/"],
+    ["https://tauri.localhost.example", "https://tauri.localhost.example/"]
+  ],
+  "invalid": [
+    "", " example.com", " https://example.com", "https://example.com ", "🔒https://example.com", "éééééhttps://example.com",
+    "http://example.com", "javascript:alert(1)", "file:///index.html", "//example.com",
+    "https:example.com", "https:///example.com", "https://example.com//",
+    "https://example.com/path", "https://example.com/.", "https://example.com/a/../",
+    "https://example.com/%2e", "https://example.com?", "https://example.com/#",
+    "https://example.com?token=secret", "https://example.com/#secret",
+    "https://user:secret@example.com", "https://example.com@evil.com",
+    "https://example.com\\@evil.com", "https://%65xample.com", "https://bücher.example",
+    "https://example.com\n", "https://example.com\t", "https://example.com.",
+    "https://localhost", "https://tauri.localhost", "https://sub.localhost", "https://tauri",
+    "https://127.0.0.1", "https://127.1", "https://2130706433", "https://0x7f000001",
+    "https://[::1]", "https://0.0.0.0", "https://example.com:99999", "https://"
+  ]
+}

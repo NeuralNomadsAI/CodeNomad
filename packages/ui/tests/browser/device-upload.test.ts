@@ -11,14 +11,20 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-async function setup(host = "web", context = "remote", params = "") {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: "en-US" })
+async function setup(host = "web", context = "remote", params = "", companion = false) {
+  const page = await browser.newPage({ viewport: { width: companion ? 360 : 1100, height: 800 }, locale: "en-US",
+    ...(companion ? { isMobile: true, hasTouch: true, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile Tauri/2.0" } : {}) })
   const prompts: any[] = [], paths: string[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(({ host, context }) => {
     ;(window as any).__CODENOMAD_RUNTIME_HOST__ = host
     ;(window as any).__CODENOMAD_WINDOW_CONTEXT__ = context
   }, { host, context })
+  if (companion) await page.addInitScript(`
+    window.nativeCalls = [];
+    const invoke = async command => { window.nativeCalls.push(command); throw Error('Unexpected native call: ' + command) };
+    Object.assign(window, { __TAURI__: { core: { invoke } }, __TAURI_INTERNALS__: { invoke } });
+  `)
   await page.route("**/api/**", route => {
     const request = route.request(), target = new URL(request.url())
     if (target.pathname.endsWith("/prompt")) {
@@ -80,6 +86,23 @@ test("device files use native selection and arrive as ordered bytes in the promp
     // Resetting the input permits selecting the same file again.
     await (await chooseDevice(page)).setFiles(files[0])
     await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("hosted mobile attachment selection uses device bytes, not Tauri IPC or server paths", async () => {
+  const { page, prompts, paths, errors } = await setup("web", "remote", "", true)
+  try {
+    await page.locator("textarea:visible").first().fill("Mobile attachment")
+    const file = { name: "mobile.txt", mimeType: "text/plain", buffer: Buffer.from("DEVICE_BYTES") }
+    await (await chooseDevice(page)).setFiles(file)
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    await page.getByRole("button", { name: "Send message", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 0)
+    assert.equal(prompts.length, 1)
+    assert.deepEqual(prompts[0].files, [{ name: file.name, uri: `data:text/plain;base64,${file.buffer.toString("base64")}` }])
+    assert.deepEqual(paths, [])
+    assert.deepEqual(await page.evaluate(() => (window as any).nativeCalls), [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
