@@ -3,6 +3,7 @@ import path from "node:path"
 import { z } from "zod"
 import type { FormInfo, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestLocation, WorkspacePendingRequestsResponse } from "../../api-types"
+import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
@@ -66,7 +67,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     const workspace = manager.get(id)
     if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
     // Includes bounded Git ownership reads before/after the native reader's independent two-second deadline.
-    const signal = AbortSignal.timeout(30_000)
+    const signal = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
     try {
       const connection = await manager.getSharedServiceConnection(id)
       if (!connection) return reply.code(503).send({ error: "Pending requests unavailable" })
