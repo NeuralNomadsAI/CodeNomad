@@ -9,6 +9,41 @@ and planned recurrence are distinct.
 The whole integrated product is not yet accepted. Do not promote the historical
 results below into current-source or installed-app qualification.
 
+### Delivery organization — approved consolidation
+
+Reference source: `missions-assembly-20261008`, at `c677303c` when consolidation
+began. The PR description remains the sole product specification. Existing native
+branches are being frozen for handoff; their uncommitted work must be preserved.
+
+- The parent owns integration and shared RPC/schema/storage contracts. One native
+  implementation owner and one UI owner receive bounded work from this reference.
+  No parallel copies of another branch's changing contracts or recursive helpers.
+- Next milestone: CREATE → explicit Play → useful native work → report → native
+  terminal evidence → archive → next passage. A passing isolated helper is not a
+  completed journey. Then close Run now, control/recovery, both delegation modes
+  and Wayfinder decisions against the same producer and UI contracts.
+- Review stable integrated journeys. Run focused checks at changed boundaries;
+  repeat broad suites at integration milestones, not after every handoff.
+- Track each PR acceptance journey as integrated, checked offline, checked natively.
+  Native/install acceptance remains deferred until the complete candidate build;
+  no partial installer, final gatekeeper review or PR merge is authorized.
+
+Current acceptance ledger at `c677303c` (checks refer to the recorded receipts below):
+
+| PR journey | Integrated | Checked offline | Checked natively on complete candidate |
+| --- | --- | --- | --- |
+| Create: templates, notes, briefs, first explicit Play | Yes | Yes | No |
+| Follow/Read: active work and archived result readers | Yes | Yes | No |
+| Control: signed Play/Pause/Stop, exact partial retries | Yes | Yes | No |
+| Continue: restart projection and explicit Resume | Yes | Yes, simulated service graph | No |
+| Schedule: Run now through the same native producer | No; frozen branch pending integration | Branch checks only | No |
+| Delegate: useful recurring work with both task modes | Incomplete native business/tool join | Branch checks only | No |
+| Respond: Wayfinder in both execution modes | Recurring proof joined; one-time/late evidence incomplete | Recurring proof checked | No |
+| Full due passage: work → report → terminal → next day | Incomplete business/tool lifetime join | Admission/settlement pieces checked | No |
+
+The next delivery closes the last row end-to-end. Do not promote branch-local
+checks into a completed row or start another independent implementation stream.
+
 **Authoritative target clarification (2026-10-07):** Missions runs autonomously
 inside the OpenCode service with both CodeNomad UI and its intermediary backend
 closed. A persistent CodeNomad backend is not a substitute. The actual user request
