@@ -201,7 +201,7 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
         <span>{t(`missions.recurrence.state.${schedule().state}`)}</span>
         <RecurrenceControls schedule={schedule()} instanceId={props.instanceId} directory={props.scope} identity={key()}
           active={props.active} enabled={valid} refresh={() => setRevision(value => value + 1)} />
-        <Show when={schedule().pendingPassageID}><span>{t("missions.recurrence.pending")}</span></Show>
+        <Show when={schedule().pendingPassageID && !schedule().pendingStatus}><span>{t("missions.recurrence.pending")}</span></Show>
         <Show when={schedule().latestResult}><span>{t("missions.recurrence.latest")}: {t(`missions.recurrence.result.${schedule().latestResult!.status}`)}</span></Show>
         <Show when={schedule().pendingStatus}><span role="status">{t(`missions.recurrence.pending.${schedule().pendingStatus}`)}</span></Show>
       </article>}}</For>

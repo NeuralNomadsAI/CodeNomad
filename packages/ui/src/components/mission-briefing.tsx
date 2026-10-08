@@ -50,13 +50,17 @@ export function MissionBriefing(props: {
   }
   return <section class="mission-briefing" aria-label={t("missions.briefing.title")}>
     <header><h3>{t("missions.briefing.title")}</h3><div class="window-actions">
-      <Show when={props.mission.briefing || props.mission.summary}><button type="button" class="mission-control-icon-button icon-toggle"
-        aria-label={t("missions.briefing.title")} title={t("missions.briefing.title")} aria-pressed={Boolean(props.reading)}
+      <Show when={props.readOnly || props.mission.briefing || props.mission.summary}><button type="button" class="mission-control-icon-button icon-toggle"
+        aria-label={t(props.mission.briefing || props.mission.summary ? "missions.briefing.title" : "missions.control.overview")}
+        title={t(props.mission.briefing || props.mission.summary ? "missions.briefing.title" : "missions.control.overview")} aria-pressed={Boolean(props.reading)}
         onClick={props.onReadOverview}><Eye class="h-3.5 w-3.5" aria-hidden="true" /></button></Show>
       <Show when={!props.readOnly && props.mission.status === "active"}><button type="button" class="window-text-button"
         disabled={props.disabled || !props.active || !missionAcceptsMessage(props.mission) || Boolean(waiting())}
         onClick={() => void ask()}><RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.briefing.request")}</button></Show>
     </div></header>
+    <Show when={props.readOnly}><p class="mission-briefing-objective" title={props.mission.objective}>
+      <strong>{t("missions.control.objective")}: </strong>{props.mission.objective}
+    </p></Show>
     <Show when={!props.mission.summary}>
       <Show when={props.mission.briefing} fallback={<p class="mission-briefing-empty">{t("missions.briefing.empty")}</p>}>{value => <>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · <time dateTime={new Date(value().createdAt).toISOString()}>{new Date(value().createdAt).toLocaleString(locale())}</time></p>

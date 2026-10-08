@@ -8,3 +8,4 @@
 .mission-briefing-sources button { font-size: var(--font-size-xs); min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .mission-briefing .window-text-button { display: inline-flex; align-items: center; gap: var(--space-xs); text-align: start; }
 .mission-briefing .window-text-button svg { flex-shrink: 0; }
+.mission-briefing-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }

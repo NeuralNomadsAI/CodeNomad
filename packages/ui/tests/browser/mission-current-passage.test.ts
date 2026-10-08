@@ -10,6 +10,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionMap } from "../../../server/src/api-types"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
+import { captureMissionView } from "./mission-view-capture"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -92,6 +93,7 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await page.getByRole("button", { name: "08:15 · UTC" }).click()
     await page.getByText("Review commits", { exact: true }).waitFor()
     assert.equal(reads, 1)
+    assert.match(await page.locator(".mission-briefing-objective").innerText(), /Finite recurring review/)
     assert.equal(await page.getByText("Real child request", { exact: true }).count(), 1)
     assert.equal(await page.getByRole("button", { name: /Play|Pause|Stop|Request briefing|Give direction/ }).count(), 0, "isolated read never opens ordinary mutations")
     const order = await page.locator(".mission-control").evaluate(node => {
@@ -99,6 +101,14 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       return Boolean(request.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
     assert.equal(order, true, "human requests precede Work and any controls")
+    await captureMissionView(page, "current-tracking-desktop")
+    if (process.env.CODENOMAD_MISSION_VIEW_EVIDENCE) {
+      await page.setViewportSize({ width: 390, height: 850 })
+      await page.evaluate(() => { document.documentElement.dir = "rtl" })
+      await captureMissionView(page, "current-tracking-390-rtl")
+      await page.evaluate(() => { document.documentElement.dir = "ltr" })
+      await page.setViewportSize({ width: 1200, height: 950 })
+    }
     await page.getByRole("button", { name: "Project briefing", exact: true }).click()
     await page.locator(".mission-reader").getByText("Exact passage briefing", { exact: true }).waitFor()
     assert.equal(reads, 1, "reader joins the existing visible snapshot demand")
@@ -115,6 +125,7 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await evidence.getByText(/Evidence:end/).waitFor()
     assert.ok(sourceReads.some(input => input.kind === "report" && input.itemId === "rpt_first" && input.section === "evidence" && input.page === 1))
     assert.ok((await evidence.locator("pre").innerText()).length <= 9_001)
+    await captureMissionView(page, "current-report-desktop")
     if (process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE) {
       await mkdir(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, { recursive: true })
       await page.screenshot({ path: join(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, "current-passage-reader.png"), fullPage: true })
@@ -123,6 +134,15 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.").waitFor()
     assert.equal(await page.locator(".mission-reader .mission-inline-session").count(), 0, "unbound task never navigates to coordinator")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
+    const savedBriefing = mission.briefing
+    mission.briefing = undefined
+    await page.evaluate(() => (window as any).passageFixture.invalidate())
+    await page.locator(".mission-briefing").getByRole("button", { name: "Overview", exact: true }).click()
+    await page.locator(".mission-reader").getByText("Finite recurring review", { exact: true }).waitFor()
+    await captureMissionView(page, "current-no-briefing-overview")
+    await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
+    mission.briefing = savedBriefing
+    await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.locator('.mission-route-task[data-task-key="first"]').getByRole("button", { name: "Open Exact task actor" }).click()
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts")).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))

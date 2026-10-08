@@ -10,6 +10,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionRecurrenceSnapshot, MissionRecurrenceReadPage } from "../../../server/src/api-types"
 import { missionMarkdownPage } from "../../src/lib/mission-markdown-pages"
 import type {} from "./fixtures/mission-passage-history"
+import { captureMissionView } from "./mission-view-capture"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -131,6 +132,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => { window.passageHistory.activate(true); window.passageHistory.readerVisible(true) })
     await page.waitForResponse(response => response.url().endsWith("/missions/recurrence"))
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
+    await captureMissionView(page, "archive-reader-390-rtl")
     const geometry = await firstEye.evaluate(node => {
       const row = node.closest("article")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
       return { rowLeft: row.left, rowRight: row.right, eyeLeft: eye.left, eyeRight: eye.right, radius: getComputedStyle(node).borderRadius }
@@ -217,6 +219,9 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
     await result.getByText("BRIEF END", { exact: false }).waitFor()
     await page.setViewportSize({ width: 390, height: 800 })
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
+    assert.ok(await page.locator(".mission-recurrence-item > button strong").first().evaluate(node => node.getBoundingClientRect().height) < 60,
+      "the pinned eye column must not make the clock wrap one character per line")
+    await captureMissionView(page, "archive-reader-390-rtl")
     const narrow = await result.getByRole("combobox").evaluate(node => ({ select: node.getBoundingClientRect().width,
       body: node.closest(".window-body")!.getBoundingClientRect().width, radius: getComputedStyle(node).borderRadius }))
     assert.ok(narrow.select <= narrow.body, "paged result selector remains inside narrow RTL reader chrome")

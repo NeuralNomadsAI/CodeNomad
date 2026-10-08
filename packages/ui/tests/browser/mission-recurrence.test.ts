@@ -13,6 +13,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceHumanRequestID } from "../../../server/src/missions/recurrence-authority-contract"
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
+import { captureMissionView } from "./mission-view-capture"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -328,6 +329,11 @@ for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) test(
     assert.equal(writes.length, 0, "a too-small effect budget never reaches creation")
     await form.getByText("Passage budgets", { exact: true }).click()
     await effects.fill("4")
+    if (template === "custom") {
+      await captureMissionView(page, "creation-recurring-inputs")
+      await page.locator("aside").evaluate(node => { node.scrollTop = 0 })
+      await captureMissionView(page, "creation-recurring-top")
+    }
     await form.getByRole("button", { name: "Save", exact: true }).click()
     await page.getByText("08:15 · Europe/Paris").waitFor()
     assert.equal(writes.length, 1)
@@ -340,6 +346,7 @@ for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) test(
     assert.deepEqual(writes[0].profiles, { coordinator: selected,
       roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, selected])) })
     assert.equal(await page.getByText("Paused", { exact: true }).count(), 1)
+    if (template === "custom") await captureMissionView(page, "created-paused-schedule")
     assert.equal(await page.getByRole("button", { name: /Run now|Play|Resume|Stop schedule/ }).count(), 0)
     await page.evaluate(() => window.missionEditorLifetime.activate(false))
     const beforeHidden = reads
@@ -651,6 +658,7 @@ for (const action of ["pause", "stop"] as const) test(`partial ${action} retains
     assert.equal(writes.length, 1, "remount does not replay a partial denial control")
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
     await retry.focus()
+    await captureMissionView(page, `partial-${action}-rtl`)
     await page.evaluate(id => window.missionEditorLifetime.invalidateRecurrence(id), id)
     await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Retry remaining"]'); return button && !button.disabled })
     assert.equal(await retry.evaluate(node => document.activeElement === node), true)

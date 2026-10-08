@@ -10,6 +10,7 @@
 .mission-recurrence-item > .window-text-button { min-width: 0; text-align: start; }
 .mission-recurrence-item small { grid-column: 1 / -1; color: var(--text-muted); word-break: break-all; }
 .mission-recurrence-item span { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-recurrence-item > span { grid-column: 1 / -1; }
 .mission-recurrence-controls { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); min-width: 0; }
 .mission-recurrence-controls small { flex-basis: 100%; color: var(--text-secondary); }
 .mission-recurrence-read { justify-self: end; }
