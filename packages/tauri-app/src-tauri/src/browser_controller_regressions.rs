@@ -278,6 +278,26 @@ fn fragment_completion_cannot_override_document_navigation_failure() {
 }
 
 #[test]
+fn saved_history_contains_only_bounded_credential_free_urls_and_native_ids() {
+    let value = bounded_history(json!({ "currentIndex": 1, "entries": [
+        { "id": 1, "url": "about:blank", "pageState": "secret" },
+        { "id": 2, "url": "https://example.com/", "pageState": "secret" },
+        { "id": 3, "url": "https://user:secret@example.com/" },
+    ] }))
+    .unwrap();
+    assert_eq!(
+        value,
+        json!({ "entries": [{ "id": 2, "url": "https://example.com/" }], "index": 0 })
+    );
+    let entries = (0..100)
+        .map(|id| json!({ "id": id, "url": format!("https://example.com/{id}") }))
+        .collect::<Vec<_>>();
+    let result = bounded_history(json!({ "currentIndex": 50, "entries": entries })).unwrap();
+    assert_eq!(result["entries"].as_array().unwrap().len(), 32);
+    assert_eq!(result["index"], 16);
+}
+
+#[test]
 fn snapshot_url_read_allows_navigation_callback_and_does_not_republish_stale_refs() {
     let (controller, registration) = controller_with_registration();
     let version = controller.page_navigation_version("preview");

@@ -104,6 +104,7 @@ export const sessionMessages = {
   "sessionPreview.backToChat": "Sohbete dön",
   "sessionPreview.close": "Önizlemeyi kapat",
   "sessionPreview.chat.button": "Sohbete dön",
+  "sessionPreview.forward": "İleri",
   "sessionPreview.open.button": "Web önizlemesini aç",
   "sessionPreview.open.title": "Web önizlemesini aç",
   "sessionPreview.open.prompt": "Bu session'da önizlemek için güvenilir bir yerel veya staging URL'si girin.",

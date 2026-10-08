@@ -111,6 +111,7 @@ export const sessionMessages = {
   "sessionPreview.backToChat": "チャットに戻る",
   "sessionPreview.close": "プレビューを閉じる",
   "sessionPreview.chat.button": "チャットに戻る",
+  "sessionPreview.forward": "進む",
   "sessionPreview.open.button": "Web プレビューを開く",
   "sessionPreview.open.title": "Web プレビューを開く",
   "sessionPreview.open.prompt": "このセッションでプレビューする信頼済みのローカルまたはステージング URL を入力してください。",

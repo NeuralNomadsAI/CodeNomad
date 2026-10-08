@@ -5,6 +5,8 @@ const requestedHost = new URLSearchParams(location.search).get("host")
 const host = requestedHost === "electron" || requestedHost === "web" ? requestedHost : "tauri"
 const calls: Call[] = []
 const callbacks = new Map<number, (event: unknown) => void>()
+const histories = new Map<string, { entries: Array<{ id: number; url: string }>; index: number }>()
+let historyId = 0
 let callbackId = 0
 let pendingRegistration: { resolve: () => void; reject: (error: Error) => void } | undefined
 
@@ -22,6 +24,8 @@ export const nativeFixture = {
     pendingRegistration = undefined
   },
   navigate(registrationId: string, url: string) {
+    const history = histories.get(registrationId)
+    if (history) { history.entries = [...history.entries.slice(0, history.index + 1), { id: ++historyId, url }]; history.index++ }
     for (const callback of callbacks.values()) callback({ payload: { registrationId, url } })
   },
   listenerCount: () => callbacks.size,
@@ -30,6 +34,14 @@ export const nativeFixture = {
 async function invoke(command: string, args: any = {}) {
   calls.push({ command, ...args })
   if (command === "plugin:event|listen") return args.handler
+  if (command === "browser_target_register") histories.set(args.payload.registrationId, { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
+  if (command === "browser_target_action" && args.payload.action === "history") return histories.get(args.payload.registrationId)
+  if (command === "browser_target_action" && args.payload.action === "navigate") nativeFixture.navigate(args.payload.registrationId, args.payload.url)
+  if (command === "browser_target_action" && args.payload.action === "history-go") {
+    const history = histories.get(args.payload.registrationId)!
+    history.index = history.entries.findIndex(entry => entry.id === args.payload.entryId)
+    for (const callback of callbacks.values()) callback({ payload: { registrationId: args.payload.registrationId, url: history.entries[history.index].url } })
+  }
   if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.failEmulation) throw new Error("Emulation failed")
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
     return new Promise<void>((resolve, reject) => { pendingRegistration = { resolve, reject } })
@@ -58,9 +70,11 @@ Object.assign(window, {
   },
 })
 if (host === "electron") {
+  const native = (window as any).browserHistoryNative
   Object.assign(window, { electronAPI: {
-    registerBrowserTarget: (payload: unknown) => invoke("browser_target_register", { payload }),
-    unregisterBrowserTarget: (registrationId: string) => invoke("browser_target_unregister", { registrationId }),
+    registerBrowserTarget: async (payload: unknown) => { await invoke("browser_target_register", { payload }); await native?.register(payload) },
+    unregisterBrowserTarget: async (registrationId: string) => { await invoke("browser_target_unregister", { registrationId }); await native?.unregister(registrationId) },
+    ...(native ? { browserTargetHistory: native.history } : {}),
     emulateBrowserTarget: (registrationId: string, preset: string) => invoke("browser_target_action", { registrationId, payload: { action: "emulate", preset } }),
   } })
 }

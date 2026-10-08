@@ -13,9 +13,12 @@ import {
   registerTauriBrowserTarget,
   unregisterTauriBrowserTarget,
   updateTauriBrowserTarget,
+  readBrowserHistory,
+  goToBrowserHistoryEntry,
 } from "../lib/native/browser"
 import { getBrowserFramePolicy, normalizeBrowserPreviewUrl } from "./browser-frame-security"
 import WindowCloseButton from "./window-close-button"
+import { BrowserHistoryJournal, type BrowserHistory, type NativeBrowserHistory } from "../lib/browser-history"
 
 export interface BrowserFrameElementTarget {
   pagePath: string
@@ -29,6 +32,7 @@ export interface BrowserFrameElementTarget {
 
 interface BrowserFrameLabels {
   back: string
+  forward?: string
   refresh: string
   path: string
   invalidUrl?: string
@@ -64,6 +68,7 @@ const VIEWPORT_OPTIONS = [
 ]
 
 interface BrowserFrameProps {
+  active?: boolean
   onClose?: () => void
   sessionId?: string
   title: string
@@ -76,6 +81,9 @@ interface BrowserFrameProps {
   onNavigate?: (address: string) => Promise<string>
   onNavigationError?: (error: unknown) => void
   onFrameLocation?: (path: string) => string | void
+  initialHistory?: BrowserHistory
+  onHistoryChange?: (history: BrowserHistory) => void
+  onCancelNavigation?: () => void
   commentBridge?: boolean
   commentMode?: boolean
   onToggleCommentMode?: () => void
@@ -142,6 +150,50 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let disposed = false
   let appliedEmulation: { registrationId: string; preset: BrowserEmulationPreset } | undefined
   let emulationGeneration = 0
+  const journal = props.onHistoryChange ? new BrowserHistoryJournal(untrack(() => props.initialHistory ?? { urls: [props.initialAddress ?? props.initialUrl], index: 0 })) : undefined
+  const [history, setHistory] = createSignal(journal?.value)
+  const [historyBusy, setHistoryBusy] = createSignal(false)
+  let historyRead = 0
+  let historyTravelVersion = 0
+  const historyGuestId = () => webviewReady ? webviewRef?.getWebContentsId() : undefined
+  const supersedeHistoryTraversal = () => {
+    if (journal?.traversing || historyBusy()) props.onCancelNavigation?.()
+    ++historyTravelVersion
+    ++historyRead
+    journal?.cancel()
+    setHistoryBusy(false)
+  }
+  const publishHistory = (value: BrowserHistory) => {
+    const previous = history()
+    if (previous?.index === value.index && previous.urls.length === value.urls.length && previous.urls.every((url, index) => url === value.urls[index])) {
+      setHistoryBusy(journal?.traversing ?? false)
+      return
+    }
+    setHistory(value)
+    props.onHistoryChange?.(value)
+    setHistoryBusy(journal?.traversing ?? false)
+  }
+  const captureHistory = async () => {
+    if (!journal || disposed || !(browserHost === "electron" ? webviewReady : untrack(emulationReady))) return
+    const sequence = ++historyRead
+    const registration = browserRegistrationId
+    const guestId = historyGuestId()
+    try {
+      const value = await readBrowserHistory(registration, guestId)
+      if (disposed || sequence !== historyRead || registration !== browserRegistrationId || guestId !== historyGuestId()) return
+      // CDP can report the destination cursor before Chromium emits its commit
+      // event. Publishing that intent as a prop would start a second navigation.
+      if (browserHost === "electron" && value.entries[value.index]?.url !== webviewObservedUrl) return
+      if (browserHost === "tauri" && value.entries[value.index]?.url !== nativeTarget()) return
+      publishHistory(journal.observe(value))
+    } catch (error) {
+      if (!disposed && sequence === historyRead) {
+        journal.cancel()
+        setHistoryBusy(false)
+        reportNativeError(error)
+      }
+    }
+  }
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv)
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
@@ -268,6 +320,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           if (typeof path !== "string" || path.length > 4_096 || !path.startsWith("/")) return
           const address = props.onFrameLocation?.(path)
           if (address) setPathInput(address)
+          if (address && journal) publishHistory(journal.visitUrl(address))
           return
         }
         if (event.data?.type !== "codenomad-preview-comment" || !props.commentMode) return
@@ -341,12 +394,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const reportNativeError = (error: unknown) => {
-    if (!disposed) props.onNavigationError?.(error)
+    if (!disposed && props.active !== false) props.onNavigationError?.(error)
   }
 
   const requestNativeTarget = (address: string) => {
     webviewObservedUrl = undefined
     const previousTarget = nativeTarget()
+    if (nativeMode() && (browserHost === "electron" || previousTarget !== address)) supersedeHistoryTraversal()
     setNativeTarget(address)
     // Electron reflects redirects into src, while the desired-URL signal can
     // still hold the original URL. Reapply that explicit intent when the signal
@@ -375,10 +429,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       webviewObservedUrl = url
       setPathInput(url)
       props.onFrameLocation?.(url)
+      void captureHistory()
     }
     const reportLoadError = (event: Event) => {
       const failure = event as Event & { errorCode?: number; errorDescription?: string }
       if (failure.errorCode === -3) return
+      journal?.cancel()
+      setHistoryBusy(false)
       reportNativeError(new Error(failure.errorDescription || `Browser failed to load (${failure.errorCode ?? "unknown"})`))
     }
     const retryRegistration = (error: unknown) => {
@@ -393,7 +450,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
     const syncRegistration = () => {
       const rect = webview.getBoundingClientRect()
-      const visible = active && rect.width > 0 && rect.height > 0
+      const visible = active && props.active !== false && rect.width > 0 && rect.height > 0
       const sessionId = props.sessionId
       if (!webviewReady || !sessionId || registering) return
       if (registered && registeredSessionId !== sessionId) {
@@ -443,6 +500,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           registered = true
           registeredSessionId = sessionId
           await restoreEmulation(registrationId)
+          void captureHistory()
           registrationFailures = 0
           registrationErrorReported = false
           syncRegistration()
@@ -463,6 +521,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     webview.addEventListener("did-navigate-in-page", syncLocation)
     webview.addEventListener("did-fail-load", reportLoadError)
     webview.addEventListener("dom-ready", handleReady)
+    webview.addEventListener("did-finish-load", captureHistory)
     syncRegistration()
     cleanupWebviewListeners = () => {
       setEmulationReady(false)
@@ -472,6 +531,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       webview.removeEventListener("did-navigate-in-page", syncLocation)
       webview.removeEventListener("did-fail-load", reportLoadError)
       webview.removeEventListener("dom-ready", handleReady)
+      webview.removeEventListener("did-finish-load", captureHistory)
       resizeObserver.disconnect()
       if (registered) void window.electronAPI?.unregisterBrowserTarget?.(browserRegistrationId).catch(reportNativeError)
       if (webviewRef === webview) {
@@ -502,6 +562,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       reportNativeError(error)
     }
     const bounds = () => {
+      if (props.active === false) return null
       if (viewportMenuOpen() || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return null
       const rect = element.getBoundingClientRect()
       const clip = frameWrapRef?.getBoundingClientRect() ?? rect
@@ -549,12 +610,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const serialized = JSON.stringify(next)
       if (registered && nativeVisible && serialized === lastBounds) return
       if (registered) {
+        const revealing = !nativeVisible
         registering = true
         void updateTauriBrowserTarget(browserRegistrationId, next, true).then(() => {
           lastBounds = serialized
           nativeVisible = true
           syncErrorReported = false
           registering = false
+          if (revealing) void captureHistory()
           if (active) syncBounds()
         }).catch(reportSyncError)
         return
@@ -567,6 +630,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         setNativeTarget(url)
         setPathInput(url)
         props.onFrameLocation?.(url)
+        void captureHistory()
       }).then(async (unlisten) => {
         if (!active) {
           unlisten()
@@ -591,6 +655,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         nativeVisible = true
         tauriRegistered = true
         await restoreEmulation(registrationId)
+        void captureHistory()
         syncErrorReported = false
         if (nativeTarget() !== target) {
           await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())
@@ -655,6 +720,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
   onCleanup(() => {
     disposed = true
+    supersedeHistoryTraversal()
     cleanupFrameListeners?.()
     cleanupWebviewListeners?.()
     cleanupTauriTarget?.()
@@ -663,6 +729,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const handleBack = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
+    if (journal) { void traverseHistory(-1); return }
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "back").catch(reportNativeError)
       else if (webviewReady && webviewRef?.canGoBack()) webviewRef.goBack()
@@ -675,7 +742,40 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
+  const traverseHistory = async (offset: number) => {
+    if (!journal || historyBusy()) return
+    const index = journal.value.index + offset
+    if (index < 0 || index >= journal.value.urls.length) return
+    setHistoryBusy(true)
+    const version = ++historyTravelVersion
+    ++historyRead // Fence reads started before this explicit traversal.
+    try {
+      const native: NativeBrowserHistory = nativeMode() ? await readBrowserHistory(browserRegistrationId, historyGuestId()) : { entries: [], index: -1 }
+      if (disposed || version !== historyTravelVersion) return
+      if (props.active === false) { setHistoryBusy(false); return }
+      const target = journal.request(index, native)
+      if (target.id !== undefined) await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
+      else if (nativeMode()) {
+        if (browserHost === "tauri") await controlTauriBrowserTarget(browserRegistrationId, "navigate", target.url)
+        else if (webviewReady) await webviewRef?.loadURL(target.url)
+      } else {
+        const source = await props.onNavigate!(target.url)
+        if (disposed || version !== historyTravelVersion) return
+        setFrameSrc(source)
+        publishHistory(journal.visitUrl(target.url))
+      }
+      // Committed navigation/load events capture the result, not the early CDP
+      // navigation response whose cursor can already point at an unloaded page.
+    } catch (error) {
+      if (disposed || version !== historyTravelVersion) return
+      journal.cancel()
+      setHistoryBusy(false)
+      reportNativeError(error)
+    }
+  }
+
   const handleRefresh = () => {
+    supersedeHistoryTraversal()
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "reload").catch(reportNativeError)
       else if (webviewReady) webviewRef?.reload()
@@ -698,6 +798,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (nativeBrowserAvailable) {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())
+          supersedeHistoryTraversal()
           setPathInput(target)
           if (nativeMode() && webviewReady && webviewRef?.getURL() === target) {
             webviewRef.reload()
@@ -707,17 +808,19 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
               void controlTauriBrowserTarget(browserRegistrationId, "navigate", target).catch(reportNativeError)
             } else setNativeMode(true)
           }
-          props.onFrameLocation?.(target)
+          if (!journal) props.onFrameLocation?.(target)
         } catch {
           reportNativeError(new Error(props.labels.invalidUrl ?? props.labels.path))
         }
         return
       }
       const restoreNative = nativeMode()
+      supersedeHistoryTraversal()
       setNativeMode(false)
       setNavigating(true)
       try {
         setFrameSrc(await props.onNavigate(pathInput()))
+        if (journal) publishHistory(journal.visitUrl(pathInput()))
       } catch (error) {
         setNativeMode(restoreNative)
         props.onNavigationError?.(error)
@@ -734,9 +837,16 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   return (
     <div class="flex h-full min-h-0 w-full flex-col bg-surface">
       <div class="relative flex shrink-0 items-center gap-2 px-3 py-2" style={{ "border-bottom": "1px solid var(--border-base)" }}>
-        <button type="button" class="new-tab-button" onClick={handleBack} title={props.labels.back} aria-label={props.labels.back}>
+        <button type="button" class="new-tab-button" onClick={handleBack} disabled={Boolean(journal && (historyBusy() || !history()?.index || (nativeMode() && !emulationReady())))} title={props.labels.back} aria-label={props.labels.back}>
           <ArrowLeft class="h-4 w-4" />
         </button>
+        <Show when={journal}>
+          <button type="button" class="new-tab-button" onClick={() => void traverseHistory(1)}
+            disabled={historyBusy() || (nativeMode() && !emulationReady()) || (history()?.index ?? 0) >= (history()?.urls.length ?? 1) - 1}
+            title={props.labels.forward} aria-label={props.labels.forward}>
+            <ArrowRight class="h-4 w-4" />
+          </button>
+        </Show>
         <button type="button" class="new-tab-button" onClick={handleRefresh} title={props.labels.refresh} aria-label={props.labels.refresh}>
           <RefreshCw class="h-4 w-4" />
         </button>

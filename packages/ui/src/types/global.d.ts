@@ -73,6 +73,7 @@ declare global {
     registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
+    browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
     claimBrowserOpen?: (requestID: string) => Promise<boolean>
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
     onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void

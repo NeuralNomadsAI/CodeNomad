@@ -111,6 +111,7 @@ export const sessionMessages = {
   "sessionPreview.backToChat": "返回聊天",
   "sessionPreview.close": "关闭预览",
   "sessionPreview.chat.button": "返回聊天",
+  "sessionPreview.forward": "前进",
   "sessionPreview.open.button": "打开网页预览",
   "sessionPreview.open.title": "打开网页预览",
   "sessionPreview.open.prompt": "输入可信的本地或预发布 URL，以便在此会话中预览。",

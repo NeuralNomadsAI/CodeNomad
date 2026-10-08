@@ -111,6 +111,7 @@ export const sessionMessages = {
   "sessionPreview.backToChat": "חזרה לצ'אט",
   "sessionPreview.close": "סגור תצוגה מקדימה",
   "sessionPreview.chat.button": "חזרה לצ'אט",
+  "sessionPreview.forward": "קדימה",
   "sessionPreview.open.button": "פתח תצוגה מקדימה של אתר",
   "sessionPreview.open.title": "פתח תצוגה מקדימה של אתר",
   "sessionPreview.open.prompt": "הזן כתובת URL מקומית או סביבת staging שאתה נותן בה אמון לתצוגה מקדימה בסשן הזה.",
