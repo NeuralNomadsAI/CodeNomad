@@ -15,6 +15,8 @@ import type { acquireNativeManagedOwner } from "./native-managed-owner"
 import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
 import { authorityDigest } from "../../missions/authority-protocol"
 import { controlOperationID } from "../../missions/receipt-identity"
+import type { MissionStorage } from "../../missions/journal"
+import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlement"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, 768 * 1024) === canonicalAuthority(b, 768 * 1024)
 
@@ -47,6 +49,7 @@ export function nativeRecurrenceAdapter(input: {
   owner: import("effect").Effect.Success<ReturnType<typeof acquireNativeManagedOwner>>
   familyClaims: ReadonlyMap<string, SynchronousFamilyAuthorityClaim>
   invocation?: () => NativeRecurrenceInvocation | undefined
+  settlementStorage?: MissionStorage
 }): RecurrenceAuthorityAdapter {
   const { provider, signer } = input, store = provider.store
   const owner = (): true => {
@@ -189,7 +192,10 @@ export function nativeRecurrenceAdapter(input: {
       current()
       return { receipt, assertCurrent: current }
     },
-    observeSettlement: async (_child: Readonly<RecurrenceChildRecord>) => rejectAuthority("observation-unavailable"),
+    observeSettlement: (child: Readonly<RecurrenceChildRecord>, signal) => {
+      if (!input.settlementStorage) rejectAuthority("observation-unavailable")
+      return observeNativeRecurrenceSettlement(provider, input.settlementStorage, child, signal)
+    },
   }
 }
 

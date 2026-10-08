@@ -647,6 +647,29 @@ test("crash after authority archive parks original pending until exact metadata 
   assert.equal(f.effects(), effects)
 })
 
+test("all three applied passage effects archive before the next passage can be reserved", async () => {
+  const f = await fixture(); await f.authorize()
+  const grant = await f.reserve()
+  for (const effect of [{ kind: "create" } as const, { kind: "start" } as const,
+    { kind: "coordinator-message", messageID: grant.messageID, contentDigest: authorityDigest(config.consigne) } as const]) {
+    const lease = await f.claim(grant.grantID, effect)
+    f.invoke(lease)
+    await f.acknowledge(grant.grantID, lease.operation.operationID)
+  }
+  const pending = (await f.source.read(scope.scheduleID))!
+  await f.source.recordAdmission(scope.scheduleID, { kind: "accepted", passageID: grant.passage.id,
+    messageID: grant.messageID, missionID: grant.missionID, conversationID: grant.coordinatorSessionID },
+  pending.pending!.passage.createdAt + 1, f.qualifiedCurrent)
+  f.terminal((await f.store.read())!.child!)
+  const archived = await f.core.settle(grant.grantID, (await f.store.read())!.revision, signal())
+  assert.deepEqual(archived.settlement.effects.map(effect => effect.outcome), ["applied", "applied", "applied"])
+  await assert.rejects(f.reserve(), /cannot trigger/, "an archive alone must not allow the next passage")
+  await f.source.finish(scope.scheduleID, { passageID: grant.passage.id, messageID: grant.messageID,
+    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome: "completed",
+    artifactMessageIDs: [], cursors: [] }, pending.pending!.passage.createdAt + 2, f.qualifiedCurrent)
+  assert.equal((await f.reserve()).sequence, 2)
+})
+
 test("1,025 passages retain permanent replay evidence with constant hot state and untouched ordinary authority/user bytes", async () => {
   const f = await fixture(); await f.authorize()
   const ordinaryKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/project/${f.store.projectToken}`

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import type { DatabaseSync } from "node:sqlite"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Location } from "@opencode/schema/location"
@@ -23,6 +23,9 @@ const namespaceKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`
 const nativeKey = (key: string) => `plugin:${Array.from(PLUGIN_ID).map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
+const formTag = Context.Service<never, unknown>("@opencode/Form")
+const permissionTag = Context.Service<never, unknown>("@opencode/Permission")
+const shellTag = Context.Service<never, unknown>("@opencode/Shell")
 type NativeEffect = Effect.Effect<unknown, unknown>
 type NativeDatabase = { db: { $client: SqlClient.SqlClient; transaction<A>(callback: () => Effect.Effect<A, unknown>, config: { behavior: "immediate" }): Effect.Effect<A, unknown> } }
 const method = Schema.declare<(...args: never[]) => NativeEffect>((value): value is (...args: never[]) => NativeEffect => Predicate.isFunction(value))
@@ -32,9 +35,18 @@ const databaseShape = Schema.Struct({ db: Schema.Struct({ transaction: method,
     && Predicate.hasProperty(value, "transactionService") && Context.isKey(value.transactionService)) }) })
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
 const SELECT_VALUE = "SELECT value FROM kv WHERE key=?"
+const SESSION_ROW = "SELECT id,parent_id,project_id,directory,workspace_id,metadata,time_suspended FROM session_v2 WHERE id=?"
+const SESSION_HEAD = "SELECT seq,owner_id FROM event_sequence WHERE aggregate_id=?"
+const SESSION_EVENTS = "SELECT id,seq,type,data FROM event WHERE aggregate_id=? ORDER BY seq LIMIT 513"
+const SESSION_INBOX = "SELECT count(*) AS count FROM session_inbox WHERE session_id=?"
+const SESSION_PENDING = "SELECT count(*) AS count FROM session_pending WHERE session_id=?"
+const SESSION_MESSAGE = "SELECT id,session_id,type,data FROM session_message WHERE id=?"
+const SESSION_MESSAGES = "SELECT id,type,data FROM session_message WHERE session_id=? ORDER BY seq LIMIT 129"
+const PASSAGE_JOURNAL = "SELECT key,value FROM kv WHERE substr(key,1,?)=? ORDER BY key LIMIT 2001"
 // This private read shim permits only the metadata CAS statements.
 const claimQueries = new Set([
   "PRAGMA database_list", "SELECT 1 FROM sqlite_schema WHERE type='trigger' LIMIT 1", SELECT_VALUE,
+  SESSION_ROW, SESSION_HEAD, SESSION_EVENTS, SESSION_INBOX, SESSION_PENDING, SESSION_MESSAGE, SESSION_MESSAGES, PASSAGE_JOURNAL,
 ])
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, RECURRENCE_AUTHORITY_MAX_BYTES) === canonicalAuthority(b, RECURRENCE_AUTHORITY_MAX_BYTES)
 
@@ -79,6 +91,28 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     if (value === undefined) return undefined
     if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > RECURRENCE_AUTHORITY_MAX_BYTES) rejectAuthority("storage-invalid")
     return JSON.parse(value)
+  }
+  const sessionWatermark = (sessionID: string) => {
+    if (!/^ses_[A-Za-z0-9_-]{3,100}$/.test(sessionID)) rejectAuthority("binding-mismatch")
+    const session = syncRows(SESSION_ROW, [sessionID])[0]
+    const head = syncRows(SESSION_HEAD, [sessionID])[0]
+    const inbox = syncRows(SESSION_INBOX, [sessionID])[0]?.count
+    const pending = syncRows(SESSION_PENDING, [sessionID])[0]?.count
+    if (!session || !head || !Number.isSafeInteger(head.seq) || !Number.isSafeInteger(inbox)
+      || !Number.isSafeInteger(pending) || session.id !== sessionID || session.project_id !== scope.projectID
+      || session.directory !== location.directory || session.workspace_id !== (location.workspaceID ?? null))
+      rejectAuthority("observation-unavailable")
+    return { session, seq: head.seq as number, ownerID: head.owner_id, inbox, pending }
+  }
+  const journalWatermark = (passageID: string) => {
+    // ponytail: bounded whole-passage hash; add a durable checkpoint only if large journals must settle.
+    if (!/^rcp_[A-Za-z0-9_-]{3,100}$/.test(passageID)) rejectAuthority("binding-mismatch")
+    const prefix = nativeKey(`${RECURRENCE_STORAGE_PREFIX}/passages/${stableToken(`${scope.projectID}\0${scope.projectCanonical}`, 24)}/${scope.scheduleID}/${passageID}/`)
+    const entries = syncRows(PASSAGE_JOURNAL, [prefix.length, prefix])
+    if (!entries.length || entries.length > 2000 || entries.some(row => typeof row.key !== "string"
+      || !row.key.startsWith(prefix) || typeof row.value !== "string")
+      || Buffer.byteLength(JSON.stringify(entries), "utf8") > 3 * 1024 * 1024) rejectAuthority("observation-unavailable")
+    return createHash("sha256").update(canonicalAuthority(entries, 3 * 1024 * 1024)).digest("hex")
   }
   // One native nonce slot per exact schedule. A new acquisition revokes an old
   // writer even if its evictable Location/plugin Scope has not been disposed.
@@ -193,6 +227,65 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
       // No arbitrary plugin KV access: only this scope's exact immutable/live keys.
       if (key !== sourceKey) allowed(key, false)
       return syncValue(key)
+    },
+    readSession: (sessionID: string, messageID?: string) => {
+      entryFence()
+      const before = sessionWatermark(sessionID)
+      // ponytail: 512 native events/128 messages per actor; a persistent cursor is needed for larger passages.
+      const events = syncRows(SESSION_EVENTS, [sessionID])
+      const messages = syncRows(SESSION_MESSAGES, [sessionID])
+      if (events.length > 512 || events.some(row => typeof row.data !== "string" || Buffer.byteLength(row.data, "utf8") > 256 * 1024)
+        || messages.length > 128 || messages.some(row => typeof row.data !== "string" || Buffer.byteLength(row.data, "utf8") > 256 * 1024)
+        || Buffer.byteLength(JSON.stringify([events, messages]), "utf8") > 3 * 1024 * 1024) rejectAuthority("observation-unavailable")
+      const message = messageID === undefined ? undefined : syncRows(SESSION_MESSAGE, [messageID])[0]
+      if (messageID !== undefined && (!/^([A-Za-z0-9_:-]{3,240})$/.test(messageID)
+        || !message || message.session_id !== sessionID || typeof message.data !== "string"
+        || Buffer.byteLength(message.data, "utf8") > 256 * 1024)) rejectAuthority("observation-unavailable")
+      if (!same(before, sessionWatermark(sessionID))) rejectAuthority("observation-unavailable")
+      return { ...before, events, messages, message }
+    },
+    readJournalWatermark: (passageID: string) => { entryFence(); return journalWatermark(passageID) },
+    assertJournalWatermark: (passageID: string, expected: string): true => {
+      nativeFence()
+      if (!frame || journalWatermark(passageID) !== expected) rejectAuthority("observation-unavailable")
+      return true
+    },
+    /** Called by the settlement lease inside the original native BEGIN IMMEDIATE.
+     * No arbitrary SQL, project inventory or asynchronous promise can pass this fence. */
+    assertSessionWatermarks: (observed: readonly { sessionID: string; seq: number; ownerID: unknown; session: unknown }[]): true => {
+      nativeFence()
+      if (!frame || observed.length < 1 || observed.length > 32 || new Set(observed.map(item => item.sessionID)).size !== observed.length)
+        rejectAuthority("policy-unqualified")
+      for (const item of observed) {
+        const actual = sessionWatermark(item.sessionID)
+        if (actual.seq !== item.seq || actual.ownerID !== item.ownerID || actual.inbox !== 0 || actual.pending !== 0
+          || actual.session.time_suspended !== null || !same(actual.session, item.session)) rejectAuthority("observation-unavailable")
+      }
+      return true
+    },
+    assertNoPendingRequests: async (sessionIDs: readonly string[]) => {
+      entryFence()
+      if (!sessionIDs.length || sessionIDs.length > 32 || new Set(sessionIDs).size !== sessionIDs.length)
+        rejectAuthority("observation-unavailable")
+      const owned = new Set(sessionIDs)
+      const forms = Context.getOption(graph, formTag), permissions = Context.getOption(graph, permissionTag)
+      const shells = Context.getOption(graph, shellTag)
+      if (Option.isNone(forms) || Option.isNone(permissions) || Option.isNone(shells)
+        || !Predicate.hasProperty(forms.value, "list") || !Predicate.isFunction(forms.value.list)
+        || !Predicate.hasProperty(permissions.value, "list") || !Predicate.isFunction(permissions.value.list)
+        || !Predicate.hasProperty(shells.value, "list") || !Predicate.isFunction(shells.value.list)) rejectAuthority("observation-unavailable")
+      // ponytail: one active-Location queue read materializes before the 1024-result cap;
+      // replace it only if upstream exposes a bounded per-session reader/cursor.
+      const [formRows, permissionRows, shellRows] = await Promise.all([forms.value.list(), permissions.value.list(), shells.value.list()]
+        .map(effect => Effect.runPromise(Effect.provide(effect as NativeEffect, graph))))
+      if (![formRows, permissionRows, shellRows].every(Array.isArray)
+        || [formRows, permissionRows, shellRows].some(list => (list as unknown[]).length > 1024)) rejectAuthority("observation-unavailable")
+      if ((formRows as { sessionID?: string }[]).some(row => owned.has(row.sessionID ?? "") || row.sessionID === "global")
+        || (permissionRows as { sessionID?: string }[]).some(row => owned.has(row.sessionID ?? ""))
+        || (shellRows as { metadata?: { sessionID?: string } }[]).some(row => owned.has(row.metadata?.sessionID ?? "")))
+        rejectAuthority("observation-unavailable")
+      entryFence()
+      return true as const
     },
     sourceKey,
     read: () => store.read(),

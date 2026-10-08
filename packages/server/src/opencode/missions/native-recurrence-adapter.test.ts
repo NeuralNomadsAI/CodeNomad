@@ -13,6 +13,7 @@ import { deriveRecurrenceChild, recurrenceEffectID, recurrenceHumanRequestID, re
   type SignedRecurrenceStandingIntent } from "../../missions/recurrence-authority-contract"
 import { recurrenceMessageID, recurrencePassageID } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
+import { RecurrenceAuthority } from "../../missions/recurrence-authority-core"
 import { physical } from "../../missions/host-authority/private-files"
 import { NativeRecurrenceAuthorityStore, type RecurrenceAuthorityDocument } from "../../missions/recurrence-authority-store"
 import type { MissionStorage } from "../../missions/journal"
@@ -145,6 +146,12 @@ test("native standing human CAS checks signer, protected decision, physical fami
     assert.equal(nativeCreations, 1)
     assert.equal(nativeMessages, 1)
     assert.equal((await store.read())?.child?.effects.length, 3)
+    const admittedLedger = (await store.read())!
+    assert(admittedLedger.child?.effects.every(item => item.receipt?.outcome === "applied"))
+    await assert.rejects(new RecurrenceAuthority(store, nativeRecurrenceAdapter(input)).settle(
+      admittedLedger.child!.grant.grantID, admittedLedger.revision, new AbortController().signal), /observation-unavailable/,
+    "three real native effect receipts are admission evidence, not a terminal passage")
+    assert.deepEqual(await store.read(), admittedLedger, "failed terminal observation cannot archive or advance the next passage")
     await assert.rejects(admitNativeRecurrencePassage({ document: pendingSource as never, provider, signer: trust,
       owner: input.owner, familyClaims: input.familyClaims, storage: finiteStorage, native: nativeService as never,
       profile, signal: new AbortController().signal, settlementSignal: new AbortController().signal,

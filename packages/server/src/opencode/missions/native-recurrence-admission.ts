@@ -4,6 +4,7 @@ import { parseRecurrenceDocument, type RecurrenceDocument } from "../../missions
 import { RecurrenceAuthority } from "../../missions/recurrence-authority-core"
 import { authenticateRecurrenceStanding, recurrenceEffectID, type RecurrenceChildGrant } from "../../missions/recurrence-authority-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
+import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import { MissionControl } from "../../missions/control"
 import type { MissionInputTransport } from "../../missions/control-types"
 import type { MissionStorage } from "../../missions/journal"
@@ -44,7 +45,7 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
     || !doc.config.roots.some(root => root.directory === native.location.directory)) rejectAuthority("binding-mismatch")
   let invocation: NativeRecurrenceInvocation | undefined
   const authority = new RecurrenceAuthority(provider.store, nativeRecurrenceAdapter({ ...input,
-    invocation: () => invocation }))
+    invocation: () => invocation, settlementStorage: input.storage }))
   const dispatch = await input.beforeEffect()
   const current = (): true => {
     signal.throwIfAborted()
@@ -170,6 +171,44 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
   if (running.runState !== "running" || running.control?.pending.length) rejectAuthority("observation-unavailable")
   return { kind: "accepted" as const, passageID: grant.passage.id, messageID: grant.messageID,
     missionID: grant.missionID, conversationID: grant.coordinatorSessionID }
+}
+
+/** Reconcile the original pending passage, never redispatch. Archive the
+ * immutable native result first; a crash before the separate calendar CAS
+ * leaves the original pending identity available for archive-only recovery. */
+export async function settleNativeRecurrencePassage(input: Omit<PassageInput, "beforeEffect">,
+  calendar: NativeMissionRecurrenceStore) {
+  const { provider, settlementSignal: signal } = input
+  const source = await calendar.read(provider.store.scope.scheduleID)
+  if (!source?.pending?.admission) rejectAuthority("observation-unavailable")
+  const hot = await provider.read()
+  const previous = await provider.store.readPassage(source.pending.passage.id)
+  const grant = hot?.child?.grant ?? previous?.child.grant
+  if (!grant || source.pending.passage.id !== grant.passage.id
+    || source.pending.passage.messageID !== grant.messageID || source.pending.admission.missionID !== grant.missionID
+    || source.pending.admission.conversationID !== grant.coordinatorSessionID
+    || hot?.child && previous) rejectAuthority("observation-unavailable")
+  const current = (): true => {
+    signal.throwIfAborted()
+    input.owner.assertCurrent(); input.native.assertCurrent()
+    return provider.assertCurrent()
+  }
+  current()
+  const authority = new RecurrenceAuthority(provider.store, nativeRecurrenceAdapter({ ...input,
+    settlementStorage: input.storage }))
+  const archive = previous ?? await provider.transact(current, () => authority.settle(grant.grantID, hot!.revision, signal))
+  if (archive.settlement.outcome !== "completed" || archive.child.grant.grantID !== grant.grantID)
+    rejectAuthority("observation-unavailable")
+  const archived = (): true => {
+    current()
+    if (canonicalAuthority(provider.readCurrent(`${provider.store.parentKey}/passages/${grant.passage.id}`))
+      !== canonicalAuthority(archive)) rejectAuthority("observation-unavailable")
+    return true
+  }
+  archived()
+  return calendar.finish(source.id, { passageID: grant.passage.id, messageID: grant.messageID,
+    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome: "completed",
+    artifactMessageIDs: [], cursors: [] }, Math.max(input.now?.() ?? Date.now(), grant.passage.createdAt), archived)
 }
 
 /** Recovery is metadata-only. A committed original create receipt and current
