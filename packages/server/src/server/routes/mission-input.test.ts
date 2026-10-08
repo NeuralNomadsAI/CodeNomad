@@ -154,7 +154,11 @@ test("mission assignments and reports refresh degraded Git context and clear it 
   assert.deepEqual(f.gitContext[2].input, { sessionID: "ses_actor", key: "codenomad.git-availability" })
 })
 
-test("Git context failures stay advisory while cancellation and retirement still fence mission sends", async () => {
+test("Git context failures stay advisory while cancellation and retirement still fence mission sends", async t => {
+  // The real `git --version` probe can exceed syncSessionGitContext's 2 s advisory
+  // deadline on a loaded host; the deadline then (correctly) skips the write and
+  // its abort/stale hook. Freeze that timer so the fence assertions are exercised.
+  t.mock.timers.enable({ apis: ["setTimeout"] })
   for (const mode of ["advisory", "abort", "stale"] as const) {
     const f = fixture()
     const abort = new AbortController()
