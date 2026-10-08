@@ -8,7 +8,7 @@ dated receipts below. The target specification is the description of open
 qualification is indexed in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
 The 2026-10-08 clarification limits unattended scheduling to the lifetime of the
 running OpenCode service: restart may lose the in-memory Job, and reopening
-CodeNomad must reconcile and automatically rearm still-authorized schedules
+CodeNomad must show an interrupted schedule until the user explicitly resumes it,
 without replaying uncertain effects. Stronger cold-restart gates below remain historical
 research, not current PR acceptance criteria.
 The earlier restriction on opening a replacement PR has been superseded by the
