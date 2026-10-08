@@ -238,6 +238,12 @@ Read-only projections and invalidations never start work or settle unknown sends
    an agent/native answer without it does not satisfy Wayfinder's human gate.
 
 These are integrated journeys, not acceptance inferred from an isolated helper.
+
+Coverage boundary: the offline `recurring-day.e2e.test.ts` fixture drives the real
+plugin, scheduler, storage and `mission_*` tools, but its scripted model only
+records `read`/`shell` call names; it executes no real shell or backend tool.
+Real shell/backend execution under native permissions is covered only by the
+isolated native qualification fixture (in progress), not by the offline e2e.
 Native tests must use isolated service/database/provider fixtures, never the shared
 daemon or user Mission. No install, daemon mutation or push is authorized by this doc.
 
