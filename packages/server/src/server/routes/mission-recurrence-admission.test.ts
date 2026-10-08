@@ -26,12 +26,11 @@ async function fixture(template: RecurrenceConfig["template"] = "custom") {
   }
   const store = new NativeMissionRecurrenceStore(storage, projectID, directory)
   const execution = { agent: "worker", model: { providerID: "provider", id: "model" } }
-  const config: RecurrenceConfig = { template, consigne: "Bounded private review", clock: { time: "07:00", zone: "UTC" },
+  const config: RecurrenceConfig = { title: "Review", template, consigne: "Bounded private review", clock: { time: "07:00", zone: "UTC" },
     notes: "  Frozen optional working notes\nverbatim  ",
     profileID: "profile", executionHost: "host", profiles: { coordinator: execution,
       roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, execution])) },
-    taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
-    publication: { policy: "disabled", conversationIDs: [] } }
+    taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [] }
   const now = Date.parse("2026-10-01T07:00:00Z")
   await store.create("schedule", config, now, () => true)
   let owned = true, nativeDirectory = directory, live = true, reads = 0, effects = 0

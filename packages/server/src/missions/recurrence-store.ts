@@ -6,7 +6,7 @@ import type { MissionJsonValue } from "./model"
 import { latestDailyDue } from "./recurrence-clock"
 import {
   parseRecurrenceDocument, recurrenceAdmissionSchema, recurrenceConfigSchema, recurrenceIDSchema,
-  recurrenceMessageID, recurrencePassageID, recurrenceResultSchema,
+  recurrenceMessageID, recurrencePassageID, recurrenceResultSchema, recurrenceCoordinatorSessionID,
   RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_SCHEDULE_LIMIT, RECURRENCE_STORAGE_PREFIX,
   type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceDue, type RecurrenceResult, type RecurrenceControlRecord,
 } from "./recurrence-contract"
@@ -123,7 +123,8 @@ export class NativeMissionRecurrenceStore {
       if (input.action === "stop") doc.state = "stopped"
       delete doc.interruptionReason
       doc.revision++
-      doc.controls.push({ ...input, revision: doc.revision, state: doc.state, controlsComplete: false,
+      doc.controls.push({ requestID: input.requestID, action: input.action, expectedRevision: input.expectedRevision,
+        revision: doc.revision, state: doc.state, controlsComplete: false,
         targets: [], targetsKnown: false })
       return this.publish(doc, current, input.expectedRevision)
     })
@@ -166,6 +167,7 @@ export class NativeMissionRecurrenceStore {
       const due: RecurrenceDue = { kind: "manual", requestID, expectedRevision, at: now }
       const passageID = recurrencePassageID(this.projectToken, id, doc.scheduleRevision, due)
       doc.pending = { passage: { id: passageID, messageID: recurrenceMessageID(passageID), due,
+        coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID),
         scheduleRevision: doc.scheduleRevision, createdAt: now }, admission: null }
       doc.controls.push({ requestID, expectedRevision, action: "run-now", revision: expectedRevision + 1,
         state: doc.state, controlsComplete: false, targetsKnown: true, targets: [] })
@@ -179,12 +181,12 @@ export class NativeMissionRecurrenceStore {
         const latest = latestDailyDue(doc.config.clock, now)
         if (latest.at !== due.at || latest.civilDay !== due.civilDay || !isNewDailyDue(doc, due)
           || canonicalAuthority(due.clock) !== canonicalAuthority(doc.config.clock)) throw new Error("Recurrence due conflict")
-        doc.lastDaily = due
       } else if (due.expectedRevision !== expectedRevision || due.at !== now) throw new Error("Recurrence manual conflict")
       const passageID = recurrencePassageID(this.projectToken, id, doc.scheduleRevision, due)
       // Unacknowledged from the FIRST durable publication. A crash at any point
       // after this write parks the original key; it never authorizes replay.
       doc.pending = { passage: { id: passageID, messageID: recurrenceMessageID(passageID),
+        coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID),
         scheduleRevision: doc.scheduleRevision, due, createdAt: now }, admission: null }
     })
   }
@@ -222,6 +224,7 @@ export class NativeMissionRecurrenceStore {
   private settle(doc: RecurrenceDocument, result: RecurrenceResult, now: number) {
     const reference = (({ cursors: _cursors, ...receipt }) => receipt)(result)
     doc.history.push({ passage: doc.pending!.passage, result: reference, settledAt: now })
+    if (doc.pending!.passage.due.kind === "daily") doc.lastDaily = doc.pending!.passage.due
     doc.history = doc.history.slice(-RECURRENCE_HISTORY_LIMIT)
     doc.settledCount++
     doc.pending = null

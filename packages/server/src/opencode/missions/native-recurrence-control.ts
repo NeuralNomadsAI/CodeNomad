@@ -70,7 +70,8 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
   const response = () => ({ version: 1 as const, scheduleID: input.scheduleID, ...record })
   if (record.controlsComplete || previous && !(input.retry && (input.action === "pause" || input.action === "stop"))) return response()
   if (input.action === "play" || input.action === "resume") {
-    yield* startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, placement), ctx)
+    yield* startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement,
+      profileSource: document.profileSource }), ctx)
     record = { ...record, controlsComplete: true, targetsKnown: true }
   } else {
     let cancelled = false

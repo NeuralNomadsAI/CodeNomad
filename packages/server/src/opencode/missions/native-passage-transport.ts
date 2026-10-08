@@ -5,6 +5,7 @@ import { readAutonomousMissionEnvironment } from "./autonomous-environment"
 import { matchesExecution } from "../../missions/execution"
 import { MissionJournal } from "../../missions/journal"
 import type { MissionDelegateInput } from "../../missions/control-types"
+import { recurrenceDispatchAllowed } from "../../missions/recurrence-contract"
 
 const marker = (metadata: Record<string, unknown> | undefined) => {
   const value = metadata?.["codenomad.mission"]
@@ -23,7 +24,7 @@ export function nativePassageTransport(input: PassageInput, identity: { missionI
     if (coordinatorID !== identity.coordinatorSessionID || marker(route.metadata).missionID !== identity.missionID)
       throw new Error("Passage transport identity differs")
     const fresh = await input.read()
-    if (fresh?.pending?.passage.id !== doc.pending!.passage.id || fresh.state !== "running") throw new Error("Passage dispatch unavailable")
+    if (!fresh || fresh.pending?.passage.id !== doc.pending!.passage.id || !recurrenceDispatchAllowed(fresh)) throw new Error("Passage dispatch unavailable")
     const target = await native.get({ sessionID: route.sessionID })
     if (target.parentID || target.projectID !== doc.projectID || target.location.directory !== native.location.directory
       || target.location.workspaceID !== native.location.workspaceID || !target.agent || !target.model)
@@ -47,7 +48,7 @@ export function nativePassageTransport(input: PassageInput, identity: { missionI
       || marker(request.metadata).missionID !== identity.missionID)
       throw new Error("Passage independent profile differs")
     const fresh = await input.read()
-    if (fresh?.pending?.passage.id !== doc.pending!.passage.id || fresh.state !== "running") throw new Error("Passage dispatch unavailable")
+    if (!fresh || fresh.pending?.passage.id !== doc.pending!.passage.id || !recurrenceDispatchAllowed(fresh)) throw new Error("Passage dispatch unavailable")
     const metadata = { ...request.metadata, "codenomad.mission": { ...marker(request.metadata),
       recurrence: { scheduleID: doc.id, passageID: doc.pending!.passage.id } } }
     await native.create({ id: request.id, title: request.title ?? "Mission task", location: { directory: native.location.directory },

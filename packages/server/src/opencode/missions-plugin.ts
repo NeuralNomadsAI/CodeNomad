@@ -104,6 +104,8 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         recurrenceSnapshot(input: unknown): Promise<unknown>
         recurrenceControl(input: unknown): Promise<unknown>
         recurrenceControlStatus(input: unknown): Promise<unknown>
+        recurrenceRunNow(input: unknown): Promise<unknown>
+        recurrenceRunNowStatus(input: unknown): Promise<unknown>
         recurrenceRead(input: unknown): Promise<unknown>
         recurrenceCreate(input: unknown): Promise<unknown>
         recurrenceCurrent(input: unknown): Promise<unknown>
@@ -194,6 +196,8 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceControl: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceControlStatus: async () => { throw new Error("Native recurrence status unavailable") },
+      recurrenceRunNow: async () => { throw new Error("Native recurrence admission unavailable") },
+      recurrenceRunNowStatus: async () => { throw new Error("Native recurrence status unavailable") },
       recurrenceRead: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCreate: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrent: async () => { throw new Error("Native recurrence graph unavailable") },
@@ -233,6 +237,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: tracked(handlers.snapshot), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
+      recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),
       recurrenceCreate: tracked(handlers.recurrenceCreate),
       recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),

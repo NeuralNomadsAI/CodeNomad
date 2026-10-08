@@ -1,5 +1,5 @@
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import type { RecurrenceDocument } from "../../missions/recurrence-contract"
+import { recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { passageStartInput, recurrenceSourceLocationDigest, type PassageSource } from "../../missions/recurrence-input"
 import { recurrenceInputBudget, recurrenceSourceContextLimit } from "../../missions/recurrence-read-budget"
 import { recurrencePassage } from "../../missions/recurrence-passage"
@@ -18,15 +18,12 @@ export type PassageInput = {
   observation: NativePassageObservation; profile: AutonomousProfileSource; signal: AbortSignal
   current(): true; read(): Promise<RecurrenceDocument | undefined>; humanGate?: NativeHumanAnswerGate
   now?: () => number
+  reconcileOnly?: boolean
 }
 
 /** Reserve in the calendar BEFORE entering here. Recovery checks both native
  * session and original inbox/message identity. No new IDs and no turn replay. */
-export async function admitNativeRecurrencePassage(raw: PassageInput | Record<string, unknown>) {
-  // Temporary compile seam for the HUMAN front's old signed-admission test.
-  // No compatibility execution: missing native observation always fails closed.
-  if (!("observation" in raw)) throw new Error("Signed passage admission retired")
-  const input = raw as PassageInput
+export async function admitNativeRecurrencePassage(input: PassageInput) {
   const { document: doc, native, observation, signal } = input
   if (!doc.pending || !recurrenceInputBudget(doc.config).sufficient) throw new Error("Passage pending input unavailable")
   const current = (): true => { signal.throwIfAborted(); input.current(); return native.assertCurrent() }
@@ -43,11 +40,13 @@ export async function admitNativeRecurrencePassage(raw: PassageInput | Record<st
     location: { directory: native.location.directory }, metadata, agent: coordinator.agent, model: coordinator.model }
   const dispatch = async () => {
     const fresh = await input.read()
-    if (fresh?.state !== "running" || fresh.pending?.passage.id !== passage.passageID
+    if (!fresh || !recurrenceDispatchAllowed(fresh) || fresh.pending?.passage.id !== passage.passageID
       || canonicalAuthority(fresh.config) !== canonicalAuthority(doc.config)) throw new Error("Passage dispatch is not running")
     current()
   }
   const exists = await observation.exists(request.id)
+  if (input.reconcileOnly && (!exists || !(await observation.session(request.id, passage.messageID)).messagePresent))
+    throw new Error("Passage original admission unavailable; reconciliation cannot resend")
   if (!exists) await dispatch()
   const session = exists ? await native.get({ sessionID: request.id }, { signal }) : await native.create(request, { signal }, effectCurrent)
   if (session.id !== request.id || session.parentID || session.projectID !== doc.projectID
@@ -72,7 +71,7 @@ export async function admitNativeRecurrencePassage(raw: PassageInput | Record<st
     prepare: async sessionID => {
       input.current()
       const fresh = await input.read()
-      if (fresh?.pending?.passage.id !== passage.passageID || fresh.state !== "running") throw new Error("Passage prompt unavailable")
+      if (!fresh || fresh.pending?.passage.id !== passage.passageID || !recurrenceDispatchAllowed(fresh)) throw new Error("Passage prompt unavailable")
       const target = await native.get({ sessionID })
       if (target.projectID !== doc.projectID || target.location.directory !== native.location.directory
         || target.location.workspaceID !== native.location.workspaceID) throw new Error("Passage prompt moved")

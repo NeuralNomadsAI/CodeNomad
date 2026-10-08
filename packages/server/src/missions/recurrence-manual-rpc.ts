@@ -12,7 +12,7 @@ export const recurrenceManualResultSchema = recurrenceManualRequestSchema.extend
   && (!value.admission || value.admission.passageID === value.passageID && value.admission.messageID === value.messageID))
 export type RecurrenceManualResult = z.infer<typeof recurrenceManualResultSchema>
 
-const id = { type: "string", pattern: "^[A-Za-z0-9_-]{3,100}$" } as const
+const id = { type: "string", minLength: 3, maxLength: 100 } as const
 export const RECURRENCE_RUN_NOW_STATUS_INPUT = { type: "object", properties: { scheduleID: id, requestID: id,
   expectedRevision: { type: "integer", minimum: 0 } }, required: ["scheduleID", "requestID", "expectedRevision"], additionalProperties: false } as const
 export const RECURRENCE_RUN_NOW_OUTPUT = { type: "object", properties: { ...RECURRENCE_RUN_NOW_STATUS_INPUT.properties,

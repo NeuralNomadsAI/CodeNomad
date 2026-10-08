@@ -14,7 +14,7 @@ export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocu
   const isolated = passageJournal(storage, doc, passage.id, current, now)
   if (doc.pending.admission && doc.pending.admission.missionID !== isolated.missionID) throw new Error("Recurrence mission conflict")
   return { passageID: passage.id, messageID: passage.messageID,
-    coordinatorSessionID: `ses_${stableToken(`${isolated.missionID}\0coordinator`, 26)}`, ...isolated }
+    coordinatorSessionID: passage.coordinatorSessionID, ...isolated }
 }
 
 /** Archived display authority comes only from the exact durable receipt. No

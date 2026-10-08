@@ -3,7 +3,7 @@ import test from "node:test"
 import { stableToken, type MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { recurrencePassage } from "./recurrence-passage"
-import { recurrenceMessageID, recurrencePassageID, type RecurrenceDocument } from "./recurrence-contract"
+import { recurrenceMessageID, recurrencePassageID, recurrenceCoordinatorSessionID, type RecurrenceDocument } from "./recurrence-contract"
 
 test("passage journal isolates its exact key and repeats the publication fence", async () => {
   const values = new Map<string, MissionJsonValue>()
@@ -23,18 +23,19 @@ test("passage journal isolates its exact key and repeats the publication fence",
   const doc = {
     version: 1, projectID: "project", projectCanonical: "/owned/project", id: "daily_review",
     revision: 1, scheduleRevision: 0, createdAt: 1, state: "running",
-    config: { template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+    config: { title: "Review", template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
       profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
         roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },
       taskMode: "native", roots: [{ mode: "directory-only", directory: "/owned/project" }],
-      watchedConversationIDs: [], publication: { policy: "draft-only", conversationIDs: [] } },
-    lastDaily: null, settledCount: 0, cursors: [], history: [],
-    pending: { passage: { id: "rcp_fixture", messageID: "msg_fixture", scheduleRevision: 0,
+      watchedConversationIDs: [] },
+    lastDaily: null, settledCount: 0, cursors: [], history: [], controls: [],
+    pending: { passage: { id: "rcp_fixture", messageID: "msg_fixture", coordinatorSessionID: "ses_fixture", scheduleRevision: 0,
       due: { kind: "manual", requestID: "req_fixture", expectedRevision: 0, at: 1 }, createdAt: 1 }, admission: null },
   } as RecurrenceDocument
   // The codec refuses arbitrary passage IDs, so use the canonical reserved ID.
   doc.pending!.passage.id = recurrencePassageID(stableToken("project\0/owned/project", 24), doc.id, 0, doc.pending!.passage.due)
   doc.pending!.passage.messageID = recurrenceMessageID(doc.pending!.passage.id)
+  doc.pending!.passage.coordinatorSessionID = recurrenceCoordinatorSessionID(doc.projectID, doc.pending!.passage.id)
   const scope = recurrencePassage(storage, doc, current)
   await assert.rejects(scope.storage.get("codenomad-missions/authority-v2/namespace"), /scope conflict/)
   await assert.rejects(scope.journal.append({ version: 1, type: "mission.created", id: "evt_wrong", projectID: "project",

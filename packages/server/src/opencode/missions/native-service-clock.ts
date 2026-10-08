@@ -1,7 +1,7 @@
 import { Location } from "@opencode/schema/location"
-import { Cause, Context, Effect, MutableHashMap, Option, Predicate, Schema, Scope } from "effect"
+import { Cause, Clock, Context, Effect, MutableHashMap, Option, Predicate, Schema, Scope } from "effect"
 import { stableToken } from "../../missions/journal"
-import type { RecurrenceRunOutcome } from "../../missions/recurrence-runner"
+import type { NativePassageDue } from "./native-recurrence-due"
 import type { RecurrenceDocument } from "../../missions/recurrence-contract"
 import { latestDailyDue, nextDailyDue } from "../../missions/recurrence-clock"
 import { isNewDailyDue } from "../../missions/recurrence-store"
@@ -84,11 +84,12 @@ export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenc
  * passage store and environment from the borrowed graph; the clock grants none. */
 export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurrenceClock")(function* (
   input: RecurrenceClockPlacement,
-  due: (graph: Context.Context<never>, assertCurrent: () => true, signal: AbortSignal) => Promise<RecurrenceRunOutcome>,
+  due: NativePassageDue,
   ctx: Pick<Plugin.Context, "storage" | "location">,
   clock: { now(): number; sleep(ms: number): Effect.Effect<void> } = { now: Date.now, sleep: Effect.sleep },
 ) {
   const exactCtx = { storage: ctx.storage, location: ctx.location }
+  const nativeClock = yield* Clock.Clock
   const job = yield* jobTag, locations = yield* mapTag, session = yield* sessionTag
   const ref = Schema.decodeUnknownSync(Location.Ref)({ directory: input.directory,
     ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }) })
@@ -124,27 +125,16 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         const now = clock.now(), dueAt = recurrenceNextDueAt(document, now)
         if (!document.pending && dueAt > now) return Math.min(dueAt - now, 3_600_000)
         const beforeRevision = document.revision
-        let pending: Promise<RecurrenceRunOutcome> | undefined
-        const invocation = Effect.tryPromise((signal) => {
-          pending = due(Context.add(graph, sessionTag, session), () => {
+        const controller = new AbortController()
+        const invocation = due(input.scheduleID, () => {
             const current = MutableHashMap.get(locations.rcMap.state.map, ref)
             if (locations.rcMap.state._tag !== "Open" || Option.isNone(current) || current.value !== entry.value) {
               throw new Error("Recurrence Location replaced")
             }
             return true
-          }, signal)
-          return pending
-        })
-        // Job cancellation aborts NEW dispatch immediately. Keep this borrowed
-        // graph alive for a bounded original positive ACK/receipt drain; after
-        // the deadline its Scope retires and all late effects fail closed.
-        yield* invocation.pipe(Effect.ensuring(Effect.promise(async () => {
-          if (!pending) return
-          await new Promise<void>(resolve => {
-            const timer = setTimeout(resolve, 30_000)
-            void pending!.then(() => { clearTimeout(timer); resolve() }, () => { clearTimeout(timer); resolve() })
-          })
-        })))
+          }, controller.signal)
+        yield* invocation.pipe(Effect.provide(Context.add(graph, sessionTag, session)),
+          Effect.ensuring(Effect.sync(() => controller.abort())))
         document = yield* Effect.promise(() => source.read(input.scheduleID))
         current()
         if (!document || document.state !== "running") return null
@@ -156,7 +146,8 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
       // A healthy accepted passage stays pending until its terminal archive;
       // polling it never admits another effect, but must not retire tomorrow's Job.
       if (delay === null) return "inactive"
-      yield* clock.sleep(Math.max(1, delay))
+      if (delay <= 0) continue
+      yield* clock.sleep(Math.max(1, delay)).pipe(Effect.provideService(Clock.Clock, nativeClock))
     }
   })).pipe(Effect.catchCause(cause => Effect.scoped(Effect.gen(function* () {
     if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)

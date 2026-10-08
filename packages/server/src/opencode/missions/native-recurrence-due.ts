@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Context, Effect, Option, Schema } from "effect"
 import { Location } from "@opencode/schema/location"
 import type { MissionStorage } from "../../missions/journal"
-import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission, type RecurrenceRunOutcome } from "../../missions/recurrence-runner"
+import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "../../missions/recurrence-runner"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
@@ -12,30 +12,23 @@ import { acquireNativePassageObservation } from "./native-passage-observation"
 import type { AutonomousProfileSource } from "./autonomous-environment"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import { runMissionExclusive } from "../../missions/exclusive"
+import { acquireNativeHumanAnswers } from "./native-human-answer"
 
 export type NativePassagePlacement = Readonly<{ projectID: string; projectCanonical: string; directory: string;
   workspaceID?: string; scheduleID: string; profileID: string; executionHost: string;
   profileSource?: AutonomousProfileSource; humanGate?: NativeHumanAnswerGate;
-  /** Ignored compile shim for the scheduler front's superseded placement. */ epoch?: number }>
+  manual?: { requestID: string; expectedRevision: number } }>
 export type NativePassageWake = "idle" | "started" | "pending" | "settled"
 type WakeEffect = Effect.Effect<NativePassageWake, Error | Schema.SchemaError, import("effect").Scope.Scope>
 export interface NativePassageDue {
   (scheduleID: string, graphCurrent: () => true, signal: AbortSignal): WakeEffect
-  /** Compile-only scheduler transition: the old Promise clock fails closed. */
-  (graph: Context.Context<never>, graphCurrent: () => true, signal: AbortSignal): Promise<RecurrenceRunOutcome>
 }
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 
 /** Called in the freshly borrowed native Location graph on every Job wake.
  * Detached storage/placement only; no backend presence or signed child ledger. */
-export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "location">,
-  placement: NativePassagePlacement, now?: () => number): NativePassageDue
-/** Compile-only transition for non-owned old Play tests. */
-export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "location">,
-  placement: NativePassagePlacement, observer: ((...args: never[]) => unknown) | undefined, now: () => number): NativePassageDue
 export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "location">, placement: NativePassagePlacement,
-  clock?: (() => number) | ((...args: never[]) => unknown), legacyClock?: () => number): NativePassageDue {
-  const now = legacyClock ?? (clock && clock.length === 0 ? clock as () => number : Date.now)
+  now: () => number = Date.now): NativePassageDue {
   const storageContext = ctx.storage
   const wake = (scheduleID: string, graphCurrent: () => true, signal: AbortSignal) => Effect.gen(function* () {
     if (scheduleID !== placement.scheduleID) throw new Error("Recurrence Job schedule differs")
@@ -57,6 +50,10 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
     const observation = yield* acquireNativePassageObservation()
     const graph = yield* Effect.context<never>()
     const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
+    const humanGate: NativeHumanAnswerGate = placement.humanGate ?? (request => run(Effect.gen(function* () {
+      const answers = yield* acquireNativeHumanAnswers(exact)
+      return yield* Effect.tryPromise(() => answers.verify(request))
+    })))
     const storage: MissionStorage = {
       get: key => run(storageContext.get(key)) as ReturnType<MissionStorage["get"]>,
       scan: options => run(storageContext.scan(options)) as ReturnType<MissionStorage["scan"]>,
@@ -77,11 +74,16 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         if (!placement.profileSource) throw new Error("Recurrence profile source unavailable")
         return admitNativeRecurrencePassage({ document: structuredClone(document), storage, native, observation,
           profile: placement.profileSource, signal, current, read: () => source.read(scheduleID),
-          humanGate: placement.humanGate, now })
+          humanGate, now, reconcileOnly: !!doc?.pending && !placement.manual })
       },
     }
     const doc = yield* Effect.promise(() => source.read(scheduleID))
     if (!doc) return "idle" as NativePassageWake
+    if (placement.manual) {
+      const due = doc.pending?.passage.due
+      if (due?.kind !== "manual" || due.requestID !== placement.manual.requestID
+        || due.expectedRevision !== placement.manual.expectedRevision) throw new Error("Manual passage identity differs")
+    }
     if (doc.config.profileID !== placement.profileID || doc.config.executionHost !== placement.executionHost
       || !doc.config.roots.some(root => root.directory === placement.directory)) throw new Error("Recurrence Job binding differs")
     if (doc.pending) {
@@ -97,8 +99,7 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         const result = await observeNativePassageSettlement({ document: fresh, storage, native: observation,
           directory: placement.directory, workspaceID: placement.workspaceID, current, signal })
         if (!result) return "pending"
-        // Contract shim until scheduler adds ended-without-report to its codec.
-        await source.finish(scheduleID, result.result as Parameters<typeof source.finish>[1], now(), result.current)
+        await source.finish(scheduleID, result.result, now(), result.current)
         return "settled"
       })).pipe(Effect.catchCause(() => Effect.succeed("pending" as NativePassageWake)))
     }
@@ -106,6 +107,5 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
     const outcome = yield* Effect.tryPromise(() => new MissionRecurrenceRunner(source, admission, now).tick(scheduleID))
     return (outcome === "accepted" ? "started" : ["pending", "unknown"].includes(outcome) ? "pending" : "idle") as NativePassageWake
   })
-  return ((id: string | Context.Context<never>, current: () => true, signal: AbortSignal) =>
-    typeof id === "string" ? wake(id, current, signal) : Promise.reject(new Error("Promise recurrence clock retired; use Effect wake"))) as NativePassageDue
+  return wake
 }

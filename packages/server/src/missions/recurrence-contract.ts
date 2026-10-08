@@ -18,10 +18,6 @@ const id = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
 const counter = z.number().int().nonnegative().safe()
 const timestamp = counter.max(Date.parse("9999-12-28T00:00:00Z"))
 const ids = z.array(id).max(32).refine(items => new Set(items).size === items.length)
-/** Explicit per-passage ceilings; a paused schedule never spends them. */
-export const recurrenceBudgetsSchema = z.object({ effects: counter.min(1).max(64), nativeCalls: counter.max(32),
-  inboxMessages: counter.max(256), publications: counter.max(32) }).strict()
-
 /** Explicit persisted selections, never a dynamic default or native tool-rights
  * sandbox. Ownership, permissions and publication enforcement belong to the
  * authorized admission composition, not standing-consigne text. */
@@ -56,7 +52,7 @@ const dailyDueSchema = z.object({ kind: z.literal("daily"), clock: dailyClockSch
 const dueSchema = z.union([dailyDueSchema, z.object({ kind: z.literal("manual"), requestID: recurrenceIDSchema,
   expectedRevision: counter, at: timestamp }).strict()])
 export type RecurrenceDue = z.infer<typeof dueSchema>
-const passageSchema = z.object({ id: recurrenceIDSchema, messageID: recurrenceIDSchema,
+const passageSchema = z.object({ id: recurrenceIDSchema, messageID: recurrenceIDSchema, coordinatorSessionID: id,
   scheduleRevision: counter, due: dueSchema, createdAt: timestamp }).strict()
 export type RecurrencePassage = z.infer<typeof passageSchema>
 
@@ -99,6 +95,13 @@ const documentSchema = z.object({ version: z.literal(1), projectID: id, projectC
 }).strict()
 export type RecurrenceDocument = z.infer<typeof documentSchema>
 
+/** A paused manual invocation is allowed only until a later human control. */
+export function recurrenceDispatchAllowed(doc: RecurrenceDocument): boolean {
+  const due = doc.pending?.passage.due, control = doc.controls.at(-1)
+  return doc.state === "running" || doc.state === "paused" && due?.kind === "manual"
+    && control?.action === "run-now" && control.requestID === due.requestID && control.expectedRevision === due.expectedRevision
+}
+
 export function recurrenceTitle(instructions: string): string {
   return instructions.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 120) ?? ""
 }
@@ -106,6 +109,11 @@ export function recurrenceTitle(instructions: string): string {
 export function recurrencePassageID(projectToken: string, scheduleID: string, scheduleRevision: number, due: RecurrenceDue): string {
   const dueIdentity = due.kind === "daily" ? `daily:${due.civilDay}` : `manual:${due.expectedRevision}:${due.requestID}`
   return `rcp_${stableToken(`${projectToken}\0${scheduleID}\0${scheduleRevision}\0${dueIdentity}`, 40)}`
+}
+
+export function recurrenceCoordinatorSessionID(projectID: string, passageID: string): string {
+  const missionID = `msn_${stableToken(`${projectID}\0${passageID}`, 24)}`
+  return `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
 }
 
 /** Strict bounded codec, including stored identity/placement relationships. No
@@ -141,13 +149,14 @@ export function parseRecurrenceDocument(input: unknown, projectID: string, proje
   for (const passage of passages) {
     if (passage.scheduleRevision > doc.scheduleRevision || passage.createdAt < doc.createdAt || passage.createdAt < passage.due.at
       || passage.id !== recurrencePassageID(projectToken, doc.id, passage.scheduleRevision, passage.due)
-      || passage.messageID !== recurrenceMessageID(passage.id)) fail()
+      || passage.messageID !== recurrenceMessageID(passage.id)
+      || passage.coordinatorSessionID !== recurrenceCoordinatorSessionID(projectID, passage.id)) fail()
     if (passage.scheduleRevision < previousScheduleRevision) fail()
     previousScheduleRevision = passage.scheduleRevision
     if (passage.due.kind === "manual" && (passage.due.expectedRevision >= doc.revision || passage.due.at !== passage.createdAt)) fail()
     if (passage.due.kind === "daily") {
       validateDaily(passage.due)
-      if (!doc.lastDaily || passage.due.civilDay > doc.lastDaily.civilDay || passage.due.at > doc.lastDaily.at
+      if (passage !== doc.pending?.passage && (!doc.lastDaily || passage.due.civilDay > doc.lastDaily.civilDay || passage.due.at > doc.lastDaily.at)
         || previousDaily && (passage.due.civilDay <= previousDaily.civilDay || passage.due.at <= previousDaily.at)) fail()
       previousDaily = passage.due
     }
@@ -159,7 +168,7 @@ export function parseRecurrenceDocument(input: unknown, projectID: string, proje
     if (passage.scheduleRevision !== doc.scheduleRevision || admission && !matches(passage, admission)) fail()
     if (passage.due.kind === "daily") {
       if (canonicalAuthority(passage.due.clock) !== canonicalAuthority(doc.config.clock)
-        || canonicalAuthority(passage.due) !== canonicalAuthority(doc.lastDaily)) fail()
+        || doc.lastDaily && (passage.due.at <= doc.lastDaily.at || passage.due.civilDay <= doc.lastDaily.civilDay)) fail()
     }
   }
   let previousSettlement = doc.createdAt

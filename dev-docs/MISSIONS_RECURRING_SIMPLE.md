@@ -109,7 +109,7 @@ civil day has no passage. Repeated clock hours must not create two daily passage
 A wall-clock rollback must not make an already processed day new again.
 `nextDueAt` is a display projection, not execution authority.
 
-Pause and Stop cancel the schedule Job. Stop is terminal.
+Pause and Stop cancel the schedule Job and interrupt the pending passage's registered root coordinator, without proving that coordinator or its descendants stopped; Stop is terminal.
 Neither control alone proves the coordinator or descendants have stopped.
 Retain pending passage identity and observations rather than clearing live work.
 

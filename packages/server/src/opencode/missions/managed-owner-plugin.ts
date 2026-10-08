@@ -4,7 +4,7 @@ import { Context, Effect, Exit, Scope } from "effect"
 import { z } from "zod"
 import { desktopPlugin as promisePlugin } from "./desktop-plugin"
 import { enrollmentSchema, observeNativeManagedOwner } from "./native-managed-owner"
-import { CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
+import { CODENOMAD_MISSIONS_RPC_ID, CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 import { readNativeRecurrenceControlStatus } from "./native-recurrence-control-status"
 import { controlNativeRecurrence } from "./native-recurrence-control"
@@ -53,7 +53,25 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
       const answers = yield* acquireNativeHumanAnswers(ctx)
       return yield* Effect.promise(() => answers.verify(request))
     }).pipe(Effect.orDie))
-    const nativeCtx = { ...ctx, rpc: withNativeRecurrenceRpc(ctx) }
+    // Keep schedule RPC available without desktop presence. One-shot handlers
+    // remain dynamically bound to their existing presence-owned registration.
+    type Handlers = Record<string, (...args: never[]) => Effect.Effect<unknown, unknown>>
+    let ordinary: Handlers | undefined
+    const forwarding = Object.fromEntries(Object.keys(CODENOMAD_MISSIONS_RPC.methods).map(name => [name,
+      (...args: never[]) => Effect.suspend(() => ordinary?.[name]?.(...args)
+        ?? Effect.die(new Error("CodeNomad Missions is no longer available")))]))
+    const persistent = yield* withNativeRecurrenceRpc(ctx).register(CODENOMAD_MISSIONS_RPC,
+      forwarding as Parameters<typeof ctx.rpc.register<typeof CODENOMAD_MISSIONS_RPC>>[1]).pipe(Effect.orDie)
+    const register: typeof ctx.rpc.register = (definition, handlers) => definition.id !== CODENOMAD_MISSIONS_RPC_ID
+      ? ctx.rpc.register(definition, handlers)
+      : Effect.sync(() => {
+        const selected = handlers as unknown as Handlers
+        ordinary = selected
+        return { events: persistent.events, dispose: Effect.sync(() => { if (ordinary === selected) ordinary = undefined }) }
+      }) as ReturnType<typeof ctx.rpc.register>
+    const nativeCtx = { ...ctx, rpc: new Proxy(ctx.rpc, { get(target, key) {
+      return key === "register" ? register : Reflect.get(target, key)
+    } }) }
     yield* ctx.rpc.register(Rpc.define(HUMAN_ANSWER_RPC), {
       binding: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.binding(input)) }).pipe(Effect.orDie),
       reply: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.reply(input)) }).pipe(Effect.orDie),

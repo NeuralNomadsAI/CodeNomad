@@ -34,12 +34,13 @@ export const runNativeRecurrenceNow = Effect.fn("missions.runNativeRecurrenceNow
   if (before.controls.some(item => item.requestID === input.requestID)) return yield* readNativeRecurrenceRunNow(ctx, request)
   const doc = yield* Effect.promise(() => store.reserveManual(input.scheduleID, input.requestID, input.expectedRevision,
     Date.now(), input.profileSource, () => true))
-  const graph = yield* Effect.context<never>()
   const due = nativeRecurrenceDue(ctx, { projectID: doc.projectID, projectCanonical: doc.projectCanonical,
     directory: ctx.location.directory, workspaceID: ctx.location.workspaceID, scheduleID: doc.id,
     profileID: doc.config.profileID, executionHost: doc.config.executionHost,
+    profileSource: doc.profileSource,
     manual: { requestID: input.requestID, expectedRevision: input.expectedRevision } })
-  yield* Effect.tryPromise(signal => due(graph, () => true, signal))
+   const controller = new AbortController()
+   yield* due(doc.id, () => true, controller.signal).pipe(Effect.ensuring(Effect.sync(() => controller.abort())))
   const result = yield* readNativeRecurrenceRunNow(ctx, request)
   if (result.outcome !== "unknown") {
     const fresh = yield* Effect.promise(() => store.read(doc.id))

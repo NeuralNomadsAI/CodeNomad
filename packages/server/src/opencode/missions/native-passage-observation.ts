@@ -4,7 +4,7 @@ import { Form } from "@opencode/schema/form"
 import { Permission } from "@opencode/schema/permission"
 import { Shell } from "@opencode/schema/shell"
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, type RecurrenceDocument } from "../../missions/recurrence-contract"
+import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
@@ -67,7 +67,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       if (typeof raw !== "string") throw new Error("Passage schedule unavailable")
       const fresh = parseRecurrenceDocument(JSON.parse(raw), document.projectID, document.projectCanonical, document.id)
       if (fresh.pending?.passage.id !== document.pending?.passage.id || !samePassageObservation(fresh.config, document.config)
-        || dispatch && fresh.state !== "running") throw new Error("Passage schedule changed")
+        || dispatch && !recurrenceDispatchAllowed(fresh)) throw new Error("Passage schedule changed")
       return true
     },
     assertQuiescent: (family: readonly PassageSessionObservation[]): true => {

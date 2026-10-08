@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { Context, Effect } from "effect"
-import { RECURRENCE_STORAGE_PREFIX, recurrenceConfigSchema, recurrencePassageID, recurrenceMessageID } from "../../missions/recurrence-contract"
+import { RECURRENCE_STORAGE_PREFIX, recurrenceConfigSchema, recurrencePassageID, recurrenceMessageID, recurrenceCoordinatorSessionID } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
 import { readNativeRecurrenceControlStatus } from "./native-recurrence-control-status"
 import { readNativeRecurrenceRunNow } from "./native-recurrence-manual"
@@ -41,7 +41,7 @@ test("lost control replies read exact request/revision status without starting J
     assert.equal((db.prepare("SELECT value FROM kv").get() as { value: string }).value, bytes)
     const due = { kind: "manual" as const, requestID: "manual_one", expectedRevision: 2, at: 2 }
     const passageID = recurrencePassageID(stableToken("project\0/project", 24), "schedule_one", 0, due)
-    const passage = { id: passageID, messageID: recurrenceMessageID(passageID), scheduleRevision: 0, createdAt: 2, due }
+    const passage = { id: passageID, messageID: recurrenceMessageID(passageID), coordinatorSessionID: recurrenceCoordinatorSessionID("project", passageID), scheduleRevision: 0, createdAt: 2, due }
     const manualDoc = { ...doc, revision: 3, pending: { passage, admission: null } }
     db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify(manualDoc), key)
     const manualInput = { scheduleID: "schedule_one", requestID: "manual_one", expectedRevision: 2 }

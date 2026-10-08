@@ -45,6 +45,7 @@ export class RecurringDayFixture {
   now = START
   autoDeliver = true
   wakeups = 0
+  private wakeTimes: number[] = []
   crash: "after-pending" | "after-create" | "after-message" | undefined
   crashHits = 0
   readonly tools = new Map<string, NativeTool>()
@@ -129,7 +130,7 @@ export class RecurringDayFixture {
         location: { directory: this.root }, profileSource: this.profileSource, issuedAt: this.now }
       const body = { ...identity, digest: createHash("sha256").update(canonicalAuthority(identity)).digest("hex") }
       const proof = createHmac("sha256", this.registration.token).update(canonicalAuthority(body)).digest("hex")
-      return await this.rpc("recurrenceControl", { ...body, proof })
+       return await this.rpc((request.body as { action: string }).action === "run-now" ? "recurrenceRunNow" : "recurrenceControl", { ...body, proof })
     })
     await this.bridge.listen({ host: "127.0.0.1", port: 0 })
     this.registration.url = `http://127.0.0.1:${(this.bridge.server.address() as { port: number }).port}${AUTOMATION_BRIDGE_PATH}`
@@ -181,7 +182,7 @@ export class RecurringDayFixture {
       message: (input: { messageID: string }) => Effect.sync(() => this.message(input.messageID)),
       messages: (input: { sessionID: string }) => Effect.sync(() => this.messages(input.sessionID)),
       inbox: (id: string) => Effect.sync(() => this.db.prepare("SELECT payload FROM session_inbox WHERE session_id=?").all(id)
-        .map(row => JSON.parse(String(row.payload)))),
+        .map(row => Schema.decodeUnknownSync(SessionInbox.Info)(JSON.parse(String(row.payload))))),
       active: (id: string) => Effect.sync(() => Boolean(this.db.prepare("SELECT active FROM fixture_session WHERE id=?").get(id)?.active)),
       list: () => Effect.sync(() => ({ data: this.sessions })),
       interrupt: (id: string) => Effect.sync(() => { this.idle(id); return true }),
@@ -208,6 +209,7 @@ export class RecurringDayFixture {
       }), pendingBackground: Effect.sync(() => this.background) }
     this.graph = Context.make(tag("@opencode/storage/Database"), database).pipe(Context.add(tag("@opencode/Location"), location),
       Context.add(tag("@opencode/Session"), native), Context.add(tag("@opencode/Job"), job),
+      Context.add(tag("@opencode/SessionExecution"), { isActive: native.active }),
       Context.add(tag("@opencode/Bus"), { publish: () => Effect.void }),
       Context.add(tag("@opencode/Form"), { list: () => Effect.sync(() => [...this.forms.values()]),
         state: (id: string) => Effect.sync(() => ({ status: this.forms.has(id) ? "pending" : "answered" })),
@@ -237,6 +239,7 @@ export class RecurringDayFixture {
       .map(name => [name, unsupported(name)]))
     const host = new Proxy({ ...unusedDomains, location, storage, rpc, session: { ...native,
       get: (input: { sessionID: string }) => native.get(input.sessionID),
+      interrupt: (input: { sessionID: string }) => Effect.sync(() => { this.idle(input.sessionID); return { interrupted: true } }),
       hook: (_name: string, callback: (event: unknown) => Effect.Effect<unknown, unknown>) => Effect.sync(() => { this.hooks.push(callback); return registration() }),
     }, tool: { transform: (callback: (draft: unknown) => void) => Effect.sync(() => {
       callback({ namespace: () => {}, list: () => [...this.tools.values()], get: (name: string) => this.tools.get(name),
@@ -255,12 +258,19 @@ export class RecurringDayFixture {
     currentTimeNanosUnsafe: () => BigInt(this.now) * 1_000_000n, currentTimeNanos: Effect.sync(() => BigInt(this.now) * 1_000_000n),
     monotonicTimeNanosUnsafe: () => BigInt(this.now) * 1_000_000n, monotonicTimeNanos: Effect.sync(() => BigInt(this.now) * 1_000_000n),
     sleep: duration => Effect.callback<void>(resume => {
-      const sleeper = { at: this.now + Duration.toMillis(duration), wake: () => { this.wakeups++; resume(Effect.void) } }
+      const sleeper = { at: this.now + Duration.toMillis(duration), wake: () => {
+        // The journey spans 32+ hours; measure the requested per-virtual-day
+        // ceiling, not its total duration. Keep the maximum monotonic for Pause.
+        this.wakeTimes = this.wakeTimes.filter(at => at > this.now - DAY)
+        this.wakeTimes.push(this.now)
+        this.wakeups = Math.max(this.wakeups, this.wakeTimes.length)
+        resume(Effect.void)
+      } }
       this.sleepers.add(sleeper)
       return Effect.sync(() => { this.sleepers.delete(sleeper) })
     }),
   }
-  async flush() { for (let n = 0; n < 40; n++) await new Promise<void>(resolve => setImmediate(resolve)) }
+  async flush() { for (let n = 0; n < 4; n++) await new Promise<void>(resolve => setTimeout(resolve, 1)) }
   async advance(to: number) {
     assert(to >= this.now)
     await this.flush()
@@ -286,20 +296,20 @@ export class RecurringDayFixture {
     this.db.prepare("INSERT INTO event VALUES(?,?,?,?,?)").run(`evt_${sessionID}_${seq}`, sessionID, seq, type, JSON.stringify({ sessionID, ...data }))
     this.db.prepare("INSERT INTO event_sequence VALUES(?,?,NULL) ON CONFLICT(aggregate_id) DO UPDATE SET seq=excluded.seq").run(sessionID, seq)
   }
-  get sessions(): SessionInfo[] { return this.db.prepare("SELECT info FROM fixture_session").all().map(row => JSON.parse(String(row.info))) }
+  get sessions(): SessionInfo[] { return this.db.prepare("SELECT info FROM fixture_session").all().map(row => Schema.decodeUnknownSync(Session.Info)(JSON.parse(String(row.info)))) }
   get coordinators() { return this.sessions.filter(s => !s.parentID) }
-  get starts(): MessageInfo[] { return this.db.prepare("SELECT data FROM session_message WHERE type IN ('user','synthetic')").all().map(row => JSON.parse(String(row.data))) }
+  get starts(): MessageInfo[] { return this.db.prepare("SELECT data FROM session_message WHERE type IN ('user','synthetic')").all().map(row => Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data)))) }
   private session(id: string): SessionInfo {
     const row = this.db.prepare("SELECT info FROM fixture_session WHERE id=?").get(id)
     if (!row) throw new Error(`Native session missing: ${id}`)
-    return JSON.parse(String(row.info))
+    return Schema.decodeUnknownSync(Session.Info)(JSON.parse(String(row.info)))
   }
   private message(id: string): MessageInfo | undefined {
     const row = this.db.prepare("SELECT data FROM session_message WHERE id=?").get(id)
-    return row && JSON.parse(String(row.data))
+    return row && Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data)))
   }
   private messages(id: string): MessageInfo[] {
-    return this.db.prepare("SELECT data FROM session_message WHERE session_id=? ORDER BY seq").all(id).map(row => JSON.parse(String(row.data)))
+    return this.db.prepare("SELECT data FROM session_message WHERE session_id=? ORDER BY seq").all(id).map(row => Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data))))
   }
   private createSession(input: Record<string, unknown>) {
     assert.equal(typeof input.id, "string", "passage caller reserves the native session ID before create")
@@ -308,7 +318,7 @@ export class RecurringDayFixture {
     if (old) return old
     const info = Schema.decodeUnknownSync(Session.Info)({ ...input, location: { directory: this.root }, projectID: "day-test",
       time: { created: this.now, updated: this.now }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
-    this.db.prepare("INSERT INTO fixture_session VALUES(?,?,0)").run(info.id, JSON.stringify(info))
+    this.db.prepare("INSERT INTO fixture_session VALUES(?,?,0)").run(info.id, JSON.stringify(Schema.encodeSync(Session.Info)(info)))
     this.db.prepare("INSERT INTO session_v2 VALUES(?,?,?,?,NULL,?,NULL)").run(info.id, info.parentID ?? null, "day-test", this.root, JSON.stringify(info.metadata ?? {}))
     this.event(info.id, "session.created.1")
     this.fail("after-create")
@@ -321,10 +331,10 @@ export class RecurringDayFixture {
     this.session(sessionID)
     const payload = { text: input.text, ...(type === "synthetic" ? { description: input.description ?? "Daily passage", metadata: input.metadata ?? {} } : {}) }
     const old = this.db.prepare("SELECT payload FROM session_inbox WHERE id=?").get(id)
-    if (old) return JSON.parse(String(old.payload))
+    if (old) return Schema.decodeUnknownSync(SessionInbox.Info)(JSON.parse(String(old.payload)))
     if (this.message(id)) return Schema.decodeUnknownSync(SessionInbox.Info)({ id, sessionID, type, payload, delivery: "queue", time: { created: this.now } })
     const item = Schema.decodeUnknownSync(SessionInbox.Info)({ id, sessionID, type, payload, delivery: "queue", time: { created: this.now } })
-    this.db.prepare("INSERT INTO session_inbox VALUES(?,?,?)").run(sessionID, id, JSON.stringify(item))
+    this.db.prepare("INSERT INTO session_inbox VALUES(?,?,?)").run(sessionID, id, JSON.stringify(Schema.encodeSync(SessionInbox.Info)(item)))
     this.event(sessionID, "session.inbox.enqueued.1", { inboxID: id, item: { type, payload } })
     if (this.autoDeliver) this.deliver(sessionID)
     this.fail("after-message")
@@ -335,7 +345,7 @@ export class RecurringDayFixture {
     for (const row of rows) {
       const item = JSON.parse(String(row.payload))
       const info = Schema.decodeUnknownSync(SessionMessage.Info)({ id: row.id, type: item.type, ...item.payload, time: { created: this.now } })
-      this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(String(row.id), sessionID, item.type, JSON.stringify(info), this.messages(sessionID).length)
+      this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(String(row.id), sessionID, item.type, JSON.stringify(Schema.encodeSync(SessionMessage.Info)(info)), this.messages(sessionID).length)
       this.event(sessionID, "session.inbox.delivered.1", { inboxID: row.id })
     }
     this.db.prepare("DELETE FROM session_inbox WHERE session_id=?").run(sessionID)
@@ -375,7 +385,7 @@ export class RecurringDayFixture {
     assert(tool, `backend-independent real ${name} registration missing`)
     this.calls.push({ name, sessionID })
     return Effect.runPromiseWith(this.graph)(tool.execute(input, { sessionID, messageID: `msg_model_${this.serial}`,
-      id: `call_${++this.serial}`, progress: async () => {}, signal: new AbortController().signal }))
+      id: `call_${++this.serial}`, progress: () => Effect.void, signal: new AbortController().signal }))
   }
   pendingForm() {
     const form = Schema.decodeUnknownSync(Form.Info)({ id: "frm_day", sessionID: this.coordinators.at(-1)!.id,
@@ -400,8 +410,14 @@ export class RecurringDayFixture {
   async create() {
     const requestID = "create_day_test"
     this.id = recurrenceScheduleID("day-test", this.root, requestID)
-    await this.rpc("recurrenceCreate", { id: this.id, requestID, expectedRevision: null, config: this.config,
-      digest: recurrenceConfigDigest(this.config), directory: this.root, scope: this.profileScope, executionHost: "local" })
+    const digest = recurrenceConfigDigest(this.config)
+    const identity = { sessionID: "offline-human-cookie", workspaceID: "owned", location: { directory: this.root },
+      scheduleID: this.id, requestID, expectedRevision: 0, action: "create", configDigest: digest,
+      profileSource: this.profileSource, issuedAt: this.now }
+    const body = { ...identity, digest: createHash("sha256").update(canonicalAuthority(identity)).digest("hex") }
+    const transport = { ...body, proof: createHmac("sha256", this.registration.token).update(canonicalAuthority(body)).digest("hex") }
+    await this.rpc("recurrenceCreate", { id: this.id, requestID, config: this.config,
+      digest, directory: this.root, scope: this.profileScope, executionHost: "local", transport })
     return this.snapshot()
   }
   async snapshot(): Promise<Schedule> {

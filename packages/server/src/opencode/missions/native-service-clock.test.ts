@@ -71,7 +71,7 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
     let doc = await store.create("schedule_one", config, now, current)
     doc = await store.setState(doc.id, doc.revision, "running", current)
     const placement = { projectID: "project", projectCanonical: directory, directory, scheduleID: doc.id, profileID: "profile", executionHost: "local" }
-    const due = async () => {
+    const due = () => Effect.tryPromise(async () => {
       let fresh = (await store.read(doc.id))!
       if (fresh.pending) { reconciles++; return "pending" as const }
       starts++; assert.equal(now, origin + (7 * 60 + 15) * 60_000)
@@ -80,8 +80,8 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
       const passage = fresh.pending!.passage
       fresh = await store.recordAdmission(doc.id, { kind: "accepted", passageID: passage.id, messageID: passage.messageID, missionID: "mission_one", conversationID: "session_one" }, now, current)
       await store.finish(doc.id, { passageID: passage.id, messageID: passage.messageID, missionID: "mission_one", conversationID: "session_one", outcome: "completed", artifactMessageIDs: [], cursors: [] }, now, current)
-      return "accepted" as const
-    }
+      return "started" as const
+    })
     const clock = { now: () => now, sleep: (ms: number) => Effect.promise(async () => {
       wakes++; now += ms
       if (now >= origin + 86_400_000) { const fresh = (await store.read(doc.id))!; await store.setState(doc.id, fresh.revision, "paused", current) }
@@ -106,7 +106,7 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
     assert.equal(reconciles, 1); assert.equal(starts, 1, "pending Resume never starts a second passage")
     await run(cancelNativeRecurrenceClock(placement))
     doc = (await store.read(doc.id))!; await store.setState(doc.id, doc.revision, "running", current)
-    await run(startNativeRecurrenceClock(placement, async () => { throw new Error("private error details") }, ctx, resumeClock))
+    await run(startNativeRecurrenceClock(placement, () => Effect.fail(new Error("private error details")), ctx, resumeClock))
     await assert.rejects(Effect.runPromise([...jobs.values()][0]!.run))
     const failed = [...jobs.values()][0]!
     failed.status = "error"
@@ -115,10 +115,10 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
     doc = await store.beginControl(doc.id, { requestID: "resume_cancel_fixture", expectedRevision: doc.revision, action: "resume" }, current)
     let entered!: () => void, aborted = false
     const waiting = new Promise<void>(resolve => { entered = resolve })
-    await run(startNativeRecurrenceClock(placement, (_graph, assertCurrent, signal) => new Promise<"pending">(resolve => {
+    await run(startNativeRecurrenceClock(placement, (_id, assertCurrent, signal) => Effect.promise(() => new Promise<"pending">(resolve => {
       entered()
       signal.addEventListener("abort", () => { aborted = true; assert.equal(assertCurrent(), true); resolve("pending") }, { once: true })
-    }), ctx, resumeClock))
+    })), ctx, resumeClock))
     const cancellable = [...jobs.values()][0]!
     cancellable.fiber = Effect.runFork(cancellable.run)
     await waiting

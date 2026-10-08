@@ -151,8 +151,9 @@ test("sleep catches up only latest day; restart and config CAS never reset origi
   assert.equal(await f.runner().tick("daily_review"), "accepted")
   let doc = (await f.store.read("daily_review"))!
   assert.equal(doc.pending!.passage.due.kind, "daily")
-  assert.equal(doc.lastDaily!.civilDay, "2026-10-20")
-  const due = structuredClone(doc.lastDaily), createdAt = doc.createdAt
+  assert.equal(doc.lastDaily, null, "daily high-water advances only with the archive")
+  assert.equal(doc.pending!.passage.due.kind === "daily" && doc.pending!.passage.due.civilDay, "2026-10-20")
+  const due = structuredClone(doc.pending!.passage.due), createdAt = doc.createdAt
   const dirtyDraftRevision = doc.revision
   doc = await f.store.finish(doc.id, terminal(doc), f.now, current)
   await assert.rejects(f.store.configure(doc.id, dirtyDraftRevision, { ...config(), consigne: "dirty draft" }, current), /revision conflict/)
@@ -433,7 +434,7 @@ test("strict bounded codec leaves damaged/foreign stored bytes unchanged and nev
     if (damage === "extra-field") value.unrecognized = true
     if (damage === "overflow") value.config.consigne = "x".repeat(20_001)
     if (damage === "cursor-source") value.cursors = [{ conversationID: "ses_foreign", messageID: "msg_owned" }]
-    if (damage === "bad-high-water") value.lastDaily.at++
+    if (damage === "bad-high-water") value.lastDaily = { ...value.pending.passage.due, at: value.pending.passage.due.at + 1 }
     f.values.set(f.key, value)
     const bytes = JSON.stringify(value), counts = f.counts()
     for (const operation of [() => f.store.read("daily_review"), () => f.store.list(), () => f.runner().tick("daily_review"),

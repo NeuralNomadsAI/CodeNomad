@@ -214,7 +214,10 @@ test("post-create profile/publication errors and lost ACKs retain the hold witho
       assert.equal(f.creates, 1); assert.equal(f.rpcCreates, 1)
       assert.equal(f.writes, mode === "ack" ? 1 : 0)
       await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("must not evacuate")), /Timed out/)
-    } finally { await f.close() }
+    } finally {
+      if (mode === "publication") await assert.rejects(f.close(), /Publication unavailable/)
+      else await f.close()
+    }
   }
 })
 

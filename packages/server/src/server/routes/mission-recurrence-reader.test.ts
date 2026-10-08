@@ -48,10 +48,9 @@ async function fixture() {
   }
   const store = new NativeMissionRecurrenceStore(storage, "project", directory)
   const selection = { agent: "private_agent", model: { providerID: "private_provider", id: "private_model" } }
-  const config: RecurrenceConfig = { template: "custom", consigne: "PRIVATE_STANDING_PROMPT", clock: { time: "07:00", zone: "UTC" },
+  const config: RecurrenceConfig = { title: "Review", template: "custom", consigne: "PRIVATE_STANDING_PROMPT", clock: { time: "07:00", zone: "UTC" },
     profileID: "private_profile", executionHost: "private_host", profiles: { coordinator: selection, roles: { specialist: selection } },
-    taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: ["ses_private_watch"],
-    publication: { policy: "draft-only", conversationIDs: [] } }
+    taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: ["ses_private_watch"] }
   await store.create("daily_review", config, 100, () => true)
   const pending = await store.reserve("daily_review", 0,
     { kind: "manual", requestID: "request_review", expectedRevision: 0, at: 100 }, 100, () => true)
@@ -220,7 +219,7 @@ test("native reader rejects selected-page errors and pending/unarchived/foreign/
     ["unarchived passage", doc => { doc.history = []; doc.settledCount = 0; f.setDocument(doc) }],
     ["rejected-before-effect has no readable result", doc => {
       const passage = doc.history[0].passage
-      doc.history[0].result = { kind: "rejected-before-effect", passageID: passage.id, messageID: passage.messageID, effect: "none", proofID: "proof_no_effect" }
+      Object.assign(doc.history[0].result, { kind: "rejected-before-effect", passageID: passage.id, messageID: passage.messageID, effect: "none", proofID: "proof_no_effect" })
       f.setDocument(doc)
     }],
     ["foreign project", doc => { doc.projectID = "foreign"; f.setDocument(doc) }],
