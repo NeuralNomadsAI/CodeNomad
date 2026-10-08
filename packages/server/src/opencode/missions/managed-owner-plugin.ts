@@ -54,7 +54,6 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
     yield* ctx.rpc.register(Rpc.define(HUMAN_ANSWER_RPC), {
       binding: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.binding(input)) }).pipe(Effect.orDie),
       reply: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.reply(input)) }).pipe(Effect.orDie),
-      reconcile: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.reconcile(input)) }).pipe(Effect.orDie),
       verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
     }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {

@@ -89,7 +89,7 @@ export class MissionControl {
   }
 
   private async verifyHumanDecision(mission: MissionMap, taskKey: string, sessionID: string,
-    call: import("./model").MissionNativeBinding, artifact: import("./model").MissionJsonValue | undefined): Promise<import("./human-answer").HumanAnswerReservation> {
+    call: import("./model").MissionNativeBinding, artifact: import("./model").MissionJsonValue | undefined): Promise<import("./human-answer").HumanDecisionMark> {
     if (!this.options.humanGate) throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
     const provenance = validateNativeDecisionArtifact({ contract: { missionID: mission.id, taskKey, generation: call.generation },
       call, sessionID, artifact })
@@ -98,10 +98,10 @@ export class MissionControl {
     const receipt = await this.options.humanGate({ ...provenance, projectID: mission.projectID,
       directory: session.location.directory, delegationToolName: "subagent" })
     this.assertActive()
-    if (receipt.state !== "settled" || receipt.principal.kind !== "codenomad-human"
-      || receipt.binding.projectID !== mission.projectID || receipt.binding.sessionID !== sessionID
-      || receipt.binding.formID !== provenance.formID || receipt.messageID !== provenance.messageID
-      || receipt.toolCallID !== provenance.toolCallID || !isDeepStrictEqual(receipt.answer[provenance.fieldKey], provenance.answer))
+    const tool = receipt.form.metadata?.tool as { messageID?: unknown; id?: unknown } | undefined
+    if (receipt.via !== "ui" || receipt.sessionID !== sessionID
+      || receipt.formID !== provenance.formID || tool?.messageID !== provenance.messageID
+      || tool?.id !== provenance.toolCallID || !isDeepStrictEqual(receipt.answer[provenance.fieldKey], provenance.answer))
       throw new MissionControlError("Exact native human-decision receipt unavailable", "policy-unqualified")
     return receipt
   }
@@ -848,7 +848,7 @@ export class MissionControl {
 
     const declared = input.taskKey && mission.tasks.find(task => task.key === input.taskKey)
     if (!native && sessionID === mission.coordinatorSessionId && declared && declared.executionMode?.kind === "native") {
-      let humanReceipt: import("./human-answer").HumanAnswerReservation | undefined
+      let humanReceipt: import("./human-answer").HumanDecisionMark | undefined
       if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed") {
         const call = declared.nativeExecution?.binding
         if (!call || !declared.actorSessionId || call.generation !== declared.contractGeneration)

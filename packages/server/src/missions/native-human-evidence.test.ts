@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { verifyNativeDecisionEvidence, type NativeDecisionEvidenceRequest,
   type NativeDecisionReadClient } from "./native-human-evidence"
+import type { HumanDecisionMark } from "./human-answer"
 
 function fixture() {
   const request: NativeDecisionEvidenceRequest = { kind: "native-form-answer",
@@ -68,7 +69,7 @@ test("exact actual Form/session/message/tool plus durable call/answer is observa
   assert.equal(result.evidence?.durability, "unqualified")
   assert.equal(result.evidence?.humanPrincipal, "unknown")
   assert.deepEqual(result.evidence?.answer, "Module")
-  assert.deepEqual(result.requiredChannel, ["durable-native-form-lifecycle", "authenticated-backend-human-reply-receipt"])
+  assert.deepEqual(result.requiredChannel, ["answered-native-form", "authenticated-backend-ui-mark"])
   assert.equal(f.counts().closed, 1)
   assert.ok(f.counts().checks >= f.counts().operations * 2)
 })
@@ -186,4 +187,23 @@ test("native multiselect answer retains exact array representation", async () =>
   assert.deepEqual(result.evidence?.answer, ["Module"])
   f.request.answer = "Module"
   assert.equal((await verifyNativeDecisionEvidence(f.request, f.deps)).status, "unknown")
+})
+
+test("owned UI mark qualifies the exact answer after native Form cache expiry", async () => {
+  const f = fixture(), { state, ...form } = structuredClone(f.form)
+  const mark = { formID: form.id, sessionID: form.sessionID, answeredAt: 100, via: "ui", form, answer: state.answer } as unknown as HumanDecisionMark
+  f.deps.client.form.get = async () => { throw new Error("Form cache expired") }
+  let calls = 0
+  const result = await verifyNativeDecisionEvidence(f.request, { ...f.deps, humanGate: async () => { calls++; return structuredClone(mark) } })
+  assert.equal(calls, 2); assert.equal(result.status, "qualified")
+  assert.equal(result.evidence?.durability, "native-ui-mark")
+  assert.equal(result.evidence?.humanPrincipal, "codenomad-human")
+})
+
+test("UI mark gate refusal and changing mark snapshots fail closed", async () => {
+  const f = fixture(), { state, ...form } = structuredClone(f.form)
+  const mark = { formID: form.id, sessionID: form.sessionID, answeredAt: 100, via: "ui", form, answer: state.answer } as unknown as HumanDecisionMark
+  assert.equal((await verifyNativeDecisionEvidence(f.request, { ...f.deps, humanGate: async () => { throw new Error("No mark") } })).status, "unknown")
+  let calls = 0
+  assert.equal((await verifyNativeDecisionEvidence(f.request, { ...f.deps, humanGate: async () => ({ ...mark, answeredAt: ++calls }) })).status, "unknown")
 })

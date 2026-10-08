@@ -1067,8 +1067,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const releaseAccount = connection && request.method !== "GET" && request.method !== "HEAD"
     && /^\/api\/(?:credential|integration)(?:\/|$)/.test(pathname) ? args.accounts?.manual(connection) : undefined
   const releasePhysicalMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
-  let humanAnswerHold: NonNullable<ReturnType<typeof import("./routes/mission-creation-holds").holdMissionCreation>> | undefined
-  const releaseMutation = releasePhysicalMutation ? () => humanAnswerHold ? humanAnswerHold.release() : releasePhysicalMutation() : undefined
+  const releaseMutation = releasePhysicalMutation
 
   try {
     connection?.assertCurrent()
@@ -1078,12 +1077,10 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
       try {
         const result = await replyMissionHumanAnswer(request, workspaceId, sessionId, decodeURIComponent(formReply[1]),
-          args.humanAnswers, connection, signal, { fence: worktreeDeletionFence,
-            locations: [...mutationPlacements].sort(([left], [right]) => left.localeCompare(right)).map(([directory, identity]) => ({ directory, identity })),
-            release: releasePhysicalMutation!, retain: hold => { humanAnswerHold = hold } })
+          args.humanAnswers, connection, signal)
         if (result) {
           releaseMutation?.()
-          return result.status === "pending" ? reply.code(409).send({ error: "Human answer receipt pending", identity: result.identity }) : reply.send({})
+          return reply.send({})
         }
       } catch {
         releaseMutation?.()

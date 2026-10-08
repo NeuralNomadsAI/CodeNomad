@@ -4,19 +4,10 @@ import type { SettingsService } from "../../settings/service"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { z } from "zod"
-import { authorityDigest, canonicalAuthority } from "../../missions/authority-protocol"
+import { canonicalAuthority } from "../../missions/authority-protocol"
 import { HUMAN_ANSWER_HEADER, HUMAN_ANSWER_RPC, assertHumanAnswerFresh, humanAnswerBindingSchema,
-  humanAnswerProof, humanAnswerProofSchema, humanAnswerResultSchema, humanAnswerIdentity } from "../../missions/human-answer"
+  humanAnswerProof, humanAnswerProofSchema, humanAnswerResultSchema } from "../../missions/human-answer"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
-import { holdMissionCreation, reconcileMissionCreationHold } from "./mission-creation-holds"
-import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-
-export interface HumanAnswerAdmission {
-  fence: WorktreeDeletionFence
-  locations: readonly { directory: string; identity: string }[]
-  release(): void
-  retain(hold: NonNullable<ReturnType<typeof holdMissionCreation>>): void
-}
 
 type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
 type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string }
@@ -26,7 +17,7 @@ const answerSchema = z.object({ answer: z.record(z.union([z.string().max(20000),
  * connection admission. It handles only the dock's real human answer path.
  * Auto/Yolo/SDK reply keeps the ordinary native route without human proof. */
 export async function replyMissionHumanAnswer(request: FastifyRequest, workspaceID: string, sessionID: string,
-  formID: string, deps: Deps, connection: ServiceConnection, signal: AbortSignal, admission: HumanAnswerAdmission) {
+  formID: string, deps: Deps, connection: ServiceConnection, signal: AbortSignal) {
   if (request.headers[HUMAN_ANSWER_HEADER] !== "1") return undefined
   const workspace = deps.manager.get(workspaceID), profile = deps.settings.getProfileScope()
   const distro = deps.manager.getServiceWslDistro(workspaceID), client = connection.client
@@ -71,38 +62,16 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
     throw error
   }
   current()
-  if (rawBinding === null) return undefined // Native recurrence + ordinary journal reads positively excluded Mission decisions.
+  if (rawBinding === null) throw new Error("Human answer binding unavailable")
   const binding = humanAnswerBindingSchema.parse(rawBinding)
-  if (binding.coordinatorSessionID !== id || !sameLocation(binding.location, ownedLocation!)) throw new Error("Human answer passage changed")
+  if (binding.sessionID !== sessionID || binding.formID !== formID || !sameLocation(binding.location, ownedLocation!)) throw new Error("Human answer Form changed")
   const body = humanAnswerProofSchema.parse({ ...binding, workspaceID, cookieSessionID: human.sessionId,
     username: human.username, issuedAt: Date.now(), answer: answerSchema.parse(request.body).answer })
   current()
-  const { cookieSessionID: _, username: _username, issuedAt: _issuedAt, answer, ...target } = body
-  const identity = humanAnswerIdentity(target)
-  const heldBinding = { key: `human-answer:${identity}`, workspaceID, projectID: binding.projectID,
-    missionID: binding.missionID, sessionID, connection, locations: admission.locations,
-    requestDigest: authorityDigest({ target, answer }) }
-  const previous = reconcileMissionCreationHold(admission.fence, heldBinding)
-  if (previous) {
-    const result = humanAnswerResultSchema.parse(await rpc.reconcile(target, options))
-    current()
-    if (result.identity !== identity) throw new Error("Human answer reconciliation differs")
-    if (result.status !== "pending") previous()
-    return result
-  }
-  const hold = holdMissionCreation(admission.fence, heldBinding, () => admission.release)
-  if (!hold) throw new Error("Human answer deletion admission unavailable")
-  admission.retain(hold)
-  try {
-    current(); hold.dispatched()
-    // Dispatch owns the original physical permit. HTTP disconnect must neither
-    // abort/race this native mutation nor dispose its unresolved hold.
-    const { signal: _observer, ...nativeOptions } = options
-    const result = humanAnswerResultSchema.parse(await rpc.reply({ body, proof: humanAnswerProof(body, deps.bridgeToken) }, nativeOptions))
-    if (result.identity !== identity) throw new Error("Human answer disposition differs")
-    if (result.status !== "pending") hold.settled()
-    return result
-  } finally { hold.release() }
+  // The plugin commits only the mark before replying; no signed receipt or
+  // reconciliation lifecycle. Never cancel a dispatched answer with its observer.
+  const { signal: _observer, ...nativeOptions } = options
+  return humanAnswerResultSchema.parse(await rpc.reply({ body, proof: humanAnswerProof(body, deps.bridgeToken) }, nativeOptions))
 }
 
 /** Existing private root bridge callback: actual AuthManager, no alternate auth
