@@ -61,41 +61,29 @@ test("maps the Anthropic alias to Claude usage", () => {
 })
 
 test("each Claude provider uses only its session's login and fences Claude Code account switches", async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-claude-sources-"))
-  const previousDir = process.env.CLAUDE_CONFIG_DIR
-  const previousToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
   const previousFetch = globalThis.fetch
   const tokens: string[] = []
-  const login = (accessToken: string) => fs.writeFileSync(path.join(directory, ".credentials.json"),
-    JSON.stringify({ claudeAiOauth: { accessToken, expiresAt: Date.now() + 3_600_000 } }))
-  process.env.CLAUDE_CONFIG_DIR = directory
-  delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+  const expires = Date.now() + 3_600_000
+  const login = (access: string) => ({ type: "oauth", access, expires })
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     tokens.push(new Headers(init?.headers).get("Authorization") ?? "")
     return Response.json({ limits: [{ kind: "session", percent: tokens.length }] })
   }) as typeof fetch
   clearProviderUsageCache()
   try {
-    login("claude-code-first")
-    const opencode = { anthropic: { type: "oauth", access: "opencode-oauth", expires: Date.now() + 3_600_000 } }
-    assert.equal((await getProviderUsage("anthropic", { auth: opencode })).windows["5h"].usedPercent, 1)
+    const opencode = { anthropic: login("opencode-oauth") }
+    assert.equal((await getProviderUsage("anthropic", { auth: { ...opencode, "claude-code": login("claude-code-first") } })).windows["5h"].usedPercent, 1)
     assert.equal((await getProviderUsage("anthropic", { auth: { anthropic: { type: "api", key: "console" } } })).configured, false)
-    assert.equal((await getProviderUsage("claude-code", { auth: opencode })).windows["5h"].usedPercent, 2)
-    assert.equal((await getProviderUsage("claude-code", { auth: {} })).windows["5h"].usedPercent, 2)
-    login("claude-code-second")
-    assert.equal((await getProviderUsage("claude-code", { auth: {} })).windows["5h"].usedPercent, 3)
+    assert.equal((await getProviderUsage("claude-code", { auth: opencode })).configured, false)
+    assert.equal((await getProviderUsage("claude-code", { auth: { "claude-code": login("claude-code-first") } })).windows["5h"].usedPercent, 2)
+    assert.equal((await getProviderUsage("claude-code", { auth: { "claude-code": login("claude-code-first") } })).windows["5h"].usedPercent, 2)
+    assert.equal((await getProviderUsage("claude-code", { auth: { "claude-code": login("claude-code-second") } })).windows["5h"].usedPercent, 3)
     assert.deepEqual(tokens, ["Bearer opencode-oauth", "Bearer claude-code-first", "Bearer claude-code-second"])
   } finally {
     globalThis.fetch = previousFetch
     clearProviderUsageCache()
-    if (previousDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
-    else process.env.CLAUDE_CONFIG_DIR = previousDir
-    if (previousToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN
-    else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousToken
-    fs.rmSync(directory, { recursive: true, force: true })
   }
 })
-
 test("adds a matched model's scoped limits to the plan windows", () => {
   const window = (usedPercent: number) => ({ usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: 604_800, resetAt: null })
   const result: ProviderResult = {

@@ -21,8 +21,6 @@ export interface UsageProvider {
   aliases: readonly string[]
   /** `auth` holds each integration's selected credential in the legacy auth.json entry shape. */
   fetchQuota: (auth: AuthFile) => Promise<ProviderResult>
-  /** Digest of credentials read outside OpenCode, joined to the snapshot cache identity. */
-  identity?: () => string | null
 }
 
 export type AuthEntry = Record<string, unknown>

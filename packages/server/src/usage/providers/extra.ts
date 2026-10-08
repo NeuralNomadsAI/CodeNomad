@@ -1,10 +1,5 @@
 import type { AuthFile, ProviderUsage, UsageProvider } from "../types"
-import {
-  claudeCodeCredential,
-  claudeCodeCredentialIdentity,
-  openCodeClaudeCredential,
-  type ClaudeCredential,
-} from "../claude-credential"
+import { authClaudeCredential, type ClaudeCredential } from "../claude-credential"
 import {
   asObject,
   fetchJson,
@@ -317,7 +312,7 @@ function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
 }
 
 // Each provider keeps its own rate-limit fallback, reset whenever its credential changes.
-function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases" | "identity"> & {
+function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases"> & {
   credential: (auth: AuthFile) => ClaudeCredential | null
   reauthError: string
 }): UsageProvider {
@@ -331,7 +326,6 @@ function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases" | "ide
     id: input.id,
     name: "Claude",
     aliases: input.aliases,
-    identity: input.identity,
     async fetchQuota(auth) {
       const credential = input.credential(auth)
       if (!credential) return notConfigured(this.id, this.name)
@@ -370,19 +364,19 @@ function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases" | "ide
 }
 
 // A session's quota must come from the login that session uses: OpenCode's
-// Anthropic OAuth for `anthropic`, Claude Code's own login for opencode-claude.
+// Anthropic OAuth for `anthropic`, and for opencode-claude's `claude-code` the
+// Claude Code login the route resolves on the daemon host.
 const claude = createClaudeProvider({
   id: "claude",
   aliases: ["claude", "anthropic"],
-  credential: openCodeClaudeCredential,
+  credential: auth => authClaudeCredential(auth, ["anthropic", "claude"]),
   reauthError: "Claude session expired. Reconnect the Anthropic integration in OpenCode.",
 })
 
 const claudeCode = createClaudeProvider({
   id: "claude-code",
   aliases: ["claude-code"],
-  credential: () => claudeCodeCredential(),
-  identity: () => claudeCodeCredentialIdentity(),
+  credential: auth => authClaudeCredential(auth, ["claude-code"]),
   reauthError: "Claude Code session expired. Use Claude Code to sign in again.",
 })
 

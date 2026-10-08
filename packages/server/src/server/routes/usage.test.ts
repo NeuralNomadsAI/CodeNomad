@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import test from "node:test"
 import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
@@ -7,7 +10,8 @@ import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
 
 function harness() {
   const expires = Date.now() + 3600000
-  const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false }
+  const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
+    daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>() }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
@@ -34,6 +38,9 @@ function harness() {
     get: id => id === "instance" ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
     ownsLocation: async (_id, location) => location.directory === "/wsl/repo",
+    getSessionEnvironment: async () => ({ ...state.daemonEnvironment }),
+    getServiceWslDistro: () => "Ubuntu",
+    getHostPathForServicePath: async (_id, servicePath) => state.hostFiles.get(servicePath)?.path,
   }
   registerUsageRoutes(app, { workspaceManager: manager })
   return { app, state, logs }
@@ -133,4 +140,34 @@ test("other providers use the daemon's selected native credential, never returni
     assert.equal(response.json().windows.credits_balance.valueLabel, "$4.00")
     assert.equal([response.body, ...logs].join("").includes("secret-"), false)
   } finally { globalThis.fetch = previousFetch; await app.close() }
+})
+
+test("claude-code sessions read Claude Code's login on the daemon host, never returning it", async () => {
+  const { app, state, logs } = harness()
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-route-claude-"))
+  const file = path.join(directory, "credentials.json")
+  fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: "secret-distro-login", expiresAt: Date.now() + 3_600_000 } }))
+  state.hostFiles.set("/home/dev/.claude/.credentials.json", { path: file })
+  const authorizations: string[] = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://api.anthropic.com/api/oauth/usage")
+    authorizations.push(new Headers(init?.headers).get("authorization") ?? "")
+    return Response.json({ limits: [{ kind: "session", percent: 7 }] })
+  }
+  const claudeUrl = url.replace("/usage/openai", "/usage/claude-code")
+  try {
+    const response = await app.inject({ url: claudeUrl })
+    assert.equal(response.json().providerId, "claude-code")
+    assert.equal(response.json().windows["5h"].usedPercent, 7)
+    // A profile token outranks the stored login and fences the cached snapshot.
+    state.daemonEnvironment.CLAUDE_CODE_OAUTH_TOKEN = "secret-profile-token"
+    assert.equal((await app.inject({ url: claudeUrl })).json().ok, true)
+    assert.deepEqual(authorizations, ["Bearer secret-distro-login", "Bearer secret-profile-token"])
+    assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+  } finally {
+    globalThis.fetch = previousFetch
+    await app.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 })
