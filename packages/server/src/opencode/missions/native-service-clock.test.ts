@@ -90,5 +90,17 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
     await Effect.runPromiseWith(app)(cancelNativeRecurrenceClock(latest))
     assert.equal(cancelled, true, "native Job interruption aborts in-flight admission without a bundle-local registry")
     assert(Exit.isFailure(await Effect.runPromise(Fiber.await(fiber))))
+
+    let ticked!: () => void
+    const tick = new Promise<void>(resolve => { ticked = resolve })
+    await Effect.runPromiseWith(app)(startNativeRecurrenceClock({ ...input, epoch: 5 }, async () => {
+      ticked()
+      return "not-due"
+    }))
+    const sleeper = Effect.runFork([...jobs.values()][4]!.run)
+    await tick
+    await Effect.runPromise(Fiber.interrupt(sleeper))
+    assert(Exit.isFailure(await Effect.runPromise(Fiber.await(sleeper))),
+      "ordinary not-due passages wait interruptibly instead of pinning the origin Scope")
   } finally { await Effect.runPromise(Scope.close(scope, Exit.void)) }
 })
