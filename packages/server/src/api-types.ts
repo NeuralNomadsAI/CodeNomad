@@ -31,6 +31,21 @@ export type {
   MissionTemplateId,
 } from "./missions/model"
 
+/** Deliberately excludes private config, authority receipts and native Job metadata. */
+export interface MissionRecurrenceSnapshot {
+  version: 1
+  projectID: string
+  schedules: Array<{
+    id: string
+    revision: number
+    scheduleRevision: number
+    state: "paused" | "unavailable" | "stopped"
+    clock: { time: string; zone: string }
+    pendingPassageID: string | null
+    settledCount: number
+  }>
+}
+
 /**
  * Canonical HTTP/SSE contract for the CLI server.
  * These types are consumed by both the CLI implementation and any UI clients.

@@ -159,6 +159,18 @@ const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    recurrenceSnapshot: {
+      input: { type: "object", properties: {}, additionalProperties: false },
+      output: { type: "object", properties: {
+        version: { type: "integer", const: 1 }, projectID: { type: "string" }, projectCanonical: { type: "string" },
+        location, schedules: { type: "array", maxItems: 64, items: { type: "object", properties: {
+          id: { type: "string" }, revision: { type: "integer" }, scheduleRevision: { type: "integer" },
+          state: { type: "string", enum: ["paused", "unavailable", "stopped"] },
+          clock: { type: "object", properties: { time: { type: "string" }, zone: { type: "string" } }, required: ["time", "zone"], additionalProperties: false },
+          pendingPassageID: { type: ["string", "null"] }, settledCount: { type: "integer" },
+        }, required: ["id", "revision", "scheduleRevision", "state", "clock", "pendingPassageID", "settledCount"], additionalProperties: false } },
+      }, required: ["version", "projectID", "projectCanonical", "location", "schedules"], additionalProperties: false },
+    },
     recover: {
       input: {
         type: "object", properties: {

@@ -3,7 +3,7 @@ import path from "node:path"
 import test from "node:test"
 import { Location } from "@opencode/schema/location"
 import { Context, Effect, Exit, Fiber, Option, RcMap, Schema, Scope } from "effect"
-import { cancelNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
+import { cancelNativeRecurrenceClock, readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
 
 const jobTag = Context.Service<never, unknown>("@opencode/Job")
 const mapTag = Context.Service<never, unknown>("@opencode/example/LocationServiceMap")
@@ -25,15 +25,16 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
         return Context.make(locationTag, location)
       }),
     }).pipe(Effect.provideService(Scope.Scope, scope)))
-    const locations = { rcMap: map, contextEffect: (key: Location.Ref) => RcMap.get(map, key) }
-    const jobs = new Map<string, { info: { status: string; metadata: Record<string, unknown> };
+    const locations = { rcMap: map, contextEffect: (key: Location.Ref) => RcMap.get(map, key),
+      contextEffectOption: (key: Location.Ref) => RcMap.getOption(map, key) }
+    const jobs = new Map<string, { info: { id: string; type: string; status: string; metadata: Record<string, unknown> };
       run: Effect.Effect<string, unknown>; fiber?: Fiber.Fiber<string, unknown> }>()
     const job = {
       get: (id: string) => Effect.succeed(jobs.get(id)?.info),
-      start: (input: { id: string; metadata: Record<string, unknown>; run: Effect.Effect<string, unknown> }) => Effect.sync(() => {
+      start: (input: { id: string; type: string; metadata: Record<string, unknown>; run: Effect.Effect<string, unknown> }) => Effect.sync(() => {
         const existing = jobs.get(input.id)
         if (existing?.info.status === "running") return existing.info
-        const info = { status: "running", metadata: input.metadata }
+        const info = { id: input.id, type: input.type, status: "running", metadata: input.metadata }
         jobs.set(input.id, { info, run: input.run })
         return info
       }),
@@ -44,7 +45,8 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
         return entry?.info
       }),
     }
-    const app = Context.make(jobTag, job).pipe(Context.add(mapTag, locations), Context.add(sessionTag, {}))
+    const app = Context.make(jobTag, job).pipe(Context.add(mapTag, locations), Context.add(sessionTag, {}),
+      Context.add(locationTag, location))
     const input = { directory, workspaceID, projectID: "p1", projectCanonical: directory, scheduleID: "rec_one",
       profileID: "profile-one", executionHost: "native", epoch: 1 }
     const due = async (_graph: Context.Context<never>, current: () => true) => {
@@ -59,6 +61,10 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
     assert.equal(await Effect.runPromise([...jobs.values()][0]!.run), "unknown")
     assert.equal(loads, 2)
     assert.equal(dueCalls, 1)
+    const read = () => Effect.runPromiseWith(app)(readNativeRecurrenceClock(input))
+    assert.equal(await read(), true)
+    await Effect.runPromise(RcMap.invalidate(map, ref))
+    assert.equal(await read(), undefined, "Job.get remains running after eviction; Location claim is uncertain")
     await Effect.runPromiseWith(app)(startNativeRecurrenceClock(input, due))
     assert.equal(jobs.size, 1, "one native Job per signed epoch")
     await Effect.runPromiseWith(app)(startNativeRecurrenceClock({ ...input, epoch: 2 }, due))

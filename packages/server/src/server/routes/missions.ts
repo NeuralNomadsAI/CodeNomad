@@ -11,6 +11,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { prepareMissionCreation, MissionCreationPreparationError } from "./mission-creation-pipeline"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
+import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -27,6 +28,7 @@ const UpdateSchema = z.object({
 const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
+  registerMissionRecurrenceSnapshot(app, deps)
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply): Promise<MissionListResponse> => {
     const lifetime = requestAdmission(request, reply)
     const parsed = MissionParamsSchema.safeParse(request.params)

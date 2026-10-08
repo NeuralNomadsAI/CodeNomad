@@ -1,5 +1,5 @@
 import { Location } from "@opencode/schema/location"
-import { Context, Effect, MutableHashMap, Option, Schema, Scope } from "effect"
+import { Context, Effect, MutableHashMap, Option, Predicate, Schema, Scope } from "effect"
 import { stableToken } from "../../missions/journal"
 import type { RecurrenceRunOutcome } from "../../missions/recurrence-runner"
 
@@ -17,6 +17,7 @@ type NativeJob = {
 type NativeLocations = {
   rcMap: { state: { _tag: string; map: MutableHashMap.MutableHashMap<Location.Ref, unknown> } }
   contextEffect(ref: Location.Ref): Effect.Effect<Context.Context<never>, unknown, Scope.Scope>
+  contextEffectOption?(ref: Location.Ref): Effect.Effect<Option.Option<Context.Context<never>>, unknown, Scope.Scope>
 }
 export type RecurrenceClockPlacement = Readonly<{
   projectID: string; projectCanonical: string; directory: string; workspaceID?: string; scheduleID: string
@@ -25,6 +26,47 @@ export type RecurrenceClockPlacement = Readonly<{
 
 const jobID = (input: RecurrenceClockPlacement) => `codenomad.missions.recurrence:${stableToken(
   `${input.projectID}\0${input.projectCanonical}\0${input.directory}\0${input.workspaceID ?? ""}\0${input.scheduleID}\0${input.profileID}\0${input.executionHost}\0${input.epoch}`, 32)}`
+
+/** Exact generation read only. Missing native Job is not a license to start it. */
+export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenceClock")(function* (input: RecurrenceClockPlacement) {
+  if (!Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new Error("Invalid recurrence epoch")
+  const service = yield* Effect.serviceOption(jobTag)
+  const map = yield* Effect.serviceOption(mapTag), origin = yield* Effect.serviceOption(locationTag)
+  if (Option.isNone(service) || !Predicate.isFunction(service.value?.get)) throw new Error("Native Job graph unavailable")
+  // RcMap.getOption never loads another Location. A Job can still say running
+  // after its owner graph was evicted, until the next due callback notices it.
+  if (Option.isNone(map) || Option.isNone(origin) || !Predicate.isFunction(map.value.contextEffectOption)) return undefined
+  if (origin.value.directory !== input.directory || origin.value.workspaceID !== input.workspaceID
+    || origin.value.project.id !== input.projectID || origin.value.project.canonical !== input.projectCanonical) return undefined
+  const ref = Schema.decodeUnknownSync(Location.Ref)({ directory: input.directory,
+    ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }) })
+  const currentEntry = () => {
+    const state = map.value.rcMap?.state
+    if (state?._tag !== "Open") return undefined
+    const found = MutableHashMap.get(state.map, ref)
+    return Option.isSome(found) ? found.value : undefined
+  }
+  const entry = currentEntry()
+  if (entry === undefined) return undefined
+  const graph = yield* Effect.scoped(map.value.contextEffectOption(ref))
+  if (Option.isNone(graph) || Option.getOrUndefined(Context.getOption(graph.value, locationTag)) !== origin.value
+    || currentEntry() !== entry) return undefined
+  const lookup = service.value.get(jobID(input))
+  if (!Effect.isEffect(lookup)) throw new Error("Native Job contract unavailable")
+  const found = yield* lookup
+  if (currentEntry() !== entry) return undefined
+  if (!found) return false
+  const actual = yield* Schema.decodeUnknownEffect(Schema.Struct({ id: Schema.String, type: Schema.String,
+    status: Schema.Literals(["running", "completed", "error", "cancelled"]),
+    metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)) }))(found)
+  const metadata = { epoch: input.epoch, projectID: input.projectID, projectCanonical: input.projectCanonical,
+    directory: input.directory, scheduleID: input.scheduleID,
+    ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }),
+    profileID: input.profileID, executionHost: input.executionHost }
+  if (actual.id !== jobID(input) || actual.type !== "codenomad.missions.recurrence"
+    || JSON.stringify(actual.metadata) !== JSON.stringify(metadata)) throw new Error("Recurrence Job generation changed")
+  return actual.status === "running"
+})
 
 /** The caller has already committed a signed Play. Job owns this clock, not the
  * evictable Location/plugin Scope. A due callback must obtain its fresh authority,

@@ -4,6 +4,8 @@ import { Context, Effect, Exit, Scope } from "effect"
 import { z } from "zod"
 import { desktopPlugin as promisePlugin } from "./desktop-plugin"
 import { enrollmentSchema, observeNativeManagedOwner } from "./native-managed-owner"
+import { CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
+import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 
 export const MANAGED_OWNER_RPC_ID = "codenomad.missions.managed-owner"
 export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods: {
@@ -12,6 +14,16 @@ export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods:
     enrollment: enrollmentSchema, storageChallengeVerified: z.literal(true),
   }).strict() },
 }, events: {} })
+
+export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rpc"] {
+  const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
+    definition.id === CODENOMAD_MISSIONS_RPC_ID
+      ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx) } as typeof handlers
+      : handlers)
+  return new Proxy(ctx.rpc, { get(target, key) {
+    return key === "register" ? register : Reflect.get(target, key)
+  } })
+}
 
 // The Promise adapter preserves the shipped Missions plugin. Only this native
 // registration/handler runs in the sealed service Effect graph; no RPC writes.
@@ -22,9 +34,10 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
+    const nativeCtx = { ...ctx, rpc: withNativeRecurrenceRpc(ctx) }
     yield* Effect.acquireRelease(Effect.promise(async () => {
         try {
-          await run(fromPromise(promisePlugin(presenceDirectory, ready => { ownerReady = ready })).effect(ctx))
+          await run(fromPromise(promisePlugin(presenceDirectory, ready => { ownerReady = ready })).effect(nativeCtx))
           try { await run(ctx.rpc.register(MANAGED_OWNER_RPC, { observe: () => Effect.scoped(
             Effect.gen(function* () {
               if (!ownerReady || !ownerRpcReady) return yield* Effect.fail(new Error("Native owner authority unavailable"))
