@@ -99,6 +99,25 @@ Play/control, Run now, current-passage/result readers, native tool/business
 composition, human-answer provenance and artifact-replacement qualification
 remain separately scoped joins, not accepted by these results.
 
+The broader Solid selections on that joined source are **not green**:
+`sh_11ccc47e3001O4WHMqPaAx0Wgt` finished **50/56** and
+`sh_11ccc8be4001aUsLSQ1Siu4X7l` finished **66/72**. Both retain the same six
+failures: the old top-level disclosure expectation omitted the new schedule
+section, and five explicit identity-retirement cases counted the intentionally
+cancelled recurrence-list GET as an unexpected actor/read network failure.
+The already-reviewed active-passage fixture correction is being joined without
+changing production navigation, widening deadlines or ignoring actor/API errors.
+Only the exact owned list GET's `net::ERR_ABORTED` after explicit view retirement
+is classified separately; raw failure diagnostics and stale-reader assertions
+remain. The corrected control/navigation rerun has its own receipt and must
+complete before claiming those failures closed. Neither run uses a native daemon.
+
+That corrected control/navigation selection completed **47/47**, no skips or
+cancellations, in `sh_11cd19498002HdKX3wauklX2k9`. All stale actor/reader ABA,
+read-only request and setup-error custody assertions remain. This closes the six
+fixture failures on this source; it is not a rerun of the entire 72-case selection
+or acceptance of the separately assembling UI/control producers.
+
 - Published head at the start of this update: `cfea513b`; corrections now pushed
   through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
   preferences/task-session policy/depth (`972910fe`) and inactive recurrence core

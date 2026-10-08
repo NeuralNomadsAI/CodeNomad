@@ -84,6 +84,8 @@ async function reportSetupFailure(record: { droppedPackets: number; failures: un
 }
 async function setup(missing = false) {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = [], networkErrors: string[] = [], requests: string[] = []
+  let recurrenceDemandRetired = false
+  const cancelledRecurrenceReads: string[] = []
   const held = gate(), reached = gate(), completed = gate()
   const traffic = Object.fromEntries(["document", "lucide", "api", "optimized", "other"].map(category =>
     [category, { started: 0, current: 0, peak: 0, finished: 0, failed: 0 }]))
@@ -108,13 +110,21 @@ async function setup(missing = false) {
   page.on("requestfinished", request => terminal(request, false))
   page.on("requestfailed", request => terminal(request, true))
   page.on("pageerror", error => errors.push(error.message))
-  page.on("requestfailed", request => networkErrors.push(`${request.url()} ${request.failure()?.errorText}`))
+  page.on("requestfailed", request => {
+    const error = `${request.url()} ${request.failure()?.errorText}`, own = ownedRequest(request.url())
+    // Only these explicit view retirements cancel the exact read-only list GET.
+    // Preserve raw failure diagnostics and all actor/read/navigation failures.
+    if (recurrenceDemandRetired && request.method() === "GET" && request.failure()?.errorText === "net::ERR_ABORTED"
+      && own && /^\/api\/workspaces\/(fixture|replacement)\/missions\/recurrence$/.test(own.path)) cancelledRecurrenceReads.push(error)
+    else networkErrors.push(error)
+  })
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A"), mission("B")], generatedAt: 1, discardedEvents: 0 } })
+    if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       reached.release(); await held.promise
       await route.fulfill(missing ? { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } }
@@ -147,7 +157,8 @@ async function setup(missing = false) {
     finally { held.release(); try { await page.close() } catch { /* Preserve original error even if cleanup fails. */ } failedSetupHeld = undefined }
     throw error
   }
-  return { page, held, reached, completed, errors, networkErrors, requests }
+  return { page, held, reached, completed, errors, networkErrors, requests, cancelledRecurrenceReads,
+    retireRecurrenceDemand: () => { recurrenceDemandRetired = true } }
 }
 const row = (page: Page, id: string) => page.locator(".mission-control-index > .mission-list-item").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
 async function read(page: Page, id: string) {
@@ -171,6 +182,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       if (origin === "reader") await page.evaluate(() => window.missionNavigation.clearActive())
       await (origin === "actor" ? actor(page, "A") : read(page, "A"))
       await reached.promise
+      if (["instance", "instance-aba", "directory-aba", "project-aba", "inactive-aba", "remount"].includes(change)) state.retireRecurrenceDemand()
       if (change.startsWith("instance")) {
         await page.evaluate(() => window.missionNavigation.instance("replacement"))
         if (change.endsWith("aba")) await page.evaluate(() => window.missionNavigation.instance("fixture"))
@@ -192,7 +204,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       held.release(); await completed.promise; await settled(page)
       const after = await page.evaluate(() => window.missionNavigation.snapshot())
       if (process.env.CODENOMAD_NAVIGATION_EVIDENCE) {
-        await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.json`), JSON.stringify({ before, after, errors, networkErrors, requests }, null, 2))
+        await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.json`), JSON.stringify({ before, after, errors, networkErrors, cancelledRecurrenceReads: state.cancelledRecurrenceReads, requests }, null, 2))
         await page.screenshot({ path: path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.png`) })
       }
       assert.deepEqual(after, before, "stale navigation must not activate, clear/install readers or reveal")

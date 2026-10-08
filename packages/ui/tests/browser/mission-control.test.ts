@@ -1128,7 +1128,7 @@ test("top-level mission rows expose two-line titles, semantic states, readers an
     }
     assert.equal(await page.locator(".mission-control-header h2, .mission-control-overview").count(), 0)
     assert.equal(await page.getByRole("button", { name: "Missions", exact: true }).count(), 0)
-    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Ask a question", "Give direction", "Technical details"])
+    assert.deepEqual(await page.locator(".mission-control > .mission-disclosure > h3 > .mission-disclosure-trigger").allTextContents(), ["Work1/1", "Ask a question", "Give direction", "Technical details", "Recurring schedules"])
     assert.equal(await page.getByRole("button", { name: "Technical details", exact: true }).getAttribute("aria-expanded"), "false")
     assert.equal(await page.getByRole("button", { name: "Give direction", exact: true }).getAttribute("aria-expanded"), "false")
     await openTechnicalDetails(page)
