@@ -1,15 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { canonicalAuthority } from "../../missions/authority-protocol"
+import { authorityDigest, canonicalAuthority } from "../../missions/authority-protocol"
 import { recurrenceMessageID, recurrencePassageID, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { controlOperationID, controlReceiptID } from "../../missions/receipt-identity"
 import { stableToken, type MissionStorage } from "../../missions/journal"
 import type { RecurrenceChildRecord } from "../../missions/recurrence-authority-contract"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
-import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlement"
+import { observeNativeRecurrenceSettlement, observeNativeRecurrenceTerminalSettlement } from "./native-recurrence-settlement"
 
-test("succeeded passage requires the exact original input and a frozen native head before archive", async () => {
+test("finite terminal observation keeps success strict and records admitted native no-route execution failure", async () => {
   const projectID = "project", projectCanonical = "/owned/project", scheduleID = "schedule"
   const due = { kind: "manual" as const,
     requestID: "request", expectedRevision: 0, at: 10 }
@@ -33,7 +33,8 @@ test("succeeded passage requires the exact original input and a frozen native he
   const child = { parent: { body: { config }, signature: "test" }, grant, effects: [
     { operationID: "create", effect: { kind: "create" }, receipt: { operationID: "create", outcome: "applied", evidenceID: coordinatorSessionID } },
     { operationID: "start", effect: { kind: "start" }, receipt: { operationID: "start", outcome: "applied", evidenceID: coordinatorSessionID } },
-    { operationID: "message", effect: { kind: "coordinator-message" }, receipt: { operationID: "message", outcome: "applied", evidenceID: messageID } },
+    { operationID: "message", effect: { kind: "coordinator-message", messageID, contentDigest: authorityDigest(config.consigne) },
+      receipt: { operationID: "message", outcome: "applied", evidenceID: messageID } },
   ] } as unknown as RecurrenceChildRecord
   const values = new Map<string, unknown>()
   const storage: MissionStorage = {
@@ -73,21 +74,23 @@ test("succeeded passage requires the exact original input and a frozen native he
   const session = { id: coordinatorSessionID, parent_id: null, project_id: projectID,
     directory: projectCanonical, workspace_id: null, metadata: JSON.stringify({ "codenomad.mission": {
       version: 1, missionID, kind: "coordinator", role: "coordinator" } }), time_suspended: null }
-  let currentHead = events.length - 1, queueCount = 0, checks = 0
+  let currentHead = events.length - 1, queueCount = 0, pendingCount = 0, checks = 0, children = false
   let journalHead = "first"
   let requests: { sessionID: string; kind: "form" | "permission" }[] = []
   let childRead: Record<string, unknown> | undefined
   let rootMessages: { id: string; type: string; data: string }[] = []
   const provider = { store: { scope: { projectID, projectCanonical, scheduleID } }, sourceKey: "source",
     location: { projectID, directory: projectCanonical }, readCurrent: () => source, assertCurrent: () => true as const,
-    readSession: (id: string) => id !== coordinatorSessionID ? childRead : ({ session, seq: currentHead, ownerID: null, inbox: queueCount, pending: 0,
+    readSession: (id: string) => id !== coordinatorSessionID ? childRead : ({ session, seq: currentHead, ownerID: null, inbox: queueCount, pending: pendingCount,
       events: events.slice(0, currentHead + 1), messages: rootMessages,
       message: { id: messageID, session_id: coordinatorSessionID, type: "synthetic", data: JSON.stringify({ text: config.consigne, metadata }) } }),
     assertNoPendingRequests: async (owned: string[]) => {
-      assert.equal(requests.some(request => owned.includes(request.sessionID)), false, "owned pending request cannot settle")
+      assert.equal(requests.some(request => owned.includes(request.sessionID) || request.sessionID === "global"), false, "owned pending request cannot settle")
       return true as const
     },
     readJournalWatermark: () => journalHead,
+    passageStorage: () => storage,
+    assertNoSessionChildren: () => { assert.equal(children, false, "unknown native family cannot settle"); return true as const },
     assertJournalWatermark: (_passageID: string, expected: string) => {
       assert.equal(expected, journalHead, "a changed Mission journal cannot borrow a completed snapshot")
       return true as const
@@ -157,4 +160,81 @@ test("succeeded passage requires the exact original input and a frozen native he
   assert.equal(result.assertCurrent(), true)
   childEvents[4].type = "session.execution.interrupted.1"
   await assert.rejects(observe(), /observation-unavailable/)
+
+  // The original start was admitted and all three startup effects were APPLIED.
+  // Its execution failed with no native tool work. This asserts no HTTP/billing
+  // claim: native retry-full requests can precede the first durable Step.
+  for (const [key, value] of values) if ((value as { type?: string }).type === "mission.finished") values.delete(key)
+  childRead = undefined
+  events.splice(4)
+  const failed = { id: "evt_failure", seq: 4, type: "session.execution.failed.1",
+    data: JSON.stringify({ sessionID: coordinatorSessionID, error: { type: "provider.no-route", message: "Model unavailable" } }) }
+  events.push(failed)
+  currentHead = 4
+  rootMessages = [{ id: messageID, type: "synthetic", data: JSON.stringify({ text: config.consigne, metadata }) }]
+  const terminalObserve = () => observeNativeRecurrenceTerminalSettlement(provider, storage, child, new AbortController().signal)
+  await assert.rejects(observe(), /observation-unavailable/, "the original succeeded-only observer never accepts a failure")
+  for (const type of ["provider.transport", "provider.internal", "provider.auth", "unknown"]) {
+    events[4] = { ...failed, data: JSON.stringify({ sessionID: coordinatorSessionID, error: { type, message: "Outside the deliberately supported native coded subset" } }) }
+    await assert.rejects(terminalObserve(), /observation-unavailable/)
+  }
+  events[4] = failed
+  for (const type of ["session.tool.called.1", "session.tool.input.started.1", "session.tool.failed.2",
+    "session.shell.started.1", "session.step.started.1", "session.execution.interrupted.1"]) {
+    events.splice(4, 1, { id: "evt_partial", seq: 4, type, data: JSON.stringify({ sessionID: coordinatorSessionID,
+      assistantMessageID: "msg_running", id: "call_running", executed: false }) }, { ...failed, seq: 5 })
+    currentHead = 5
+    await assert.rejects(terminalObserve(), /observation-unavailable/, "partial/running work must remain pending")
+    events.splice(4, 2, failed)
+    currentHead = 4
+  }
+  assert.equal((await journal.snapshot()).missions[0].status, "active", "negative observations write no fabricated result")
+  queueCount = 1
+  await assert.rejects(terminalObserve(), /observation-unavailable/)
+  queueCount = 0
+  pendingCount = 1
+  await assert.rejects(terminalObserve(), /observation-unavailable/)
+  pendingCount = 0
+  session.time_suspended = 1 as never
+  await assert.rejects(terminalObserve(), /observation-unavailable/)
+  session.time_suspended = null
+  children = true
+  await assert.rejects(terminalObserve(), /native family/)
+  children = false
+  for (const kind of ["form", "permission"] as const) {
+    requests = [{ sessionID: coordinatorSessionID, kind }]
+    await assert.rejects(terminalObserve(), /pending request/)
+  }
+  requests = [{ sessionID: "global", kind: "form" }]
+  await assert.rejects(terminalObserve(), /pending request/)
+  requests = []
+  const receipt = child.effects[2].receipt
+  child.effects[2].receipt = null
+  await assert.rejects(terminalObserve(), /observation-unavailable/)
+  child.effects[2].receipt = receipt
+  result = await terminalObserve()
+  assert.equal(result.settlement.outcome, "failed")
+  assert.deepEqual(result.settlement.effects.map(effect => effect.outcome), ["applied", "applied", "applied"],
+    "admitted execution failure is not rejected-before-effect")
+  assert.equal(result.settlement.evidenceID, "evt_failure")
+  assert.equal(result.assertCurrent(), true)
+  const recorded = (await journal.events()).events.find(event => event.type === "mission.finished")
+  assert.ok(recorded?.type === "mission.finished")
+  assert.equal(recorded.outcome, "failed")
+  assert.equal(recorded.summary, "Model unavailable", "only the native diagnostic is retained, not invented coordinator prose")
+  assert.deepEqual(recorded.nativeFailure, { operationID, sessionID: coordinatorSessionID, messageID, evidenceID: "evt_failure",
+    inputDigest: authorityDigest(config.consigne) })
+  assert.equal((await journal.snapshot()).missions[0].reports.length, 0, "native failure is not an invented task report")
+  assert.equal((await terminalObserve()).settlement.evidenceID, "evt_failure", "journal-only tear reconciles the original failure")
+  assert.equal((await journal.events()).events.length, 4)
+  requests = [{ sessionID: "global", kind: "form" }]
+  assert.equal(result.assertCurrent(), true, "a late global Form has no native passage session/message/call provenance")
+  requests = []
+  children = true
+  assert.throws(result.assertCurrent, /native family/, "a late unregistered child fences publication")
+  children = false
+  const previousFailure = recorded.nativeFailure
+  recorded.nativeFailure = { ...previousFailure!, operationID: "foreign_operation" }
+  for (const [key, value] of values) if ((value as { type?: string }).type === "mission.finished") values.set(key, recorded)
+  await assert.rejects(terminalObserve(), /observation-unavailable/, "a mismatched durable control identity cannot borrow native failure")
 })

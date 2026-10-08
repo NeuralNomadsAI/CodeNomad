@@ -75,6 +75,116 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
   worktree scan is used. Failed, interrupted, background and unrecognised effect
   cases are not claimed complete by the succeeded-only observer.
 
+### Known admitted terminal execution failure subset — 2026-10-08, offline only
+
+`missions-known-terminal-failure-20261008` adds a finite-passage branch, leaving
+the ordinary succeeded-only observer's contract intact. It accepts only an exact
+original start with all three applied authority receipts, one delivered input,
+one native execution and a final durable `session.execution.failed.1` whose native
+type is `provider.no-route` without an HTTP status. This is a deliberately limited
+native coded subset, not error-prose interpretation. There must be **no durable Step,
+tool/input, Shell, compaction, extra message, task, report, actor or native child**.
+The released native claim, owner/inbox/pending counts, bounded actual Form,
+Permission and Shell queues (including uncorrelated running Shells), native head
+and journal are rechecked. Unknown/over-bound observations remain pending. The
+outcome is **failed**, with all three startup effects **applied**, never
+`rejected-before-effect`. No zero-HTTP-request, zero-dispatch or billing claim is
+made: the admitted native execution positively ended, not an unadmitted operation.
+
+Source backing is the unmodified reviewed files in `D:/opencode` at
+`757e565c23f83b3ce3eab64aa6e35cf6ffbde880`:
+
+- `packages/core/src/session/runner/step.ts:104-173` starts `llm.stream` before
+  provider output and may return retry-full recovery before any durable Step.
+  `session/runner/publish-llm-event.ts:99-110` lazily publishes Step.Started, and
+  `session/runner/llm.ts:214-215` reloads context for subsequent attempts. Therefore
+  a later native `provider.no-route` with no Step does **not** prove no previous
+  provider HTTP request. Native retries remain native-owned; settlement never
+  admits a second workflow operation or new tool grant.
+- `session/execution.ts:79-89,141-148` publishes the failed terminal with claim
+  release; `session/store.ts:217-223` clears `time_suspended`.
+- `session/runner/step.ts:100-129` publishes Tool.Called before starting any local
+  executor; `:135-145,256-269` joins/intercepts the scoped local fibers before the
+  drain exits, and `session/run-coordinator.ts:99-106` publishes execution settlement
+  after that drain exits. The complete exact ledger and empty native family/Shell
+  coverage establish absence of passage-owned native tool/project/publication work,
+  not absence of earlier provider activity. Other error codes, interrupted and
+  partial/tool cases remain outside this intentionally smaller supported subset.
+- `form.ts:148-155` keeps ordinary asked Forms within their owning operation and
+  cancels them on interruption. `mcp/index.ts:234-268` uses a global sentinel with
+  server/elicitation metadata, not native session/message/tool-call provenance.
+  An arbitrary global Form arriving after the queue read is not passage-owned
+  evidence. The same final native head/claim/inbox guard as success fences new
+  passage-owned work; it does not invent ownership of unrelated late Forms.
+  The existing queue read conservatively parks globals already observed, without
+  claiming that the final lease globally freezes Forms from unrelated conversations.
+
+The shared journal records `mission.finished/failed` at the existing finished
+identity, with the exact start operation/session/message/native event identities.
+It invents no task report or coordinator prose result. The write inherits the
+original native IMMEDIATE frame and already-held business lock; settlement then
+archives before the calendar CAS. Offline tests cover failed-not-success archival,
+partial work/queue/identity refusals, transaction rollback during authority
+archival, a crash after archive before calendar finish, no replay and next-day
+admission. Explicit Stop terminality is not added. No private native fixture,
+NSIS build, OpenCode edit, live Mission, installation, commit or push qualifies
+this branch; packaged qualification remains deferred.
+
+**Cross-branch source coherence:** settlement now consumes `8ec4aa6a`'s shared
+`recurrenceSources(child)` / `recurrenceInput(child)` and signed read descriptors,
+not just three startup operations or bare `config.consigne`. Each watched source
+needs its exact bounded applied read receipt, source placement and old cursor
+binding; every original charged operation/receipt survives the failed archive.
+Unknown/legacy-without-descriptor reads, extra tool/publication operations and
+changed shared input/digest remain pending. The failure journal retains the exact
+source-bearing native input digest without trimming or substituting the consigne.
+Both native due reconciliation and explicit archive-to-calendar settlement reuse
+`recurrenceSourceCursors(archive)`; failed archives return no processed cursors and
+retain the old cursor. The previous watched-count selector in due reconciliation
+is removed, rather than silently parking all watched failures.
+
+`native-recurrence-failed-sources.test.ts` exercises the actual production failure
+observer, native authority provider over an owned offline SQLite/service graph,
+shared source/input validators, journal and authority core. Its fixture supplies
+pre-existing signed read/startup/native execution records; settlement itself is
+not mocked. It verifies a full multi-KiB source input, refusal of unknown/tampered
+reads, wrong input digest, hardcoded consigne substitution and moved sources,
+unchanged charged receipts, failed cursors staying old, and the real due callback's
+archive-only recovery with watched sources after an authority/calendar gap.
+No native sends run during recovery; a retired grant cannot settle again and the
+next passage can reserve with the unchanged old cursor. This tests the settlement
+join with the source branch, not actual private-daemon source querying or a new
+watched-source admission producer on this older `2985f090` worktree base. That
+producer remains the main/source branch's existing separately scoped work.
+Current cross-branch offline validation: failure/source plus ordinary terminal
+tests pass **2/2**; adding recurrence-store and journal-capacity regressions gives
+**55/55**, and server typecheck passes. These scoped receipts do not replace the
+previous aggregate **25/26 admission-unknown failure** receipt below or qualify
+private-native/package acceptance. No private fixture or deadline change ran.
+Six focused authority identity/budget/archive regressions also pass **6/6** on
+the shared signed-read schema; no aggregate or private-native rerun is implied.
+
+Supported ceiling remains deliberate: coded native `provider.no-route` with no
+durable Step/tool/Shell/derived family work, disabled publication, and only the
+three applied startup operations plus fully validated signed source reads. No
+zero-HTTP/billing or model-consumption claim is added; unknown effects stay pending.
+
+Offline validation: server typecheck passes; one serialized authority/due/settlement
+run passed **26/26**, and control/adapter/storage/metadata regressions passed **35/35**.
+A later serialized run and an earlier concurrent run each returned `unknown`
+before terminal observation in initial admission (**25/26**); a diagnostic run
+reported `untrusted-signer`, but its underlying cause is not claimed resolved by
+this terminal-failure change. A final focused failed-passage/settlement run passed
+**2/2**, including native diagnostic preservation. Temporary diagnostics are
+removed. No production fence or test deadline was relaxed; these successful
+focused receipts do not erase the admission failures or qualify packaging.
+The follow-up failure review withdrew its P1/P2 findings after native causal
+proof; the strict coded subset is retained. The wording/label correction makes
+no zero-HTTP or billing assertion. Its focused terminal test passes **1/1** and
+server typecheck passes, including applied-receipt preservation and an unrelated
+late-global-Form final-guard regression. No private fixture or deadline change
+accompanies this correction; source review/commit remain separate parent actions.
+
 No complete NSIS build or replacement installation has occurred. The requested
 native/private qualification remains deferred until that first complete build;
 the premature isolated source-fixture receipts below remain exceptions, not

@@ -390,6 +390,8 @@ export interface MissionFinishedEvent extends MissionEventBase {
   type: "mission.finished"
   outcome: "completed" | "failed"
   summary: string
+  /** Exact original control/message and durable native failure, not a task report. */
+  nativeFailure?: { operationID: string; sessionID: string; messageID: string; evidenceID: string; inputDigest: string }
 }
 
 export interface MissionBriefedEvent extends MissionEventBase {

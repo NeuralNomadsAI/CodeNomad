@@ -15,7 +15,7 @@ import { acquireNativeRecurrenceAuthorityProvider } from "./native-authority-pro
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
 import { nativeRecurrenceAdapter, type NativeStandingSigner } from "./native-recurrence-adapter"
-import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlement"
+import { observeNativeRecurrenceTerminalSettlement } from "./native-recurrence-settlement"
 import { acquireMissionNativeService } from "./native-service-adapter"
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import type { RecurrenceClockPlacement } from "./native-service-clock"
@@ -30,12 +30,12 @@ const prefix = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(
 const equal = (a: unknown, b: unknown) => canonicalAuthority(a, 768 * 1024) === canonicalAuthority(b, 768 * 1024)
 
 /** A native terminal-evidence observer, not an admission ACK or model prose. */
-export type ReconcileNativePending = typeof observeNativeRecurrenceSettlement
+export type ReconcileNativePending = typeof observeNativeRecurrenceTerminalSettlement
 
 /** The only due callback. The native Job passes a freshly borrowed Location graph
  * on each tick; this closure carries placement, not an evictable Session/owner. */
 export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "location">, placement: RecurrenceClockPlacement,
-  reconcilePending: ReconcileNativePending = observeNativeRecurrenceSettlement, now: () => number = Date.now) {
+  reconcilePending: ReconcileNativePending = observeNativeRecurrenceTerminalSettlement, now: () => number = Date.now) {
   // Pick is not a runtime projection. Retain only app-global KV and detached
   // scalar identity; never the caller's full plugin context or evictable graph.
   const exactCtx = Object.freeze({ storage: ctx.storage, location: Object.freeze(new Location.Info({

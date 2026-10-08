@@ -24,13 +24,15 @@ import { nativeRecurrenceDue, type ReconcileNativePending } from "./native-recur
 import { recurrenceInput, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
 import type { RecurrenceChildRecord } from "../../missions/recurrence-authority-contract"
 import { readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
+import { observeNativeRecurrenceTerminalSettlement } from "./native-recurrence-settlement"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const dbTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location"), sessionTag = tag("@opencode/Session")
 const jobTag = tag("@opencode/Job"), mapTag = tag("@opencode/example/LocationServiceMap")
 const encoded = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 
-test("signed Play admits one native due passage after desktop detach and Location eviction; Pause and restart do not rearm", async () => {
+for (const terminalOutcome of ["completed", "failed"] as const) {
+test(`signed Play archives ${terminalOutcome} before calendar finish; crash never replays and the next day proceeds`, async () => {
   const root = await mkdtemp(path.join(process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Temp", "opencode") : os.tmpdir(), "missions-due-"))
   const db = new DatabaseSync(path.join(root, "service.sqlite"))
   const lifetime = await Effect.runPromise(Scope.make())
@@ -56,6 +58,11 @@ test("signed Play admits one native due passage after desktop detach and Locatio
           && JSON.parse(params[0]).pending === null) {
           failFinishOnce = false
           throw new Error("Simulated crash after authority archive")
+        }
+        if (failArchiveOnce && sql.startsWith("INSERT INTO kv") && typeof params[0] === "string"
+          && params[0].startsWith(encoded(`${ledgerKey}/passages/`))) {
+          failArchiveOnce = false
+          throw new Error("Simulated crash during authority archive")
         }
         if (/^(INSERT|UPDATE)/.test(sql)) { statement.run(...params as []); return [] }
         return statement.all(...params as [])
@@ -93,7 +100,7 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       profiles: { coordinator: selection, roles: { specialist: selection } }, taskMode: "native" as const,
       watchedConversationIDs: [], publication: { policy: "disabled" as const, conversationIDs: [] } }
     const store = await Effect.runPromise(Effect.scoped(acquireNativeRecurrenceStore(ctx).pipe(Effect.provide(base))))
-    let now = Date.now(), failFinishOnce = false, terminal = false
+    let now = Date.now(), failFinishOnce = false, failArchiveOnce = false, terminal = false
     let document = await store.create("schedule", config, now - 2 * 86_400_000, () => true)
     document = await store.setState("schedule", document.revision, "running", () => true)
     const namespace = "9f6f590e-271d-477f-8c02-7a6a119d63b9", daemonStorageID = nativeDatabaseStorageID(path.join(root, "service.sqlite"))
@@ -195,10 +202,11 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       jobs.set(input.id, { status: "running", metadata: input.metadata, run: input.run })
       return { id: input.id, type: "codenomad.missions.recurrence", status: "running", metadata: input.metadata }
     }), cancel: (id: string) => Effect.sync(() => { const found = jobs.get(id); if (found) found.status = "cancelled" }) }
+    const emptyQueue = { list: () => Effect.succeed([]) }
+    let pendingShells: unknown[] = []
     const app = base.pipe(Context.add(sessionTag, native), Context.add(jobTag, job), Context.add(mapTag, locations),
-      Context.add(tag("@opencode/Form"), { list: () => Effect.succeed([]) }),
-      Context.add(tag("@opencode/Permission"), { list: () => Effect.succeed([]) }),
-      Context.add(tag("@opencode/Shell"), { list: () => Effect.succeed([]) }))
+      Context.add(tag("@opencode/Form"), emptyQueue), Context.add(tag("@opencode/Permission"), emptyQueue),
+      Context.add(tag("@opencode/Shell"), { list: () => Effect.succeed(pendingShells) }))
     const placement = { projectID: "project", projectCanonical: directory, directory, scheduleID: "schedule",
       profileID: "profile", executionHost: "native", epoch: 1 }
     const tornDocument = await store.create("torn_schedule", config, now - 2 * 86_400_000, () => true)
@@ -268,6 +276,7 @@ test("signed Play admits one native due passage after desktop detach and Locatio
     }
     const observer: ReconcileNativePending = async (provider, nativeStorage, child, signal) => {
       signal.throwIfAborted()
+      if (terminalOutcome === "failed") return observeNativeRecurrenceTerminalSettlement(provider, nativeStorage, child, signal)
       const doc = (await store.read("schedule"))!
       const journal = recurrencePassage(nativeStorage, doc, () => true).journal
       const snapshot = await journal.snapshot()
@@ -331,22 +340,65 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       set: async (key: string, value: unknown) => { put(key, value) },
       scan: async (options: { prefix: string; after?: string; limit?: number }) =>
         Effect.runPromise(storage.scan({ ...options, limit: options.limit ?? 100 })) as never }
-    await recurrencePassage(journalStorage, pending, () => true).journal.append({ version: 1, id: "evt_finished",
+    const recordTerminal = async (doc: NonNullable<Awaited<ReturnType<typeof store.read>>>) => {
+      if (terminalOutcome === "completed") {
+        await recurrencePassage(journalStorage, doc, () => true).journal.append({ version: 1, id: "evt_finished",
+          type: "mission.finished", missionID: doc.pending!.admission!.missionID, projectID: "project",
+          createdAt: now, outcome: "completed", summary: "Native terminal evidence" })
+        return
+      }
+      const mission = (await recurrencePassage(journalStorage, doc, () => true).journal.snapshot()).missions[0]
+      const acknowledgement = mission.control!.receipts![0].nativeAcknowledgement!
+      assert.equal(acknowledgement.disposition, "start-admitted")
+      if (acknowledgement.disposition !== "start-admitted") throw new Error("Exact start receipt missing")
+      const message = acknowledgement.admission, sessionID = message.sessionID
+      // Admission above already persisted the original root/input and events.
+      // Append only terminal evidence; never fabricate or overwrite that entry.
+      const session = db.prepare("SELECT metadata FROM session_v2 WHERE id=?").get(sessionID) as { metadata: string }
+      assert.deepEqual(JSON.parse(session.metadata), { "codenomad.mission": {
+        version: 1, missionID: mission.id, kind: "coordinator", role: "coordinator" } })
+      const original = db.prepare("SELECT data FROM session_message WHERE id=? AND session_id=?").get(message.id, sessionID) as { data: string }
+      const payload = JSON.parse(original.data)
+      assert.equal(payload.text, message.payload.text)
+      assert.deepEqual(payload.metadata, message.payload.metadata)
+      const head = db.prepare("SELECT seq FROM event_sequence WHERE aggregate_id=?").get(sessionID) as { seq: number }
+      assert.equal(head.seq, 3)
+      event(sessionID, "session.execution.failed.1", { error: { type: "provider.no-route", message: "Model unavailable" } })
+    }
+    if (terminalOutcome === "completed") await recurrencePassage(journalStorage, pending, () => true).journal.append({ version: 1, id: "evt_finished",
       type: "mission.finished", missionID: pending.pending.admission.missionID, projectID: "project",
       createdAt: now, outcome: "completed", summary: "Native terminal evidence" })
     terminal = true
     assert.equal(await nativeRecurrenceDue(ctx, placement)(app, () => true, new AbortController().signal), "pending",
       "a completed journal without native execution/event evidence cannot settle")
+    if (terminalOutcome === "failed") {
+      await recordTerminal(pending)
+      pendingShells = [{ id: "sh_uncorrelated", status: "running", command: "work", cwd: directory,
+        shell: "pwsh", file: path.join(root, "output"), metadata: {}, time: { started: 1 } }]
+      assert.equal(await due(app, () => true, new AbortController().signal), "pending", "uncorrelated running Shell is not terminal evidence")
+      pendingShells = []
+      failArchiveOnce = true
+      assert.equal(await due(app, () => true, new AbortController().signal), "pending")
+      assert.equal((get(`${ledgerKey}/live`) as { child: unknown }).child !== null, true)
+      assert.equal((await recurrencePassage(journalStorage, pending, () => true).journal.snapshot()).missions[0].status,
+        "active", "native transaction rollback retains original child and rolls back failure publication")
+      assert.deepEqual([creations, sends], [1, 1], "archive failure grants no replay")
+    }
     failFinishOnce = true
     assert.equal(await due(app, () => true, new AbortController().signal), "pending")
     assert.equal((await store.read("schedule"))?.pending?.passage.id, pending.pending.passage.id,
       "a crash after authority archive cannot silently clear the calendar")
     assert.equal((get(`${ledgerKey}/live`) as { child: unknown }).child, null)
+    const archived = get(`${ledgerKey}/passages/${pending.pending.passage.id}`) as { settlement: { outcome: string } }
+    assert.equal(archived.settlement.outcome, terminalOutcome, "failure is archived as failed, never green")
+    assert.equal((await recurrencePassage(journalStorage, pending, () => true).journal.snapshot()).missions[0].status, terminalOutcome)
     assert.equal(await due(app, () => true, new AbortController().signal), "not-due",
       "the exact immutable archive completes metadata without observing or replaying native effects")
     const finished = (await store.read("schedule"))!
     assert.equal(finished.pending, null)
     assert.equal(finished.history.length, 1)
+    assert.ok("outcome" in finished.history[0].result)
+    assert.equal(finished.history[0].result.outcome, terminalOutcome)
     assert.equal(creations, 1)
     assert.equal(sends, 1)
     now += 86_400_000
@@ -356,9 +408,7 @@ test("signed Play admits one native due passage after desktop detach and Locatio
     const next = (await store.read("schedule"))!
     assert.equal(next.pending?.admission?.kind, "accepted")
     assert.notEqual(next.pending.passage.id, pending.pending.passage.id)
-    await recurrencePassage(journalStorage, next, () => true).journal.append({ version: 1, id: "evt_finished",
-      type: "mission.finished", missionID: next.pending.admission.missionID, projectID: "project",
-      createdAt: now, outcome: "completed", summary: "Next native terminal evidence" })
+    await recordTerminal(next)
     assert.equal(await due(app, () => true, new AbortController().signal), "not-due")
     assert.equal((await store.read("schedule"))?.settledCount, 2)
 
@@ -557,3 +607,4 @@ test("signed Play admits one native due passage after desktop detach and Locatio
     await rm(root, { recursive: true, force: true })
   }
 })
+}

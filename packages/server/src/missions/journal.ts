@@ -459,10 +459,20 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         && text(input.reportID, MAX_SHORT_TEXT) && text(input.admissionID, MAX_SHORT_TEXT)
         ? { ...eventBase(input), type: "report.notified", reportID: input.reportID, admissionID: input.admissionID }
         : undefined
-    case "mission.finished":
+    case "mission.finished": {
+      const failure = input.nativeFailure
+      if (failure !== undefined && (input.outcome !== "failed" || !record(failure)
+        || !onlyFields(failure, ["operationID", "sessionID", "messageID", "evidenceID", "inputDigest"])
+        || !nativeID(failure.operationID) || !nativeID(failure.sessionID)
+        || !nativeID(failure.messageID) || !nativeID(failure.evidenceID)
+        || typeof failure.inputDigest !== "string" || !/^[a-f0-9]{64}$/.test(failure.inputDigest))) return undefined
       return (input.outcome === "completed" || input.outcome === "failed") && text(input.summary, MAX_TEXT)
-        ? { ...eventBase(input), type: "mission.finished", outcome: input.outcome, summary: input.summary }
+        ? { ...eventBase(input), type: "mission.finished", outcome: input.outcome, summary: input.summary,
+          ...(failure === undefined ? {} : { nativeFailure: { operationID: failure.operationID as string,
+            sessionID: failure.sessionID as string, messageID: failure.messageID as string, evidenceID: failure.evidenceID as string,
+            inputDigest: failure.inputDigest as string } }) }
         : undefined
+    }
     default:
       return undefined
   }

@@ -1,12 +1,13 @@
-import { canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
+import { authorityDigest, canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
 import { parseRecurrenceDocument } from "../../missions/recurrence-contract"
 import type { RecurrenceChildRecord, RecurrenceSettlement } from "../../missions/recurrence-authority-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { controlOperationID } from "../../missions/receipt-identity"
 import type { MissionStorage } from "../../missions/journal"
 import { reportInput } from "../../missions/inputs"
-import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
+import { recordNativeControlFailure } from "../../missions/native-control-failure"
 import { recurrenceInput, recurrenceSources, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
+import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
 const parse = (value: unknown): Record<string, unknown> => {
@@ -22,6 +23,22 @@ type Watermark = { sessionID: string; seq: number; ownerID: unknown; session: un
  * child leaves the original passage pending instead of guessing its lifetime. */
 export async function observeNativeRecurrenceSettlement(provider: NativeRecurrenceAuthorityProvider,
   storage: MissionStorage, child: Readonly<RecurrenceChildRecord>, signal: AbortSignal) {
+  return observeSettlement(provider, storage, child, signal, "completed")
+}
+
+/** Keep the succeeded observer unchanged for its callers. Only this finite-passage
+ * branch can record an admitted execution's known terminal failure without native
+ * tool/project/publication effects. Earlier provider attempts are not workflow replay. */
+export async function observeNativeRecurrenceTerminalSettlement(provider: NativeRecurrenceAuthorityProvider,
+  storage: MissionStorage, child: Readonly<RecurrenceChildRecord>, signal: AbortSignal) {
+  signal.throwIfAborted()
+  const failed = provider.readSession(child.grant.coordinatorSessionID).events
+    .some(event => event.type === "session.execution.failed.1")
+  return observeSettlement(provider, storage, child, signal, failed ? "failed" : "completed")
+}
+
+async function observeSettlement(provider: NativeRecurrenceAuthorityProvider,
+  storage: MissionStorage, child: Readonly<RecurrenceChildRecord>, signal: AbortSignal, outcome: "completed" | "failed") {
   signal.throwIfAborted()
   const grant = child.grant, source = provider.readCurrent(provider.sourceKey)
   const document = parseRecurrenceDocument(source, provider.store.scope.projectID,
@@ -34,9 +51,16 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
   const effects = ["create", "start", "coordinator-message"]
   const sources = recurrenceSources(child), expectedInput = recurrenceInput(child)
   if (child.effects.length !== 3 + sources.length || effects.some(kind => !child.effects.some(item => item.effect.kind === kind
-    && item.receipt?.outcome === "applied" && item.receipt.evidenceID === (kind === "coordinator-message" ? grant.messageID : grant.coordinatorSessionID))))
+    && item.receipt?.outcome === "applied" && item.receipt.operationID === item.operationID && item.receipt.sourceMessages === undefined
+    && item.receipt.evidenceID === (kind === "coordinator-message" ? grant.messageID : grant.coordinatorSessionID))))
     rejectAuthority("observation-unavailable")
+  const messageEffect = child.effects.find(item => item.effect.kind === "coordinator-message")!.effect
+  if (messageEffect.kind !== "coordinator-message" || messageEffect.messageID !== grant.messageID
+    || messageEffect.contentDigest !== authorityDigest(expectedInput.text)) rejectAuthority("binding-mismatch")
   const sourcesCurrent = () => {
+    const fresh = parseRecurrenceDocument(provider.readCurrent(provider.sourceKey), document.projectID, document.projectCanonical, document.id)
+    if (!same(fresh.pending, document.pending) || !same(fresh.config, document.config) || !same(fresh.cursors, document.cursors))
+      rejectAuthority("observation-unavailable")
     for (const source of sources) {
       const cursor = document.cursors.find(item => item.conversationID === source.conversationID)
       if ((cursor?.messageID ?? null) !== source.afterMessageID
@@ -46,13 +70,15 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
   }
   sourcesCurrent()
 
-  const journal = recurrencePassage(storage, document, () => true).journal
+  const journal = recurrencePassage(outcome === "failed" ? provider.passageStorage(grant.passage.id) : storage,
+    document, () => true).journal
   const snapshot = await journal.snapshot(), history = await journal.events()
   const mission = snapshot.missions[0]
   if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable
     || snapshot.notificationUnavailable || snapshot.cleanupUnavailable || history.discardedEvents
     || !mission || mission.id !== grant.missionID || mission.coordinatorSessionId !== grant.coordinatorSessionID
-    || mission.status !== "completed" || mission.control?.action !== "start" || mission.control.pending.length
+    || (outcome === "completed" ? mission.status !== "completed" : !["active", "failed"].includes(mission.status))
+    || mission.control?.action !== "start" || mission.control.pending.length
     || !same(mission.control.recurrence, { grantID: grant.grantID, passageID: grant.passage.id,
       messageID: grant.messageID, coordinatorSessionID: grant.coordinatorSessionID })
     || mission.control.receipts?.length !== 1 || mission.control.receipts[0].acknowledgementState !== "known"
@@ -62,14 +88,16 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
     || mission.reports.some(report => report.notificationStatus === "pending")
     || !history.events.some(event => event.type === "mission.created" && event.missionID === grant.missionID
       && event.requestID === grant.passage.id)
-    || !history.events.some(event => event.type === "mission.finished" && event.missionID === grant.missionID
+    || outcome === "completed" && !history.events.some(event => event.type === "mission.finished" && event.missionID === grant.missionID
       && event.outcome === "completed")) rejectAuthority("observation-unavailable")
-  const journalWatermark = provider.readJournalWatermark(grant.passage.id)
+  let journalWatermark = provider.readJournalWatermark(grant.passage.id)
+  if (outcome === "failed" && (mission.tasks.length || mission.reports.length || mission.actors.length !== 1
+    || mission.control.id !== controlOperationID(grant.missionID, grant.passage.id))) rejectAuthority("observation-unavailable")
   const notifications = new Map(mission.reports.filter(report => report.notificationStatus === "admitted")
     .map(report => { const input = reportInput(mission, report); return [input.id, input] as const }))
   const queue = [{ sessionID: grant.coordinatorSessionID, parentID: undefined as string | undefined,
     prompt: undefined as string | undefined }], visited = new Set<string>(), watermarks: Watermark[] = []
-  let terminal = ""
+  let terminal = "", failureSummary = ""
   while (queue.length) {
     signal.throwIfAborted()
     const { sessionID, parentID, prompt } = queue.shift()!
@@ -95,19 +123,35 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
       rejectAuthority("observation-unavailable")
     const created = events.filter(event => event.type === "session.created.1")
     const starts = events.filter(event => event.type === "session.execution.started.1")
-    const succeeded = events.filter(event => event.type === "session.execution.succeeded.1")
+    const ended = events.filter(event => event.type === `session.execution.${outcome === "completed" ? "succeeded" : "failed"}.1`)
     if (created.length !== 1 || created[0].data.sessionID !== sessionID
       || created[0].data.parentID !== parentID
-      || starts.length !== 1 || succeeded.length !== 1 || starts[0].seq >= succeeded[0].seq
-      || events.some(event => ["session.execution.failed.1", "session.execution.interrupted.1",
-        "session.step.failed.1"].includes(event.type)))
+      || starts.length !== 1 || ended.length !== 1 || starts[0].seq >= ended[0].seq
+      || events.some(event => (outcome === "completed" ? ["session.execution.failed.1", "session.execution.interrupted.1",
+        "session.step.failed.1"] : ["session.execution.succeeded.1", "session.execution.interrupted.1"]).includes(event.type)))
       rejectAuthority("observation-unavailable")
+    if (outcome === "failed") {
+      // Deliberately limited to native no-route with no durable Step/tool evidence.
+      // This does NOT prove zero provider HTTP requests: retry-full can precede a
+      // durable Step. The admitted execution FAILED; its three startup effects
+      // remain APPLIED. Native retries/billing are not workflow replay or tool grants.
+      const error = ended[0].data.error
+      if (sessionID !== grant.coordinatorSessionID || ended[0].seq !== read.seq
+        || !object(error) || error.type !== "provider.no-route" || typeof error.message !== "string" || error.status !== undefined
+        || events.some(event => !["session.created.1", "session.agent.selected.1", "session.model.selected.1",
+          "session.instructions.updated.2", "session.inbox.enqueued.1", "session.inbox.delivered.1",
+          "session.execution.started.1", "session.execution.failed.1"].includes(event.type))
+        || read.messages.length !== 1 || read.messages[0].id !== grant.messageID || read.messages[0].type !== "synthetic")
+        rejectAuthority("observation-unavailable")
+      provider.assertNoSessionChildren(sessionID)
+      failureSummary = error.message || error.type // Native diagnostic, never parsed into a result.
+    }
     const enqueued = events.filter(event => event.type === "session.inbox.enqueued.1")
     const delivered = events.filter(event => event.type === "session.inbox.delivered.1")
     if (!enqueued.length || enqueued.length !== delivered.length
       || enqueued.some(event => !delivered.some(next => next.data.inboxID === event.data.inboxID
-        && next.seq > event.seq && next.seq > starts[0].seq && next.seq < succeeded[0].seq))
-      || enqueued.some(event => event.seq >= succeeded[0].seq)) rejectAuthority("observation-unavailable")
+        && next.seq > event.seq && next.seq > starts[0].seq && next.seq < ended[0].seq))
+      || enqueued.some(event => event.seq >= ended[0].seq)) rejectAuthority("observation-unavailable")
     if (sessionID === grant.coordinatorSessionID) {
       const original = enqueued.find(event => event.data.inboxID === grant.messageID)
       const message = read.message && parse(read.message.data)
@@ -136,7 +180,7 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
             || !same(message?.metadata, expected.metadata)
         }))
         rejectAuthority("observation-unavailable")
-      terminal = succeeded[0].id as string
+      terminal = ended[0].id as string
     } else {
       const first = enqueued[0], message = read.messages.find(row => row.id === first.data.inboxID && row.type === "user")
       const text = message && parse(message.data).text
@@ -149,7 +193,7 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
     const tools = new Map<string, { seq: number; messageID: string }>()
     const shells = new Set<string>()
     for (const event of events) {
-      if (event.seq > succeeded[0].seq) {
+      if (event.seq > ended[0].seq) {
         if (event.type.startsWith("session.execution.") || event.type.startsWith("session.inbox.")) rejectAuthority("observation-unavailable")
         continue // A later unrelated human Shell cannot be attributed to this passage.
       }
@@ -195,14 +239,30 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
       }
       tools.delete(String(event.data.id))
     }
-    if (tools.size || shells.size || !succeeded[0].id) rejectAuthority("observation-unavailable")
+    if (tools.size || shells.size || !ended[0].id) rejectAuthority("observation-unavailable")
     watermarks.push({ sessionID, seq: read.seq, ownerID: read.ownerID, session: read.session })
   }
   if (mission.actors.some(actor => !visited.has(actor.sessionId))) rejectAuthority("observation-unavailable")
-  await provider.assertNoPendingRequests([...visited])
+  await provider.assertNoPendingRequests([...visited], outcome === "failed" ? "before-tools" : undefined)
   signal.throwIfAborted()
+  const nativeCurrent = (): true => {
+    signal.throwIfAborted()
+    provider.assertCurrent()
+    sourcesCurrent()
+    provider.assertSessionWatermarks(watermarks)
+    if (outcome === "failed") provider.assertNoSessionChildren(grant.coordinatorSessionID)
+    return true
+  }
+  if (outcome === "failed") {
+    nativeCurrent()
+    provider.assertJournalWatermark(grant.passage.id, journalWatermark)
+    await recordNativeControlFailure(journal, grant.missionID, { operationID: mission.control.id,
+      sessionID: grant.coordinatorSessionID, messageID: grant.messageID, evidenceID: terminal,
+      inputDigest: authorityDigest(expectedInput.text) }, failureSummary, nativeCurrent)
+    journalWatermark = provider.readJournalWatermark(grant.passage.id)
+  }
   const settlement: RecurrenceSettlement = { grantID: grant.grantID, evidenceID: terminal,
-    outcome: "completed", effects: child.effects.map(item => item.receipt!), nativeIdle: true,
+    outcome, effects: child.effects.map(item => item.receipt!), nativeIdle: true,
     controlsSettled: true, notificationsSettled: true, derivedCallsEnded: true }
   return { settlement, assertCurrent: (): true => {
     signal.throwIfAborted()
@@ -210,6 +270,7 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
     sourcesCurrent()
     provider.assertJournalWatermark(grant.passage.id, journalWatermark)
     provider.assertSessionWatermarks(watermarks)
+    if (outcome === "failed") provider.assertNoSessionChildren(grant.coordinatorSessionID)
     return true
   } }
 }

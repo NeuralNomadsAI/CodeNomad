@@ -2,6 +2,9 @@ import { createHash, randomUUID } from "node:crypto"
 import type { DatabaseSync } from "node:sqlite"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Location } from "@opencode/schema/location"
+import { Form } from "@opencode/schema/form"
+import { Permission } from "@opencode/schema/permission"
+import { Shell } from "@opencode/schema/shell"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
 import type { SqlClient } from "effect/unstable/sql"
 import { authorityDigest, canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
@@ -42,11 +45,12 @@ const SESSION_INBOX = "SELECT count(*) AS count FROM session_inbox WHERE session
 const SESSION_PENDING = "SELECT count(*) AS count FROM session_pending WHERE session_id=?"
 const SESSION_MESSAGE = "SELECT id,session_id,type,data FROM session_message WHERE id=?"
 const SESSION_MESSAGES = "SELECT id,type,data FROM session_message WHERE session_id=? ORDER BY seq LIMIT 129"
+const SESSION_CHILD = "SELECT id FROM session_v2 WHERE parent_id=? LIMIT 1"
 const PASSAGE_JOURNAL = "SELECT key,value FROM kv WHERE substr(key,1,?)=? ORDER BY key LIMIT 2001"
 // This private read shim permits only the metadata CAS statements.
 const claimQueries = new Set([
   "PRAGMA database_list", "SELECT 1 FROM sqlite_schema WHERE type='trigger' LIMIT 1", SELECT_VALUE,
-  SESSION_ROW, SESSION_HEAD, SESSION_EVENTS, SESSION_INBOX, SESSION_PENDING, SESSION_MESSAGE, SESSION_MESSAGES, PASSAGE_JOURNAL,
+  SESSION_ROW, SESSION_HEAD, SESSION_EVENTS, SESSION_INBOX, SESSION_PENDING, SESSION_MESSAGE, SESSION_MESSAGES, SESSION_CHILD, PASSAGE_JOURNAL,
 ])
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, RECURRENCE_AUTHORITY_MAX_BYTES) === canonicalAuthority(b, RECURRENCE_AUTHORITY_MAX_BYTES)
 
@@ -104,7 +108,7 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
       rejectAuthority("observation-unavailable")
     return { session, seq: head.seq as number, ownerID: head.owner_id, inbox, pending }
   }
-  const journalWatermark = (passageID: string) => {
+  const journalEntries = (passageID: string) => {
     // ponytail: bounded whole-passage hash; add a durable checkpoint only if large journals must settle.
     if (!/^rcp_[A-Za-z0-9_-]{3,100}$/.test(passageID)) rejectAuthority("binding-mismatch")
     const prefix = nativeKey(`${RECURRENCE_STORAGE_PREFIX}/passages/${stableToken(`${scope.projectID}\0${scope.projectCanonical}`, 24)}/${scope.scheduleID}/${passageID}/`)
@@ -112,8 +116,10 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     if (!entries.length || entries.length > 2000 || entries.some(row => typeof row.key !== "string"
       || !row.key.startsWith(prefix) || typeof row.value !== "string")
       || Buffer.byteLength(JSON.stringify(entries), "utf8") > 3 * 1024 * 1024) rejectAuthority("observation-unavailable")
-    return createHash("sha256").update(canonicalAuthority(entries, 3 * 1024 * 1024)).digest("hex")
+    return entries as { key: string; value: string }[]
   }
+  const journalWatermark = (passageID: string) => createHash("sha256")
+    .update(canonicalAuthority(journalEntries(passageID), 3 * 1024 * 1024)).digest("hex")
   // One native nonce slot per exact schedule. A new acquisition revokes an old
   // writer even if its evictable Location/plugin Scope has not been disposed.
   const scheduleKey = `${PREFIX}/owners/${authorityDigest({ scope, location: {
@@ -254,6 +260,48 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
       return true
     },
     readJournalWatermark: (passageID: string) => { entryFence(); return journalWatermark(passageID) },
+    /** Failure publication uses the SAME native IMMEDIATE frame, not an app-global
+     * ctx.storage Effect that cannot inherit this transaction's connection. */
+    passageStorage: (passageID: string): MissionStorage => {
+      entryFence()
+      if (!/^rcp_[A-Za-z0-9_-]{3,100}$/.test(passageID)) rejectAuthority("binding-mismatch")
+      const prefix = `${RECURRENCE_STORAGE_PREFIX}/passages/${stableToken(`${scope.projectID}\0${scope.projectCanonical}`, 24)}/${scope.scheduleID}/${passageID}`
+      const owned = (key: string) => {
+        if (!key.startsWith(`${prefix}/`) || !/^msn_[A-Za-z0-9_-]{3,100}\/[A-Za-z0-9_-]{3,100}$/.test(key.slice(prefix.length + 1)))
+          rejectAuthority("binding-mismatch")
+        return nativeKey(key)
+      }
+      return {
+        get: async key => { entryFence(); owned(key); return syncValue(key) },
+        scan: async options => {
+          entryFence()
+          if (options.prefix !== `${prefix}/` || options.limit !== 100) rejectAuthority("binding-mismatch")
+          const after = options.after === undefined ? undefined : owned(options.after)
+          const rows = journalEntries(passageID).filter(row => !after || row.key > after)
+          const entries = rows.slice(0, 100).map(row => ({ key: row.key.slice(nativeKey("").length), value: JSON.parse(row.value) }))
+          return { entries, ...(rows.length > 100 ? { next: entries.at(-1)!.key } : {}) }
+        },
+        set: async (key, value, current) => {
+          nativeFence()
+          if (!frame || !current) rejectAuthority("policy-unqualified")
+          const target = owned(key), bytes = canonicalAuthority(value)
+          current()
+          const existing = syncRows(SELECT_VALUE, [target])[0]?.value
+          if (existing !== undefined && existing !== bytes) rejectAuthority("request-conflict")
+          syncRows("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?) ON CONFLICT(key) DO NOTHING",
+            [target, bytes, Date.now(), Date.now()])
+          if (syncRows(SELECT_VALUE, [target])[0]?.value !== bytes) rejectAuthority("storage-unavailable")
+          current(); nativeFence()
+        },
+      }
+    },
+    /** This failed-execution subset has no family, including unregistered descendants. */
+    assertNoSessionChildren: (sessionID: string): true => {
+      entryFence()
+      if (!/^ses_[A-Za-z0-9_-]{3,100}$/.test(sessionID) || syncRows(SESSION_CHILD, [sessionID]).length)
+        rejectAuthority("observation-unavailable")
+      return true
+    },
     assertJournalWatermark: (passageID: string, expected: string): true => {
       nativeFence()
       if (!frame || journalWatermark(passageID) !== expected) rejectAuthority("observation-unavailable")
@@ -272,7 +320,7 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
       }
       return true
     },
-    assertNoPendingRequests: async (sessionIDs: readonly string[]) => {
+    assertNoPendingRequests: async (sessionIDs: readonly string[], mode?: "before-tools") => {
       entryFence()
       if (!sessionIDs.length || sessionIDs.length > 32 || new Set(sessionIDs).size !== sessionIDs.length)
         rejectAuthority("observation-unavailable")
@@ -289,6 +337,14 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
         .map(effect => Effect.runPromise(Effect.provide(effect as NativeEffect, graph))))
       if (![formRows, permissionRows, shellRows].every(Array.isArray)
         || [formRows, permissionRows, shellRows].some(list => (list as unknown[]).length > 1024)) rejectAuthority("observation-unavailable")
+      if (mode === "before-tools") {
+        Schema.decodeUnknownSync(Schema.Array(Form.Info))(formRows)
+        Schema.decodeUnknownSync(Schema.Array(Permission.Request))(permissionRows)
+        const actualShells = Schema.decodeUnknownSync(Schema.Array(Shell.Info))(shellRows)
+        if (actualShells.some(row => row.status === "running" && typeof row.metadata.sessionID !== "string"
+          || row.metadata.sessionID !== undefined && (typeof row.metadata.sessionID !== "string"
+            || !/^ses_[A-Za-z0-9_-]{3,100}$/.test(row.metadata.sessionID)))) rejectAuthority("observation-unavailable")
+      }
       if ((formRows as { sessionID?: string }[]).some(row => owned.has(row.sessionID ?? "") || row.sessionID === "global")
         || (permissionRows as { sessionID?: string }[]).some(row => owned.has(row.sessionID ?? ""))
         || (shellRows as { metadata?: { sessionID?: string } }[]).some(row => owned.has(row.metadata?.sessionID ?? "")))

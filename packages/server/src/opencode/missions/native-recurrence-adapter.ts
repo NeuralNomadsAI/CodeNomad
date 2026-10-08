@@ -16,7 +16,7 @@ import type { NativeRecurrenceOwner } from "./native-authority-provider"
 import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
 import { authorityDigest } from "../../missions/authority-protocol"
 import type { MissionStorage } from "../../missions/journal"
-import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlement"
+import { observeNativeRecurrenceTerminalSettlement } from "./native-recurrence-settlement"
 import { recurrenceInput, recurrenceReadEvidence, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
 import type { NativeSourceReadInput } from "./native-service-adapter"
 import type { RecurrenceEffectReceipt } from "../../missions/recurrence-authority-contract"
@@ -238,7 +238,7 @@ export function nativeRecurrenceAdapter(input: {
     },
     observeSettlement: input.observeSettlement ?? ((child: Readonly<RecurrenceChildRecord>, signal) => {
       if (!input.settlementStorage) rejectAuthority("observation-unavailable")
-      return observeNativeRecurrenceSettlement(provider, input.settlementStorage, child, signal)
+      return observeNativeRecurrenceTerminalSettlement(provider, input.settlementStorage, child, signal)
     }),
   }
 }
