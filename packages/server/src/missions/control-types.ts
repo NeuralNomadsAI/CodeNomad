@@ -171,7 +171,8 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
-  lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string }): Promise<unknown>
+  lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string;
+    recurrence?: import("./lifecycle-model").MissionLifecycleInput["recurrence"] }): Promise<unknown>
   cleanup?(coordinatorID: string, input: { missionID: string; deletionID: string; sessionID: string }): Promise<{ outcome: "removed" | "retained"; reason?: import("./model").MissionCleanupReason }>
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
   synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>

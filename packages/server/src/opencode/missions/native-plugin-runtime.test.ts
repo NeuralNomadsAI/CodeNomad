@@ -37,6 +37,7 @@ function fixture(name: string) {
       return info
     }),
     environment: () => Effect.succeed({}),
+    create: () => Effect.die("Unexpected create"),
     prompt: () => Effect.die("Unexpected admission"),
     synthetic: () => Effect.die("Unexpected admission"),
     inbox: () => Effect.gen(function* () {

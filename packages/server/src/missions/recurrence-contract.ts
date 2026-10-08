@@ -1,6 +1,8 @@
 import { z } from "zod"
 import { authorityRootSchema, canonicalAuthority } from "./authority-protocol"
 import { stableToken } from "./journal"
+export { recurrenceMessageID } from "./receipt-identity"
+import { recurrenceMessageID } from "./receipt-identity"
 import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
@@ -85,7 +87,6 @@ export function recurrencePassageID(projectToken: string, scheduleID: string, sc
   const dueIdentity = due.kind === "daily" ? `daily:${due.civilDay}` : `manual:${due.expectedRevision}:${due.requestID}`
   return `rcp_${stableToken(`${projectToken}\0${scheduleID}\0${scheduleRevision}\0${dueIdentity}`, 40)}`
 }
-export function recurrenceMessageID(passageID: string): string { return `msg_${stableToken(passageID, 28)}` }
 
 /** Strict bounded codec, including stored identity/placement relationships. No
  * repair, schema stripping, legacy reads, transcript retention or defaulting. */

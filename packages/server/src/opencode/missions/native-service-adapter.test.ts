@@ -23,7 +23,8 @@ const receipt = (value: AutonomousMissionCommand, type = value.kind === "prompt"
 
 test("real-shaped native service invokes entry fences, replaces environment, and retires with its Effect scope", async () => {
   const effects: string[] = []
-  const service = { get: () => Effect.succeed({ ...info, location: { ...info.location, workspaceID: undefined } }), inbox: () => Effect.succeed([]),
+  const service = { get: () => Effect.succeed({ ...info, location: { ...info.location, workspaceID: undefined } }),
+    create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
     environment: (input: { variables: Record<string, string> }) => Effect.sync(() => { effects.push("environment"); return { ...input.variables } }),
     prompt: () => Effect.sync(() => { effects.push("prompt"); return receipt(command) }),
     synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),
@@ -48,7 +49,7 @@ test("real-shaped native service invokes entry fences, replaces environment, and
 
 test("missing/private contract changes fail closed without HTTP fallback or version checks", async () => {
   await assert.rejects(Effect.runPromise(Effect.scoped(acquireMissionNativeService())), /unavailable/)
-  const service = { get: () => Effect.succeed(info), inbox: () => Effect.succeed([]),
+  const service = { get: () => Effect.succeed(info), create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
     environment: () => Effect.succeed(undefined), prompt: () => ({ invented: true }), synthetic: () => Effect.succeed(receipt(command)) }
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const native = yield* acquireMissionNativeService()
@@ -61,7 +62,7 @@ test("missing/private contract changes fail closed without HTTP fallback or vers
 
 test("authority call-entry rejects false, void, promises and thenables before environment or admission", async () => {
   let effects = 0, assimilated = 0
-  const service = { get: () => Effect.succeed(info), inbox: () => Effect.succeed([]),
+  const service = { get: () => Effect.succeed(info), create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
     environment: () => Effect.sync(() => { effects++; return {} }),
     prompt: () => Effect.sync(() => { effects++; return receipt(command) }),
     synthetic: () => Effect.sync(() => { effects++; return receipt({ ...command, kind: "synthetic" }) }) }
@@ -87,6 +88,62 @@ test("authority call-entry rejects false, void, promises and thenables before en
       assert.deepEqual(await native.inbox("ses_owned"), [])
       assert.equal(effects, 0)
       assert.equal(assimilated, 0)
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
+
+test("native root creation checks the exact requested location, profile and mission metadata at one call entry", async () => {
+  const input = { id: "ses_root", title: "Mission coordinator", location: { directory },
+    agent: "worker", model: { providerID: "provider", id: "model", variant: "fast" },
+    metadata: { "codenomad.mission": { version: 1, missionID: "msn_owned", kind: "coordinator", role: "coordinator" } } }
+  const root = Schema.decodeUnknownSync(Session.Info)({ ...info, ...input, location: { directory },
+    time: { created: 1, updated: 1 } })
+  let entered = 0, claimed = false, changed = false
+  const service = { get: () => Effect.succeed(root), inbox: () => Effect.succeed([]),
+    environment: () => Effect.succeed({}), prompt: () => Effect.succeed(receipt(command)),
+    synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),
+    create: () => Effect.sync(() => { entered++; return changed ? { ...root, metadata: {} } : root }) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const current = () => { assert(claimed); return true as const }
+      await assert.rejects(native.create(input, {}, current), /policy-unqualified/)
+      assert.equal(entered, 0)
+      claimed = true
+      assert.equal((await native.create(input, {}, current)).id, input.id)
+      changed = true
+      await assert.rejects(native.create(input, {}, current), /effect-unavailable/)
+      assert.equal(entered, 2)
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
+
+test("relocation or profile change during preparation blocks ENV and synthetic at native call entry", async () => {
+  const metadata = { "codenomad.mission": { version: 1, missionID: "msn_owned", kind: "coordinator", role: "coordinator" } }
+  const expected = { id: "ses_owned", projectID: "project", location: { directory }, agent: "worker",
+    model: { providerID: "provider", id: "model" }, metadata }
+  let moved = false, changedModel = false, mutations = 0, fences = 0
+  const service = { get: () => Effect.sync(() => Schema.decodeUnknownSync(Session.Info)({ ...info,
+    agent: expected.agent, model: changedModel ? { providerID: "provider", id: "other" } : expected.model,
+    metadata, location: { directory: moved ? `${directory}-moved` : directory }, time: { created: 1, updated: 1 } })),
+    create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]),
+    environment: (input: { variables: Record<string, string> }) => Effect.sync(() => { mutations++; return input.variables }),
+    prompt: () => Effect.sync(() => { mutations++; return receipt(command) }),
+    synthetic: () => Effect.sync(() => { mutations++; return receipt({ ...command, kind: "synthetic" }) }) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      assert.equal((await native.get({ sessionID: expected.id })).location.directory, directory)
+      await Promise.resolve() // Native Session may move while ENV/profile is prepared.
+      moved = true
+      const current = () => { fences++; return true as const }
+      await assert.rejects(native.environment({ sessionID: expected.id, variables: { MARKER: "fresh" } }, {}, current, expected), /binding-mismatch/)
+      await assert.rejects(native.admit({ ...command, kind: "synthetic" }, {}, current, expected), /binding-mismatch/)
+      moved = false; changedModel = true
+      await assert.rejects(native.environment({ sessionID: expected.id, variables: {} }, {}, current, expected), /binding-mismatch/)
+      await assert.rejects(native.admit({ ...command, kind: "synthetic" }, {}, current, expected), /binding-mismatch/)
+      assert.equal(mutations, 0)
+      assert.equal(fences, 0, "the one-use native admission fence is not spent on a moved target")
     })
   })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
 })

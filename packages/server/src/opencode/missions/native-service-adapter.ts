@@ -4,7 +4,7 @@ import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import type { NativeMissionSession } from "../../missions/control-types"
-import { rejectAuthority } from "../../missions/authority-protocol"
+import { canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import type { AutonomousMissionCommand } from "./autonomous-contract"
 
@@ -15,13 +15,27 @@ const locationTag = Context.Service<never, unknown>("@opencode/Location")
 type NativeEffect = Effect.Effect<unknown, unknown>
 type NativeSessionService = {
   get(id: string): NativeEffect
+  create(input: NativeCreateInput): NativeEffect
   environment(input: { sessionID: string; variables: Record<string, string> }): NativeEffect
   prompt(input: AutonomousMissionCommand["input"]): NativeEffect
-  synthetic(input: AutonomousMissionCommand["input"]): NativeEffect
+  synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"]): NativeEffect
   inbox(id: string): NativeEffect
 }
+export type NativeCreateInput = {
+  id: string; title: string; location: { directory: string }; metadata: Record<string, unknown>
+  agent: string; model: { providerID: string; id: string; variant?: string }
+}
+export type NativeRootPlacement = Pick<NativeCreateInput, "id" | "agent" | "model" | "metadata"> & {
+  projectID: string; location: { directory: string; workspaceID?: string }
+}
+export type NativeRecurrenceLifecycleCommand = { kind: "synthetic"; input: {
+  sessionID: string; id: string; text: string; description: string; delivery: "queue"; resume: true
+  metadata: { "codenomad.mission": { version: 1; missionID: string; kind: "lifecycle"; operationID: string;
+    taskMode: "native" | "independent";
+    recurrence: { grantID: string; passageID: string; messageID: string; coordinatorSessionID: string } } }
+} }
 const method = Schema.declare<(input: never) => NativeEffect>((value): value is (input: never) => NativeEffect => Predicate.isFunction(value))
-const serviceShape = Schema.Struct({ get: method, environment: method, prompt: method, synthetic: method, inbox: method })
+const serviceShape = Schema.Struct({ get: method, create: method, environment: method, prompt: method, synthetic: method, inbox: method })
 const nativeEffect = Schema.declare<NativeEffect>((value): value is NativeEffect => Effect.isEffect(value))
 const variablesShape = Schema.Record(Schema.String, Schema.String)
 
@@ -29,7 +43,7 @@ const variablesShape = Schema.Record(Schema.String, Schema.String)
  * real service graph; a bare Promise/Effect.runPromise cannot fabricate it. Scope
  * finalization retires captured sends before release. This is a native capability,
  * not a human authorization or protected grant; the admission helper supplies those.
- * Existing Session.environment/get/inbox/prompt/synthetic contracts are validated
+  * Existing Session.create/environment/get/inbox/prompt/synthetic contracts are validated
  * by shape and result codecs, not the runtime version or an invented ctx field. */
 export const acquireMissionNativeService = Effect.fn("missions.acquireNativeService")(function* () {
   const found = yield* Effect.serviceOption(sessionTag)
@@ -50,11 +64,24 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     return true as const
   }
   const run = <A>(operation: () => NativeEffect, decode: Schema.Codec<A, unknown>,
-    options: { signal?: AbortSignal } | undefined, current: () => true) => {
+    options: { signal?: AbortSignal } | undefined, current: () => true, expected?: NativeRootPlacement) => {
+    const pinned = expected && structuredClone(expected)
     const effect = Effect.gen(function* () {
-      yield* Effect.sync(() => { options?.signal?.throwIfAborted(); assertCurrent(); assertSynchronousAuthorityGuard(current, "policy-unqualified") })
-      // Invoke the actual native method only AFTER the synchronous call-entry fence.
-      const result = yield* Schema.decodeUnknownEffect(nativeEffect)(yield* Effect.sync(operation))
+      // The native get is preparation; a moved/retargeted root is rejected in
+      // the SAME synchronous callback that invokes the native mutation.
+      const session = pinned ? yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* service.get(pinned.id)) : undefined
+      const entered = yield* Effect.sync(() => {
+        options?.signal?.throwIfAborted(); assertCurrent()
+        if (pinned && (!session || session.id !== pinned.id || session.parentID
+          || session.projectID !== pinned.projectID || session.location.directory !== pinned.location.directory
+          || session.location.workspaceID !== pinned.location.workspaceID || session.agent !== pinned.agent
+          || !isDeepStrictEqual(session.model, pinned.model) || !isDeepStrictEqual(session.metadata, pinned.metadata))) {
+          rejectAuthority("binding-mismatch")
+        }
+        assertSynchronousAuthorityGuard(current, "policy-unqualified")
+        return operation()
+      })
+      const result = yield* Schema.decodeUnknownEffect(nativeEffect)(entered)
       return yield* Schema.decodeUnknownEffect(decode)(yield* result)
     })
     return Effect.runPromise(Effect.provide(effect, graph), { signal: options?.signal })
@@ -67,21 +94,36 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       return { id: session.id, projectID: session.projectID, location: { directory: session.location.directory,
         ...(session.location.workspaceID === undefined ? {} : { workspaceID: session.location.workspaceID }) },
         ...(session.parentID === undefined ? {} : { parentID: session.parentID }),
+        ...(session.title === undefined ? {} : { title: session.title }),
+        ...(session.metadata === undefined ? {} : { metadata: JSON.parse(canonicalAuthority(session.metadata)) as NativeMissionSession["metadata"] }),
         ...(session.agent === undefined ? {} : { agent: session.agent }),
         ...(session.model === undefined ? {} : { model: { ...session.model } }) }
     },
     inbox: (sessionID: string, options?: { signal?: AbortSignal }) =>
       run(() => service.inbox(sessionID), Schema.Array(Schema.toType(SessionInbox.Info)).check(Schema.isMaxLength(1024)), options, assertCurrent),
+    create: async (input: NativeCreateInput, options: { signal?: AbortSignal }, current: () => true) => {
+      const request = structuredClone(input)
+      const session = await run(() => service.create(request), Schema.toType(Session.Info), options, current)
+      if (session.id !== request.id || session.parentID || session.projectID !== location.project.id
+        || session.location.directory !== request.location.directory || session.location.workspaceID !== location.workspaceID
+        || session.agent !== request.agent || !isDeepStrictEqual(session.model, request.model)
+        || !isDeepStrictEqual(session.metadata, request.metadata)) rejectAuthority("effect-unavailable")
+      return session
+    },
     environment: async (input: { sessionID: string; variables: Record<string, string> },
-      options: { signal?: AbortSignal }, current: () => true) => {
+      options: { signal?: AbortSignal }, current: () => true, expected?: NativeRootPlacement) => {
       const variables = { ...input.variables }
-      const result = await run(() => service.environment({ sessionID: input.sessionID, variables }), variablesShape, options, current)
+      if (expected && input.sessionID !== expected.id) rejectAuthority("binding-mismatch")
+      const result = await run(() => service.environment({ sessionID: input.sessionID, variables }), variablesShape, options, current, expected)
       if (!isDeepStrictEqual(result, variables)) rejectAuthority("effect-unavailable")
     },
-    admit: async (command: AutonomousMissionCommand, options: { signal?: AbortSignal }, current: () => true) => {
+    admit: async (command: AutonomousMissionCommand | NativeRecurrenceLifecycleCommand, options: { signal?: AbortSignal },
+      current: () => true, expected?: NativeRootPlacement) => {
       const input = structuredClone(command.input)
-      const receipt = await run(() => command.kind === "prompt" ? service.prompt(input) : service.synthetic(input),
-        Schema.toType(SessionInbox.Info), options, current)
+      if (expected && input.sessionID !== expected.id) rejectAuthority("binding-mismatch")
+      const receipt = await run(() => command.kind === "prompt" ? service.prompt(input as AutonomousMissionCommand["input"])
+        : service.synthetic(input),
+        Schema.toType(SessionInbox.Info), options, current, expected)
       if (receipt.id !== input.id || receipt.sessionID !== input.sessionID
         || receipt.type !== (command.kind === "prompt" ? "user" : "synthetic")) rejectAuthority("effect-unavailable")
       return receipt

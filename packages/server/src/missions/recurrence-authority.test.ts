@@ -267,6 +267,36 @@ test("Pause/revoke and signer/native qualification changes fence prepared effect
   }
 })
 
+test("a committed Pause after native entry preserves the original applied ACK despite dispatch cancellation", async () => {
+  const f = await fixture(); await f.authorize(); const grant = await f.reserve()
+  const create = await f.claim(grant.grantID, { kind: "create" })
+  f.invoke(create)
+  const dispatch = new AbortController(); dispatch.abort()
+  await f.authorize({ action: "pause" })
+  await assert.rejects(f.core.acknowledgeEffect(grant.grantID, create.operation.operationID,
+    (await f.store.read())!.revision, dispatch.signal))
+  const original = await f.core.acknowledgeEffect(grant.grantID, create.operation.operationID,
+    (await f.store.read())!.revision, new AbortController().signal)
+  assert.equal(original.operationID, create.operation.operationID)
+  assert.equal(original.outcome, "applied")
+  assert.equal(f.effects(), 1)
+  await assert.rejects(f.claim(grant.grantID, { kind: "start" }), /authorization-blocked/)
+})
+
+test("signed initial coordinator message can be reserved once after start environment ACK", async () => {
+  const f = await fixture(); await f.authorize(); const grant = await f.reserve()
+  const create = await f.claim(grant.grantID, { kind: "create" }); f.invoke(create)
+  await f.acknowledge(grant.grantID, create.operation.operationID)
+  const start = await f.claim(grant.grantID, { kind: "start" }); f.invoke(start)
+  await f.acknowledge(grant.grantID, start.operation.operationID)
+  const message = { kind: "coordinator-message" as const, messageID: grant.messageID,
+    contentDigest: "a".repeat(64) }
+  const reserved = await f.claim(grant.grantID, message); f.invoke(reserved)
+  await f.acknowledge(grant.grantID, reserved.operation.operationID)
+  await assert.rejects(f.claim(grant.grantID, message), /request-conflict/)
+  assert.equal(f.effects(), 3)
+})
+
 test("human reauthorization is CAS, monotonic and refuses outstanding children; stale snapshots cannot replenish budgets", async () => {
   const f = await fixture(); await f.authorize()
   const first = await f.signed(), second = await f.signed()

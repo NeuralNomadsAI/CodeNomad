@@ -144,8 +144,8 @@ export function assertRecurrenceEffectScope(child: RecurrenceChildRecord, effect
   if (effect.kind === "create" && effects.some(item => item.effect.kind === "create")
     || effect.kind === "start" && (!applied("create") || effects.some(item => item.effect.kind === "start"))
     || !["create", "start", "inbox-read"].includes(effect.kind) && !applied("start")) rejectAuthority("authorization-blocked")
-  if (effect.kind === "coordinator-message" && (effect.messageID === child.grant.messageID
-    || effects.some(item => item.effect.kind === "coordinator-message" && item.effect.messageID === effect.messageID))) rejectAuthority("request-conflict")
+  if (effect.kind === "coordinator-message" && effects.some(item => item.effect.kind === "coordinator-message"
+    && item.effect.messageID === effect.messageID)) rejectAuthority("request-conflict")
   if (effect.kind === "native-call") {
     if (effects.some(item => item.effect.kind === "native-call" && item.effect.parentSessionID === effect.parentSessionID
       && (item.effect.toolCallID === effect.toolCallID || item.effect.taskKey === effect.taskKey

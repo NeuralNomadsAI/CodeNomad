@@ -7,6 +7,8 @@ export function stableToken(value: string, length = 26): string {
   return createHash("sha256").update(value).digest("hex").slice(0, length)
 }
 
+export function recurrenceMessageID(passageID: string): string { return `msg_${stableToken(passageID, 28)}` }
+
 export function controlOperationID(missionID: string, requestID: string): string {
   return `evt_${stableToken(`${missionID}\0control-${requestID}`, 28)}`
 }
@@ -23,8 +25,10 @@ export function isControlReceipt(event: MissionEvent, intent: MissionControlRequ
   return event.type === "mission.control-applied" && event.projectID === intent.projectID
     && event.missionID === intent.missionID && event.operationID === intent.id && event.sessionID === sessionID
     && intent.targets.some(target => target.sessionID === sessionID) && event.id === controlReceiptID(intent.id, sessionID)
+    && (!intent.recurrence || event.nativeAcknowledgement !== undefined)
     && (event.nativeAcknowledgement === undefined || Boolean(parseMissionNativeAcknowledgement(event.nativeAcknowledgement,
-      { missionID: intent.missionID, operationID: intent.id, sessionID, action: intent.action })))
+      { missionID: intent.missionID, operationID: intent.id, sessionID, action: intent.action,
+        ...(intent.recurrence ? { recurrence: intent.recurrence } : {}) })))
 }
 
 export function hasInvalidControlHistory(events: readonly MissionEvent[]): boolean {

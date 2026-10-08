@@ -12,6 +12,9 @@ import type { RecurrenceAuthorityDocument, NativeRecurrenceAuthorityStore } from
 import { readFamilyAuthorityIdentity, readFamilyAuthorityIdentitySync, type SynchronousFamilyAuthorityClaim } from "../../workspaces/family-authority-claim"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 import type { acquireNativeManagedOwner } from "./native-managed-owner"
+import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
+import { authorityDigest } from "../../missions/authority-protocol"
+import { controlOperationID } from "../../missions/receipt-identity"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, 768 * 1024) === canonicalAuthority(b, 768 * 1024)
 
@@ -26,6 +29,16 @@ export interface NativeStandingSigner {
   captureHumanIntent(parent: SignedRecurrenceStandingIntent): () => true
 }
 
+/** In-flight native call owned by the admission module, never an RPC value.
+ * Only the original call may expose its positive native return as a receipt. */
+export type NativeRecurrenceInvocation = {
+  operationID: string
+  input: { kind: "create"; request: NativeCreateInput }
+    | { kind: "start"; sessionID: string; variables: Record<string, string> }
+    | { kind: "coordinator-message"; command: NativeRecurrenceLifecycleCommand }
+  acknowledgement?: { operationID: string; outcome: "applied"; evidenceID: string }
+}
+
 /** Native capability + original protected signer + held physical family claims.
  * Construction never enrolls an anchor, creates a key or opens a new database. */
 export function nativeRecurrenceAdapter(input: {
@@ -33,6 +46,7 @@ export function nativeRecurrenceAdapter(input: {
   signer: NativeStandingSigner
   owner: import("effect").Effect.Success<ReturnType<typeof acquireNativeManagedOwner>>
   familyClaims: ReadonlyMap<string, SynchronousFamilyAuthorityClaim>
+  invocation?: () => NativeRecurrenceInvocation | undefined
 }): RecurrenceAuthorityAdapter {
   const { provider, signer } = input, store = provider.store
   const owner = (): true => {
@@ -130,12 +144,51 @@ export function nativeRecurrenceAdapter(input: {
       if (target !== store || !hot || hot.parent.body.action !== "authorize" || !same(hot.parent, child.parent)
         || !same(hot.child, child) || provider.readCurrent(`${store.parentKey}/passages/${child.grant.passage.id}`) !== undefined
         || !hot.child?.effects.some(item => same(item, operation))) rejectAuthority("authorization-blocked")
-      // Original native invocation/target/payload is not currently proven by
-      // metadata. Never issue the single-use execution fence on this path.
-      rejectAuthority("effect-unavailable")
+      const call = input.invocation?.()
+      if (!call || operation.receipt || call.operationID !== operation.operationID) rejectAuthority("effect-unavailable")
+      const grant = child.grant, config = child.parent.body.config
+      const metadata = { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "coordinator", role: "coordinator" } }
+      if (operation.effect.kind === "create") {
+        if (call.input.kind !== "create" || !same(call.input.request, {
+          id: grant.coordinatorSessionID, title: `Mission coordinator: ${config.consigne}`.slice(0, 160),
+          location: { directory: provider.location.directory }, metadata, ...config.profiles!.coordinator,
+        })) rejectAuthority("binding-mismatch")
+      } else if (operation.effect.kind === "start") {
+        if (call.input.kind !== "start" || call.input.sessionID !== grant.coordinatorSessionID
+          || !call.input.variables || !Object.values(call.input.variables).every(value => typeof value === "string")) rejectAuthority("binding-mismatch")
+      } else if (operation.effect.kind === "coordinator-message") {
+        if (call.input.kind !== "coordinator-message" || operation.effect.messageID !== grant.messageID
+          || operation.effect.contentDigest !== authorityDigest(call.input.command.input.text)
+          || !same(call.input.command, { kind: "synthetic", input: {
+            sessionID: grant.coordinatorSessionID, id: grant.messageID, text: config.consigne,
+            description: "CodeNomad recurring mission start", delivery: "queue", resume: true,
+            metadata: { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "lifecycle",
+              operationID: controlOperationID(grant.missionID, grant.passage.id), taskMode: config.taskMode, recurrence: {
+                grantID: grant.grantID, passageID: grant.passage.id, messageID: grant.messageID,
+                coordinatorSessionID: grant.coordinatorSessionID } } },
+          } })) rejectAuthority("binding-mismatch")
+      } else rejectAuthority("effect-unavailable")
+      return true
     },
-    observeEffect: async (_child: Readonly<RecurrenceChildRecord>, _operation: Readonly<RecurrenceEffectRecord>) =>
-      rejectAuthority("observation-unavailable"),
+    observeEffect: async (child, operation) => {
+      const call = input.invocation?.(), receipt = call?.acknowledgement
+      if (!call || !receipt || call.operationID !== operation.operationID || receipt.operationID !== operation.operationID
+        || receipt.evidenceID !== (call.input.kind === "coordinator-message" ? child.grant.messageID : child.grant.coordinatorSessionID)) {
+        rejectAuthority("observation-unavailable")
+      }
+      const current = (): true => {
+        owner()
+        const hot = provider.readCurrent(store.key) as RecurrenceAuthorityDocument | undefined
+        if (!same(call, input.invocation?.()) || !hot?.child || !same(hot.child.grant, child.grant)
+          || !hot.child.effects.some(effect => same(effect, operation))
+          || !same(hot.child.effects.find(effect => effect.operationID === operation.operationID)?.receipt, null)) {
+          rejectAuthority("observation-unavailable")
+        }
+        return true
+      }
+      current()
+      return { receipt, assertCurrent: current }
+    },
     observeSettlement: async (_child: Readonly<RecurrenceChildRecord>) => rejectAuthority("observation-unavailable"),
   }
 }

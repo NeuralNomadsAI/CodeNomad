@@ -50,6 +50,7 @@ async function fixture() {
   let current = true, environmentHook: (() => void | Promise<void>) | undefined, failSend = false, moved = false
   const effects: Array<{ kind: string; id?: string; variables?: Record<string, string> }> = []
   const service = {
+    create: () => Effect.die("Unexpected create"),
     get: (id: string) => Effect.sync(() => Schema.decodeUnknownSync(Session.Info)({ id, projectID: scope.projectID,
       ...(id === "ses_worker" ? { agent: "worker" } : {}), location: { directory: moved ? `${root}-moved` : root },
       cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } })),

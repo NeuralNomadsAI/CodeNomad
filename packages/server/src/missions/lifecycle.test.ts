@@ -4,7 +4,7 @@ import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
 import type { MissionJsonValue, MissionMap } from "./model"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
-import { controlResumeAdmissionID } from "./receipt-identity"
+import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 
 function fixture() {
   const values = new Map<string, MissionJsonValue>()
@@ -53,6 +53,47 @@ function fixture() {
   return { control, create, calls, failing, action, delegate, values, native, transport, state, storage }
 }
 const code = (value: string) => (error: unknown) => error instanceof MissionControlError && error.code === value
+
+test("signed-passage lifecycle ID is exact and ordinary one-shot start ID stays unchanged", async () => {
+  const f = fixture(), mission = await f.create(), passageID = "rcp_signed_passage"
+  const recurrence = { grantID: "rgrant_signed", passageID, messageID: recurrenceMessageID(passageID),
+    coordinatorSessionID: mission.coordinatorSessionId }
+  const request = { ...f.action(mission, "start", passageID), recurrence }
+  await assert.rejects(f.control().lifecycle({ ...request, recurrence: { ...recurrence, messageID: "msg_wrong" } }),
+    code("control-conflict"))
+  assert.equal(f.calls.length, 0, "a mismatched message is rejected before transport")
+  f.transport.lifecycle = async (_, input) => ({ nativeAcknowledgement: {
+    missionID: input.missionID, sessionID: input.sessionID, operationID: input.operationID,
+    action: "start", disposition: "start-admitted", admission: { id: input.recurrence!.messageID,
+      sessionID: input.sessionID, type: "synthetic", delivery: "queue", time: { created: 100 },
+      payload: { text: "Continue existing work", metadata: { "codenomad.mission": {
+        version: 1, kind: "lifecycle", missionID: input.missionID, operationID: input.operationID,
+        recurrence: input.recurrence,
+      } } },
+    },
+  } })
+  const result = (await f.control().lifecycle(request)).mission
+  assert.equal(result.control?.receipts?.[0]?.nativeAcknowledgement?.disposition, "start-admitted")
+  assert.equal(result.control?.recurrence?.messageID, recurrence.messageID)
+  const ordinary = fixture(), prepared = await ordinary.create()
+  const standard = (await ordinary.control().lifecycle(ordinary.action(prepared, "start"))).mission.control!
+  assert.equal(standard.recurrence, undefined)
+  assert.equal(standard.receipts?.[0]?.nativeAcknowledgement?.disposition, "start-admitted")
+})
+
+test("recurring start with lost native ACK retains its original operation without automatic replay", async () => {
+  const f = fixture(), mission = await f.create(), passageID = "rcp_uncertain_start"
+  const request = { ...f.action(mission, "start", passageID), recurrence: { grantID: "rgrant_original", passageID,
+    messageID: recurrenceMessageID(passageID), coordinatorSessionID: mission.coordinatorSessionId } }
+  let entries = 0
+  f.transport.lifecycle = async () => { entries++; throw new Error("native ACK lost") }
+  await assert.rejects(f.control().lifecycle(request), code("control-pending"))
+  const first = (await f.control().snapshot()).missions[0].control!
+  assert.equal(first.recurrence?.grantID, request.recurrence.grantID)
+  assert.deepEqual(first.pending, [mission.coordinatorSessionId])
+  assert.equal((await f.control().snapshot()).missions[0].control?.id, first.id)
+  assert.equal(entries, 1)
+})
 
 test("native coordinator readout respects explicit Play, Pause and terminal Stop", async () => {
   const f = fixture()

@@ -27,6 +27,8 @@ export interface MissionLifecycleInput {
   requestID: string
   expectedRevision: number
   action: MissionAction
+  /** Internal signed finite passage only; ordinary lifecycle omits this. */
+  recurrence?: { grantID: string; passageID: string; messageID: string; coordinatorSessionID: string }
 }
 export interface MissionLifecycleOperation extends MissionLifecycleInput {
   id: string
@@ -80,6 +82,7 @@ export function projectLifecycle(events: readonly MissionEvent[]): { runState: M
     control: {
       id: operation.id, missionID: operation.missionID, requestID: operation.requestID, expectedRevision: operation.expectedRevision,
       action: operation.action, targets: operation.targets, pending, receipts,
+      ...(operation.recurrence ? { recurrence: operation.recurrence } : {}),
       ...(completedRevision !== undefined ? { completedRevision } : {}),
     },
   }

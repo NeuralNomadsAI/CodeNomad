@@ -1,9 +1,11 @@
 import { z } from "zod"
-import type { MissionAction, MissionNativeAcknowledgement } from "./lifecycle-model"
-import { controlResumeAdmissionID } from "./receipt-identity"
+import { isDeepStrictEqual } from "node:util"
+import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement } from "./lifecycle-model"
+import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 
 const id = z.string().min(1).max(240)
 const identity = { missionID: id, operationID: id, sessionID: id }
+const recurrence = z.object({ grantID: id, passageID: id, messageID: id, coordinatorSessionID: id }).strict()
 const cancellation = z.object({ inboxID: id, disposition: z.enum(["native-acknowledged", "observed-absent"]) }).strict()
 const interruptAcknowledgement = z.object({ ...identity, action: z.enum(["pause", "stop"]),
   disposition: z.literal("interrupt-observed"), interrupt: z.object({ interrupted: z.boolean() }).strict(),
@@ -21,6 +23,7 @@ const acknowledgement = z.union([startAcknowledgement, interruptAcknowledgement,
  * old {applied:true}, void, unknown response or activity observation into an ACK. */
 export function parseMissionNativeAcknowledgement(value: unknown, expected?: {
   missionID: string; operationID: string; sessionID: string; action: MissionAction
+  recurrence?: MissionLifecycleInput["recurrence"]
 }): MissionNativeAcknowledgement | undefined {
   const parsed = acknowledgement.safeParse(value)
   if (!parsed.success) return undefined
@@ -29,7 +32,17 @@ export function parseMissionNativeAcknowledgement(value: unknown, expected?: {
     || ack.sessionID !== expected.sessionID || ack.action !== expected.action)) return undefined
   if (ack.disposition === "start-admitted") {
     const metadata = ack.admission.payload.metadata?.["codenomad.mission"]
-    if (ack.admission.id !== controlResumeAdmissionID(ack.operationID, ack.sessionID) || ack.admission.sessionID !== ack.sessionID
+    const claimed = metadata !== null && metadata !== undefined && typeof metadata === "object" && !Array.isArray(metadata)
+      ? recurrence.safeParse((metadata as Record<string, unknown>).recurrence) : { success: false as const }
+    const bound = claimed.success ? claimed.data : undefined
+    const wrongID = bound ? bound.messageID !== recurrenceMessageID(bound.passageID)
+        || bound.coordinatorSessionID !== ack.sessionID || ack.admission.id !== bound.messageID
+      : ack.admission.id !== controlResumeAdmissionID(ack.operationID, ack.sessionID)
+    if (wrongID || expected && (Boolean(bound) !== Boolean(expected.recurrence)
+        || bound && !isDeepStrictEqual(bound, expected.recurrence))
+      || metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        && "recurrence" in metadata && !bound
+      || ack.admission.sessionID !== ack.sessionID
       || !metadata || typeof metadata !== "object" || Array.isArray(metadata)
       || (metadata as Record<string, unknown>).version !== 1 || (metadata as Record<string, unknown>).kind !== "lifecycle"
       || (metadata as Record<string, unknown>).missionID !== ack.missionID
@@ -94,7 +107,10 @@ export const nativeAcknowledgementSchema = { oneOf: [
 ] } as const
 export const lifecycleOperationSchema = {
   type: "object", properties: {
-    ...lifecycleInputSchema.properties, id: { type: "string" }, pending: { type: "array", items: { type: "string" } },
+    ...lifecycleInputSchema.properties, recurrence: { type: "object", properties: {
+      grantID: { type: "string" }, passageID: { type: "string" }, messageID: { type: "string" }, coordinatorSessionID: { type: "string" },
+    }, required: ["grantID", "passageID", "messageID", "coordinatorSessionID"], additionalProperties: false },
+    id: { type: "string" }, pending: { type: "array", items: { type: "string" } },
     completedRevision: { type: "integer", minimum: 1 },
     // Native V2's JSON Schema decoder does not support `not`. Complete,
     // disjoint object branches retain the exact known/unknown evidence rule.

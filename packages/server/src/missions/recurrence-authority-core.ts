@@ -135,6 +135,9 @@ export class RecurrenceAuthority {
   async acknowledgeEffect(grantID: string, operationID: string, expectedRevision: number, signal: AbortSignal): Promise<RecurrenceEffectReceipt> {
     return this.store.transaction(expectedRevision, async before => {
       if (!before) rejectAuthority("authorization-blocked")
+      // Torn denial must reconcile its original signed CAS before any receipt.
+      // A committed Pause/Stop advances the parent epoch, so exact original
+      // positive ACKs may still be recorded without authorizing new effects.
       await this.noPendingParent(before)
       const child = this.child(before, grantID), operation = child.effects.find(item => item.operationID === operationID)
       if (!operation || operation.receipt) rejectAuthority("request-conflict")

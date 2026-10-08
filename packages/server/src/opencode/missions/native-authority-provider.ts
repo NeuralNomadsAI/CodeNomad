@@ -12,7 +12,7 @@ import { stableToken } from "../../missions/journal"
 import { recurrenceAuthorityScopeSchema, RECURRENCE_AUTHORITY_MAX_BYTES, type RecurrenceAuthorityScope, type SignedRecurrenceStandingIntent } from "../../missions/recurrence-authority-contract"
 import { NativeRecurrenceAuthorityStore, recurrenceAuthorityDocumentSchema, type RecurrenceAuthorityDocument } from "../../missions/recurrence-authority-store"
 import type { MissionStorage } from "../../missions/journal"
-import { validateRecurrenceMetadataFence } from "./native-recurrence-metadata-fence"
+import { validateRecurrenceEntryFence, validateRecurrenceMetadataFence } from "./native-recurrence-metadata-fence"
 import type { acquireNativeManagedOwner } from "./native-managed-owner"
 
 const PLUGIN_ID = "codenomad.missions"
@@ -71,8 +71,8 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
   const readRows = (sql: string, params: readonly unknown[], context = graph) =>
     client.unsafe(sql, params).withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(context))
   const syncRows = (sql: string, params: readonly unknown[] = []) => {
-    if (!frame || Option.isNone(Context.getOption(frame, client.transactionService))) rejectAuthority("policy-unqualified")
-    return Effect.runSync(readRows(sql, params, frame))
+    if (frame ? Option.isNone(Context.getOption(frame, client.transactionService)) : !claimQueries.has(sql)) rejectAuthority("policy-unqualified")
+    return Effect.runSync(readRows(sql, params, frame ?? graph))
   }
   const syncValue = (key: string) => {
     const value = syncRows(SELECT_VALUE, [nativeKey(key)])[0]?.value
@@ -99,6 +99,13 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     if (syncValue(namespaceKey) !== scope.namespace) {
       rejectAuthority("policy-unqualified")
     }
+    return true
+  }
+  const entryFence = (): true => {
+    assertActive()
+    if (frame) return nativeFence()
+    validateRecurrenceEntryFence(readClaim, { challengeKey: nativeKey(challengeKey), nonce })
+    if (syncValue(namespaceKey) !== scope.namespace) rejectAuthority("policy-unqualified")
     return true
   }
   const inTransaction = <A>(current: () => true, operation: () => Effect.Effect<A, unknown>) => db.transaction(() => Effect.gen(function* () {
@@ -165,7 +172,7 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
   // Verify the exact actual storage/claim contracts before publishing capability.
   yield* inTransaction(nativeFence, () => Effect.sync(nativeFence))
   const assertLedgerCurrent = (expected: Readonly<RecurrenceAuthorityDocument> | null): true => {
-    nativeFence()
+    entryFence()
     if (!same(syncValue(store.key) ?? null, expected)) rejectAuthority("revision-conflict")
     return true
   }
@@ -180,9 +187,9 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     /** Keep the same native IMMEDIATE frame around the entire business CAS. */
     transact: <A>(current: () => true, operation: () => Promise<A>): Promise<A> =>
       Effect.runPromise(inTransaction(current, () => Effect.promise(operation))),
-    assertCurrent: nativeFence,
+    assertCurrent: entryFence,
     readCurrent: (key: string): unknown => {
-      nativeFence()
+      entryFence()
       // No arbitrary plugin KV access: only this scope's exact immutable/live keys.
       if (key !== sourceKey) allowed(key, false)
       return syncValue(key)

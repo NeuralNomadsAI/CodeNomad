@@ -1,4 +1,4 @@
-import { controlReceiptID, hasInvalidControlHistory, isControlReceipt, stableToken } from "./receipt-identity"
+import { controlReceiptID, hasInvalidControlHistory, isControlReceipt, recurrenceMessageID, stableToken } from "./receipt-identity"
 export { stableToken } from "./receipt-identity"
 
 import {
@@ -267,13 +267,22 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
         || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_ACTORS || !input.targets.length) return undefined
       const targets: Array<{ sessionID: string; location: MissionLocation }> = []
+      const recurrence = input.recurrence
+      if (recurrence !== undefined && (!record(recurrence) || input.action !== "start"
+        || !text(recurrence.grantID, MAX_SHORT_TEXT) || !text(recurrence.passageID, MAX_SHORT_TEXT)
+        || !text(recurrence.messageID, MAX_SHORT_TEXT) || !text(recurrence.coordinatorSessionID, MAX_SHORT_TEXT)
+        || recurrence.passageID !== input.requestID
+        || recurrence.messageID !== recurrenceMessageID(recurrence.passageID))) return undefined
       for (const target of input.targets) {
         if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT)) return undefined
         const location = parseLocation(target.location)
         if (!location || targets.some(item => item.sessionID === target.sessionID)) return undefined
         targets.push({ sessionID: target.sessionID, location })
       }
-      return { ...eventBase(input), type: "mission.control-requested", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), action: input.action as "start" | "pause" | "stop", targets }
+      if (recurrence !== undefined && (targets.length !== 1 || targets[0].sessionID !== recurrence.coordinatorSessionID)) return undefined
+      return { ...eventBase(input), type: "mission.control-requested", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), action: input.action as "start" | "pause" | "stop", targets,
+        ...(recurrence === undefined ? {} : { recurrence: { grantID: recurrence.grantID as string, passageID: recurrence.passageID as string,
+          messageID: recurrence.messageID as string, coordinatorSessionID: recurrence.coordinatorSessionID as string } }) }
     }
     case "mission.control-applied": {
       if (!text(input.operationID, MAX_SHORT_TEXT) || !text(input.sessionID, MAX_SHORT_TEXT)) return undefined
