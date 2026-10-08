@@ -32,12 +32,7 @@ export async function passageFixture(business = true) {
     profiles: { coordinator: { agent: "build", model: { providerID: "unit", id: "model" } },
       roles: { specialist: { agent: "build", model: { providerID: "unit", id: "model" } } } }, taskMode: "native",
     roots: [{ mode: "directory-only", directory: root }], watchedConversationIDs: [] }
-  // Compile/test shim only: this front's base still has the old schedule codec.
-  const simple = recurrenceConfigSchema.safeParse(config)
-  const legacy = { ...config, budgets: { effects: 64, nativeCalls: 32, inboxMessages: 256, publications: 0 },
-    publication: { policy: "disabled", conversationIDs: [] } }
-  delete (legacy as Partial<typeof config>).title
-  const parsed = (simple.success ? simple.data : recurrenceConfigSchema.parse(legacy)) as RecurrenceConfig
+  const parsed = recurrenceConfigSchema.parse(config)
   const paused = await calendar.create("schedule", parsed, 10, () => true)
   const created = await calendar.setState("schedule", paused.revision, "running", () => true)
   let doc = await calendar.reserve("schedule", created.revision, { kind: "manual", requestID: "unit-wake", expectedRevision: created.revision, at: 10 }, 10, () => true)

@@ -60,9 +60,3 @@ export async function observeNativePassageSettlement(input: {
   return { result, current: (): true => { signal.throwIfAborted(); input.current(); return native.assertQuiescent(family) } }
 }
 
-// Old signed adapter remains imported by non-owned controls. It must not
-// silently reintroduce the superseded recurring settlement authority model.
-export async function observeNativeRecurrenceTerminalSettlement(..._input: unknown[]): Promise<never> {
-  throw new Error("Signed recurrence settlement retired; use pending passage observation")
-}
-export const observeNativeRecurrenceSettlement = observeNativeRecurrenceTerminalSettlement

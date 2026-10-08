@@ -12,7 +12,7 @@ import { ASSIGNED_CLI, privateRoot } from "../../../../../scripts/missions-child
 
 const original = { ...process.env }, children = []
 const sourceFiles = ["opencode/missions/native-managed-owner.ts", "opencode/missions/native-managed-owner.test.mjs",
-  "opencode/missions/native-authority-provider.ts", "workspaces/native-service-registration.ts", "host-lifetime/process-identity.ts",
+  "workspaces/native-service-registration.ts", "host-lifetime/process-identity.ts",
   "missions/host-authority/private-files.ts", "host-lifetime/windows-storage.ts", "host-lifetime/storage.ts"]
 const hash = bytes => createHash("sha256").update(bytes).digest("hex")
 const hashes = async () => Object.fromEntries(await Promise.all(sourceFiles.map(async file => [file, hash(await readFile(path.resolve("packages/server/src", file)))])))
@@ -53,7 +53,6 @@ try {
 import { Cause, Context, Effect, Option } from "effect";
 import { observeNativeManagedOwner, acquireNativeManagedOwner } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-managed-owner.ts"))};
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from ${JSON.stringify(path.resolve("packages/server/src/missions/authority-store.ts"))};
- import { acquireNativeRecurrenceAuthorityProvider } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-authority-provider.ts"))};
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -75,12 +74,8 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const enrolled=JSON.parse(readFileSync(enrollmentFile,"utf8"));
   const owner=yield* acquireNativeManagedOwner(ctx,enrollmentFile);
   checkStep="metadata-acquisition";
-  const scope={namespace,projectID:ctx.location.project.id,projectCanonical:ctx.location.project.canonical,profileID:"fixture-profile",
-   executionHost:"fixture-host",scheduleID:"fixture_schedule",daemonStorageID:owner.daemonStorageID};
   // Explicit fixture enrollment of a genuine idle anchor; the producer neither
   // creates sessions nor authorizes their enrollment. No signer keys are minted.
-   const metadata=yield* acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner);
-  assert.equal(yield* Effect.promise(()=>metadata.read()),undefined);
   assert.equal(owner.assertCurrent(),true);
   const {db}=yield* Context.Service("@opencode/storage/Database");
   const proofKey=MISSION_AUTHORITY_STORAGE_PREFIX+"/recurrence/managed-owner/proof";

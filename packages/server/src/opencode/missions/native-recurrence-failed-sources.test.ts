@@ -11,7 +11,7 @@ test("native terminal failure settles failed and never advances watched cursors"
     const result = await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
       native: f.observation, directory: f.root, current: () => true, signal: new AbortController().signal })
     assert.equal(result?.result.outcome, "failed")
-    await f.calendar.finish("schedule", result!.result as never, 30, result!.current)
+    await f.calendar.finish("schedule", result!.result, 30, result!.current)
     const doc = (await f.calendar.read("schedule"))!
     assert.equal(doc.pending, null)
     assert.deepEqual(doc.cursors, [])

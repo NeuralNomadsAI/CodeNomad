@@ -3,7 +3,7 @@ import test from "node:test"
 import { passageFixture } from "./native-passage-test-fixture"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
 
-test("crash after pending write checks native session/message before starting original identity", async () => {
+test("original admission checks native session/message before starting its reserved identity", async () => {
   const f = await passageFixture()
   try {
     assert.equal((await f.calendar.read("schedule"))!.pending!.admission, null)

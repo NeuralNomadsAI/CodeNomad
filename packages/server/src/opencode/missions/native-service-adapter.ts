@@ -5,7 +5,7 @@ import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
-import type { RecurrenceEffectReceipt } from "../../missions/recurrence-authority-contract"
+import type { PassageSource } from "../../missions/recurrence-input"
 import type { NativeMissionSession } from "../../missions/control-types"
 import { canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
 import { matchesExecution } from "../../missions/execution"
@@ -120,7 +120,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       return run(() => service.cancelInbox!({ ...input }), Schema.Void, undefined, current, expected)
     },
     sourceMessages: async (input: NativeSourceReadInput, options: { signal?: AbortSignal }, current: () => true,
-      placementCurrent: () => true): Promise<NonNullable<RecurrenceEffectReceipt["sourceMessages"]>> => {
+      placementCurrent: () => true): Promise<PassageSource["messages"]> => {
       const request = structuredClone(input)
       if (!Predicate.isFunction(service.messages) || !Predicate.isFunction(service.message)
         || !Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 32
@@ -160,7 +160,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
           .check(Schema.isMaxLength(request.limit)))(output)
         if (new Set(decoded.map(item => item.id)).size !== decoded.length
           || decoded.some(item => item.id === request.afterMessageID)) rejectAuthority("observation-unavailable")
-        const projected: NonNullable<RecurrenceEffectReceipt["sourceMessages"]> = []
+        const projected: PassageSource["messages"] = []
         for (const item of decoded) {
           if (item.type === "location-switched") rejectAuthority("observation-unavailable")
           // Sequence is a prefix: never step over a streaming reply to consume
