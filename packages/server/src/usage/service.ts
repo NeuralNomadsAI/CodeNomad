@@ -54,7 +54,8 @@ export function selectModelWindows(result: ProviderResult, modelId?: string): Re
 }
 
 async function fetchProvider(provider: UsageProvider, auth: AuthFile): Promise<ProviderResult> {
-  const identity = createHash("sha256").update(JSON.stringify(provider.aliases.map(alias => auth[alias] ?? null))).digest("hex")
+  const credentials = [provider.aliases.map(alias => auth[alias] ?? null), provider.identity?.() ?? null]
+  const identity = createHash("sha256").update(JSON.stringify(credentials)).digest("hex")
   const cached = cache.get(provider.id)
   if (cached?.identity === identity && cached.expiresAt > Date.now()) return cached.result
   const key = `${provider.id}\0${identity}`

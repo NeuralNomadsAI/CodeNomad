@@ -1,4 +1,5 @@
 import { execFileSync } from "child_process"
+import { createHash } from "crypto"
 import fs from "fs"
 import os from "os"
 import path from "path"
@@ -49,16 +50,26 @@ function readClaudeCodeFile(): ClaudeCredential | null {
 }
 
 /**
+ * The login opencode-claude's `claude-code` provider runs Claude Code with.
  * Read-only, fresh on every call: Claude Code rotates these records whenever it
  * refreshes. The macOS Keychain wins because the file there is a stale leftover.
- * OpenCode's own Anthropic OAuth login is the fallback.
  */
-export function findClaudeCredential(auth: AuthFile): ClaudeCredential | null {
-  const fromClaudeCode = readKeychain() ?? readClaudeCodeFile()
-  if (fromClaudeCode) return fromClaudeCode
-  const entry = getOAuthEntry(auth, ["anthropic", "claude", "claude-code"])
-  const access = getString(entry?.access) ?? getString(entry?.token)
-  if (access) return { access, refresh: getString(entry?.refresh), expires: toTimestamp(entry?.expires), source: "opencode" }
+export function claudeCodeCredential(): ClaudeCredential | null {
+  const stored = readKeychain() ?? readClaudeCodeFile()
+  if (stored) return stored
   const env = getString(process.env.CLAUDE_CODE_OAUTH_TOKEN)
   return env ? { access: env, refresh: null, expires: null, source: "env" } : null
+}
+
+/** Digest for snapshot caching, so a Claude Code account switch is never served stale numbers. */
+export function claudeCodeCredentialIdentity(): string | null {
+  const credential = claudeCodeCredential()
+  return credential && createHash("sha256").update(`${credential.access}\0${credential.refresh ?? ""}`).digest("hex")
+}
+
+/** The Anthropic OAuth login OpenCode itself uses for `anthropic` sessions. */
+export function openCodeClaudeCredential(auth: AuthFile): ClaudeCredential | null {
+  const entry = getOAuthEntry(auth, ["anthropic", "claude"])
+  const access = getString(entry?.access) ?? getString(entry?.token)
+  return access ? { access, refresh: getString(entry?.refresh), expires: toTimestamp(entry?.expires), source: "opencode" } : null
 }

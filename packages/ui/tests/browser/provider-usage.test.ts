@@ -303,7 +303,7 @@ test("Claude Code sessions label model-scoped limits beside the plan windows", a
     assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/claude-code")
     const quota = (usedPercent: number, windowSeconds: number) => ({ usedPercent, remainingPercent: 100 - usedPercent, windowSeconds, resetAt: null })
     await requests[1].fulfill({ contentType: "application/json", body: JSON.stringify({
-      requestedProviderId: "claude-code", providerId: "claude", providerName: "Claude", supported: true, configured: true, ok: true,
+      requestedProviderId: "claude-code", providerId: "claude-code", providerName: "Claude", supported: true, configured: true, ok: true,
       fetchedAt: Date.now(), windows: { "5h": quota(4, 18000), "7d": quota(1, 604800), "7d:Opus": quota(60, 604800) },
     }) })
     await page.getByText("7 days · Opus", { exact: true }).waitFor({ timeout: 5000 })

@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { findClaudeCredential } from "./claude-credential"
+import { claudeCodeCredential, claudeCodeCredentialIdentity, openCodeClaudeCredential } from "./claude-credential"
 
 async function withClaudeDir(run: (directory: string) => void | Promise<void>) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-claude-credential-"))
@@ -23,22 +23,31 @@ async function withClaudeDir(run: (directory: string) => void | Promise<void>) {
   }
 }
 
-const opencodeAuth = { anthropic: { type: "oauth", access: "opencode-access", refresh: "opencode-refresh", expires: 5 } }
-
-test("prefers the Claude Code login used by the opencode-claude provider", () => withClaudeDir((directory) => {
-  fs.writeFileSync(path.join(directory, ".credentials.json"), JSON.stringify({
-    claudeAiOauth: { accessToken: "claude-code-access", refreshToken: "claude-code-refresh", expiresAt: 1_900_000_000_000 },
-    mcpOAuth: { other: { accessToken: "unrelated" } },
-  }))
-  assert.deepEqual(findClaudeCredential(opencodeAuth), {
-    access: "claude-code-access", refresh: "claude-code-refresh", expires: 1_900_000_000_000, source: "claude-code",
-  })
+const writeLogin = (directory: string, accessToken: string) => fs.writeFileSync(path.join(directory, ".credentials.json"), JSON.stringify({
+  claudeAiOauth: { accessToken, refreshToken: "claude-code-refresh", expiresAt: 1_900_000_000_000 },
+  mcpOAuth: { other: { accessToken: "unrelated" } },
 }))
 
-test("falls back to OpenCode's Anthropic login, then CLAUDE_CODE_OAUTH_TOKEN", () => withClaudeDir((directory) => {
+test("reads the Claude Code login used by opencode-claude, then CLAUDE_CODE_OAUTH_TOKEN", () => withClaudeDir((directory) => {
+  assert.equal(claudeCodeCredential(), null)
+  assert.equal(claudeCodeCredentialIdentity(), null)
+  writeLogin(directory, "claude-code-access")
+  assert.deepEqual(claudeCodeCredential(), {
+    access: "claude-code-access", refresh: "claude-code-refresh", expires: 1_900_000_000_000, source: "claude-code",
+  })
+  const first = claudeCodeCredentialIdentity()
+  writeLogin(directory, "other-account")
+  assert.notEqual(claudeCodeCredentialIdentity(), first)
   fs.writeFileSync(path.join(directory, ".credentials.json"), "{ not json")
-  assert.equal(findClaudeCredential(opencodeAuth)?.source, "opencode")
-  assert.equal(findClaudeCredential({ anthropic: { type: "api", key: "console-key" } }), null)
   process.env.CLAUDE_CODE_OAUTH_TOKEN = "env-token"
-  assert.deepEqual(findClaudeCredential({}), { access: "env-token", refresh: null, expires: null, source: "env" })
+  assert.deepEqual(claudeCodeCredential(), { access: "env-token", refresh: null, expires: null, source: "env" })
+}))
+
+test("Anthropic sessions use only OpenCode's Anthropic OAuth login", () => withClaudeDir((directory) => {
+  writeLogin(directory, "claude-code-access")
+  assert.deepEqual(openCodeClaudeCredential({ anthropic: { type: "oauth", access: "opencode-access", refresh: "r", expires: 1_900_000_000_000 } }), {
+    access: "opencode-access", refresh: "r", expires: 1_900_000_000_000, source: "opencode",
+  })
+  // An API-key session has no subscription quota, even with Claude Code signed in.
+  assert.equal(openCodeClaudeCredential({ anthropic: { type: "api", key: "console-key" } }), null)
 }))
