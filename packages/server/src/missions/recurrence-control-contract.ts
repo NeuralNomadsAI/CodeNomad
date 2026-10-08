@@ -3,17 +3,22 @@ import { recurrenceIDSchema, recurrenceControlRecordSchema } from "./recurrence-
 import { dailyClockSchema } from "./recurrence-clock"
 
 export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceIDSchema,
-  requestID: recurrenceIDSchema, action: z.enum(["play", "pause", "stop", "resume", "run-now"]),
+  requestID: recurrenceIDSchema, action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]),
   expectedRevision: z.number().int().nonnegative().safe(),
 }).strict()
 export type RecurrenceControlRequest = z.infer<typeof recurrenceControlRequestSchema>
+/** Desired state committed by a control; Check stays paused, Run now has none. */
+export function recurrenceControlTargetState(action: RecurrenceControlRequest["action"]) {
+  return action === "play" || action === "resume" ? "running" : action === "pause" || action === "check" ? "paused"
+    : action === "stop" ? "stopped" : undefined
+}
 export const recurrenceControlHttpSchema = recurrenceControlRequestSchema.extend({
   directory: z.string().min(1).max(4096).optional(), retry: z.boolean().optional(),
 }).refine(input => !input.retry || input.action === "pause" || input.action === "stop", "Only partial denial controls can be retried")
 export const recurrenceControlStatusSchema = recurrenceControlRecordSchema.omit({ action: true, targetsKnown: true }).partial({
   revision: true, state: true, controlsComplete: true, targets: true,
 }).extend({ version: z.literal(1), scheduleID: recurrenceIDSchema, outcome: z.enum(["committed", "unknown"]),
-  action: z.enum(["play", "pause", "stop", "resume", "run-now"]).optional() })
+  action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]).optional() })
   .refine(value => value.outcome !== "committed" || value.controlsComplete === true)
   .refine(value => value.controlsComplete !== true || value.schedulerCancellation !== "unknown"
     && (value.targets?.every(target => target.outcome === "acknowledged") ?? true), "Unknown targets/cancellation are not completed controls")
@@ -25,7 +30,7 @@ export const recurrenceNativeControlWire = { type: "object", properties: {
 export const recurrenceControlRequestWire = { type: "object", properties: {
   scheduleID: { type: "string", minLength: 3, maxLength: 100 },
   requestID: { type: "string", minLength: 3, maxLength: 100 },
-  action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now"] },
+  action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
   expectedRevision: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
 }, required: ["scheduleID", "requestID", "action", "expectedRevision"], additionalProperties: false } as const
 
@@ -41,7 +46,7 @@ export const recurrenceSnapshotSchema = z.object({ version: z.literal(1), projec
     pending: z.object({ passageID: recurrenceIDSchema, status: z.enum(["starting", "running", "settling", "uncertain"]),
       missionID: z.string().optional(), conversationID: z.string().optional() }).strict().nullable(),
     latestResult: reference.nullable(), history: z.array(reference).max(30),
-    actions: z.array(z.enum(["play", "pause", "stop", "resume", "run-now"])).max(5).refine(items => new Set(items).size === items.length),
+    actions: z.array(z.enum(["play", "pause", "stop", "resume", "run-now", "check"])).max(6).refine(items => new Set(items).size === items.length),
     controls: z.array(recurrenceControlStatusSchema).max(64),
   }).strict().refine(value => (value.state === "running") === (value.nextDueAt !== null)
     && JSON.stringify(value.latestResult) === JSON.stringify(value.history.at(-1) ?? null)
@@ -58,7 +63,7 @@ const referenceWire = { type: ["object", "null"], properties: { passageID: { typ
 export const recurrenceControlStatusWire = { type: "object", properties: { version: { type: "integer", const: 1 },
   scheduleID: { type: "string" }, requestID: { type: "string" }, expectedRevision: numberWire, revision: numberWire,
   state: { type: "string", enum: ["paused", "running", "stopped"] }, outcome: { type: "string", enum: ["committed", "unknown"] },
-  action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now"] },
+  action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
   controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] },
   targets: { type: "array", maxItems: 32, items: recurrenceNativeControlWire } },
   required: ["version", "scheduleID", "requestID", "expectedRevision", "outcome"], additionalProperties: false } as const
@@ -73,7 +78,7 @@ export const recurrenceSnapshotOutput = { type: "object", properties: { version:
     pending: { type: ["object", "null"], properties: { passageID: { type: "string" }, status: { type: "string", enum: ["starting", "running", "settling", "uncertain"] },
       missionID: { type: "string" }, conversationID: { type: "string" } }, required: ["passageID", "status"], additionalProperties: false },
     latestResult: referenceWire, history: { type: "array", maxItems: 30, items: { ...referenceWire, type: "object" } },
-    actions: { type: "array", maxItems: 5, uniqueItems: true, items: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now"] } },
+    actions: { type: "array", maxItems: 6, uniqueItems: true, items: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] } },
     controls: { type: "array", maxItems: 64, items: recurrenceControlStatusWire },
   }, required: ["id", "title", "revision", "state", "clock", "nextDueAt", "pending", "latestResult", "history", "actions", "controls"], additionalProperties: false } },
 }, required: ["version", "projectID", "projectCanonical", "location", "schedules"], additionalProperties: false } as const

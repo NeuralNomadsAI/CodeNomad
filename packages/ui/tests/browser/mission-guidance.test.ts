@@ -177,7 +177,7 @@ test("returned blockages are results, not native questions or generic coordinato
   try {
     assert.equal(await page.getByRole("button", { name: "Your response is needed", exact: true }).count(), 0)
     const progress = page.getByRole("region", { name: "Activity and remaining work", exact: true })
-    await progress.getByText("0 tasks completed · 1 remaining", { exact: true }).waitFor()
+    await progress.getByText("0 tasks completed · 1 task remaining", { exact: true }).waitFor()
     assert.equal(await progress.getByText("Old cancelled build", { exact: true }).count(), 0)
     assert.equal(await page.locator(".mission-control").getByText("Full Xcode is missing.", { exact: true }).filter({ visible: true }).count(), 0)
     await page.locator('[data-task-key="xcode"] .mission-list-item').getByRole("button", { name: "Check Xcode", exact: true }).click()

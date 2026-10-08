@@ -4,6 +4,7 @@ import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../
 import { assertRecurrenceBridgeProof, nativeRecurrenceControlInputSchema } from "./native-recurrence-control"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { nativeRecurrenceDue } from "./native-recurrence-due"
+import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import type { RecurrencePassage } from "../../missions/recurrence-contract"
 
 type NativeContext = Pick<Plugin.Context, "storage" | "location">
@@ -34,13 +35,18 @@ export const runNativeRecurrenceNow = Effect.fn("missions.runNativeRecurrenceNow
   if (before.controls.some(item => item.requestID === input.requestID)) return yield* readNativeRecurrenceRunNow(ctx, request)
   const doc = yield* Effect.promise(() => store.reserveManual(input.scheduleID, input.requestID, input.expectedRevision,
     Date.now(), input.profileSource, () => true))
-  const due = nativeRecurrenceDue(ctx, { projectID: doc.projectID, projectCanonical: doc.projectCanonical,
+  const placement = { projectID: doc.projectID, projectCanonical: doc.projectCanonical,
     directory: ctx.location.directory, workspaceID: ctx.location.workspaceID, scheduleID: doc.id,
-    profileID: doc.config.profileID, executionHost: doc.config.executionHost,
-    profileSource: doc.profileSource,
+    profileID: doc.config.profileID, executionHost: doc.config.executionHost }
+  const due = nativeRecurrenceDue(ctx, { ...placement, profileSource: doc.profileSource,
     manual: { requestID: input.requestID, expectedRevision: input.expectedRevision } })
-   const controller = new AbortController()
-   yield* due(doc.id, () => true, controller.signal).pipe(Effect.ensuring(Effect.sync(() => controller.abort())))
+  const controller = new AbortController()
+  yield* due(doc.id, () => true, controller.signal).pipe(Effect.ensuring(Effect.sync(() => controller.abort())))
+  // A running schedule's Job observes the passage. Otherwise start the
+  // settlement-only observer; it reconciles but never starts daily work.
+  const after = yield* Effect.promise(() => store.read(doc.id))
+  if (after?.pending?.passage.id === doc.pending!.passage.id && after.state === "paused")
+    yield* startNativeRecurrenceSettlement(ctx, placement, after)
   const result = yield* readNativeRecurrenceRunNow(ctx, request)
   if (result.outcome !== "unknown") {
     const fresh = yield* Effect.promise(() => store.read(doc.id))

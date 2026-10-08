@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
-import { Eye, Play, Pause, Square, Search, Zap, RotateCcw } from "lucide-solid"
+import { Eye, Play, Pause, Square, Search, ScanSearch, Zap, RotateCcw } from "lucide-solid"
 import { Tooltip } from "@kobalte/core/tooltip"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
@@ -85,17 +85,19 @@ function RecurrenceControls(props: { schedule: RecurrenceSchedule; identity: str
     } catch { /* Retain the exact request identity. */ }
     finally { if (captured === generation) setBusy(false) }
   }
+  // "check" reconciles a paused pending passage; its label differs from the control-outcome status check below.
+  const label = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
   return <div class="mission-recurrence-controls">
     <For each={props.schedule.actions}>{action => <Tooltip placement="top" openDelay={300}><Tooltip.Trigger type="button" class="mission-control-icon-button"
-      classList={{ "mission-schedule-resume button-primary": action === "resume", "mission-schedule-run-now": action === "run-now" }}
-      disabled={!capable(action)} aria-label={t(`missions.recurrence.${action}`, { id: props.schedule.title })}
-      title={t(`missions.recurrence.${action}`, { id: props.schedule.title })}
+      classList={{ "mission-schedule-resume button-primary": action === "resume" || action === "check", "mission-schedule-run-now": action === "run-now" }}
+      disabled={!capable(action)} aria-label={label(action)} title={label(action)}
       onClick={() => action === "stop" ? setConfirmStop(true) : void act(action)}>
       {action === "pause" ? <Pause class="h-4 w-4" /> : action === "stop" ? <Square class="h-4 w-4" />
-        : action === "run-now" ? <Zap class="h-4 w-4" /> : <Play class="h-4 w-4" />}
+        : action === "run-now" ? <Zap class="h-4 w-4" /> : action === "check" ? <ScanSearch class="h-4 w-4" /> : <Play class="h-4 w-4" />}
       <Show when={action === "resume"}><span>{t("missions.simple.resume")}</span></Show>
+      <Show when={action === "check"}><span>{t("missions.simple.checkPassage")}</span></Show>
       <Show when={action === "run-now"}><span class="mission-schedule-action-label">{t("missions.simple.runNow")}</span></Show>
-    </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content class="section-info-tooltip">{t(`missions.recurrence.${action}`, { id: props.schedule.title })}</Tooltip.Content></Tooltip.Portal></Tooltip>}</For>
+    </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content class="section-info-tooltip">{label(action)}</Tooltip.Content></Tooltip.Portal></Tooltip>}</For>
     <Show when={confirmStop()}><span role="group" aria-label={t("missions.simple.confirmStop", { title: props.schedule.title })}
       onKeyDown={event => { if (event.key === "Escape") setConfirmStop(false) }}>
       <span>{t("missions.simple.confirmStop", { title: props.schedule.title })}</span>

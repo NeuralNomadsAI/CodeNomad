@@ -19,7 +19,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control/status", async (request, reply) => {
     const session = deps.auth.getSessionFromRequest(request)
     if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") return reply.code(401).send({ error: "Human authentication required" })
-    const parsed = z.object({ requestID: z.string(), action: z.enum(["play", "pause", "stop", "resume", "run-now"]),
+    const parsed = z.object({ requestID: z.string(), action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]),
       expectedRevision: z.number(), directory: z.string().min(1).max(4096).optional() }).strict().safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid exact control status request" })
     const { directory: requestedDirectory, ...identity } = parsed.data

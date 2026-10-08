@@ -20,9 +20,13 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
   const qualified = yield* qualifyNativeRecurrenceControl().pipe(Effect.catchCause(() => Effect.succeed(false)))
   const results: MissionRecurrenceSnapshot["schedules"] = []
   for (const doc of schedules) {
-    const jobStatus = doc.state === "running" ? yield* readNativeRecurrenceClockStatus({ projectID: doc.projectID,
+    const placement = { projectID: doc.projectID,
       projectCanonical: doc.projectCanonical, directory: location.directory, workspaceID: location.workspaceID,
-      scheduleID: doc.id, profileID: doc.config.profileID, executionHost: doc.config.executionHost }) : false
+      scheduleID: doc.id, profileID: doc.config.profileID, executionHost: doc.config.executionHost }
+    const jobStatus = doc.state === "running" ? yield* readNativeRecurrenceClockStatus(placement) : false
+    // A paused pending passage without a live settlement observer (service
+    // restart) needs an explicit reconcile-only Check; reads never restart it.
+    const settleStatus = doc.state === "paused" && doc.pending ? yield* readNativeRecurrenceClockStatus(placement, "settle") : undefined
     if (doc.state === "running" && jobStatus === undefined) throw new Error("Recurrence clock observation unavailable")
     const state = doc.state === "running" && jobStatus !== "running" ? "interrupted" : doc.state
     const history = doc.history.map(({ passage, settledAt, result }) => ({ passageID: passage.id, dueAt: passage.due.at,
@@ -34,6 +38,7 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     if (qualified && !partial && state !== "stopped") {
       if (state === "paused" && !doc.pending) actions.push("play")
       if (state === "interrupted" || state === "paused" && doc.pending) actions.push("resume")
+      if (state === "paused" && doc.pending && settleStatus !== undefined && settleStatus !== "running") actions.push("check")
       if (state === "running" || state === "interrupted") actions.push("pause")
       actions.push("stop")
       if (!doc.pending) actions.push("run-now")

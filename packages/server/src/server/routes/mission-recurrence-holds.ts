@@ -1,5 +1,5 @@
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import type { RecurrenceControlRequest, RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
+import { recurrenceControlTargetState, type RecurrenceControlRequest, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
 import { sameLocation } from "../../opencode/compatibility/location"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 
@@ -70,7 +70,7 @@ export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, wor
     || request.action !== original.action || receipt.scheduleID !== original.scheduleID
     || receipt.requestID !== original.requestID || receipt.expectedRevision !== original.expectedRevision
     || receipt.revision !== original.expectedRevision + 1
-    || original.action !== "run-now" && receipt.state !== (original.action === "play" || original.action === "resume" ? "running" : original.action === "pause" ? "paused" : "stopped")) return
+    || original.action !== "run-now" && receipt.state !== recurrenceControlTargetState(original.action)) return
   original.connection.assertCurrent()
   if (receipt.outcome === "committed" && receipt.controlsComplete === true) { registry!.delete(id); record.release() }
   else if (receipt.controlsComplete === false) record.state = "partial"

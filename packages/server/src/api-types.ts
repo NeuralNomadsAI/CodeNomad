@@ -46,7 +46,7 @@ export interface MissionRecurrenceSnapshot {
     interruptionReason?: "service-restart" | "error"
     pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
       missionID?: string; conversationID?: string } | null
-    actions: Array<"play" | "pause" | "stop" | "resume" | "run-now">
+    actions: Array<"play" | "pause" | "stop" | "resume" | "run-now" | "check">
     controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
     latestResult: MissionRecurrenceReceipt | null
     history: MissionRecurrenceReceipt[]

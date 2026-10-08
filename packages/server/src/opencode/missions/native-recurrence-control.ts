@@ -7,6 +7,7 @@ import { recurrenceControlRequestSchema } from "../../missions/recurrence-contro
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { cancelNativeRecurrenceClock, readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
 import { nativeRecurrenceDue } from "./native-recurrence-due"
+import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
 import { interruptRecurrenceActors } from "./native-recurrence-actor-controls"
 import { readFamilyAuthorityPlacementSync } from "../../workspaces/family-authority-claim"
@@ -17,7 +18,7 @@ const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
 export const nativeRecurrenceControlInputSchema = Schema.Struct({ sessionID: Schema.String, workspaceID: Schema.String, requestID: Schema.String,
   location: Schema.Struct({ directory: Schema.String, workspaceID: Schema.optional(Schema.String) }),
   digest: Schema.String, scheduleID: Schema.String, expectedRevision: Schema.Number,
-  action: Schema.Literals(["play", "pause", "stop", "resume", "run-now", "create"]), retry: Schema.optional(Schema.Boolean),
+  action: Schema.Literals(["play", "pause", "stop", "resume", "run-now", "check", "create"]), retry: Schema.optional(Schema.Boolean),
   configDigest: Schema.optional(Schema.String),
   profileSource: Schema.Struct({ profileID: Schema.String, executionHost: Schema.String, configYamlPath: Schema.String }),
   issuedAt: Schema.Number, proof: Schema.String })
@@ -73,8 +74,13 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
     yield* startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement,
       profileSource: document.profileSource }), ctx)
     record = { ...record, controlsComplete: true, targetsKnown: true }
+  } else if (input.action === "check") {
+    // Reconcile-only: restarts settlement observation, never daily scheduling.
+    yield* startNativeRecurrenceSettlement(ctx, placement, document)
+    record = { ...record, controlsComplete: true, targetsKnown: true }
   } else {
     let cancelled = false
+    yield* cancelNativeRecurrenceClock(placement, "settle").pipe(Effect.catchCause(() => Effect.void))
     yield* cancelNativeRecurrenceClock(placement).pipe(Effect.flatMap(() => readNativeRecurrenceClock(placement)),
       Effect.tap(value => Effect.sync(() => { cancelled = value === false })), Effect.catchCause(() => Effect.void))
     const actors = yield* Effect.scoped(interruptRecurrenceActors(ctx, { scheduleID: input.scheduleID, requestID: input.requestID,

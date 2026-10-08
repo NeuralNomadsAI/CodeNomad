@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-preparation"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
-import { recurrenceControlStatusSchema, recurrenceControlHttpSchema } from "../../missions/recurrence-control-contract"
+import { recurrenceControlStatusSchema, recurrenceControlHttpSchema, recurrenceControlTargetState } from "../../missions/recurrence-control-contract"
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions } from "../../opencode/compatibility/location"
 
@@ -50,7 +50,7 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID
           || result.expectedRevision !== body.expectedRevision) throw new Error("Foreign control receipt")
         if (result.outcome === "committed" && result.controlsComplete === true && result.revision === body.expectedRevision + 1
-          && result.state === (body.action === "play" || body.action === "resume" ? "running" : body.action === "pause" ? "paused" : "stopped")) prepared.hold.settled()
+          && result.state === recurrenceControlTargetState(body.action)) prepared.hold.settled()
         else if (result.controlsComplete === false) prepared.hold.partial()
         return reply.code(result.outcome === "committed" ? 200 : 503).send(result)
       }

@@ -8,7 +8,7 @@ export interface RecurrenceControlProofBody {
   location: { directory: string; workspaceID?: string }
   scheduleID: string
   expectedRevision: number
-  action: "play" | "pause" | "stop" | "resume" | "run-now" | "create"
+  action: "play" | "pause" | "stop" | "resume" | "run-now" | "check" | "create"
   configDigest?: string
   profileSource: { profileID: string; executionHost: string; configYamlPath: string }
   issuedAt: number

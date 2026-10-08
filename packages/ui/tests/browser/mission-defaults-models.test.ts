@@ -454,7 +454,7 @@ test("Creation and Settings summaries group requested tuples once and collapse a
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
-    const label = await text(page, "missions.defaults.summary"), native = await text(page, "missions.control.execution.nativeDefault")
+    const label = await text(page, "missions.defaults.summary"), native = await text(page, "missions.simple.profilesNative")
     assert.equal(await page.getByLabel(label).textContent(), native)
     await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
     assert.equal(await page.getByLabel(label).textContent(), native)

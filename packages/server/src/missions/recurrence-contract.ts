@@ -74,7 +74,7 @@ export type RecurrenceResult = z.infer<typeof recurrenceResultSchema>
 const receiptSchema = z.object({ passage: passageSchema, settledAt: timestamp,
   result: recurrenceResultSchema.omit({ cursors: true }) }).strict()
 export const recurrenceControlRecordSchema = z.object({ requestID: recurrenceIDSchema,
-  action: z.enum(["play", "pause", "stop", "resume", "run-now"]), expectedRevision: counter,
+  action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]), expectedRevision: counter,
   revision: counter, state: z.enum(["paused", "running", "stopped"]), controlsComplete: z.boolean(),
   schedulerCancellation: z.enum(["acknowledged", "unknown"]).optional(),
   targets: z.array(z.object({ sessionID: id, outcome: z.enum(["acknowledged", "unknown"]) }).strict()).max(32),
@@ -95,11 +95,14 @@ const documentSchema = z.object({ version: z.literal(1), projectID: id, projectC
 }).strict()
 export type RecurrenceDocument = z.infer<typeof documentSchema>
 
-/** A paused manual invocation is allowed only until a later human control. */
+/** A paused manual invocation is allowed only until a later human control
+ * other than Check, which merely restarts observation of that same passage. */
 export function recurrenceDispatchAllowed(doc: RecurrenceDocument): boolean {
-  const due = doc.pending?.passage.due, control = doc.controls.at(-1)
-  return doc.state === "running" || doc.state === "paused" && due?.kind === "manual"
-    && control?.action === "run-now" && control.requestID === due.requestID && control.expectedRevision === due.expectedRevision
+  const due = doc.pending?.passage.due
+  if (doc.state === "running") return true
+  if (doc.state !== "paused" || due?.kind !== "manual") return false
+  const control = [...doc.controls].reverse().find(item => item.action !== "check")
+  return control?.action === "run-now" && control.requestID === due.requestID && control.expectedRevision === due.expectedRevision
 }
 
 export function recurrenceTitle(instructions: string): string {

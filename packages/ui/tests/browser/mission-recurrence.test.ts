@@ -135,6 +135,47 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
   } catch (error) { console.error(errors, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
+test("paused pending passage exposes a labelled reconcile-only Check passage control sent once", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], errors: string[] = []
+  page.setDefaultTimeout(10_000)
+  page.on("pageerror", error => errors.push(error.message))
+  const schedule: RecurrenceSchedule = { ...scheduleFixture(), state: "paused", nextDueAt: null,
+    pending: { passageID: "pas_manual", status: "running" }, actions: ["resume", "check", "stop"] }
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: snapshotFixture(schedule) })
+    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: "pas_manual" } })
+    if (path.endsWith("/control")) {
+      const input = recurrenceControlHttpSchema.parse(request.postDataJSON()); posts.push(input)
+      const { directory: _directory, ...identity } = input
+      const status = recurrenceControlStatusSchema.parse({ version: 1, ...identity, revision: input.expectedRevision + 1,
+        state: "paused", outcome: "committed", controlsComplete: true, targets: [] })
+      schedule.revision = status.revision!; schedule.actions = ["resume", "stop"]; schedule.controls = [status]
+      const { outcome: _outcome, ...record } = status
+      return route.fulfill({ json: { ...record, targetsKnown: true } })
+    }
+    return route.fulfill({ json: {} })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    await page.getByRole("button", { name: schedule.title, exact: true }).click()
+    const check = page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true })
+    assert.equal(await check.innerText(), "Check passage")
+    assert.equal(await check.evaluate(element => element.classList.contains("button-primary")), true)
+    await captureMissionView(page, "paused-check-passage")
+    await check.click()
+    await check.waitFor({ state: "hidden" })
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].action, "check")
+    assert.equal(await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).count(), 0)
+    assert.equal(posts.length, 1, "refresh never resends")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`real ${mode} routes preserve unknown identity without automatic resend`, async () => {
   const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], errors: string[] = []
   page.setDefaultTimeout(10_000)

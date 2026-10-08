@@ -38,7 +38,7 @@ Keep this small: no authority epochs, signing keys or per-effect ledgers.
 
 ## User controls
 
-Create paused, Play, Pause, Stop, Resume and Run now are admitted only through:
+Create paused, Play, Pause, Stop, Resume, Run now and Check passage are admitted only through:
 
 1. The authenticated CodeNomad UI/backend route.
 2. The existing HMAC-authenticated bridge.
@@ -139,6 +139,15 @@ passage: no second coordinator message. Unknown native coverage leaves pending
 uncertain and blocks a further passage. No expiry converts unknown into safe replay.
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 Manual runs do not masquerade as a different scheduled civil day's completion.
+
+Run now on a paused schedule starts a separate **settlement-only observer Job**
+using the same sleep/wake seam. It is reconcile-only (never a second coordinator
+message), never starts daily passages, exits once the passage settles or the
+schedule leaves paused, and Pause/Stop cancel it. A running schedule's own Job
+observes its manual passage instead. After a service restart while paused with a
+pending passage, the snapshot offers an explicit **Check passage** (`check`)
+control, admitted like the others (requestID, expectedRevision, authenticated
+route), which only restarts that observer and keeps the schedule paused.
 
 ## Passage tools and journals
 

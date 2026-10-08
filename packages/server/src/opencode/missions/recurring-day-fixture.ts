@@ -426,7 +426,7 @@ export class RecurringDayFixture {
     assert(schedule, "created schedule must be present in real snapshot")
     return schedule
   }
-  async control(action: "play" | "pause" | "stop" | "resume" | "run-now") {
+  async control(action: "play" | "pause" | "stop" | "resume" | "run-now" | "check") {
     const schedule = await this.snapshot()
     const response = await this.bridge.inject({ method: "POST", url: "/day-test/control", headers: { cookie: "session=offline-human-cookie" },
       payload: { scheduleID: this.id, action, requestID: `human_${++this.serial}`, expectedRevision: schedule.revision } })
