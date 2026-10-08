@@ -26,6 +26,7 @@ import { MissionActors } from "../../../../mission-actors"
 import { createMissionRecoveryAction } from "../../../../mission-recovery-button"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { MissionPreferences } from "../../../../mission-preferences"
+import { MissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { createMissionViewFence } from "../../../../../lib/mission-view-fence"
 
 interface MissionControlProps {
@@ -42,6 +43,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const setSelectedMissionId = (selected: string) => updateMissionProjectView(scope(), { selected })
   const [editor, setEditor] = createSignal<MissionEditorAction & { current: () => boolean }>()
   const [navigationError, setNavigationError] = createSignal(false)
+  const [recurrenceRefresh, setRecurrenceRefresh] = createSignal(0)
   const state = () => missionStore.state(props.instanceId)
   // Cached display revalidation is not a view/ownership transition. Message
   // admission still performs its own fresh authoritative mission read.
@@ -209,7 +211,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           aria-label={props.t("missions.control.refresh")}
           title={props.t("missions.control.refresh")}
           disabled={state().status === "loading"}
-          onClick={() => void missionStore.refresh(props.instanceId)}
+          onClick={() => { void missionStore.refresh(props.instanceId); setRecurrenceRefresh(value => value + 1) }}
         >
           <Show when={state().status === "loading"} fallback={<RefreshCw class="h-4 w-4" />}>
             <Loader2 class="h-4 w-4 animate-spin" />
@@ -228,6 +230,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           return completionCurrent
         }}
         onCancel={closeEditor} onOpenPreferences={openPreferences}
+        onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
+        onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; setEditor(undefined); setRecurrenceRefresh(value => value + 1) }}
         onSaved={saved => {
           if (!completionCurrent() || editor() !== action) return
           const instanceId = props.instanceId, current = completionCurrent
@@ -364,6 +368,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           )}
         </Match>
       </Switch>
+      <MissionRecurrenceList instanceId={props.instanceId} scope={scope()} projectID={projectID()} active={() => props.isActive?.() ?? true} refresh={recurrenceRefresh()} />
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
       <MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
         disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}

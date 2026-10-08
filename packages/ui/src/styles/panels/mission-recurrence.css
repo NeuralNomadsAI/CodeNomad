@@ -1,0 +1,14 @@
+.mission-recurrence-clock, .mission-recurrence-budgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
+.mission-editor .mission-recurrence-clock input, .mission-editor .mission-recurrence-budgets input {
+  min-width: 0; width: 100%; min-height: var(--touch-target-size-compact); padding: var(--space-xs);
+  color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0;
+}
+.mission-recurrence-list { display: grid; gap: var(--space-xs); padding: 0 var(--space-sm) var(--space-sm); font-size: var(--font-size-sm); }
+.mission-recurrence-list p { margin: 0; color: var(--text-secondary); }
+.mission-recurrence-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); padding-block: var(--space-sm); border-block-start: 1px solid var(--border-base); overflow-wrap: anywhere; }
+.mission-recurrence-item strong { font-size: var(--font-size-sm); }
+.mission-recurrence-item small { grid-column: 1 / -1; color: var(--text-muted); word-break: break-all; }
+.mission-recurrence-item span { color: var(--text-secondary); font-size: var(--font-size-xs); }
+@container mission-panel (max-width: 300px) {
+  .mission-recurrence-clock, .mission-recurrence-budgets, .mission-recurrence-item { grid-template-columns: minmax(0, 1fr); }
+}

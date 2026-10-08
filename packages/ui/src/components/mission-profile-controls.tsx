@@ -15,6 +15,7 @@ export function MissionProfileControls(props: {
   instanceId: string; directory?: string; template: MissionTemplateId
   profiles?: MissionProfiles; disabled: boolean; active: () => boolean
   taskMode?: MissionTaskMode
+  requireCustomSpecialist?: boolean
   onChange: (profiles: MissionProfiles | undefined) => void
 }) {
   const { t } = useI18n()
@@ -118,9 +119,10 @@ export function MissionProfileControls(props: {
       <span class="sr-only">{t("missions.control.profiles.pocock")}</span>
       <For each={missionProfileRoles["pocock-fix-bug"].slice(0, 3)}>{row}</For>
     </Show>
-    <details class="mission-profile-optional"><summary>{t("missions.control.profiles.optional")}</summary>
+    <Show when={props.template === "custom" && props.requireCustomSpecialist}>{row("specialist")}</Show>
+    <Show when={props.template !== "custom" || !props.requireCustomSpecialist}><details class="mission-profile-optional"><summary>{t("missions.control.profiles.optional")}</summary>
       <For each={props.template === "pocock-fix-bug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
-    </details>
+    </details></Show>
     <Show when={loading()}><p role="status">{t("missions.control.profiles.loading")}</p></Show>
     <Show when={failed()}><p role="status">{t("missions.control.profiles.error")}</p></Show>
   </section>

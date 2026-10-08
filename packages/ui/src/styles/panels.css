@@ -10,6 +10,7 @@
 @import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";
 @import "./panels/mission-control.css";
+@import "./panels/mission-recurrence.css";
 @import "./panels/mission-list-item.css";
 @import "./panels/mission-overview.css";
 @import "./panels/mission-route.css";

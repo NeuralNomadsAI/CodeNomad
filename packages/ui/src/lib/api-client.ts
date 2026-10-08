@@ -17,6 +17,7 @@ import type {
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
+  MissionRecurrenceSnapshot,
   MissionMap,
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
@@ -619,6 +620,16 @@ export const serverApi = {
   },
   fetchMissions(instanceId: string): Promise<MissionListResponse> {
     return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  },
+  fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
+    return request<MissionRecurrenceSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
+  },
+  createMissionRecurrence(instanceId: string, input: { requestID: string; instructions: string;
+    clock: { time: string; zone: string }; watchedConversationIDs: string[];
+    budgets: { effects: number; nativeCalls: number; inboxMessages: number; publications: number };
+    profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
+  }): Promise<{ schedule: MissionRecurrenceSnapshot["schedules"][number] }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
   },
   createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
