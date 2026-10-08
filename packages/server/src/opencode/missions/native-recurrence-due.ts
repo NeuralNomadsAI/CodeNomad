@@ -19,6 +19,9 @@ import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlemen
 import { acquireMissionNativeService } from "./native-service-adapter"
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import type { RecurrenceClockPlacement } from "./native-service-clock"
+import { assertRecurrenceDispatchFeasible } from "../../missions/recurrence-read-budget"
+import { recurrenceInput, recurrenceSourceCursors, recurrenceSources, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
+import { readAutonomousMissionEnvironment } from "./autonomous-environment"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -147,6 +150,12 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
             rejectAuthority("authorization-blocked")
           }
           authenticateRecurrenceStanding(hot.parent, await signer.readSigners())
+          if (purpose === "dispatch") {
+            assertRecurrenceDispatchFeasible(document.config, parent.budgets)
+            // Fresh signed YAML readability is preparation, not session ENV mutation.
+            // Reject before calendar reservation; actual sends still reread it.
+            await readAutonomousMissionEnvironment(scope, parent.profileSource, signal)
+          }
           return () => {
             owner.assertCurrent(); signer.assertSignerCurrent(authenticated.signer)
             if (purpose === "dispatch") noTornParent()
@@ -158,7 +167,8 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
               || latest.settledSequence !== hot.settledSequence
               || hot.child && (!latest.child || !equal(latest.child.grant, hot.child.grant))
               || !hot.child && latest.child && (!document.pending || !equal(latest.child.grant,
-                deriveRecurrenceChild(hot.parent, document, hot.settledSequence + 1)))) rejectAuthority("revision-conflict")
+                 deriveRecurrenceChild(hot.parent, document, hot.settledSequence + 1)))) rejectAuthority("revision-conflict")
+            if (purpose === "dispatch") assertRecurrenceDispatchFeasible(document.config, latest.parent.body.budgets)
             return true
           }
         },
@@ -171,7 +181,7 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         const pending = doc.pending!, accepted = pending.admission!
         const ledger = await provider.read()
         if (!ledger || !equal(ledger.scope, scope) || !equal(ledger.parent.body.config, doc.config)
-          || doc.config.watchedConversationIDs.length || doc.config.publication.policy !== "disabled") return "pending"
+          || doc.config.publication.policy !== "disabled") return "pending"
         const observerSignal = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
         let archive
         if (ledger.child) {
@@ -199,9 +209,26 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         const fresh = await source.read(placement.scheduleID)
         if (!fresh || !equal(fresh.pending, pending)) return "pending"
         const fence = await admission.authorize(fresh, "settle")
+        // Authority is already archived. Finish only from exact validated read
+        // receipts, never from admission ACKs or newly queried source messages.
+        recurrenceInput(archive.child)
+        const sources = recurrenceSources(archive.child), cursors = recurrenceSourceCursors(archive)
+        const archived = (): true => {
+          fence()
+          if (!equal(provider.readCurrent(`${provider.store.parentKey}/passages/${grant.passage.id}`), archive))
+            rejectAuthority("observation-unavailable")
+          for (const item of sources) {
+            const cursor = fresh.cursors.find(cursor => cursor.conversationID === item.conversationID)
+            if ((cursor?.messageID ?? null) !== item.afterMessageID
+              || cursor?.locationDigest !== undefined && cursor.locationDigest !== recurrenceSourceLocationDigest(item))
+              rejectAuthority("binding-mismatch")
+            provider.assertSourcePlacement(item.conversationID, item)
+          }
+          return true
+        }
         await source.finish(placement.scheduleID, { passageID: grant.passage.id, messageID: grant.messageID,
           missionID: grant.missionID, conversationID: grant.coordinatorSessionID,
-          outcome: terminal.outcome as "completed" | "failed" | "stopped", artifactMessageIDs: [], cursors: [] }, now(), fence)
+          outcome: terminal.outcome as "completed" | "failed" | "stopped", artifactMessageIDs: [], cursors }, now(), archived)
         return runner.tick(placement.scheduleID)
       }
       const document = yield* Effect.promise(() => source.read(placement.scheduleID))

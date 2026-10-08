@@ -10,6 +10,7 @@ import test from "node:test"
 import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { Context, Effect, Exit, Fiber, RcMap, Schema, Scope } from "effect"
 import { authorityDigest, authoritySignerDigest } from "../../missions/authority-protocol"
 import { recurrencePassage } from "../../missions/recurrence-passage"
@@ -20,6 +21,8 @@ import { readFamilyAuthorityIdentity } from "../../workspaces/family-authority-c
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import { nativeRecurrenceDue, type ReconcileNativePending } from "./native-recurrence-due"
+import { recurrenceInput, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
+import type { RecurrenceChildRecord } from "../../missions/recurrence-authority-contract"
 import { readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
@@ -38,6 +41,12 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       project: { id: "project", directory, canonical: directory } })
     const ref = Schema.decodeUnknownSync(Location.Ref)({ directory })
     db.exec("CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT NOT NULL,time_created INTEGER NOT NULL,time_updated INTEGER NOT NULL)")
+    db.exec(`CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,metadata TEXT,time_suspended INTEGER);
+      CREATE TABLE event_sequence(aggregate_id TEXT PRIMARY KEY,seq INTEGER,owner_id TEXT);
+      CREATE TABLE event(id TEXT,aggregate_id TEXT,seq INTEGER,type TEXT,data TEXT);
+      CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,seq INTEGER,type TEXT,data TEXT);
+      CREATE TABLE session_inbox(session_id TEXT);
+      CREATE TABLE session_pending(session_id TEXT);`)
     let beforeTransaction: (() => void) | undefined
     const transactionService = tag("@test/TransactionService")
     const client = Object.assign(() => {}, { transactionService,
@@ -107,19 +116,67 @@ test("signed Play admits one native due passage after desktop detach and Locatio
     put(`${ledgerKey}/parents/1`, parent)
     put(`${ledgerKey}/live`, { version: 1, scope, revision: 0, parent, settledSequence: 0, lastArchiveDigest: null, child: null })
 
-    let loads = 0, creations = 0, sends = 0, environment = ""
+    let loads = 0, creations = 0, sends = 0, sourceReads = 0, environment = ""
     let afterNativeCreate: (() => void) | undefined
     let rootSession: unknown
-    const native = { get: () => Effect.sync(() => { if (!rootSession) throw new Error("Root missing"); return rootSession }),
+    const sessions = new Map<string, unknown>(), commands = new Map<string, { id: string; text: string; metadata: unknown }>()
+    const replies: { id: string; text: string; completed: boolean }[] = [
+      { id: "msg_one", text: "First full watched reply", completed: true },
+      { id: "msg_partial", text: "Streaming partial", completed: false },
+    ]
+    let anchorRace: "delete" | "change" | undefined, sourceMoved = false
+    const readCalls: { cursor?: { id: string }; limit: number }[] = []
+    const replyInfo = (reply: typeof replies[number]) => Schema.decodeUnknownSync(SessionMessage.Info)({
+      id: reply.id, type: "assistant", agent: "worker", model: selection.model,
+      content: [{ type: "text", text: reply.text }], time: { created: 1, ...(reply.completed ? { completed: 3 } : {}) } })
+    const watched = Schema.decodeUnknownSync(Session.Info)({ id: "ses_watched", projectID: "project", location: { directory },
+      time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
+    sessions.set("ses_watched", watched)
+    db.prepare("INSERT INTO session_v2 VALUES(?,NULL,?,?,NULL,?,NULL)").run("ses_watched", "project", directory, "{}")
+    const event = (sessionID: string, type: string, data: Record<string, unknown>) => {
+      const previous = db.prepare("SELECT seq FROM event_sequence WHERE aggregate_id=?").get(sessionID) as { seq: number } | undefined
+      const seq = (previous?.seq ?? -1) + 1
+      db.prepare("INSERT INTO event VALUES(?,?,?,?,?)").run(`evt_${sessionID}_${seq}`, sessionID, seq, type, JSON.stringify({ sessionID, ...data }))
+      db.prepare("INSERT INTO event_sequence VALUES(?,?,NULL) ON CONFLICT(aggregate_id) DO UPDATE SET seq=excluded.seq").run(sessionID, seq)
+    }
+    const native = { get: (id: string) => Effect.sync(() => {
+      const target = sessions.get(id)
+      if (!target) throw new Error("Native session missing")
+      return id === "ses_watched" && sourceMoved ? { ...watched, location: { directory: `${directory}-moved` } } : target
+    }),
       create: (request: Record<string, unknown>) => Effect.sync(() => {
         creations++; rootSession = Schema.decodeUnknownSync(Session.Info)({ ...request, projectID: "project",
           time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
+        sessions.set(String(request.id), rootSession)
+        db.prepare("INSERT INTO session_v2 VALUES(?,NULL,?,?,NULL,?,NULL)").run(String(request.id), "project", directory, JSON.stringify(request.metadata))
+        event(String(request.id), "session.created.1", {})
         afterNativeCreate?.()
         return rootSession
       }), inbox: () => Effect.succeed([]), prompt: () => Effect.die("Raw prompt forbidden"),
+      messages: (input: { cursor?: { id: string }; limit: number }) => Effect.sync(() => {
+        sourceReads++; readCalls.push(input)
+        if (anchorRace && input.cursor) {
+          const index = replies.findIndex(reply => reply.id === input.cursor!.id)
+          if (anchorRace === "delete") replies.splice(index, 1)
+          else replies[index].text += " changed after query"
+          return []
+        }
+        return replies.slice(input.cursor ? replies.findIndex(reply => reply.id === input.cursor!.id) + 1 : 0)
+          .slice(0, input.limit).map(replyInfo)
+      }),
+      message: (input: { messageID: string }) => Effect.sync(() => {
+        const reply = replies.find(reply => reply.id === input.messageID)
+        return reply && replyInfo(reply)
+      }),
       environment: (input: { variables: Record<string, string> }) => Effect.sync(() => { environment = input.variables.MARKER; return input.variables }),
       synthetic: (input: { sessionID: string; id: string; text: string; metadata: unknown; delivery: string; description: string }) => Effect.sync(() => {
         sends++
+        commands.set(input.sessionID, input)
+        db.prepare("INSERT INTO session_message VALUES(?,?,0,'synthetic',?)").run(input.id, input.sessionID, JSON.stringify(input))
+        event(input.sessionID, "session.inbox.enqueued.1", { inboxID: input.id,
+          item: { type: "synthetic", payload: { text: input.text, metadata: input.metadata } } })
+        event(input.sessionID, "session.execution.started.1", {})
+        event(input.sessionID, "session.inbox.delivered.1", { inboxID: input.id })
         return Schema.decodeUnknownSync(SessionInbox.Info)({ id: input.id, sessionID: input.sessionID, type: "synthetic",
           payload: { text: input.text, description: input.description, metadata: input.metadata },
           delivery: input.delivery, time: { created: Date.now() } })
@@ -138,7 +195,10 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       jobs.set(input.id, { status: "running", metadata: input.metadata, run: input.run })
       return { id: input.id, type: "codenomad.missions.recurrence", status: "running", metadata: input.metadata }
     }), cancel: (id: string) => Effect.sync(() => { const found = jobs.get(id); if (found) found.status = "cancelled" }) }
-    const app = base.pipe(Context.add(sessionTag, native), Context.add(jobTag, job), Context.add(mapTag, locations))
+    const app = base.pipe(Context.add(sessionTag, native), Context.add(jobTag, job), Context.add(mapTag, locations),
+      Context.add(tag("@opencode/Form"), { list: () => Effect.succeed([]) }),
+      Context.add(tag("@opencode/Permission"), { list: () => Effect.succeed([]) }),
+      Context.add(tag("@opencode/Shell"), { list: () => Effect.succeed([]) }))
     const placement = { projectID: "project", projectCanonical: directory, directory, scheduleID: "schedule",
       profileID: "profile", executionHost: "native", epoch: 1 }
     const tornDocument = await store.create("torn_schedule", config, now - 2 * 86_400_000, () => true)
@@ -176,6 +236,36 @@ test("signed Play admits one native due passage after desktop detach and Locatio
     assert.equal(await tornDue(app, () => true, new AbortController().signal), "inactive")
     assert.equal((await store.read(tornDocument.id))?.pending, null)
     assert.deepEqual([creations, sends, environment], [0, 0, ""])
+    await writeFile(profile.configYamlPath, "server: [malformed\n")
+    await assert.rejects(nativeRecurrenceDue(ctx, placement)(app, () => true, new AbortController().signal))
+    assert.deepEqual(await store.read("schedule"), document, "unreadable signed YAML cannot reserve calendar/high-water")
+    assert.equal((get(`${ledgerKey}/live`) as { child: unknown }).child, null)
+    assert.deepEqual([sourceReads, creations, sends, environment], [0, 0, 0, ""], "YAML preparation has no native ENV writes")
+    await writeFile(profile.configYamlPath, "server:\n  environmentVariables:\n    MARKER: old\n")
+    for (const [id, effects, inboxMessages, consigne] of [
+      ["low_inbox", 4, 0, "Review"], ["low_effects", 3, 1, "Review"],
+      ["oversized_input", 4, 1, "x".repeat(16_384)],
+    ] as const) {
+      const draft = await store.create(id, { ...config, consigne, watchedConversationIDs: ["ses_watched"] },
+        now - 2 * 86_400_000, () => true)
+      const before = await store.setState(id, draft.revision, "running", () => true)
+      const budgetScope = { ...scope, scheduleID: id }
+      const budgetBody = { ...body, ...budgetScope, config: before.config, configDigest: authorityDigest(before.config),
+        requestID: recurrenceHumanRequestID(id, 1, "authorize"), budgets: { effects, inboxMessages, nativeCalls: 0, publications: 0 } }
+      const budgetParent = { body: budgetBody,
+        signature: sign(null, recurrenceStandingSigningBytes(budgetBody), keys.privateKey).toString("base64") }
+      const key = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence/${store.projectToken}/${stableToken(`profile\0native\0${id}`, 40)}`
+      const head = { version: 1, scope: budgetScope, revision: 0, parent: budgetParent,
+        settledSequence: 0, lastArchiveDigest: null, child: null }
+      put(`${key}/parents/1`, budgetParent)
+      put(`${key}/live`, head)
+      const limited = nativeRecurrenceDue(ctx, { ...placement, scheduleID: id })
+      const outcome = await limited(app, () => true, new AbortController().signal).catch(() => "rejected-before-effect")
+      assert.equal(outcome, "rejected-before-effect", `${id}: fail before any calendar reservation`)
+      assert.deepEqual(await store.read(id), before, `${id}: no pending, high-water, history or revision change`)
+      assert.deepEqual(get(`${key}/live`), head, `${id}: no child or read reservation`)
+      assert.deepEqual([sourceReads, creations, sends, environment], [0, 0, 0, ""], `${id}: no native effects`)
+    }
     const observer: ReconcileNativePending = async (provider, nativeStorage, child, signal) => {
       signal.throwIfAborted()
       const doc = (await store.read("schedule"))!
@@ -271,6 +361,157 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       createdAt: now, outcome: "completed", summary: "Next native terminal evidence" })
     assert.equal(await due(app, () => true, new AbortController().signal), "not-due")
     assert.equal((await store.read("schedule"))?.settledCount, 2)
+
+    // Exercise the ACTUAL due consumer, native SQL provider and native source
+    // reader. No direct reserve/admit shortcut or backend fixture is involved.
+    const followed = async (id: string, cursors: typeof document.cursors = []) => {
+      const draft = await store.create(id, { ...config, watchedConversationIDs: ["ses_watched"] }, now - 2 * 86_400_000, () => true)
+      const running = await store.setState(id, draft.revision, "running", () => true)
+      if (cursors.length) {
+        // Seed an existing historical cursor through the strict metadata codec.
+        // The tested due invocation below still owns all native admission/read work.
+        const at = now - 86_400_000
+        const historical = await store.reserve(id, running.revision, { kind: "manual", requestID: "history_seed",
+          expectedRevision: running.revision, at }, at, () => true)
+        const passage = historical.pending!.passage
+        const receipt = { passageID: passage.id, messageID: passage.messageID,
+          missionID: "msn_historical", conversationID: "ses_historical" }
+        await store.recordAdmission(id, { ...receipt, kind: "accepted" }, at, () => true)
+        await store.finish(id, { ...receipt, outcome: "completed", artifactMessageIDs: [], cursors }, at, () => true)
+      }
+      const exact = (await store.read(id))!, sourceScope = { ...scope, scheduleID: id }
+      const signedBody = { ...body, ...sourceScope, config: exact.config, configDigest: authorityDigest(exact.config),
+        requestID: recurrenceHumanRequestID(id, 1, "authorize"), budgets: { effects: 4, nativeCalls: 0, inboxMessages: 4, publications: 0 } }
+      const signedParent = { body: signedBody, signature: sign(null, recurrenceStandingSigningBytes(signedBody), keys.privateKey).toString("base64") }
+      const key = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence/${store.projectToken}/${stableToken(`profile\0native\0${id}`, 40)}`
+      put(`${key}/parents/1`, signedParent)
+      put(`${key}/live`, { version: 1, scope: sourceScope, revision: 0, parent: signedParent, settledSequence: 0, lastArchiveDigest: null, child: null })
+      const callback = nativeRecurrenceDue(ctx, { ...placement, scheduleID: id }, undefined, () => now)
+      const tick = () => callback(app, () => true, new AbortController().signal)
+      return { id, key, tick, exact }
+    }
+    const source = await followed("followed")
+    const sourceHead = () => get(`${source.key}/live`) as { child: RecurrenceChildRecord | null }
+    const sourcePending = async () => {
+      const pending = (await store.read(source.id))!
+      assert.equal(pending.pending?.admission?.kind, "accepted")
+      return pending
+    }
+    const completeSource = async (doc: typeof document, outcome: "completed" | "failed" = "completed") => {
+      const accepted = doc.pending!.admission!
+      event(accepted.conversationID, outcome === "completed" ? "session.execution.succeeded.1" : "session.execution.failed.1",
+        outcome === "failed" ? { error: { type: "provider.no-route" } } : {})
+      await recurrencePassage(journalStorage, doc, () => true).journal.append({ version: 1, id: "evt_finished", type: "mission.finished",
+        missionID: accepted.missionID, projectID: "project", createdAt: now, outcome, summary: "Exact offline native terminal" })
+    }
+    assert.equal(await source.tick(), "accepted")
+    const firstSource = await sourcePending(), firstChild = sourceHead().child!
+    const firstCommand = commands.get(firstSource.pending!.admission!.conversationID)!
+    assert.equal(firstCommand.text, recurrenceInput(firstChild).text, "deterministic input is identical to lifecycle ACK text")
+    assert(firstCommand.text.includes("First full watched reply")); assert(!firstCommand.text.includes("Streaming partial"))
+    assert.deepEqual(firstChild.effects[0].receipt!.sourceMessages!.map(message => message.id), ["msg_one"])
+    assert.equal(firstChild.effects[0].effect.kind, "inbox-read")
+    assert.deepEqual(firstSource.cursors, [], "a positive read ACK is not processed output")
+    await completeSource(firstSource)
+    failFinishOnce = true
+    assert.equal(await source.tick(), "pending", "authority archive precedes calendar finish")
+    assert.equal(sourceHead().child, null)
+    assert.deepEqual((await store.read(source.id))!.cursors, [], "crash after authority archive cannot advance cursors")
+    assert.equal(await source.tick(), "not-due", "exact source archive resumes metadata only")
+    const firstArchive = (await store.read(source.id))!
+    assert.deepEqual(firstArchive.cursors, [{ conversationID: "ses_watched", messageID: "msg_one",
+      locationDigest: recurrenceSourceLocationDigest({ directory }) }])
+
+    now += 86_400_000
+    replies[1].completed = true; replies[1].text = "Final stable same-ID reply " + "x".repeat(4 * 1024)
+    replies.push({ id: "msg_three", text: "Only new next-day reply", completed: true })
+    assert.equal(await source.tick(), "accepted")
+    const secondSource = await sourcePending(), secondChild = sourceHead().child!
+    assert.equal(readCalls.at(-1)!.cursor?.id, "msg_one")
+    assert.deepEqual(secondChild.effects[0].receipt!.sourceMessages!.map(message => message.id), ["msg_partial", "msg_three"])
+    const secondCommand = commands.get(secondSource.pending!.admission!.conversationID)!
+    assert(secondCommand.text.includes(replies[1].text)); assert(secondCommand.text.includes("Only new next-day reply"))
+    assert(!secondCommand.text.includes("First full watched reply")); assert(secondCommand.text.length <= 16_384)
+    assert.deepEqual(secondSource.cursors, firstArchive.cursors)
+    await completeSource(secondSource)
+    db.prepare("UPDATE session_v2 SET directory=? WHERE id='ses_watched'").run(`${directory}-moved`)
+    assert.equal(await source.tick(), "pending", "moved source cannot borrow terminal read receipts")
+    assert.deepEqual((await store.read(source.id))!.cursors, firstArchive.cursors)
+    db.prepare("UPDATE session_v2 SET directory=? WHERE id='ses_watched'").run(directory)
+    assert.equal(await source.tick(), "not-due")
+    const secondArchive = (await store.read(source.id))!
+    assert.equal(secondArchive.cursors[0].messageID, "msg_three")
+
+    now += 86_400_000
+    replies.push({ id: "msg_oversized", text: "z".repeat(20 * 1024), completed: true })
+    assert.equal(await source.tick(), "accepted")
+    const oversized = await sourcePending(), reference = sourceHead().child!.effects[0].receipt!.sourceMessages![0]
+    assert.equal(reference.id, "msg_oversized"); assert.equal(reference.needsDecision, "source-input-capacity")
+    assert.equal(reference.text, "")
+    const oversizedCommand = commands.get(oversized.pending!.admission!.conversationID)!
+    assert(oversizedCommand.text.includes("msg_oversized")); assert(!oversizedCommand.text.includes("z".repeat(1024)))
+    assert(oversizedCommand.text.length <= 16_384)
+    await completeSource(oversized)
+    assert.equal(await source.tick(), "not-due")
+    assert.deepEqual((await store.read(source.id))!.cursors, secondArchive.cursors, "oversized reference never consumes its cursor")
+
+    now += 86_400_000
+    replies.at(-1)!.text = "Now manageable full reply"
+    replies.push({ id: "msg_unhandled", text: "Read before provider failure", completed: true })
+    assert.equal(await source.tick(), "accepted")
+    const failedSource = await sourcePending()
+    await completeSource(failedSource, "failed")
+    assert.equal(await source.tick(), "pending", "production observer does not invent failed terminal qualification")
+    // Offline exact known-failure producer stand-in; test the real due archival
+    // path without adding a new production failure-observation policy.
+    const knownFailed: ReconcileNativePending = async (provider, storage, child, signal) => {
+      signal.throwIfAborted()
+      const native = provider.readSession(child.grant.coordinatorSessionID, child.grant.messageID)
+      const terminal = native.events.at(-1)!
+      assert.equal(terminal.type, "session.execution.failed.1")
+      assert.equal(JSON.parse(String(terminal.data)).error.type, "provider.no-route")
+      assert.equal(native.ownerID, null); assert.equal(native.inbox, 0); assert.equal(native.pending, 0)
+      const snapshot = await recurrencePassage(storage, failedSource, () => true).journal.snapshot()
+      assert.equal(snapshot.missions[0].status, "failed")
+      assert(child.effects.every(item => item.receipt?.outcome === "applied"))
+      return { settlement: { grantID: child.grant.grantID, evidenceID: String(terminal.id), outcome: "failed",
+        effects: child.effects.map(item => item.receipt!), nativeIdle: true, controlsSettled: true,
+        notificationsSettled: true, derivedCallsEnded: true }, assertCurrent: () => { signal.throwIfAborted(); return provider.assertCurrent() } }
+    }
+    const failedDue = nativeRecurrenceDue(ctx, { ...placement, scheduleID: source.id }, knownFailed, () => now)
+    assert.equal(await failedDue(app, () => true, new AbortController().signal), "not-due")
+    const failedResult = (await store.read(source.id))!.history.at(-1)!.result
+    assert("outcome" in failedResult)
+    assert.equal(failedResult.outcome, "failed")
+    assert.deepEqual((await store.read(source.id))!.cursors, secondArchive.cursors, "failed read ACKs remain charged, not processed")
+
+    now += 86_400_000
+    assert.equal(await source.tick(), "accepted")
+    const retryDay = await sourcePending(), retryText = commands.get(retryDay.pending!.admission!.conversationID)!.text
+    assert(retryText.includes("Read before provider failure")); assert(retryText.includes("Now manageable full reply"))
+    assert.equal(readCalls.at(-1)!.cursor?.id, "msg_three", "new passage reads failed passage's unprocessed source IDs")
+    await completeSource(retryDay)
+    assert.equal(await source.tick(), "not-due")
+    const finalArchive = (await store.read(source.id))!
+    assert.equal(finalArchive.cursors[0].messageID, "msg_unhandled")
+
+    // Moved and deleted/changed ORIGINAL anchors park only the original read,
+    // never clear the cursor, create a coordinator or retry the native query.
+    for (const kind of ["moved", "change", "delete"] as const) {
+      const unknownSource = await followed(`anchor_${kind}`, finalArchive.cursors)
+      const before: [number, number, number] = [sourceReads, creations, sends]
+      if (kind === "moved") sourceMoved = true
+      else anchorRace = kind
+      assert.equal(await unknownSource.tick(), "unknown")
+      assert.deepEqual((await store.read(unknownSource.id))!.cursors, finalArchive.cursors)
+      assert.equal((await store.read(unknownSource.id))!.pending!.admission, null)
+      assert.deepEqual([creations, sends], before.slice(1), "unknown source never creates/adopts a root")
+      const after = sourceReads
+      assert.equal(await unknownSource.tick(), "pending")
+      assert.equal(sourceReads, after, "uncertain source read is never replayed")
+      sourceMoved = false; anchorRace = undefined
+    }
+    const beforePause = [creations, sends]
     now += 86_400_000
     const cancelledDispatch = new AbortController()
     afterNativeCreate = () => {
@@ -303,8 +544,8 @@ test("signed Play admits one native due passage after desktop detach and Locatio
       [["create", "applied"]], "the original positive native return is committed under the advanced signed epoch")
     terminal = false
     assert.equal(await due(app, () => true, new AbortController().signal), "pending")
-    assert.equal(creations, 3)
-    assert.equal(sends, 2)
+    assert.equal(creations, beforePause[0] + 1)
+    assert.equal(sends, beforePause[1])
     await Effect.runPromise(Fiber.interrupt(fiber))
     jobs.clear() // The native service restarted: in-memory Job is gone; no startup auto-arm.
     assert.equal(await Effect.runPromiseWith(app)(readNativeRecurrenceClock(placement)), false)
