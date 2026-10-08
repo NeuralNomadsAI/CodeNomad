@@ -7,6 +7,7 @@ import type { MissionStorage } from "../../missions/journal"
 import { reportInput } from "../../missions/inputs"
 import { recordNativeControlFailure } from "../../missions/native-control-failure"
 import { recurrenceInput, recurrenceSources, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
+import { nativeFailedExecution } from "./native-recurrence-failed-execution"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
@@ -131,20 +132,11 @@ async function observeSettlement(provider: NativeRecurrenceAuthorityProvider,
         "session.step.failed.1"] : ["session.execution.succeeded.1", "session.execution.interrupted.1"]).includes(event.type)))
       rejectAuthority("observation-unavailable")
     if (outcome === "failed") {
-      // Deliberately limited to native no-route with no durable Step/tool evidence.
-      // This does NOT prove zero provider HTTP requests: retry-full can precede a
-      // durable Step. The admitted execution FAILED; its three startup effects
-      // remain APPLIED. Native retries/billing are not workflow replay or tool grants.
-      const error = ended[0].data.error
-      if (sessionID !== grant.coordinatorSessionID || ended[0].seq !== read.seq
-        || !object(error) || error.type !== "provider.no-route" || typeof error.message !== "string" || error.status !== undefined
-        || events.some(event => !["session.created.1", "session.agent.selected.1", "session.model.selected.1",
-          "session.instructions.updated.2", "session.inbox.enqueued.1", "session.inbox.delivered.1",
-          "session.execution.started.1", "session.execution.failed.1"].includes(event.type))
-        || read.messages.length !== 1 || read.messages[0].id !== grant.messageID || read.messages[0].type !== "synthetic")
-        rejectAuthority("observation-unavailable")
+      if (sessionID !== grant.coordinatorSessionID || ended[0].seq !== read.seq) rejectAuthority("observation-unavailable")
       provider.assertNoSessionChildren(sessionID)
-      failureSummary = error.message || error.type // Native diagnostic, never parsed into a result.
+      const delivered = events.filter(event => event.type === "session.inbox.delivered.1" && event.data.inboxID === grant.messageID)
+      if (delivered.length !== 1) rejectAuthority("observation-unavailable")
+      failureSummary = nativeFailedExecution(events, read.messages, grant.messageID, delivered[0].seq, ended[0])
     }
     const enqueued = events.filter(event => event.type === "session.inbox.enqueued.1")
     const delivered = events.filter(event => event.type === "session.inbox.delivered.1")

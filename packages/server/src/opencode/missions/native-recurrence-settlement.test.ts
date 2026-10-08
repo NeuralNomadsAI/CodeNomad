@@ -9,7 +9,7 @@ import type { RecurrenceChildRecord } from "../../missions/recurrence-authority-
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 import { observeNativeRecurrenceSettlement, observeNativeRecurrenceTerminalSettlement } from "./native-recurrence-settlement"
 
-test("finite terminal observation keeps success strict and records admitted native no-route execution failure", async () => {
+test("finite terminal observation keeps success strict and records bounded admitted provider execution failure", async () => {
   const projectID = "project", projectCanonical = "/owned/project", scheduleID = "schedule"
   const due = { kind: "manual" as const,
     requestID: "request", expectedRevision: 0, at: 10 }
@@ -174,7 +174,7 @@ test("finite terminal observation keeps success strict and records admitted nati
   rootMessages = [{ id: messageID, type: "synthetic", data: JSON.stringify({ text: config.consigne, metadata }) }]
   const terminalObserve = () => observeNativeRecurrenceTerminalSettlement(provider, storage, child, new AbortController().signal)
   await assert.rejects(observe(), /observation-unavailable/, "the original succeeded-only observer never accepts a failure")
-  for (const type of ["provider.transport", "provider.internal", "provider.auth", "unknown"]) {
+  for (const type of ["unknown", "tool.execution", "provider.not-native"]) {
     events[4] = { ...failed, data: JSON.stringify({ sessionID: coordinatorSessionID, error: { type, message: "Outside the deliberately supported native coded subset" } }) }
     await assert.rejects(terminalObserve(), /observation-unavailable/)
   }
@@ -221,7 +221,7 @@ test("finite terminal observation keeps success strict and records admitted nati
   const recorded = (await journal.events()).events.find(event => event.type === "mission.finished")
   assert.ok(recorded?.type === "mission.finished")
   assert.equal(recorded.outcome, "failed")
-  assert.equal(recorded.summary, "Model unavailable", "only the native diagnostic is retained, not invented coordinator prose")
+  assert.equal(recorded.summary, "provider.no-route", "only a bounded native code is copied; diagnostic URLs/tokens stay native")
   assert.deepEqual(recorded.nativeFailure, { operationID, sessionID: coordinatorSessionID, messageID, evidenceID: "evt_failure",
     inputDigest: authorityDigest(config.consigne) })
   assert.equal((await journal.snapshot()).missions[0].reports.length, 0, "native failure is not an invented task report")

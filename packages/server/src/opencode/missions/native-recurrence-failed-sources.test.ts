@@ -33,7 +33,12 @@ const tag = (name: string) => Context.Service<never, unknown>(name)
 const nativeKey = (key: string) => `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 const current = () => true as const
 
-test("actual failure observer and native SQLite provider archive charged sources without consuming failed cursors", async () => {
+for (const failure of [
+  { type: "provider.no-route", status: undefined, modelStep: false, retry: false },
+  { type: "provider.auth", status: 401, modelStep: true, retry: false },
+  { type: "provider.rate-limit", status: 429, modelStep: true, retry: true },
+] as const) {
+test(`actual native ${failure.type} failure archives charged sources and ended Steps without consuming cursors`, async () => {
   const temporary = await mkdtemp(path.join(process.env.LOCALAPPDATA!, "Temp", "opencode", "failed-sources-offline-"))
   execFileSync("git", ["init", "-q", temporary])
   const directory = realpathSync(temporary), family = await readFamilyAuthorityIdentity(directory)
@@ -179,16 +184,34 @@ test("actual failure observer and native SQLite provider archive charged sources
         admission: { id: input.id, sessionID: input.sessionID, type: "synthetic", delivery: "queue", payload, time: { created: 10 } } } })
     for (const [id, metadata] of [[grant.coordinatorSessionID, { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "coordinator", role: "coordinator" } }],
       ["ses_watched", {}]] as const) db.prepare("INSERT INTO session_v2 VALUES(?,NULL,?,?,NULL,?,NULL)").run(id, scope.projectID, directory, JSON.stringify(metadata))
-    const events = [
+    const error = { type: failure.type, message: "Native provider failed at https://private.example/?token=private-token",
+      ...(failure.status === undefined ? {} : { status: failure.status }) }
+    const model = { providerID: "fixture", id: "model" }, assistantMessageID = "msg_native_assistant"
+    const events: { type: string; data: Record<string, unknown> }[] = [
       { type: "session.created.1", data: { sessionID: input.sessionID } },
       { type: "session.inbox.enqueued.1", data: { sessionID: input.sessionID, inboxID: input.id, item: { type: "synthetic", payload } } },
       { type: "session.execution.started.1", data: { sessionID: input.sessionID } },
       { type: "session.inbox.delivered.1", data: { sessionID: input.sessionID, inboxID: input.id } },
-      { type: "session.execution.failed.1", data: { sessionID: input.sessionID, error: { type: "provider.no-route", message: "Native provider route unavailable" } } },
     ]
-    db.prepare("INSERT INTO event_sequence VALUES(?,4,NULL)").run(input.sessionID)
+    if (failure.modelStep) {
+      const start = (started: number) => ({ type: "session.step.started.1", data: { sessionID: input.sessionID,
+        assistantMessageID, agent: "build", model, started } })
+      events.push(start(11))
+      if (failure.retry) events.push({ type: "session.retry.scheduled.1", data: { sessionID: input.sessionID,
+        assistantMessageID, attempt: 2, at: 12, error } }, start(13))
+      events.push({ type: "session.step.streamed.1", data: { sessionID: input.sessionID, assistantMessageID } },
+        { type: "session.step.failed.1", data: { sessionID: input.sessionID, assistantMessageID, error, files: [] } })
+      db.prepare("INSERT INTO session_message VALUES(?,?,4,'assistant',?)").run(assistantMessageID, input.sessionID, JSON.stringify({
+        agent: "build", model, content: [], error, finish: "error", snapshot: { files: [] },
+        time: { created: failure.retry ? 13 : 11, streamed: 14, completed: 15 } }))
+    }
+    events.push({ type: "session.execution.failed.1", data: { sessionID: input.sessionID, error } })
+    const terminalSeq = events.length - 1
+    db.prepare("INSERT INTO event_sequence VALUES(?,?,NULL)").run(input.sessionID, terminalSeq)
     events.forEach((event, seq) => db.prepare("INSERT INTO event VALUES(?,?,?,?,?)").run(`evt_native_${seq}`, input.sessionID, seq, event.type, JSON.stringify(event.data)))
     db.prepare("INSERT INTO session_message VALUES(?,?,3,'synthetic',?)").run(input.id, input.sessionID, JSON.stringify(payload))
+    db.prepare("INSERT INTO session_message VALUES(?, ?, ?, 'idle', ?)").run(`msg_native_${terminalSeq}`, input.sessionID, terminalSeq,
+      JSON.stringify({ outcome: "failed", time: { created: 16 } }))
     const observe = (candidate: RecurrenceChildRecord = child) => provider.transact(current,
       () => observeNativeRecurrenceTerminalSettlement(provider, storage, candidate, new AbortController().signal))
     const unknownRead = structuredClone(child); unknownRead.effects[0].receipt = null
@@ -210,6 +233,20 @@ test("actual failure observer and native SQLite provider archive charged sources
     db.prepare("UPDATE session_v2 SET directory=? WHERE id='ses_watched'").run(`${directory}-moved`)
     await assert.rejects(observe(), /binding-mismatch/)
     db.prepare("UPDATE session_v2 SET directory=? WHERE id='ses_watched'").run(directory)
+    db.prepare("UPDATE event SET type='session.tool.called.1' WHERE aggregate_id=? AND seq=?").run(input.sessionID, terminalSeq)
+    await assert.rejects(observe(), /observation-unavailable/, "a running/partial tool is not a provider execution terminal")
+    db.prepare("UPDATE event SET type='session.execution.failed.1' WHERE aggregate_id=? AND seq=?").run(input.sessionID, terminalSeq)
+    const withRunningTool = [...events.slice(0, -1), { type: "session.tool.called.1", data: { sessionID: input.sessionID,
+      assistantMessageID, id: "call_running", input: { command: "work" }, executed: false } }, events.at(-1)!]
+    db.prepare("DELETE FROM event WHERE aggregate_id=?").run(input.sessionID)
+    withRunningTool.forEach((event, seq) => db.prepare("INSERT INTO event VALUES(?,?,?,?,?)")
+      .run(`evt_native_${seq}`, input.sessionID, seq, event.type, JSON.stringify(event.data)))
+    db.prepare("UPDATE event_sequence SET seq=? WHERE aggregate_id=?").run(withRunningTool.length - 1, input.sessionID)
+    await assert.rejects(observe(), /observation-unavailable/, "positive execution failure cannot retire a partial native tool")
+    db.prepare("DELETE FROM event WHERE aggregate_id=?").run(input.sessionID)
+    events.forEach((event, seq) => db.prepare("INSERT INTO event VALUES(?,?,?,?,?)")
+      .run(`evt_native_${seq}`, input.sessionID, seq, event.type, JSON.stringify(event.data)))
+    db.prepare("UPDATE event_sequence SET seq=? WHERE aggregate_id=?").run(terminalSeq, input.sessionID)
     assert.equal((await journal.snapshot()).missions[0].status, "active", "refusals invent no result")
     const signer: NativeStandingSigner = { readSigners: async () => [{ ...scope, authorityID, keyID, roots: [root],
       publicKey: keys.publicKey, provisioningGeneration: signerDigest, policy: MISSION_AUTHORITY_POLICY, qualification: "qualified" }],
@@ -221,10 +258,11 @@ test("actual failure observer and native SQLite provider archive charged sources
     assert.deepEqual(archive.child.effects, originalEffects, "all original read/startup operations remain charged and unchanged")
     assert.equal(recurrenceSources(archive.child)[0].messages[0].text, sourceMessages[0].text)
     assert.deepEqual(recurrenceSourceCursors(archive), [], "positive reads are not processed source work")
-    const failure = (await journal.events()).events.find(event => event.type === "mission.finished")
-    assert.ok(failure?.type === "mission.finished")
-    assert.equal(failure.nativeFailure?.inputDigest, authorityDigest(input.text))
-    assert.notEqual(failure.nativeFailure?.inputDigest, authorityDigest(pending.config.consigne))
+    const recordedFailure = (await journal.events()).events.find(event => event.type === "mission.finished")
+    assert.ok(recordedFailure?.type === "mission.finished")
+    assert.equal(recordedFailure.summary, error.type, "private native URLs/tokens are not copied into the Mission result")
+    assert.equal(recordedFailure.nativeFailure?.inputDigest, authorityDigest(input.text))
+    assert.notEqual(recordedFailure.nativeFailure?.inputDigest, authorityDigest(pending.config.consigne))
     assert.equal((await provider.read())!.child, null)
     assert.deepEqual((await calendar.read(scope.scheduleID))!.cursors, [oldCursor])
     const runner = new MissionRecurrenceRunner(calendar, { authorize: async () => { throw Error("Archive-only pending must not dispatch") },
@@ -255,3 +293,4 @@ test("actual failure observer and native SQLite provider archive charged sources
     db.close(); await rm(temporary, { recursive: true, force: true })
   }
 })
+}

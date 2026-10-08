@@ -77,6 +77,52 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
 
 ### Known admitted terminal execution failure subset — 2026-10-08, offline only
 
+**Superseding provider-failure increment:** the owned branch now accepts the
+bounded native provider error codes actually emitted by the inspected V2
+`to-session-error.ts` at `757e565c`: auth, rate-limit, quota, content-filter,
+transport, internal, invalid-output/request, unsupported-operation, no-route,
+provider-unknown and timeout. This is a coded contract, not error-prose parsing or
+a daemon-version allowlist. A native execution must still have one exact final
+failed terminal, a released claim/owner/inbox/pending queue, no outstanding owned
+request/Shell/family work, three applied startup operations and only validated
+applied signed reads. Every tool/input/result event or assistant tool part,
+invocation/publication charge, unknown event or partial projection stays pending.
+
+`native-recurrence-failed-execution.ts` uses the pinned `@opencode/schema@2.0.24`
+Step/Text/Reasoning/Retry and assistant-message codecs. Model Steps are permitted,
+but their lifecycle and corresponding projections must be complete and bounded:
+started/streamed/ended-or-failed, closed text/reasoning fragments and matching
+assistant identity, agent/model/time/error/finish/content. The inspected native
+`step.ts:174-189` and `llm.ts:273-297` also permit an output-free attempt to end
+in RetryScheduled and reuse its assistant ID, or to end the native retry wait in
+the final execution failure. Native continuation synthetics require their exact
+retry predecessor and event-derived message identity; the code never admits a
+replacement prompt, workflow operation or tool grant. Idle/config/instruction
+artifacts are matched to their native event identities. Unknown compaction and
+mutation lifecycles remain outside this minimum proof rather than being guessed
+terminal. Native Step snapshot file changes are not accepted as no-tool evidence.
+
+Source proof is `step.ts:100-145,256-269` (Tool.Called before local execution and
+scoped joins before drain exit), `run-coordinator.ts:99-106` (settlement after
+drain exit), `execution.ts:141-148` / `store.ts:217-223` (failed event with claim
+release), and `message-updater.ts:214-285,403-410,63-75` (Steps, retries and idle
+projection). The old no-Step/no-route slice below is historical, not full product
+acceptance. Neither slice claims zero HTTP calls, no native retries or remote
+billing settlement. Failure stays failed with all original charged receipts and
+old source cursors, with authority archive before calendar finish and no replay.
+
+Provider diagnostic text may contain private URLs/tokens. No new error-message
+parser/redactor is introduced: the Mission journal copies only the validated
+bounded native code; full diagnostics remain in native storage. Offline actual
+observer/provider SQLite cases now cover no-route, auth/401 failed Step and
+rate-limit/429 with same-ID retry then failed Step. They preserve charged reads,
+failed cursors and input digest, reject a partial tool despite the positive
+failed terminal, and recover the exact archive without native re-execution.
+Five focused lifecycle checks plus these actual provider/observer cases pass
+**9/9**. The earlier aggregate **25/26 admission-unknown** failure remains recorded
+below; this increment is not a package/private-native acceptance claim. No
+private fixture, installation, push or deadline change accompanies it.
+
 `missions-known-terminal-failure-20261008` adds a finite-passage branch, leaving
 the ordinary succeeded-only observer's contract intact. It accepts only an exact
 original start with all three applied authority receipts, one delivered input,
