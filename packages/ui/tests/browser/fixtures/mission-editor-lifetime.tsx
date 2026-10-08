@@ -32,6 +32,10 @@ function Fixture() {
       { type: "instance.event", instanceId: instanceId(), event: { type: "rpc.codenomad.missions.changed", id: "private-changed", created: 1,
         location: { directory: instances().get(instanceId())!.folder }, data: {} } },
     ]),
+    invalidateRecurrence: (scheduleID = "rec_fixture") => (serverEvents as unknown as { dispatchBatch(events: WorkspaceEventPayload[]): void }).dispatchBatch([
+      { type: "instance.event", instanceId: instanceId(), event: { type: "rpc.codenomad.missions.scheduleChanged", id: "calendar-changed", created: 1,
+        location: { directory: instances().get(instanceId())!.folder }, data: { scheduleID, revision: 1 } } },
+    ]),
     state: id => missionStore.state(id),
     held: () => uncertainMissionCreation(JSON.stringify([instanceId(), instances().get(instanceId())!.folder, instances().get(instanceId())!.metadata?.project?.id])),
     selectedHistory: () => [...selectedHistory],
@@ -50,6 +54,7 @@ declare global {
       directory(value: string): void
       project(value: string): void
       invalidate(): void
+      invalidateRecurrence(scheduleID?: string): void
       state(id: string): ReturnType<typeof missionStore.state>
       held(): ReturnType<typeof uncertainMissionCreation>
       selectedHistory(): Array<string | undefined>

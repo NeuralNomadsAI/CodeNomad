@@ -11,7 +11,7 @@ import { missionBriefingRequest, setMissionBriefingRequest } from "../stores/mis
 import { missionBriefingFreshness } from "./mission-briefing-model"
 
 export function MissionBriefing(props: {
-  instanceId: string; mission: MissionMap; active: boolean; disabled?: boolean
+  instanceId: string; mission: MissionMap; active: boolean; disabled?: boolean; readOnly?: boolean
   onReadOverview: () => void; reading?: boolean
   onOpenCoordinator: () => void
 }) {
@@ -29,7 +29,7 @@ export function MissionBriefing(props: {
   const freshness = createMemo(() => missionBriefingFreshness(props.mission))
   const capture = createMissionViewFence(identity, () => props.active && !props.disabled)
   const ask = async () => {
-    if (waiting() || props.disabled || !props.active || !missionAcceptsMessage(props.mission)) return
+    if (props.readOnly || waiting() || props.disabled || !props.active || !missionAcceptsMessage(props.mission)) return
     const key = identity(), instanceId = props.instanceId, mission = props.mission
     const original = { requestID: crypto.randomUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
@@ -53,7 +53,7 @@ export function MissionBriefing(props: {
       <Show when={props.mission.briefing || props.mission.summary}><button type="button" class="mission-control-icon-button icon-toggle"
         aria-label={t("missions.briefing.title")} title={t("missions.briefing.title")} aria-pressed={Boolean(props.reading)}
         onClick={props.onReadOverview}><Eye class="h-3.5 w-3.5" aria-hidden="true" /></button></Show>
-      <Show when={props.mission.status === "active"}><button type="button" class="window-text-button"
+      <Show when={!props.readOnly && props.mission.status === "active"}><button type="button" class="window-text-button"
         disabled={props.disabled || !props.active || !missionAcceptsMessage(props.mission) || Boolean(waiting())}
         onClick={() => void ask()}><RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.briefing.request")}</button></Show>
     </div></header>
@@ -66,9 +66,9 @@ export function MissionBriefing(props: {
       </>}</Show>
     </Show>
     <Show when={props.mission.status === "active" && !missionAcceptsMessage(props.mission)}><p class="mission-briefing-meta">{t("missions.briefing.inactive")}</p></Show>
-    <Show when={request() && !answered()}><p role={request()?.state === "error" || request()?.state === "uncertain" ? "alert" : "status"}
+    <Show when={!props.readOnly && request() && !answered()}><p role={request()?.state === "error" || request()?.state === "uncertain" ? "alert" : "status"}
       class="mission-briefing-feedback">{t(`missions.briefing.request.${request()!.state}`)}</p></Show>
-    <Show when={request() && !answered() && ["admitted", "uncertain"].includes(request()!.state)}>
+    <Show when={!props.readOnly && request() && !answered() && ["admitted", "uncertain"].includes(request()!.state)}>
       <button type="button" class="window-text-button" disabled={props.disabled || !props.active}
         onClick={props.onOpenCoordinator}>{t("missions.control.openCoordinator")}</button>
       <button type="button" class="window-text-button" disabled={props.disabled || !props.active || !missionAcceptsMessage(props.mission)}

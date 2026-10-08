@@ -11,12 +11,28 @@ export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocu
   const doc = parseRecurrenceDocument(input, input.projectID, input.projectCanonical, input.id)
   if (!doc.pending) throw new Error("Recurrence passage missing")
   const passage = doc.pending.passage
+  const isolated = passageJournal(storage, doc, passage.id, current, now)
+  if (doc.pending.admission && doc.pending.admission.missionID !== isolated.missionID) throw new Error("Recurrence mission conflict")
+  return { passageID: passage.id, messageID: passage.messageID, ...isolated }
+}
+
+/** Archived display authority comes only from the exact durable receipt. No
+ * browser mission/session selectors and no reconstructed pending passage. */
+export function archivedRecurrencePassage(storage: MissionStorage, input: RecurrenceDocument, passageID: string) {
+  const doc = parseRecurrenceDocument(input, input.projectID, input.projectCanonical, input.id)
+  const receipt = doc.history.find(item => item.passage.id === passageID)
+  if (!receipt || !("missionID" in receipt.result)) throw new Error("Archived recurrence result unavailable")
+  const isolated = passageJournal(storage, doc, receipt.passage.id, () => { throw new Error("Archived recurrence is read-only") })
+  if (receipt.result.missionID !== isolated.missionID) throw new Error("Archived recurrence mission conflict")
+  return { receipt, ...isolated }
+}
+
+function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passageID: string, current: () => true, now: () => number = Date.now) {
   const projectToken = stableToken(`${doc.projectID}\0${doc.projectCanonical}`, 24)
   // Exactly the existing MissionControl creation identity, not a second scheme.
-  const missionID = `msn_${stableToken(`${doc.projectID}\0${passage.id}`, 24)}`
-  if (doc.pending.admission && doc.pending.admission.missionID !== missionID) throw new Error("Recurrence mission conflict")
+  const missionID = `msn_${stableToken(`${doc.projectID}\0${passageID}`, 24)}`
   const virtual = `${MISSION_JOURNAL_STORAGE_PREFIX}/${projectToken}`
-  const physical = `${RECURRENCE_STORAGE_PREFIX}/passages/${projectToken}/${doc.id}/${passage.id}`
+  const physical = `${RECURRENCE_STORAGE_PREFIX}/passages/${projectToken}/${doc.id}/${passageID}`
   const suffix = (key: string) => {
     const tail = key.slice(virtual.length)
     if (!key.startsWith(`${virtual}/${missionID}/`) || !new RegExp(`^/${missionID}/[A-Za-z0-9_-]{3,100}$`).test(tail)) {
@@ -50,6 +66,6 @@ export function recurrencePassage(storage: MissionStorage, input: RecurrenceDocu
       return { entries, ...(page.next === undefined ? {} : { next: entries.at(-1)!.key }) }
     },
   }
-  return { passageID: passage.id, messageID: passage.messageID, missionID, storage: scoped,
+  return { missionID, storage: scoped,
     journal: new MissionJournal(scoped, doc.projectID, doc.projectCanonical, now) }
 }

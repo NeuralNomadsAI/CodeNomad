@@ -8,6 +8,7 @@ import { RECURRENCE_MAX_BYTES, RECURRENCE_SCHEDULE_LIMIT, RECURRENCE_STORAGE_PRE
   parseRecurrenceDocument } from "../../missions/recurrence-contract"
 import { NativeMissionRecurrenceStore, RecurrenceCreateCapacityError, type RecurrenceStorage } from "../../missions/recurrence-store"
 import type { MissionJsonValue } from "../../missions/model"
+import { emitNativeRecurrenceChanged } from "./native-recurrence-events"
 
 const pluginID = "codenomad.missions"
 const nativeKey = (key: string) => `plugin:${Array.from(pluginID).map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
@@ -31,6 +32,8 @@ export const acquireNativeRecurrenceStore = Effect.fn("missions.acquireNativeRec
   yield* Schema.decodeUnknownEffect(shape)(found.value)
   const { db } = found.value as NativeDatabase
   const projectID = ctx.location.project.id, canonical = ctx.location.project.canonical
+  const placement = { projectID, projectCanonical: canonical, directory: ctx.location.directory,
+    ...(ctx.location.workspaceID === undefined ? {} : { workspaceID: ctx.location.workspaceID }) }
   const prefix = `${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${projectID}\0${canonical}`, 24)}/`
   const databasePrefix = nativeKey(prefix)
   const graph = yield* Effect.context<never>()
@@ -75,7 +78,13 @@ export const acquireNativeRecurrenceStore = Effect.fn("missions.acquireNativeRec
         const saved = (yield* query("SELECT value FROM kv WHERE key=?", [databaseKey]))[0]?.value
         if (saved !== bytes) throw new Error("Recurrence publication unknown")
         guard()
-      }), { behavior: "immediate" }))
+      }), { behavior: "immediate" }).pipe(Effect.andThen(
+        emitNativeRecurrenceChanged(placement, next.id, next.revision).pipe(
+          // Invalidation is volatile display feedback. An emitter failure must
+          // not relabel/replay the already committed authoritative calendar CAS.
+          Effect.catchCause(() => Effect.logWarning("Committed recurrence invalidation unavailable")),
+        ),
+      )))
     },
   }
   function checkKey(key: string): string {

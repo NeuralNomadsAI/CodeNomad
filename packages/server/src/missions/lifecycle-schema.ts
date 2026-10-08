@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { isDeepStrictEqual } from "node:util"
-import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement } from "./lifecycle-model"
+import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement, MissionLifecycleOperation } from "./lifecycle-model"
 import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 
@@ -59,6 +59,25 @@ export function parseMissionLifecycleReply(value: unknown, expected: Parameters<
     || !("nativeAcknowledgement" in value)) return undefined
   return parseMissionNativeAcknowledgement(value.nativeAcknowledgement, expected)
 }
+
+/** Bounded strict lifecycle receipt projection for native recurrence snapshots. */
+export const lifecycleOperationReadSchema = z.object({ id, missionID: id, requestID: id,
+  expectedRevision: z.number().int().positive().safe(), action: z.enum(["start", "pause", "stop"]),
+  recurrence: recurrence.optional(), completedRevision: z.number().int().positive().safe().optional(),
+  targets: z.array(z.object({ sessionID: id, location: z.object({ directory: z.string().min(1).max(4096), workspaceID: id.optional() }).strict() }).strict()).max(32),
+  pending: z.array(id).max(32),
+  receipts: z.array(z.union([
+    z.object({ receiptID: id, sessionID: id, acknowledgementState: z.literal("known"), nativeAcknowledgement: acknowledgement }).strict(),
+    z.object({ receiptID: id, sessionID: id, acknowledgementState: z.literal("unknown") }).strict(),
+  ])).max(32).optional(),
+}).strict().refine(value => new Set(value.targets.map(target => target.sessionID)).size === value.targets.length
+  && new Set(value.pending).size === value.pending.length && value.pending.every(session => value.targets.some(target => target.sessionID === session))
+  && new Set(value.receipts?.map(receipt => receipt.sessionID)).size === (value.receipts?.length ?? 0)
+  && (value.receipts ?? []).every(receipt => value.targets.some(target => target.sessionID === receipt.sessionID)
+    && (receipt.acknowledgementState === "unknown" ? value.pending.includes(receipt.sessionID)
+      : !value.pending.includes(receipt.sessionID) && !!parseMissionNativeAcknowledgement(receipt.nativeAcknowledgement,
+        { missionID: value.missionID, operationID: value.id, sessionID: receipt.sessionID, action: value.action, recurrence: value.recurrence }))))
+  .transform(value => value as MissionLifecycleOperation)
 
 function boundedJson(value: unknown): boolean {
   const pending = [{ value, depth: 0 }]

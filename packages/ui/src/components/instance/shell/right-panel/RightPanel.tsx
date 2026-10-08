@@ -89,6 +89,7 @@ interface RightPanelProps {
 
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
+  onRestoreConversation?: () => void
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
@@ -242,7 +243,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       activeSessionId: props.activeSessionId,
       isTabActive: (tabId) => props.isActive() && rightPanelTab() === tabId,
       openTab: openRightPanelTab,
-      revealConversation: () => { if (props.isPhoneLayout()) props.onCloseRightDrawer() },
+      revealConversation: restoreChat => {
+        if (restoreChat) props.onRestoreConversation?.()
+        if (props.isPhoneLayout()) props.onCloseRightDrawer()
+      },
       reportAttention: () => undefined,
     },
   )

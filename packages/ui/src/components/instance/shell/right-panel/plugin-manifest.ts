@@ -7,7 +7,7 @@ export interface RightPanelHostContext {
   activeSessionId: Accessor<string | null>
   isTabActive: (tabId: string) => boolean
   openTab: (tabId: string) => void
-  revealConversation?: () => void
+  revealConversation?: (restoreChat?: boolean) => void
   reportAttention?: (attention: RightPanelAttention) => void
 }
 

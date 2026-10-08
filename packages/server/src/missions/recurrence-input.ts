@@ -1,5 +1,5 @@
 import { authorityDigest, canonicalAuthority, rejectAuthority } from "./authority-protocol"
-import type { RecurrenceAuthorityArchive, RecurrenceChildRecord, RecurrenceEffect, RecurrenceEffectReceipt } from "./recurrence-authority-contract"
+import { recurrenceEffectID, type RecurrenceAuthorityArchive, type RecurrenceChildRecord, type RecurrenceEffect, type RecurrenceEffectReceipt } from "./recurrence-authority-contract"
 import { controlOperationID } from "./receipt-identity"
 import { RECURRENCE_SOURCE_CONTEXT_HEADER } from "./recurrence-read-budget"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
@@ -47,6 +47,24 @@ export function recurrenceInput(child: Readonly<RecurrenceChildRecord>) {
       operationID: controlOperationID(grant.missionID, grant.passage.id), taskMode: config.taskMode,
       recurrence: { grantID: grant.grantID, passageID: grant.passage.id, messageID: grant.messageID,
         coordinatorSessionID: grant.coordinatorSessionID } } } }
+}
+
+/** Current readers require the same complete frozen input as native admission. */
+export function assertRecurrenceStartupReceipts(child: Readonly<RecurrenceChildRecord>) {
+  const input = recurrenceInput(child), grant = child.grant
+  const startup: RecurrenceEffect[] = [{ kind: "create" }, { kind: "start" },
+    { kind: "coordinator-message", messageID: grant.messageID, contentDigest: authorityDigest(input.text) }]
+  if (child.effects.filter(item => ["create", "start", "coordinator-message"].includes(item.effect.kind)).length !== startup.length)
+    rejectAuthority("observation-unavailable")
+  for (const effect of startup) {
+    const operationID = recurrenceEffectID(grant, effect), matches = child.effects.filter(item => item.operationID === operationID)
+    const item = matches[0], receipt = item?.receipt
+    if (matches.length !== 1 || canonicalAuthority(item.effect) !== canonicalAuthority(effect)
+      || receipt?.operationID !== operationID || receipt.outcome !== "applied"
+      || receipt.evidenceID !== (effect.kind === "coordinator-message" ? grant.messageID : grant.coordinatorSessionID))
+      rejectAuthority("observation-unavailable")
+  }
+  return input
 }
 
 /** Only call after a positively committed authority archive, never after admission. */

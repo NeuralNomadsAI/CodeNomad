@@ -102,8 +102,13 @@ export interface MissionsPluginContext extends MissionCatalogClient {
       handlers: {
         snapshot(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
+        recurrenceControl(input: unknown): Promise<unknown>
+        recurrenceControlStatus(input: unknown): Promise<unknown>
         recurrenceRead(input: unknown): Promise<unknown>
         recurrenceCreate(input: unknown): Promise<unknown>
+        recurrenceCurrent(input: unknown): Promise<unknown>
+        recurrenceCurrentContent(input: unknown): Promise<unknown>
+        recurrencePassageRead(input: unknown): Promise<unknown>
         lifecycle(input: unknown, context: MutationContext): Promise<unknown>
         recover(input: unknown, context: MutationContext): Promise<unknown>
         cleanupTarget(input: unknown): Promise<unknown>
@@ -187,8 +192,13 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceControl: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceControlStatus: async () => { throw new Error("Native recurrence status unavailable") },
       recurrenceRead: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCreate: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceCurrent: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceCurrentContent: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrencePassageRead: async () => { throw new Error("Native recurrence reader graph unavailable") },
       recover: async (input, context) => {
         assertActive()
         const value = object(input)
@@ -222,8 +232,12 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: tracked(handlers.snapshot), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
+      recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),
-      recurrenceCreate: tracked(handlers.recurrenceCreate), recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
+      recurrenceCreate: tracked(handlers.recurrenceCreate),
+      recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),
+      recurrencePassageRead: tracked(handlers.recurrencePassageRead),
+      recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
       cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),
       update: tracked(handlers.update), delete: tracked(handlers.delete),
     })

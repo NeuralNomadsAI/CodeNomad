@@ -10,6 +10,9 @@ import type {} from "./fixtures/mission-editor-lifetime"
 import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "../../../server/src/missions/lifecycle-input"
 import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-read-budget"
+import { recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
+import { recurrenceHumanRequestID } from "../../../server/src/missions/recurrence-authority-contract"
+import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -340,7 +343,7 @@ for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) test(
     assert.equal(await page.getByRole("button", { name: /Run now|Play|Resume|Stop schedule/ }).count(), 0)
     await page.evaluate(() => window.missionEditorLifetime.activate(false))
     const beforeHidden = reads
-    await page.evaluate(() => window.missionEditorLifetime.invalidate())
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
     await page.waitForTimeout(130)
     assert.equal(reads, beforeHidden)
     await page.evaluate(() => window.missionEditorLifetime.activate(true))
@@ -410,5 +413,265 @@ test("uncertain creation refreshes the visible read-only list and preserves the 
     assert.equal(await form.getByLabel("Playbook", { exact: true }).inputValue(), "wayfinder")
     assert.equal(await form.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
     assert.equal(writes.length, 1)
+  } finally { await page.close() }
+})
+
+test("qualified Interrupted resumes only on click; unknown control survives native refresh without replay", async () => {
+  const page = await browser.newPage({ locale: "fr-FR", viewport: { width: 320, height: 740 }, hasTouch: true })
+  const writes: Array<{ requestID: string; expectedEpoch: number; expectedRevision: number; action: string; directory: string }> = []
+  let statusReads = 0
+  let outcome: "committed" | "unknown" = "unknown"
+  let releaseMutation!: () => void, mutationObserved!: () => void
+  const delayedMutation = new Promise<void>(resolve => { releaseMutation = resolve })
+  const mutationStarted = new Promise<void>(resolve => { mutationObserved = resolve })
+  let releaseStatus!: () => void, statusObserved!: () => void
+  const delayedStatus = new Promise<void>(resolve => { releaseStatus = resolve })
+  const statusStarted = new Promise<void>(resolve => { statusObserved = resolve })
+  const schedule = { id: "rec_controls", revision: 4, scheduleRevision: 1, state: "interrupted", epoch: 2,
+    clock: { time: "09:00", zone: "Europe/Paris" }, pendingPassageID: null as string | null, settledCount: 1,
+    controlCapability: { version: 1, actions: ["play", "pause", "stop"] } }
+  let capability = false
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  const mission = { version: 1, id: "msn_fixture", projectID: "project", projectCanonical: "/fixture", objective: "Review",
+    template: "custom", notes: "", coordinatorSessionId: "ses_fixture", status: "active", runState: "paused",
+    actors: [{ sessionId: "ses_fixture", kind: "coordinator", managed: true, title: "Coordinator", roles: [],
+      location: { directory: "/fixture" }, joinedAt: 1 }], frontier: [], claims: [], revision: 1, createdAt: 1,
+    updatedAt: 1, history: [], historyTruncated: false, tasks: [], reports: [] }
+  await page.route("**/api/workspaces/*/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: [mission], generatedAt: 1, discardedEvents: 0 } }))
+  await page.route("**/api/workspaces/*/missions/recurrence", route => route.fulfill({ json: { version: 1, projectID: "project",
+    schedules: [{ ...schedule, ...(capability ? {} : { controlCapability: undefined }) }] } }))
+  await page.route("**/api/workspaces/*/missions/recurrence/*/control", async route => {
+    const body = route.request().postDataJSON()
+    recurrenceControlHttpSchema.parse(body)
+    writes.push(body); mutationObserved()
+    await delayedMutation
+    return route.fulfill({ status: 503, json: { error: "Unknown result" } })
+  })
+  await page.route("**/api/workspaces/*/missions/recurrence/*/control/status", async route => {
+    const { directory: _directory, ...body } = route.request().postDataJSON()
+    recurrenceControlRequestSchema.parse({ ...body, scheduleID: schedule.id })
+    statusReads++
+    if (statusReads === 1) {
+      statusObserved(); await delayedStatus
+      return route.fulfill({ status: 503, json: { error: "Status still unknown" } })
+    }
+    const result = recurrenceControlStatusSchema.parse({ version: 1, scheduleID: schedule.id, requestID: writes[0]?.requestID,
+      expectedRevision: 4, epoch: 3, outcome, controlsComplete: outcome === "committed",
+      ...(outcome === "committed" ? { revision: 5, state: "running" } : {}) })
+    return route.fulfill({ json: result })
+  })
+  try {
+    await page.goto(url)
+    await page.evaluate(async () => {
+      const { addFormToQueue } = await import("/src/stores/forms.ts")
+      addFormToQueue("fixture", { id: "form_review", sessionID: "ses_fixture", title: "Native decision", fields: [], location: { directory: "/fixture" } } as any)
+    })
+    const resume = page.getByRole("button", { name: `Reprendre le programme ${schedule.id}` })
+    await page.getByText("Interrompue", { exact: true }).waitFor()
+    await page.getByText("Native decision").waitFor()
+    const order = await page.evaluate(() => ({ attention: document.querySelector(".mission-attention-list")?.getBoundingClientRect().top,
+      control: document.querySelector(".mission-recurrence-item")?.getBoundingClientRect().top }))
+    assert.ok(order.attention !== undefined && order.control !== undefined && order.attention < order.control,
+      "native Attention remains above recurring controls")
+    assert.equal(await resume.count(), 0, "unsigned or unqualified schedules never show Play")
+    assert.equal(writes.length, 0)
+    capability = true
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await resume.waitFor()
+    assert.equal(writes.length, 0, "native event revalidation never resumes an interrupted schedule")
+    await page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      ;(serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: "fixture", status: "connected" }])
+    })
+    assert.equal(writes.length, 0, "reconnect never submits a mutation")
+    schedule.pendingPassageID = "pas_unconfirmed"
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await resume.waitFor({ state: "hidden" })
+    assert.equal(await page.getByRole("button", { name: /Run now/ }).count(), 0, "no unqualified manual passage action")
+    schedule.pendingPassageID = null
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await resume.waitFor()
+    await page.evaluate(() => { document.documentElement.dir = "rtl" })
+    assert.equal(await resume.evaluate(node => getComputedStyle(node).borderRadius), "0px")
+    const bounds = await page.locator(".mission-recurrence-item").evaluate(node => ({ item: node.getBoundingClientRect().width,
+      parent: node.parentElement!.getBoundingClientRect().width }))
+    assert.ok(bounds.item <= bounds.parent, "RTL touch item stays within the narrow panel")
+    await resume.focus()
+    assert.equal(await resume.evaluate(node => document.activeElement === node), true)
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await page.waitForFunction(() => {
+      const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Reprendre"]')
+      return button && !button.disabled
+    })
+    assert.equal(await resume.evaluate(node => document.activeElement === node), true, "native refresh preserves keyboard focus")
+    await page.keyboard.press("Enter")
+    await mutationStarted
+    schedule.clock.time = "09:01"
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await page.getByText(/09:01/).waitFor()
+    assert.equal(await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).isDisabled(), true,
+      "same-schedule refresh does not unlock an in-flight mutation")
+    releaseMutation()
+    await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).waitFor({ state: "visible" })
+    await page.waitForFunction(() => {
+      const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Vérifier"]')
+      return button && !button.disabled
+    })
+    assert.equal(writes.length, 1)
+    assert.deepEqual({ action: writes[0].action, expectedEpoch: writes[0].expectedEpoch,
+      expectedRevision: writes[0].expectedRevision, directory: writes[0].directory },
+    { action: "play", expectedEpoch: 2, expectedRevision: 4, directory: "/fixture" })
+    assert.match(writes[0].requestID, /^rhuman_[a-f0-9]{64}$/)
+    assert.equal(writes[0].requestID, recurrenceHumanRequestID(schedule.id, 3, "authorize"), "request identity matches the actual native helper")
+    assert.equal(await resume.isDisabled(), true)
+    await page.getByRole("button", { name: "Actualiser les programmes" }).click()
+    assert.equal(writes.length, 1, "explicit schedule refresh is read-only and retains the exact held request")
+    await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).click()
+    await statusStarted
+    schedule.clock.time = "09:02"
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await page.getByText(/09:02/).waitFor({ state: "attached" })
+    assert.equal(await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).isDisabled(), true)
+    releaseStatus()
+    await page.waitForFunction(() => {
+      const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Vérifier"]')
+      return button && !button.disabled
+    })
+    assert.equal(statusReads, 1)
+    await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).click()
+    assert.equal(statusReads, 2)
+    assert.equal(writes.length, 1, "unknown status retry is read-only; the mutation never replays")
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).waitFor()
+    outcome = "committed"
+    await page.getByRole("button", { name: `Vérifier le résultat de ${schedule.id}` }).click()
+    assert.equal(statusReads, 3)
+    assert.equal(await resume.isDisabled(), true, "even an exact receipt waits for a fresh signed epoch snapshot")
+    schedule.revision = 5; schedule.epoch = 3; schedule.state = "running"
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await page.getByRole("button", { name: `Suspendre le programme ${schedule.id}` }).waitFor()
+    assert.equal(writes.length, 1, "exact read only reconciles the original mutation")
+    schedule.revision = 6; schedule.epoch = 4; schedule.state = "interrupted"
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence("rec_controls"))
+    await page.evaluate(() => window.missionEditorLifetime.instance("other"))
+    await page.getByRole("button", { name: `Reprendre le programme ${schedule.id}` }).waitFor()
+    assert.equal(writes.length, 1, "unresolved request remains bound to its original instance")
+    await page.evaluate(() => {
+      const subtle = crypto.subtle, original = subtle.digest.bind(subtle)
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      ;(window as any).releaseControlDigest = release
+      Object.getPrototypeOf(subtle).digest = async (...args: Parameters<SubtleCrypto["digest"]>) => {
+        await gate; return original(...args)
+      }
+    })
+    await page.getByRole("button", { name: `Reprendre le programme ${schedule.id}` }).click()
+    await page.evaluate(() => window.missionEditorLifetime.instance("fixture"))
+    await page.evaluate(() => (window as any).releaseControlDigest())
+    await page.waitForTimeout(100)
+    assert.equal(writes.length, 1, "navigation before asynchronous identity calculation cannot write to the old session")
+    await page.evaluate(() => window.missionEditorLifetime.activate(false))
+    await page.waitForTimeout(100)
+    assert.equal(writes.length, 1, "inactive navigation has no stale-session write")
+  } finally { await page.close() }
+})
+
+for (const action of ["pause", "stop"] as const) test(`partial ${action} retains its exact intent across remount and offers only explicit remaining-control retry`, async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 320, height: 740 }, hasTouch: true })
+  const id = `rec_partial_${action}`, requestID = recurrenceHumanRequestID(id, 3, action === "pause" ? "pause" : "revoke")
+  const operationID = controlOperationID("msn_passage", requestID), writes: any[] = []
+  let reads = 0
+  let schedule: any = { id, revision: 4, scheduleRevision: 1, state: "running", epoch: 2,
+    clock: { time: "09:00", zone: "UTC" }, pendingPassageID: null, pendingStatus: null, pendingAdmission: null,
+    settledCount: 0, latestResult: null, history: [], controlCapability: { version: 1, actions: ["pause", "stop"] } }
+  const target = (sessionID: string) => ({ sessionID, location: { directory: "/fixture" } })
+  const receipt = (sessionID: string) => ({ receiptID: controlReceiptID(operationID, sessionID), sessionID, acknowledgementState: "known",
+    nativeAcknowledgement: { missionID: "msn_passage", operationID, sessionID, action, disposition: "interrupt-observed",
+      interrupt: { interrupted: true }, cancellations: [] } })
+  const nativeControl = { id: operationID, missionID: "msn_passage", requestID, action, expectedRevision: 1,
+    targets: [target("ses_root"), target("ses_worker")], pending: ["ses_worker"], receipts: [receipt("ses_root")] }
+  const original = { scheduleID: id, requestID, action, expectedRevision: 4, expectedEpoch: 2, directory: "/fixture" }
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  const mission = { version: 1, id: "msn_fixture", projectID: "project", projectCanonical: "/fixture", objective: "Review",
+    template: "custom", coordinatorSessionId: "ses_fixture", status: "active", runState: "paused",
+    actors: [{ sessionId: "ses_fixture", kind: "coordinator", managed: true, title: "Coordinator", roles: [],
+      location: { directory: "/fixture" }, joinedAt: 1 }], frontier: [], claims: [], revision: 1, createdAt: 1,
+    updatedAt: 1, history: [], historyTruncated: false, tasks: [], reports: [] }
+  await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: [mission], generatedAt: 1, discardedEvents: 0 } }))
+  await page.route("**/api/workspaces/fixture/missions/recurrence", route => { reads++; return route.fulfill({ json: { version: 1, projectID: "project", schedules: [schedule] } }) })
+  await page.route(`**/missions/recurrence/${id}/control`, route => {
+    const body = recurrenceControlHttpSchema.parse(route.request().postDataJSON())
+    writes.push(body)
+    assert.deepEqual(body, writes.length === 1 ? original : { ...original, retry: true }, "retry preserves the original complete human identity")
+    schedule = { ...schedule, revision: 5, epoch: 3, state: action === "pause" ? "paused" : "stopped",
+      controlsComplete: false, nativeControl, controlRetry: { scheduleID: id, requestID, action, expectedRevision: 4, expectedEpoch: 2 },
+      controlCapability: { version: 1, actions: action === "pause" ? ["pause", "stop"] : ["stop"] } }
+    if (writes.length < 3) return route.fulfill({ status: 503, json: { error: "Original remaining-control outcome unknown" } })
+    const completed = { ...nativeControl, pending: [], receipts: [receipt("ses_root"), receipt("ses_worker")] }
+    schedule = { ...schedule, controlsComplete: true, nativeControl: completed, controlRetry: undefined,
+      controlCapability: { version: 1, actions: action === "pause" ? ["play", "stop"] : [] } }
+    return route.fulfill({ json: { version: 1, scheduleID: id, requestID, revision: 5, epoch: 3, state: schedule.state,
+      controlsComplete: true, schedulerCancellation: "acknowledged", nativeControl: completed } })
+  })
+  await page.route(`**/missions/recurrence/${id}/control/status`, route => {
+    const body = route.request().postDataJSON(), { directory: _directory, ...identity } = body
+    recurrenceControlRequestSchema.parse({ ...identity, scheduleID: id })
+    assert.equal("retry" in body, false, "status is a read-only endpoint, not another retry admission")
+    return route.fulfill({ json: recurrenceControlStatusSchema.parse({ version: 1, scheduleID: id, requestID,
+      expectedRevision: 4, epoch: 3, revision: 5, state: schedule.state, outcome: "unknown", controlsComplete: false,
+      schedulerCancellation: "unknown", nativeControl: schedule.nativeControl }) })
+  })
+  try {
+    await page.goto(url)
+    await page.evaluate(async () => {
+      const { addFormToQueue } = await import("/src/stores/forms.ts")
+      addFormToQueue("fixture", { id: "form_control", sessionID: "ses_fixture", title: "Native control decision", fields: [], location: { directory: "/fixture" } } as any)
+    })
+    const row = page.locator(".mission-recurrence-item"), retry = row.getByRole("button", { name: `Retry remaining controls for ${id}` })
+    await row.getByRole("button", { name: `${action === "pause" ? "Pause" : "Stop"} schedule ${id}`, exact: true }).click()
+    await row.getByRole("button", { name: `Check control outcome for ${id}` }).waitFor()
+    await page.evaluate(id => window.missionEditorLifetime.invalidateRecurrence(id), id)
+    await retry.waitFor()
+    await row.getByText("Pending native targets: 1").waitFor()
+    await page.getByText("Native control decision", { exact: true }).waitFor()
+    assert.equal(await row.getByRole("button", { name: /Play schedule|Resume schedule/ }).count(), 0)
+    if (action === "stop") assert.equal(await row.getByRole("button", { name: `Stop schedule ${id}`, exact: true }).count(), 0, "terminal Stop never becomes a new Stop intent")
+    else assert.equal(await row.getByRole("button", { name: `Stop schedule ${id}`, exact: true }).isDisabled(), true)
+    const order = await page.evaluate(() => ({ attention: document.querySelector(".mission-attention-list")!.getBoundingClientRect().top,
+      controls: document.querySelector(".mission-recurrence-controls")!.getBoundingClientRect().top }))
+    assert.ok(order.attention < order.controls)
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    await retry.waitFor()
+    assert.equal(writes.length, 1, "remount does not replay a partial denial control")
+    await page.evaluate(() => { document.documentElement.dir = "rtl" })
+    await retry.focus()
+    await page.evaluate(id => window.missionEditorLifetime.invalidateRecurrence(id), id)
+    await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Retry remaining"]'); return button && !button.disabled })
+    assert.equal(await retry.evaluate(node => document.activeElement === node), true)
+    assert.equal(await retry.evaluate(node => getComputedStyle(node).borderRadius), "0px")
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Retry remaining"]'); return button && !button.disabled })
+    assert.equal(writes.length, 2)
+    const beforeRead = reads
+    await row.getByRole("button", { name: `Check control outcome for ${id}` }).click()
+    await page.getByRole("button", { name: "Refresh schedules" }).click()
+    await page.waitForResponse(response => response.url().endsWith("/missions/recurrence"))
+    assert.ok(reads > beforeRead)
+    assert.equal(writes.length, 2, "outcome/list refresh never posts another retry")
+    assert.equal(await row.getByRole("button", { name: `Check control outcome for ${id}` }).count(), 1, "a snapshot does not clear the unknown retry hold")
+    // Clock cancellation can remain unknown after all root receipts arrived.
+    schedule = { ...schedule, nativeControl: { ...nativeControl, pending: [], receipts: [receipt("ses_root"), receipt("ses_worker")] } }
+    await page.evaluate(id => window.missionEditorLifetime.invalidateRecurrence(id), id)
+    await row.getByText("Pending native targets: 1").waitFor({ state: "hidden" })
+    await retry.click()
+    await retry.waitFor({ state: "hidden" })
+    assert.equal(writes.length, 3)
+    if (action === "stop") assert.equal(await row.getByRole("button", { name: /Play schedule|Resume schedule|Stop schedule/ }).count(), 0)
   } finally { await page.close() }
 })

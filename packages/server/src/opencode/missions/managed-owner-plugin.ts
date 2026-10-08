@@ -9,6 +9,8 @@ import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 import { nativeRecurrenceHandlers } from "./native-recurrence-create"
 import { HUMAN_ANSWER_RPC, type NativeHumanAnswerGate } from "../../missions/human-answer"
 import { acquireNativeHumanAnswers } from "./native-human-answer"
+import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from "./native-recurrence-current"
+import { readNativeRecurrencePage } from "./native-recurrence-reader"
 
 export const MANAGED_OWNER_RPC_ID = "codenomad.missions.managed-owner"
 export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods: {
@@ -21,7 +23,10 @@ export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods:
 export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rpc"] {
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
     definition.id === CODENOMAD_MISSIONS_RPC_ID
-      ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx), ...nativeRecurrenceHandlers(ctx) } as typeof handlers
+      ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
+        ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
+        recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
+        recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input) } as typeof handlers
       : handlers)
   return new Proxy(ctx.rpc, { get(target, key) {
     return key === "register" ? register : Reflect.get(target, key)

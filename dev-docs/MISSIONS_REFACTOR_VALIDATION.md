@@ -184,6 +184,67 @@ no zero-HTTP or billing assertion. Its focused terminal test passes **1/1** and
 server typecheck passes, including applied-receipt preservation and an unrelated
 late-global-Form final-guard regression. No private fixture or deadline change
 accompanies this correction; source review/commit remain separate parent actions.
+#### Reviewed UI/source join on `9eed6d4a` — 2026-10-08
+
+Parent assembly verification preserves the human-answer RPC/gate together with
+CREATE, current passage and archive readers. Its recurring current/history/control
+Solid selection passes **19/19** (`sh_11d1636ed001hAq0VPr8Bkw5bI`) and the targeted
+strict read routes/native outputs/UI control payload selection passes **39/39**.
+Server/UI typechecks pass. These are joined-source receipts, not installed-app
+or service-lifetime autonomy acceptance.
+
+The human-answer merge initially rejected watched input because it compared the
+original lifecycle text with bare consigne. Both admission and historical proof
+now use the shared full composed input and positive startup/source receipts;
+watched/nested tests reject subsequent bare-consigne substitution. The published
+2.0.24 `session/runner/publish-llm-event.ts:290,473,590` and
+`session/message-updater.ts:327,346` establish that `executed` tracks **provider
+execution**, not local completion. Local questions, subagents and business tools
+carry false. Corrected human and terminal checks retain durable result/claim and
+signature requirements and reject provider-hosted substitutes. The focused
+producer/common-verifier/settlement selection passes **65/65**, with independent
+source review at zero findings; no private native fixture was used. One-time
+Wayfinder and original after-denial human evidence remain separate increments.
+
+The owned `missions-ui-final-join-20261008` assembly joins the reviewed current
+passage, archived reader and signed-control sources without replacing main's
+paused CREATE, Custom/Pocock/Wayfinder templates, verbatim Notes, saved briefs
+or source/input budgets. Final independent UI review closed all reported
+P0/P1/P2 findings; the additional read-only retry-increment review reported zero
+actionable findings (`ses_ee2fb91ceffeRx6LMmjl07gQTP`). This is source/UI scope,
+not installed-app or native autonomous execution acceptance.
+
+- Final current-source Solid selection (`mission-recurrence`,
+  `mission-passage-history`, `mission-current-passage`) passed **19/19**, including
+  partial Pause/remount and terminal partial Stop retries with the original whole
+  request identity, clock-cancellation uncertainty, exact read-only status,
+  keyboard focus, narrow RTL/touch and all ten locale keys. Receipt:
+  `sh_11d0496770019LRfshZ2DNNlFc`.
+- The deterministic input/contract/registration and owned current/archive/snapshot
+  route selection passed **40/40**, with no skips/cancellations. It validates full
+  frozen source/input startup receipts before journal exposure, strict partial
+  denial-control snapshots alongside history/pending references, and preservation
+  of the native control/status handlers. UI/server typechecks, UI build and Missions
+  bundle build passed on the same source. Retained final foreground receipt:
+  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-ui-final-join-20261008-selfchecks.txt`.
+- Failed evidence remains failed: the earlier owned joined browser selection was
+  **32 pass / 8 fail** (`sh_11ccfa9510017XAUkN5Jc5H8EG`, missing assembled locale
+  keys and stale control protocol). Its corrected intermediate selections passed
+  **64/64** (`sh_11cd60e3b001yjV1k8oFYfM20D`) and **55/55**
+  (`sh_11cd9f892001ThMSVbmMkPDaRI`); these are changing-source scoped receipts,
+  not a new aggregate. The parent-reported broader **50/56** and **66/72** failed
+  selections also remain failures. The initial foreground browser run timed out
+  at the shell's 120-second command limit before completing its selection; it is
+  not a pass. Neither these failures nor the earlier native/performance failures
+  above are erased by the final focused passes.
+
+Retry authorizes only remaining native interrupt/cancel receipts under the
+qualified original pause/stop tuple with `retry: true`. A partial denial is not
+a completed control, and no snapshot, refresh, remount or unknown reply replays
+a POST, Play, prompt or task birth. Calendar SQL/CAS post-commit Bus delivery,
+the separately integrated native control/kernel writer and complete packaged
+NSIS/installation/private-native qualification remain distinct gates. No such
+fixture, installation, daemon mutation or push accompanied this UI join.
 
 No complete NSIS build or replacement installation has occurred. The requested
 native/private qualification remains deferred until that first complete build;

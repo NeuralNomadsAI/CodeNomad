@@ -3,10 +3,15 @@ import { readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue 
 
 export interface MissionReaderTarget {
   missionId: string
-  kind: "overview" | "task" | "report" | "change"
+  kind: "overview" | "task" | "report" | "change" | "recurrence"
   itemId?: string
+  /** Exact isolated passage scope; never a native session selector. */
+  recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string }
+  /** Recurrence readers do not inherit a selected one-shot Mission's authority. */
+  instanceId?: string
+  projectID?: string
 }
-interface ProjectView { selected?: string; reader?: MissionReaderTarget }
+interface ProjectView { selected?: string; selectedRecurrence?: string; reader?: MissionReaderTarget }
 const [version, setVersion] = createSignal(0)
 const projects = new Map<string, ProjectView>()
 const disclosures = new Map<string, Map<string, boolean>>()
@@ -33,9 +38,12 @@ export function missionProjectView(scope: string): ProjectView {
     try {
       const stored = JSON.parse(readClientLayoutValue(storageKey) ?? "{}")
       if (typeof stored.selected === "string") value.selected = stored.selected
+      if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
       const r = stored.reader
-      if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change"].includes(r.kind)
-        && (r.itemId === undefined || typeof r.itemId === "string")) value.reader = r
+      if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence"].includes(r.kind)
+        && (r.itemId === undefined || typeof r.itemId === "string")
+        && (r.recurrence === undefined || ["instanceId", "projectID", "scheduleID", "passageID"].every(key => typeof r.recurrence?.[key] === "string"))
+        && (r.kind !== "recurrence" || typeof r.instanceId === "string" && typeof r.projectID === "string")) value.reader = r
     } catch { /* Ignore malformed saved layout. */ }
     projects.set(storageKey, value)
   }
@@ -44,7 +52,7 @@ export function missionProjectView(scope: string): ProjectView {
 export function updateMissionProjectView(scope: string, patch: Partial<ProjectView>): void {
   const previous = missionProjectView(scope)
   const value = { ...previous, ...patch }
-  if (previous.selected === value.selected && previous.reader === value.reader) return
+  if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader) return
   projects.set(projectKey(scope), value)
   writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
   setVersion(v => v + 1)

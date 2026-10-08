@@ -9,6 +9,7 @@ import type {
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
+export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
 
 export type {
   MissionActor,
@@ -39,11 +40,45 @@ export interface MissionRecurrenceSnapshot {
     id: string
     revision: number
     scheduleRevision: number
-    state: "paused" | "unavailable" | "stopped"
+    state: "running" | "paused" | "interrupted" | "unavailable" | "stopped"
     clock: { time: string; zone: string }
     pendingPassageID: string | null
+    /** An admission is not a completed passage. Unknown effects require a human check. */
+    pendingStatus: "unknown" | "admitted" | null
+    pendingAdmission: { missionID: string; conversationID: string } | null
     settledCount: number
+    /** Null until a signed parent is authenticated; not an inferred epoch. */
+    epoch?: number | null
+    /** Supplied only by the qualified native control surface. */
+    controlCapability?: { version: 1; actions: Array<"play" | "pause" | "stop"> }
+    nativeControl?: import("./missions/lifecycle-model").MissionLifecycleOperation
+    controlRetry?: import("./missions/recurrence-control-contract").RecurrenceControlRequest
+    controlsComplete?: boolean
+    latestResult: MissionRecurrenceReceipt | null
+    history: MissionRecurrenceReceipt[]
   }>
+}
+
+export interface MissionRecurrenceCurrent {
+  version: 1
+  projectID: string
+  scheduleID: string
+  passageID: string | null
+  mission?: import("./missions/model").MissionMap
+  activity?: import("./missions/model").MissionActivityProjection
+}
+export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
+
+/** Bounded native reference receipts only; never the standing instructions, native transcript or authority. */
+export interface MissionRecurrenceReceipt {
+  passageID: string
+  messageID: string
+  dueAt: number
+  settledAt: number
+  status: "completed" | "failed" | "stopped" | "rejected-before-effect"
+  missionID?: string
+  conversationID?: string
+  artifactMessageIDs?: string[]
 }
 
 /**

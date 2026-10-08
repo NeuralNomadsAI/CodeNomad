@@ -27,6 +27,8 @@ import PermissionNotificationBanner from "../permission-notification-banner"
 import { InterruptionDock } from "../interruption-dock"
 import { focusInterruption } from "../../stores/interruption-navigation"
 import SessionView from "../session/session-view"
+import { MissionReader } from "../mission-reader"
+import { missionProjectView } from "../../stores/mission-view-state"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { formatTokenTotal } from "../../lib/formatters"
@@ -827,6 +829,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
+            onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -852,6 +855,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
+          onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -865,6 +869,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+  const readingRecurrence = () => Boolean(props.isActiveInstance)
+    && missionProjectView(props.instance.folder).reader?.kind === "recurrence"
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -1192,6 +1198,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </div>
                   }>
                   <div class="session-view">
+                    <div class="mission-transcript-surface">
                     <MessageSection
                       instanceId={props.instance.id}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
@@ -1202,6 +1209,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
+                    <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    </div>
 
                     <Show when={draftAttachments().length > 0}>
                       <PromptAttachmentsBar
@@ -1287,12 +1296,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               </Show>
             }
           >
-            <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
+            <div class="info-view-pane mission-transcript-surface flex flex-col flex-1 min-h-0 overflow-y-auto">
               <InfoView
                 instanceId={props.instance.id}
                 active={Boolean(props.isActiveInstance) && showingInfoView()}
                 onBackToConversation={handleBackToConversation}
               />
+              <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
             </div>
           </Show>
         </Box>
