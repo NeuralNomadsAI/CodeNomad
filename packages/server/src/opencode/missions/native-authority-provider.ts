@@ -244,6 +244,15 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
       if (!same(before, sessionWatermark(sessionID))) rejectAuthority("observation-unavailable")
       return { ...before, events, messages, message }
     },
+    /** Exact source placement only. No ancestry, directory-prefix authority or session inventory. */
+    assertSourcePlacement: (sessionID: string, expected: { directory: string; workspaceID?: string }): true => {
+      entryFence()
+      if (!/^ses_[A-Za-z0-9_-]{3,100}$/.test(sessionID)) rejectAuthority("binding-mismatch")
+      const actual = syncRows(SESSION_ROW, [sessionID])[0]
+      if (!actual || actual.id !== sessionID || actual.project_id !== scope.projectID
+        || actual.directory !== expected.directory || actual.workspace_id !== (expected.workspaceID ?? null)) rejectAuthority("binding-mismatch")
+      return true
+    },
     readJournalWatermark: (passageID: string) => { entryFence(); return journalWatermark(passageID) },
     assertJournalWatermark: (passageID: string, expected: string): true => {
       nativeFence()

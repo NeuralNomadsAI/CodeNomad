@@ -4,6 +4,7 @@ import { runMissionExclusive } from "./exclusive"
 import { latestDailyDue } from "./recurrence-clock"
 import { recurrenceIDSchema, type RecurrenceAdmission, type RecurrenceDocument, type RecurrenceDue } from "./recurrence-contract"
 import { isNewDailyDue, NativeMissionRecurrenceStore } from "./recurrence-store"
+import { recurrenceInputBudget } from "./recurrence-read-budget"
 
 export interface RecurrenceAuthorizedAdmission {
   /** Fresh owning-authority read, including active protected host incarnation.
@@ -44,6 +45,9 @@ export class MissionRecurrenceRunner {
       const due: RecurrenceDue = manual ? { kind: "manual", ...manual, at: now }
         : { kind: "daily", clock: doc.config.clock, ...latestDailyDue(doc.config.clock, now) }
       if (due.kind === "daily" && !isNewDailyDue(doc, due)) return "not-due"
+      // Pure whole-input capacity rejection: no passage, read or native effect
+      // has been reserved, so this is positively no-effect rather than unknown.
+      if (!recurrenceInputBudget(doc.config).sufficient) return "rejected-before-effect"
       // Read-only failed authority cannot even reserve a passage.
       const current = await this.admission.authorize(structuredClone(doc), "dispatch")
       assertSynchronousAuthorityGuard(current, "policy-unqualified")

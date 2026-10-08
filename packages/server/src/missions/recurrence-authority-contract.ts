@@ -7,6 +7,7 @@ import { recurrenceConfigSchema, recurrenceIDSchema, recurrenceMessageID, recurr
 import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { derivedExecutionSchema } from "./derived-call-protocol"
 import { stableToken } from "./journal"
+import { recurrenceSourceContextLimit, RECURRENCE_SOURCE_REFERENCE_RESERVE } from "./recurrence-read-budget"
 
 export const RECURRENCE_AUTHORITY_POLICY = "codenomad.missions.recurrence-standing/human-signed-v1" as const
 /** Exact schedule-local human identity. Native epoch CAS makes historical IDs
@@ -120,11 +121,21 @@ export const recurrenceEffectSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("native-call"), taskKey: id, generation: positive, parentSessionID: id,
     parentMessageID: id, toolCallID: id, directory: z.string().min(1).max(4096), execution: derivedExecutionSchema,
     mode: z.enum(["native", "independent"]), targetSessionID: id.optional() }).strict(),
-  z.object({ kind: z.literal("inbox-read"), conversationID: id, messageIDs: uniqueIDs(32) }).strict(),
+  z.object({ kind: z.literal("inbox-read"), conversationID: id, messageIDs: uniqueIDs(32),
+    read: z.object({ directory: z.string().min(1).max(4096), workspaceID: id.optional(),
+      afterMessageID: id.nullable(), limit: positive.max(32),
+      contextLimit: positive.min(RECURRENCE_SOURCE_REFERENCE_RESERVE).max(16_384) }).strict().optional() }).strict(),
   z.object({ kind: z.literal("publish"), conversationID: id, messageID: id, contentDigest: digest }).strict(),
 ])
 export type RecurrenceEffect = z.infer<typeof recurrenceEffectSchema>
-export const recurrenceEffectReceiptSchema = z.object({ operationID: id, outcome: z.enum(["applied", "rejected-before-effect"]), evidenceID: id }).strict()
+export const recurrenceSourceMessageSchema = z.object({ id, type: id, text: z.string().max(16_384),
+  nativeDigest: digest, completedAt: counter.optional(), needsDecision: z.literal("source-input-capacity").optional() }).strict()
+  .refine(message => message.type !== "assistant" || message.completedAt !== undefined)
+  .refine(message => !message.needsDecision || message.text === "")
+export const recurrenceEffectReceiptSchema = z.object({ operationID: id, outcome: z.enum(["applied", "rejected-before-effect"]), evidenceID: id,
+  sourceMessages: z.array(recurrenceSourceMessageSchema).max(32).refine(messages => {
+    try { canonicalAuthority(messages, 64 * 1024); return true } catch { return false }
+  }).optional() }).strict()
 export type RecurrenceEffectReceipt = z.infer<typeof recurrenceEffectReceiptSchema>
 export const recurrenceEffectRecordSchema = z.object({ operationID: id, effect: recurrenceEffectSchema,
   receipt: recurrenceEffectReceiptSchema.nullable() }).strict()
@@ -156,8 +167,14 @@ export function assertRecurrenceEffectScope(child: RecurrenceChildRecord, effect
   }
   if (effect.kind === "inbox-read") {
     if (!config.watchedConversationIDs.includes(effect.conversationID)) rejectAuthority("authorization-blocked")
-    const count = effects.reduce((sum, item) => sum + (item.effect.kind === "inbox-read" ? item.effect.messageIDs.length : 0), 0)
-    if (count + effect.messageIDs.length > budgets.inboxMessages) rejectAuthority("capacity")
+    const previous = effects.filter(item => item.effect.kind === "inbox-read" && item.effect.read)
+    if (effect.read && previous.some(item => item.receipt?.outcome !== "applied" || !item.receipt.sourceMessages)) rejectAuthority("authorization-blocked")
+    if (effect.read && (effect.messageIDs.length || !config.roots.some(root => root.directory === effect.read!.directory)
+      || effect.conversationID !== config.watchedConversationIDs[previous.length]
+      || effect.read.contextLimit !== recurrenceSourceContextLimit(config, previous.map(item => item.receipt!.sourceMessages!))
+      || effects.some(item => item.effect.kind === "inbox-read" && item.effect.conversationID === effect.conversationID))) rejectAuthority("binding-mismatch")
+    const count = effects.reduce((sum, item) => sum + (item.effect.kind === "inbox-read" ? item.effect.read?.limit ?? item.effect.messageIDs.length : 0), 0)
+    if (count + (effect.read?.limit ?? effect.messageIDs.length) > budgets.inboxMessages) rejectAuthority("capacity")
   }
   if (effect.kind === "publish") {
     if (config.publication.policy !== "authorized-targets" || !config.publication.conversationIDs.includes(effect.conversationID)) rejectAuthority("authorization-blocked")

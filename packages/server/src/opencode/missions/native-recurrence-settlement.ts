@@ -6,6 +6,7 @@ import { controlOperationID } from "../../missions/receipt-identity"
 import type { MissionStorage } from "../../missions/journal"
 import { reportInput } from "../../missions/inputs"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
+import { recurrenceInput, recurrenceSources, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
 const parse = (value: unknown): Record<string, unknown> => {
@@ -29,11 +30,21 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
     || document.pending.passage.messageID !== grant.messageID || document.pending.admission?.missionID !== grant.missionID
     || document.pending.admission.conversationID !== grant.coordinatorSessionID
     || !same(child.parent.body.config, document.config)
-    || document.config.watchedConversationIDs.length || document.config.publication.policy !== "disabled") rejectAuthority("observation-unavailable")
+    || document.config.publication.policy !== "disabled") rejectAuthority("observation-unavailable")
   const effects = ["create", "start", "coordinator-message"]
-  if (child.effects.length !== 3 || effects.some(kind => !child.effects.some(item => item.effect.kind === kind
+  const sources = recurrenceSources(child), expectedInput = recurrenceInput(child)
+  if (child.effects.length !== 3 + sources.length || effects.some(kind => !child.effects.some(item => item.effect.kind === kind
     && item.receipt?.outcome === "applied" && item.receipt.evidenceID === (kind === "coordinator-message" ? grant.messageID : grant.coordinatorSessionID))))
     rejectAuthority("observation-unavailable")
+  const sourcesCurrent = () => {
+    for (const source of sources) {
+      const cursor = document.cursors.find(item => item.conversationID === source.conversationID)
+      if ((cursor?.messageID ?? null) !== source.afterMessageID
+        || cursor?.locationDigest !== undefined && cursor.locationDigest !== recurrenceSourceLocationDigest(source)) rejectAuthority("binding-mismatch")
+      provider.assertSourcePlacement(source.conversationID, source)
+    }
+  }
+  sourcesCurrent()
 
   const journal = recurrencePassage(storage, document, () => true).journal
   const snapshot = await journal.snapshot(), history = await journal.events()
@@ -106,7 +117,7 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
           coordinatorSessionID: grant.coordinatorSessionID } }
       const missionMetadata = object(message?.metadata) ? message.metadata["codenomad.mission"] : undefined
       if (!original || enqueued.filter(event => event.data.inboxID === grant.messageID).length !== 1
-        || read.message?.type !== "synthetic" || message?.text !== child.parent.body.config.consigne
+        || read.message?.type !== "synthetic" || message?.text !== expectedInput.text
         || !object(missionMetadata) || Object.entries(expected).some(([key, value]) => !same(missionMetadata[key], value))
         || mission.control.receipts[0].nativeAcknowledgement?.disposition !== "start-admitted"
         || !same(mission.control.receipts[0].nativeAcknowledgement.admission.payload.metadata, message.metadata)
@@ -196,6 +207,7 @@ export async function observeNativeRecurrenceSettlement(provider: NativeRecurren
   return { settlement, assertCurrent: (): true => {
     signal.throwIfAborted()
     provider.assertCurrent()
+    sourcesCurrent()
     provider.assertJournalWatermark(grant.passage.id, journalWatermark)
     provider.assertSessionWatermarks(watermarks)
     return true

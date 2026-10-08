@@ -135,7 +135,8 @@ export class NativeMissionRecurrenceStore {
       if (!admission || result.missionID !== admission.missionID || result.conversationID !== admission.conversationID
         || result.cursors.some(cursor => !doc.config.watchedConversationIDs.includes(cursor.conversationID))) throw new Error("Recurrence result conflict")
       this.settle(doc, result, now)
-      doc.cursors = [...new Map([...doc.cursors, ...result.cursors].map(cursor => [cursor.conversationID, cursor])).values()]
+      if (result.outcome === "completed")
+        doc.cursors = [...new Map([...doc.cursors, ...result.cursors].map(cursor => [cursor.conversationID, cursor])).values()]
       doc.revision++
       return this.publish(doc, current, doc.revision - 1)
     })

@@ -1,11 +1,15 @@
 import { isDeepStrictEqual } from "node:util"
-import { Context, Effect, Option, Predicate, Schema } from "effect"
+import { createHash } from "node:crypto"
+import { Context, DateTime, Effect, Option, Predicate, Schema } from "effect"
 import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { SessionMessage } from "@opencode/schema/session-message"
+import type { RecurrenceEffectReceipt } from "../../missions/recurrence-authority-contract"
 import type { NativeMissionSession } from "../../missions/control-types"
 import { canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
 import { matchesExecution } from "../../missions/execution"
+import { RECURRENCE_SOURCE_REFERENCE_RESERVE } from "../../missions/recurrence-read-budget"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import type { AutonomousMissionCommand } from "./autonomous-contract"
 
@@ -21,7 +25,11 @@ type NativeSessionService = {
   prompt(input: AutonomousMissionCommand["input"]): NativeEffect
   synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"]): NativeEffect
   inbox(id: string): NativeEffect
+  messages?(input: { sessionID: string; order: "asc"; limit: number; cursor?: { id: string; direction: "next" } }): NativeEffect
+  message?(input: { sessionID: string; messageID: string }): NativeEffect
 }
+export type NativeSourceReadInput = { sessionID: string; directory: string; workspaceID?: string;
+  afterMessageID: string | null; limit: number; contextLimit: number }
 export type NativeCreateInput = {
   id: string; title: string; location: { directory: string }; metadata: Record<string, unknown>
   agent: string; model: { providerID: string; id: string; variant?: string }
@@ -105,6 +113,89 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     },
     inbox: (sessionID: string, options?: { signal?: AbortSignal }) =>
       run(() => service.inbox(sessionID), Schema.Array(Schema.toType(SessionInbox.Info)).check(Schema.isMaxLength(1024)), options, assertCurrent),
+    sourceMessages: async (input: NativeSourceReadInput, options: { signal?: AbortSignal }, current: () => true,
+      placementCurrent: () => true): Promise<NonNullable<RecurrenceEffectReceipt["sourceMessages"]>> => {
+      const request = structuredClone(input)
+      if (!Predicate.isFunction(service.messages) || !Predicate.isFunction(service.message)
+        || !Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 32
+        || !Number.isSafeInteger(request.contextLimit) || request.contextLimit < RECURRENCE_SOURCE_REFERENCE_RESERVE
+        || request.contextLimit > 16_384) rejectAuthority("effect-unavailable")
+      const messages = service.messages, message = service.message
+      const nativeBytes = (value: unknown) => canonicalAuthority(Schema.encodeSync(SessionMessage.Info)(
+        Schema.decodeUnknownSync(Schema.toType(SessionMessage.Info))(value)), 256 * 1024)
+      const placed = (session: typeof Session.Info.Type) => {
+        if (session.id !== request.sessionID || session.projectID !== location.project.id
+          || session.location.directory !== request.directory || session.location.workspaceID !== request.workspaceID
+          || session.revert) rejectAuthority("binding-mismatch")
+      }
+      const operation = Effect.gen(function* () {
+        placed(yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* service.get(request.sessionID)))
+        yield* Effect.sync(() => {
+          options.signal?.throwIfAborted(); assertCurrent()
+          assertSynchronousAuthorityGuard(placementCurrent, "policy-unqualified")
+          assertSynchronousAuthorityGuard(current, "policy-unqualified")
+        })
+        let anchorBytes: string | undefined
+        if (request.afterMessageID !== null) {
+          const anchor = yield* message({ sessionID: request.sessionID, messageID: request.afterMessageID })
+          // Native messages silently returns [] for a deleted cursor: never interpret that as no change.
+          if (!anchor || !Predicate.hasProperty(anchor, "id") || anchor.id !== request.afterMessageID) rejectAuthority("observation-unavailable")
+          anchorBytes = nativeBytes(anchor)
+        }
+        const prepared = messages({ sessionID: request.sessionID, order: "asc", limit: request.limit,
+          ...(request.afterMessageID === null ? {} : { cursor: { id: request.afterMessageID, direction: "next" } }) })
+        if (!Effect.isEffect(prepared)) rejectAuthority("effect-unavailable")
+        const output = yield* Effect.suspend(() => {
+          options.signal?.throwIfAborted(); assertCurrent()
+          assertSynchronousAuthorityGuard(placementCurrent, "policy-unqualified")
+          return prepared
+        })
+        const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.toType(SessionMessage.Info))
+          .check(Schema.isMaxLength(request.limit)))(output)
+        if (new Set(decoded.map(item => item.id)).size !== decoded.length
+          || decoded.some(item => item.id === request.afterMessageID)) rejectAuthority("observation-unavailable")
+        const projected: NonNullable<RecurrenceEffectReceipt["sourceMessages"]> = []
+        for (const item of decoded) {
+          if (item.type === "location-switched") rejectAuthority("observation-unavailable")
+          // Sequence is a prefix: never step over a streaming reply to consume
+          // newer IDs. The SAME ID can be read once complete next passage.
+          if (item.type === "assistant" && (!item.time.completed
+            || item.content.some(part => part.type === "tool" && ["running", "streaming"].includes(part.state.status)))
+            || item.type === "shell" && item.status === "running" || item.type === "compaction" && item.status === "running") break
+          assertCurrent(); assertSynchronousAuthorityGuard(placementCurrent, "policy-unqualified")
+          const stable = yield* message({ sessionID: request.sessionID, messageID: item.id })
+          if (!stable || !Predicate.hasProperty(stable, "id") || stable.id !== item.id) rejectAuthority("observation-unavailable")
+          const bytes = nativeBytes(item)
+          if (nativeBytes(stable) !== bytes) break // Updated since the page read: defer this ID and every later ID.
+          const text = item.type === "user" || item.type === "synthetic" ? item.text
+            : item.type === "assistant" ? item.content.filter(part => part.type === "text").map(part => part.text).join("\n") : ""
+          const reference = { id: String(item.id), type: item.type, nativeDigest: createHash("sha256").update(bytes).digest("hex"),
+            ...(item.type === "assistant" && item.time.completed ? { completedAt: DateTime.toEpochMillis(item.time.completed) } : {}) }
+          const complete = { ...reference, text }
+          // Keep complete source messages, never trimmed prose. Leave enough
+          // room for the next exact needsDecision reference if this batch fills.
+          if (text.length > 16_384 || canonicalAuthority([...projected, complete], 256 * 1024).length
+            + (projected.length + 1 < decoded.length ? RECURRENCE_SOURCE_REFERENCE_RESERVE : 0) > request.contextLimit) {
+            projected.push({ ...reference, text: "", needsDecision: "source-input-capacity" })
+            break
+          }
+          projected.push(complete)
+        }
+        if (request.afterMessageID !== null) {
+          const anchor = yield* message({ sessionID: request.sessionID, messageID: request.afterMessageID })
+          // Revert/deletion can race the query and make native messages return [].
+          // An empty page is positive only while the ORIGINAL anchor is intact.
+          if (!anchor || !Predicate.hasProperty(anchor, "id") || anchor.id !== request.afterMessageID
+            || nativeBytes(anchor) !== anchorBytes)
+            rejectAuthority("observation-unavailable")
+        }
+        placed(yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* service.get(request.sessionID)))
+        assertCurrent(); assertSynchronousAuthorityGuard(placementCurrent, "policy-unqualified")
+        if (canonicalAuthority(projected, 64 * 1024).length > request.contextLimit) rejectAuthority("capacity")
+        return projected
+      })
+      return Effect.runPromise(Effect.provide(operation, graph), { signal: options.signal })
+    },
     create: async (input: NativeCreateInput, options: { signal?: AbortSignal }, current: () => true) => {
       const request = structuredClone(input)
       const session = await run(() => service.create(request), Schema.toType(Session.Info), options, current)

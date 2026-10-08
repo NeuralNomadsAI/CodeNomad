@@ -5,8 +5,10 @@ import { Context, Effect, Exit, Schema, Scope } from "effect"
 import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { acquireMissionNativeService } from "./native-service-adapter"
 import type { AutonomousMissionCommand } from "./autonomous-contract"
+import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 
 const sessionTag = Context.Service<never, unknown>("@opencode/Session")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -209,7 +211,167 @@ test("omitted native variant accepts materialized default but never a high varia
       await assert.rejects(native.environment({ sessionID: request.id, variables: {} }, {}, current, expected), /binding-mismatch/)
       await assert.rejects(native.admit({ ...command, kind: "synthetic" }, {}, current, expected), /binding-mismatch/)
       await assert.rejects(native.create(request, {}, current), /effect-unavailable/)
-      assert.equal(writes, 4, "wrong create ACK is unknown, not a successful matching profile")
+       assert.equal(writes, 4, "wrong create ACK is unknown, not a successful matching profile")
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
+
+test("actual native source method reads only bounded new messages, pins placement/cursor and excludes images and provider secrets", async () => {
+  let moved = false, missing = false, entered = 0, acknowledged = true, oversized = false, revoked = false, revokeOnPrepare = false
+  const calls: unknown[] = []
+  const output = [
+    Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_first", type: "user", text: "First reply",
+      files: [{ data: "SU1BR0VfQllURVM=", source: { type: "inline" }, mime: "image/png", name: "image" }], time: { created: 1 } }),
+    Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_second", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" }, providerState: { credential: "CREDENTIAL_BYTES" },
+      content: [{ type: "text", text: "Native answer" }], time: { created: 2, completed: 3 } }),
+  ]
+  const service = { get: () => Effect.succeed({ ...info, location: { directory: moved ? `${directory}-moved` : directory } }),
+    create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]), environment: () => Effect.succeed({}),
+    prompt: () => Effect.succeed(receipt(command)), synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),
+    message: (input: { messageID: string }) => Effect.succeed(missing ? undefined
+      : oversized && input.messageID === output[0].id ? { ...output[0], text: "x".repeat(20_000) } : output.find(item => item.id === input.messageID)),
+    messages: (input: { limit: number; cursor?: { id: string }; order: string }) => {
+      if (revokeOnPrepare) revoked = true
+      return Effect.sync(() => {
+      entered++; calls.push(input)
+      if (!acknowledged) throw Error("Unknown native read ACK")
+      if (oversized) return [{ ...output[0], text: "x".repeat(20_000) }]
+      return output.slice(input.cursor ? output.findIndex(item => item.id === input.cursor!.id) + 1 : 0).slice(0, input.limit)
+      })
+    },
+  }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      let fences = 0
+      const request = { sessionID: "ses_owned", directory, afterMessageID: null, limit: 2, contextLimit: 16_384 }
+      const fence = () => { fences++; return true as const }
+      const first = await native.sourceMessages(request, {}, fence, () => true)
+      assert.deepEqual(first.map(({ id, type, text }) => ({ id, type, text })),
+        [{ id: "msg_first", type: "user", text: "First reply" }, { id: "msg_second", type: "assistant", text: "Native answer" }])
+      assert(first.every(item => /^[a-f0-9]{64}$/.test(item.nativeDigest)))
+      assert.equal(first[1].completedAt, 3)
+      assert(!JSON.stringify(first).includes("BYTES"))
+      assert.equal(fences, 1)
+      const second = await native.sourceMessages({ ...request, afterMessageID: "msg_first" }, {}, fence, () => true)
+      assert.deepEqual(second, [first[1]])
+      assert.deepEqual(calls[1], { sessionID: "ses_owned", order: "asc", limit: 2, cursor: { id: "msg_first", direction: "next" } })
+      missing = true
+      await assert.rejects(native.sourceMessages({ ...request, afterMessageID: "msg_first" }, {}, fence, () => true), /observation-unavailable/)
+      missing = false; moved = true
+      await assert.rejects(native.sourceMessages(request, {}, fence, () => true), /binding-mismatch/)
+      moved = false
+      await assert.rejects(native.sourceMessages({ ...request, limit: 33 }, {}, fence, () => true), /effect-unavailable/)
+      assert.equal(entered, 2)
+      revokeOnPrepare = true
+      const placement = () => { assert.equal(revoked, false, "source admission revoked"); return true as const }
+      await assert.rejects(native.sourceMessages(request, {}, fence, placement), /policy-unqualified/)
+      assert.equal(entered, 2, "revocation after constructing a lazy messages Effect blocks native entry")
+      revokeOnPrepare = false; revoked = false; oversized = true
+      const blocked = await native.sourceMessages(request, {}, fence, placement)
+      assert.equal(blocked[0].id, "msg_first")
+      assert.equal(blocked[0].text, "")
+      assert.equal(blocked[0].needsDecision, "source-input-capacity", "overlarge text is referenced, never trimmed and marked processed")
+      oversized = false
+      acknowledged = false
+      await assert.rejects(native.sourceMessages(request, {}, fence, () => true), /Unknown native read ACK/)
+      assert.equal(entered, 4)
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
+
+test("a reverted or changed source anchor after the async messages query cannot acknowledge an empty page", async () => {
+  const original = Schema.decodeUnknownSync(SessionMessage.User)({ id: "msg_anchor", type: "user", text: "Original source bytes", time: { created: 1 } })
+  let anchor: typeof original | undefined = original, moved = false, foreign = false
+  let race: "none" | "delete" | "rewrite" | "move" | "project" = "none", reads = 0, anchorReads = 0
+  const service = { get: () => Effect.succeed({ ...info, projectID: foreign ? "foreign" : info.projectID,
+      location: { directory: moved ? `${directory}-moved` : directory } }),
+    create: () => Effect.die("unexpected create"), inbox: () => Effect.succeed([]), environment: () => Effect.succeed({}),
+    prompt: () => Effect.succeed(receipt(command)), synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),
+    message: (input: { messageID: string; sessionID: string }) => Effect.sync(() => {
+      assert.deepEqual(input, { sessionID: "ses_owned", messageID: "msg_anchor" }); anchorReads++; return anchor
+    }),
+    messages: () => Effect.promise(async () => {
+      reads++; await Promise.resolve()
+      if (race === "delete") anchor = undefined
+      if (race === "rewrite") anchor = { ...original, text: "Rewritten source bytes" }
+      if (race === "move") moved = true
+      if (race === "project") foreign = true
+      return [] // Native missing-anchor behavior, not a positive no-change proof.
+    }) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const request = { sessionID: "ses_owned", directory, afterMessageID: "msg_anchor", limit: 2, contextLimit: 16_384 }
+      assert.deepEqual(await native.sourceMessages(request, {}, () => true, () => true), [])
+      assert.equal(anchorReads, 2, "same original anchor is checked both sides of the query")
+      for (const changed of ["delete", "rewrite", "move", "project"] as const) {
+        race = changed; anchor = original; moved = false; foreign = false
+        await assert.rejects(native.sourceMessages(request, {}, () => true, () => true),
+          changed === "delete" || changed === "rewrite" ? /observation-unavailable/ : /binding-mismatch/)
+      }
+      assert.equal(reads, 5, "no automatic query retry or replacement anchor")
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
+
+test("native completion and unchanged point-read bytes are required; no later IDs pass a streaming or updated reply", async () => {
+  const assistant = (completed: boolean, text = "Stable complete reply") => Schema.decodeUnknownSync(SessionMessage.Assistant)({
+    id: "msg_reply", type: "assistant", agent: "build", model: { providerID: "fixture", id: "model" },
+    content: [{ type: "text", text }], time: { created: 1, ...(completed ? { completed: 3 } : {}) } })
+  const later = Schema.decodeUnknownSync(SessionMessage.User)({ id: "msg_later", type: "user", text: "Later reply", time: { created: 4 } })
+  let completed = false, changing = false, pointReads = 0
+  const service = { get: () => Effect.succeed(info), create: () => Effect.die("unexpected create"), inbox: () => Effect.succeed([]),
+    environment: () => Effect.succeed({}), prompt: () => Effect.succeed(receipt(command)), synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),
+    messages: () => Effect.succeed([assistant(completed), later]),
+    message: (input: { messageID: string }) => Effect.sync(() => {
+      pointReads++; return input.messageID === "msg_reply" ? assistant(completed, changing ? "Changed after query" : "Stable complete reply") : later
+    }) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const request = { sessionID: "ses_owned", directory, afterMessageID: null, limit: 2, contextLimit: 16_384 }
+      assert.deepEqual(await native.sourceMessages(request, {}, () => true, () => true), [])
+      assert.equal(pointReads, 0, "a known streaming message is deferred without unrelated native activity reads")
+      completed = true; changing = true
+      assert.deepEqual(await native.sourceMessages(request, {}, () => true, () => true), [])
+      assert.equal(pointReads, 1, "changed completion bytes defer this ID and later IDs")
+      changing = false
+      const stable = await native.sourceMessages(request, {}, () => true, () => true)
+      assert.deepEqual(stable.map(item => item.id), ["msg_reply", "msg_later"])
+      assert.equal(stable[0].completedAt, 3)
+      assert(stable.every(item => /^[a-f0-9]{64}$/.test(item.nativeDigest)))
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
+
+test("remaining deterministic coordinator room includes whole 2–8 KiB stable replies and references a genuinely oversized reply", async () => {
+  let text = "", queryCount = 0
+  const reply = () => Schema.decodeUnknownSync(SessionMessage.Assistant)({ id: "msg_full_reply", type: "assistant", agent: "build",
+    model: { providerID: "fixture", id: "model" }, content: [{ type: "text", text }], time: { created: 1, completed: 3 } })
+  const service = { get: () => Effect.succeed(info), create: () => Effect.die("unexpected create"), inbox: () => Effect.succeed([]),
+    environment: () => Effect.succeed({}), prompt: () => Effect.succeed(receipt(command)), synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),
+    messages: () => Effect.sync(() => { queryCount++; return [reply()] }), message: () => Effect.sync(reply) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const budget = recurrenceInputBudget({ consigne: "Review new replies", roots: [{ directory }], watchedConversationIDs: ["ses_owned"] })
+      const request = { sessionID: "ses_owned", directory, afterMessageID: null, limit: 2, contextLimit: budget.sourceContextLimit }
+      for (const length of [2 * 1024, 4 * 1024, 8 * 1024]) {
+        text = "x".repeat(length)
+        const read = await native.sourceMessages(request, {}, () => true, () => true)
+        assert.equal(read[0].text, text, "normal reply is neither shortened nor replaced with a summary")
+        assert.equal(read[0].needsDecision, undefined)
+        assert.equal(read[0].completedAt, 3)
+      }
+      text = "x".repeat(20 * 1024)
+      const blocked = await native.sourceMessages(request, {}, () => true, () => true)
+      assert.equal(blocked[0].id, "msg_full_reply")
+      assert.equal(blocked[0].needsDecision, "source-input-capacity")
+      assert.equal(blocked[0].text, "")
+      assert.match(blocked[0].nativeDigest, /^[a-f0-9]{64}$/)
+      assert.equal(queryCount, 4, "no alternate reader, retry or workflow engine")
     })
   })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
 })

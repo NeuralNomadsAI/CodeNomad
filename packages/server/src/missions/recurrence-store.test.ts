@@ -7,6 +7,7 @@ import { RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_STORAGE_PREF
   type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceResult } from "./recurrence-contract"
 import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "./recurrence-runner"
 import { NativeMissionRecurrenceStore } from "./recurrence-store"
+import { latestDailyDue } from "./recurrence-clock"
 
 const current = () => true as const
 function config(): RecurrenceConfig {
@@ -104,6 +105,25 @@ test("removing and readding watched conversations preserves their cursors withou
   assert.equal(await f.runner().tick(doc.id), "not-due")
 })
 
+test("failed/stopped settlement never turns supplied read cursor claims into handled source work", async () => {
+  const f = await fixture()
+  assert.equal(await f.runner().tick("daily_review"), "accepted")
+  let doc = (await f.store.read("daily_review"))!
+  doc = await f.store.finish(doc.id, terminal(doc), f.now, current)
+  const original = structuredClone(doc.cursors)
+  for (const outcome of ["failed", "stopped"] as const) {
+    f.now += 86_400_000
+    assert.equal(await f.runner().tick(doc.id), "accepted")
+    doc = (await f.store.read(doc.id))!
+    doc = await f.store.finish(doc.id, { ...terminal(doc), outcome,
+      cursors: [{ conversationID: "ses_watched", messageID: "msg_read_but_not_processed" }] }, f.now, current)
+    assert.deepEqual(doc.cursors, original)
+    const result = doc.history.at(-1)!.result
+    assert.equal("outcome" in result && result.outcome, outcome)
+    assert.equal(doc.pending, null, "a qualified terminal failure retires its passage without consuming sources")
+  }
+})
+
 test("remembered watch capacity rejects new scopes before dispatch rather than losing deduplication", async () => {
   const f = await fixture(false), selection = config()
   selection.watchedConversationIDs = Array.from({ length: 32 }, (_, index) => `ses_original_${index}`)
@@ -112,8 +132,10 @@ test("remembered watch capacity rejects new scopes before dispatch rather than l
   for (const watched of [selection.watchedConversationIDs, Array.from({ length: 32 }, (_, index) => `ses_replacement_${index}`)]) {
     doc = await f.store.configure(doc.id, doc.revision, { ...selection, watchedConversationIDs: watched }, current)
     f.now += 86_400_000
-    assert.equal(await f.runner().tick(doc.id), "accepted")
-    doc = (await f.store.read(doc.id))!
+    // Storage capacity is independent of the smaller native initial-input cap.
+    doc = await f.store.reserve(doc.id, doc.revision, { kind: "daily", clock: doc.config.clock,
+      ...latestDailyDue(doc.config.clock, f.now) }, f.now, current)
+    doc = await f.store.recordAdmission(doc.id, accepted(doc), f.now, current)
     doc = await f.store.finish(doc.id, { ...terminal(doc), cursors: watched.map(conversationID => ({ conversationID, messageID: "msg_processed" })) }, f.now, current)
   }
   assert.equal(doc.cursors.length, 64)
@@ -173,16 +195,15 @@ test("reservation leaves space to settle maximum reference/cursor receipts throu
   heavy.watchedConversationIDs = Array.from({ length: 32 }, (_, index) => `ses_${index}`.padEnd(240, "x"))
   let doc = await f.store.create("large_schedule", heavy, f.now, current)
   doc = await f.store.setState(doc.id, doc.revision, "running", current)
-  f.admission.admit = async (reserved, beforeEffect) => {
-    const fence = await beforeEffect(); fence()
-    return { ...accepted(reserved), missionID: "m".repeat(240), conversationID: "s".repeat(240) }
-  }
   const artifacts = Array.from({ length: 8 }, (_, index) => `msg_${index}`.padEnd(240, "x"))
   const cursors = heavy.watchedConversationIDs.map(conversationID => ({ conversationID, messageID: "m".repeat(240) }))
   for (let day = 0; day < 32; day++) {
     f.now += 86_400_000
-    assert.equal(await f.runner().tick(doc.id), "accepted")
-    doc = (await f.store.read(doc.id))!
+    // Deliberately exercise maximum durable reference rows directly, not native
+    // execution: this synthetic configuration exceeds the lifecycle text cap.
+    doc = await f.store.reserve(doc.id, doc.revision, { kind: "daily", clock: doc.config.clock,
+      ...latestDailyDue(doc.config.clock, f.now) }, f.now, current)
+    doc = await f.store.recordAdmission(doc.id, { ...accepted(doc), missionID: "m".repeat(240), conversationID: "s".repeat(240) } as RecurrenceAdmission, f.now, current)
     doc = await f.store.finish(doc.id, { ...terminal(doc), artifactMessageIDs: artifacts, cursors }, f.now, current)
   }
   assert.equal(doc.settledCount, 32)

@@ -14,9 +14,12 @@ import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provi
 import type { NativeRecurrenceOwner } from "./native-authority-provider"
 import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
 import { authorityDigest } from "../../missions/authority-protocol"
-import { controlOperationID } from "../../missions/receipt-identity"
 import type { MissionStorage } from "../../missions/journal"
 import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlement"
+import { recurrenceInput, recurrenceReadEvidence, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
+import type { NativeSourceReadInput } from "./native-service-adapter"
+import type { RecurrenceEffectReceipt } from "../../missions/recurrence-authority-contract"
+import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, 768 * 1024) === canonicalAuthority(b, 768 * 1024)
 
@@ -37,7 +40,8 @@ export type NativeRecurrenceInvocation = {
   input: { kind: "create"; request: NativeCreateInput }
     | { kind: "start"; sessionID: string; variables: Record<string, string> }
     | { kind: "coordinator-message"; command: NativeRecurrenceLifecycleCommand }
-  acknowledgement?: { operationID: string; outcome: "applied"; evidenceID: string }
+    | { kind: "inbox-read"; request: NativeSourceReadInput }
+  acknowledgement?: RecurrenceEffectReceipt
 }
 
 /** Native capability + signed parent + fresh physical Git family identity.
@@ -153,6 +157,7 @@ export function nativeRecurrenceAdapter(input: {
     assertLedgerCurrent: ledger,
     assertEffectCurrent: (target, child, operation) => {
       owner(); pending(child.parent)
+      rootCurrent(child.parent.body.roots, signerRoots)
       const hot = provider.readCurrent(store.key) as RecurrenceAuthorityDocument | undefined
       if (target !== store || !hot || hot.parent.body.action !== "authorize" || !same(hot.parent, child.parent)
         || !same(hot.child, child) || provider.readCurrent(`${store.parentKey}/passages/${child.grant.passage.id}`) !== undefined
@@ -170,27 +175,40 @@ export function nativeRecurrenceAdapter(input: {
         if (call.input.kind !== "start" || call.input.sessionID !== grant.coordinatorSessionID
           || !call.input.variables || !Object.values(call.input.variables).every(value => typeof value === "string")) rejectAuthority("binding-mismatch")
       } else if (operation.effect.kind === "coordinator-message") {
+        for (const item of child.effects) {
+          if (item.effect.kind === "inbox-read" && item.effect.read)
+            provider.assertSourcePlacement(item.effect.conversationID, item.effect.read)
+        }
         if (call.input.kind !== "coordinator-message" || operation.effect.messageID !== grant.messageID
           || operation.effect.contentDigest !== authorityDigest(call.input.command.input.text)
-          || !same(call.input.command, { kind: "synthetic", input: {
-            sessionID: grant.coordinatorSessionID, id: grant.messageID, text: config.consigne,
-            description: "CodeNomad recurring mission start", delivery: "queue", resume: true,
-            metadata: { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "lifecycle",
-              operationID: controlOperationID(grant.missionID, grant.passage.id), taskMode: config.taskMode, recurrence: {
-                grantID: grant.grantID, passageID: grant.passage.id, messageID: grant.messageID,
-                coordinatorSessionID: grant.coordinatorSessionID } } },
-          } })) rejectAuthority("binding-mismatch")
+          || !same(call.input.command, { kind: "synthetic", input: recurrenceInput(child) })) rejectAuthority("binding-mismatch")
+      } else if (operation.effect.kind === "inbox-read") {
+        const { read, conversationID } = operation.effect
+        if (!read || call.input.kind !== "inbox-read" || !same(call.input.request,
+          { sessionID: operation.effect.conversationID, ...read })) rejectAuthority("binding-mismatch")
+        const raw = provider.readCurrent(provider.sourceKey)
+        const source = parseRecurrenceDocument(raw, store.scope.projectID, store.scope.projectCanonical, store.scope.scheduleID)
+        const cursor = source.cursors.find(item => item.conversationID === conversationID)
+        if (!same(source.config, config) || (cursor?.messageID ?? null) !== read.afterMessageID
+          || cursor?.locationDigest !== undefined && cursor.locationDigest !== recurrenceSourceLocationDigest(read)) rejectAuthority("binding-mismatch")
+        provider.assertSourcePlacement(operation.effect.conversationID, read)
       } else rejectAuthority("effect-unavailable")
       return true
     },
     observeEffect: async (child, operation) => {
       const call = input.invocation?.(), receipt = call?.acknowledgement
       if (!call || !receipt || call.operationID !== operation.operationID || receipt.operationID !== operation.operationID
-        || receipt.evidenceID !== (call.input.kind === "coordinator-message" ? child.grant.messageID : child.grant.coordinatorSessionID)) {
+        || (call.input.kind === "inbox-read" ? operation.effect.kind !== "inbox-read" || !operation.effect.read || !receipt.sourceMessages
+          || receipt.sourceMessages.length > operation.effect.read.limit
+          || canonicalAuthority(receipt.sourceMessages, 64 * 1024).length > operation.effect.read.contextLimit
+          || receipt.evidenceID !== recurrenceReadEvidence(operation.effect, receipt.sourceMessages)
+          : receipt.sourceMessages !== undefined || receipt.evidenceID !== (call.input.kind === "coordinator-message" ? child.grant.messageID : child.grant.coordinatorSessionID))) {
         rejectAuthority("observation-unavailable")
       }
       const current = (): true => {
         owner()
+        if (operation.effect.kind === "inbox-read" && operation.effect.read)
+          provider.assertSourcePlacement(operation.effect.conversationID, operation.effect.read)
         const hot = provider.readCurrent(store.key) as RecurrenceAuthorityDocument | undefined
         if (!same(call, input.invocation?.()) || !hot?.child || !same(hot.child.grant, child.grant)
           || !hot.child.effects.some(effect => same(effect, operation))
@@ -215,6 +233,7 @@ export function nativeRecurrenceAdapter(input: {
  * This export alone is NOT a shipped Play route or an execution grant. */
 export async function applyNativeStandingDecision(input: Parameters<typeof nativeRecurrenceAdapter>[0],
   parent: SignedRecurrenceStandingIntent, signal: AbortSignal): Promise<RecurrenceAuthorityDocument> {
+  if (parent.body.action === "authorize" && !recurrenceInputBudget(parent.body.config).sufficient) rejectAuthority("capacity")
   const guard = input.signer.captureHumanIntent(parent)
   const current = (): true => {
     signal.throwIfAborted()

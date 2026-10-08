@@ -62,7 +62,8 @@ export const recurrenceAdmissionSchema = z.discriminatedUnion("kind", [
     effect: z.literal("none"), proofID: id }).strict(),
 ])
 export type RecurrenceAdmission = z.infer<typeof recurrenceAdmissionSchema>
-const cursorListSchema = z.array(z.object({ conversationID: id, messageID: id }).strict())
+const cursorListSchema = z.array(z.object({ conversationID: id, messageID: id,
+  locationDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict())
   .refine(items => new Set(items.map(item => item.conversationID)).size === items.length)
 export const recurrenceResultSchema = z.object({ passageID: recurrenceIDSchema, messageID: recurrenceIDSchema,
   missionID: id, conversationID: id, outcome: z.enum(["completed", "failed", "stopped"]),

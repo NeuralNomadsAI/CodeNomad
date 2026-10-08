@@ -2,7 +2,9 @@ import { authorityDigest, canonicalAuthority, rejectAuthority } from "../../miss
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { parseRecurrenceDocument, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { RecurrenceAuthority } from "../../missions/recurrence-authority-core"
-import { authenticateRecurrenceStanding, recurrenceEffectID, type RecurrenceChildGrant } from "../../missions/recurrence-authority-contract"
+import { authenticateRecurrenceStanding, recurrenceEffectID, type RecurrenceChildGrant, type RecurrenceEffect, type RecurrenceEffectReceipt } from "../../missions/recurrence-authority-contract"
+import { recurrenceInput, recurrenceReadEvidence, recurrenceSourceCursors, recurrenceSources, recurrenceSourceLocationDigest } from "../../missions/recurrence-input"
+import { assertRecurrenceDispatchFeasible, recurrenceInputBudget, recurrenceReadBudget, recurrenceSourceContextLimit } from "../../missions/recurrence-read-budget"
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import { MissionControl } from "../../missions/control"
@@ -39,14 +41,14 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
   const doc = parseRecurrenceDocument(input.document, scope.projectID, scope.projectCanonical, scope.scheduleID)
   if (!doc.pending || doc.pending.admission || doc.state === "stopped"
     || doc.pending.passage.due.kind === "daily" && doc.state !== "running"
-    || doc.config.consigne.length > 16_384
+    || !recurrenceInputBudget(doc.config).sufficient
     || provider.location.directory !== native.location.directory
     || provider.location.projectID !== native.location.project.id
     || provider.location.projectCanonical !== native.location.project.canonical
     || !doc.config.roots.some(root => root.directory === native.location.directory)) rejectAuthority("binding-mismatch")
   let invocation: NativeRecurrenceInvocation | undefined
-  const authority = new RecurrenceAuthority(provider.store, nativeRecurrenceAdapter({ ...input,
-    invocation: () => invocation, settlementStorage: input.storage }))
+  const adapter = nativeRecurrenceAdapter({ ...input, invocation: () => invocation, settlementStorage: input.storage })
+  const authority = new RecurrenceAuthority(provider.store, adapter)
   const dispatch = await input.beforeEffect()
   const current = (): true => {
     signal.throwIfAborted()
@@ -57,14 +59,15 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
   current()
   const hot = await provider.read()
   if (!hot || hot.parent.body.action !== "authorize" || hot.child
-    || hot.parent.body.budgets.effects < 3
+    || doc.config.publication.policy !== "disabled"
     || canonicalAuthority(hot.parent.body.config) !== canonicalAuthority(doc.config)
     || !("profileSource" in hot.parent.body)
     || canonicalAuthority(hot.parent.body.profileSource) !== canonicalAuthority(input.profile)) rejectAuthority("authorization-blocked")
+  assertRecurrenceDispatchFeasible(doc.config, hot.parent.body.budgets)
   const grant = await provider.transact(current, () => authority.reservePassage(doc, hot.revision, signal))
   const passage = recurrencePassage(input.storage, doc, current, input.now)
   if (passage.missionID !== grant.missionID || passage.messageID !== grant.messageID) rejectAuthority("binding-mismatch")
-  const effect = async (value: { kind: "create" | "start" } | { kind: "coordinator-message"; messageID: string; contentDigest: string }) => {
+  const effect = async (value: RecurrenceEffect) => {
     current()
     const fresh = await provider.read()
     if (!fresh?.child || fresh.child.grant.grantID !== grant.grantID) rejectAuthority("authorization-blocked")
@@ -79,6 +82,48 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
     return provider.transact(() => input.owner.assertCurrent(), () =>
       authority.acknowledgeEffect(grant.grantID, operationID, fresh.revision, evidenceSignal))
   }
+  // One bounded ascending batch per explicitly followed exact source. The limit
+  // is charged BEFORE Session.messages, including reads with an unknown ACK.
+  const readMessages: NonNullable<RecurrenceEffectReceipt["sourceMessages"]>[] = []
+  for (const conversationID of doc.config.watchedConversationIDs) {
+    current()
+    const target = await native.get({ sessionID: conversationID }, { signal })
+    const cursor = doc.cursors.find(item => item.conversationID === conversationID)
+    if (target.id !== conversationID || target.projectID !== scope.projectID
+      || !doc.config.roots.some(root => root.directory === target.location.directory)
+      || cursor?.locationDigest !== undefined && cursor.locationDigest !== recurrenceSourceLocationDigest(target.location)) rejectAuthority("binding-mismatch")
+    const read = { directory: target.location.directory,
+      ...(target.location.workspaceID === undefined ? {} : { workspaceID: target.location.workspaceID }),
+      afterMessageID: cursor?.messageID ?? null,
+      limit: recurrenceReadBudget(doc.config.watchedConversationIDs.length, hot.parent.body.budgets).readLimit,
+      contextLimit: recurrenceSourceContextLimit(doc.config, readMessages) }
+    provider.assertSourcePlacement(conversationID, read)
+    const reserved = await effect({ kind: "inbox-read", conversationID, messageIDs: [], read })
+    const readLedger = await provider.read()
+    if (!readLedger?.child || readLedger.child.grant.grantID !== grant.grantID) rejectAuthority("authorization-blocked")
+    const request = { sessionID: conversationID, ...read }
+    invocation = { operationID: reserved.operation.operationID, input: { kind: "inbox-read", request } }
+    try {
+      const sourceMessages = await native.sourceMessages(request, { signal }, () => { current(); return reserved.assertCurrent() },
+        () => {
+          current()
+          // Anchor access may yield; check the exact ORIGINAL invocation/child
+          // again at messages entry, without issuing or consuming a second lease.
+          adapter.assertEffectCurrent(provider.store, readLedger.child!, reserved.operation)
+          return provider.assertSourcePlacement(conversationID, read)
+        })
+      invocation.acknowledgement = { operationID: reserved.operation.operationID, outcome: "applied",
+        evidenceID: recurrenceReadEvidence(reserved.operation.effect, sourceMessages), sourceMessages }
+      await acknowledge(reserved.operation.operationID)
+      readMessages.push(sourceMessages)
+    } finally { invocation = undefined }
+  }
+  // Source/output and prompt capacity is known before creating a coordinator.
+  // Incomplete replies defer; overlarge replies carry exact unprocessed references.
+  // Invalid/unknown evidence parks only the original read reservations.
+  const readComplete = await provider.read()
+  if (!readComplete?.child || readComplete.child.grant.grantID !== grant.grantID) rejectAuthority("authorization-blocked")
+  recurrenceInput(readComplete.child)
   const coordinator = doc.config.profiles?.coordinator
   if (!coordinator?.agent || !coordinator.model) rejectAuthority("binding-mismatch")
   const request: NativeCreateInput = { id: grant.coordinatorSessionID,
@@ -155,12 +200,9 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
       evidenceID: grant.coordinatorSessionID }
     await acknowledge(start.operation.operationID)
   } finally { invocation = undefined }
-  command = { kind: "synthetic", input: {
-    sessionID: grant.coordinatorSessionID, id: grant.messageID, text: doc.config.consigne,
-    description: "CodeNomad recurring mission start", delivery: "queue", resume: true,
-    metadata: { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "lifecycle",
-      operationID: controlOperationID(grant.missionID, grant.passage.id), taskMode: doc.config.taskMode, recurrence } },
-  } }
+  const ready = await provider.read()
+  if (!ready?.child || ready.child.grant.grantID !== grant.grantID) rejectAuthority("authorization-blocked")
+  command = { kind: "synthetic", input: recurrenceInput(ready.child) }
   message = await effect({ kind: "coordinator-message", messageID: grant.messageID,
     contentDigest: authorityDigest(command.input.text) })
   invocation = { operationID: message.operation.operationID, input: { kind: "coordinator-message", command } }
@@ -203,18 +245,20 @@ export async function settleNativeRecurrencePassage(input: Omit<PassageInput, "b
   const authority = new RecurrenceAuthority(provider.store, nativeRecurrenceAdapter({ ...input,
     settlementStorage: input.storage }))
   const archive = previous ?? await provider.transact(current, () => authority.settle(grant.grantID, hot!.revision, signal))
-  if (archive.settlement.outcome !== "completed" || archive.child.grant.grantID !== grant.grantID)
+  const outcome = archive.settlement.outcome
+  if (outcome !== "completed" && outcome !== "failed" && outcome !== "stopped" || archive.child.grant.grantID !== grant.grantID)
     rejectAuthority("observation-unavailable")
   const archived = (): true => {
     current()
     if (canonicalAuthority(provider.readCurrent(`${provider.store.parentKey}/passages/${grant.passage.id}`))
       !== canonicalAuthority(archive)) rejectAuthority("observation-unavailable")
+    for (const source of recurrenceSources(archive.child)) provider.assertSourcePlacement(source.conversationID, source)
     return true
   }
   archived()
   return calendar.finish(source.id, { passageID: grant.passage.id, messageID: grant.messageID,
-    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome: "completed",
-    artifactMessageIDs: [], cursors: [] }, Math.max(input.now?.() ?? Date.now(), grant.passage.createdAt), archived)
+    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome,
+    artifactMessageIDs: [], cursors: recurrenceSourceCursors(archive) }, Math.max(input.now?.() ?? Date.now(), grant.passage.createdAt), archived)
 }
 
 /** Recovery is metadata-only. A committed original create receipt and current
