@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { execFileSync } from "node:child_process"
-import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs"
+import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync } from "node:fs"
 import { lstat, mkdir, open, opendir, realpath, rmdir, unlink } from "node:fs/promises"
 import path from "node:path"
 import { isDeepStrictEqual, TextDecoder } from "node:util"
@@ -8,6 +8,8 @@ import { privateStorage, type StoragePolicy } from "../host-lifetime/storage"
 import { verifyPrivateSync } from "../host-lifetime/private-storage-sync"
 import { lookupProcess, type ProcessLookup } from "../host-lifetime/process-identity"
 import { readGitCommonDirectory } from "./git-common-directory"
+import { readCheckoutIdentity } from "./git-worktrees"
+import { runWorktreeGit as git } from "./git-process"
 
 const MAX_MARKER_BYTES = 8 * 1024
 type MarkerIdentity = Pick<import("node:fs").BigIntStats, "dev" | "ino" | "birthtimeNs">
@@ -23,9 +25,8 @@ export async function readFamilyAuthorityIdentity(ownedDirectory: string): Promi
   catch { throw new FamilyAuthorityError("family-identity-unavailable") }
 }
 
-/** Final native write fence cannot await the worker. Repeat Git's actual
- * common-directory resolution, including worktree/config redirects, rather
- * than treating a retained family claim as proof the checkout still belongs. */
+/** Conservative final-fence fallback for discovery/config contracts that cannot
+ * be captured completely by createFamilyAuthorityIdentityFence. */
 export function readFamilyAuthorityIdentitySync(ownedDirectory: string): string {
   try {
     const checkout = realpathSync(ownedDirectory)
@@ -34,6 +35,146 @@ export function readFamilyAuthorityIdentitySync(ownedDirectory: string): string 
     if (!path.isAbsolute(common)) throw new Error("Git common directory is not absolute")
     return physicalIdentity(realpathSync(common))
   } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
+}
+
+/** Resolve with Git before acquisition, then re-read the exact physical discovery,
+ * administrative and config inputs at every final fence. Includes (including
+ * missing/conditional includes) retain Git's resolver: do not emulate Git config. */
+export async function createFamilyAuthorityIdentityFence(ownedDirectory: string): Promise<() => string> {
+  let fallback = () => readFamilyAuthorityIdentitySync(ownedDirectory)
+  try {
+    const environment = familyRoutingEnvironment()
+    const checkout = await realpath(ownedDirectory)
+    const discovery = await Promise.all([
+      git(checkout, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir"]),
+      environment.GIT_CONFIG_NOSYSTEM === "1" ? Promise.resolve("") : git(checkout, ["var", "GIT_CONFIG_SYSTEM"]),
+      git(checkout, ["var", "GIT_CONFIG_GLOBAL"]),
+    ].map(task => task.catch(() => undefined)))
+    if (discovery.some(value => value === undefined)) return fallback
+    const [paths, system, global] = discovery as string[]
+    const [rootName, commonName, gitName] = paths.split(/\r?\n/)
+    const root = await realpath(rootName), common = await realpath(commonName), gitDirectory = await realpath(gitName)
+    fallback = () => {
+      try {
+        const actual = execFileSync("git", ["-C", realpathSync(ownedDirectory), "rev-parse", "--show-toplevel",
+          "--path-format=absolute", "--git-common-dir", "--absolute-git-dir"],
+        { encoding: "utf8", windowsHide: true, timeout: 3000, maxBuffer: 8192 }).replace(/\r?\n$/, "").split(/\r?\n/)
+        if (actual.length !== 3 || actual.some((file, index) => physicalIdentity(realpathSync(file))
+          !== physicalIdentity([root, common, gitDirectory][index]))) throw new Error("routing changed")
+        return physicalIdentity(common)
+      } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
+    }
+    // Environment-directed discovery and redirected effective roots need Git.
+    if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_CONFIG"].some(key => environment[key] !== undefined)) return fallback
+    const relative = path.relative(root, checkout)
+    if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) return fallback
+    const administrative = await readCheckoutIdentity(root)
+    if (physicalIdentity(administrative.common) !== physicalIdentity(common)
+      || physicalIdentity(administrative.gitDirectory) !== physicalIdentity(gitDirectory)
+      || administrative.root && physicalIdentity(administrative.root) !== physicalIdentity(root)) return fallback
+    const files = new Set([ownedDirectory, checkout, root, common, gitDirectory, path.join(root, ".git"),
+      path.join(gitDirectory, "commondir"), path.join(gitDirectory, "gitdir"),
+      path.join(common, "objects"), path.join(common, "refs")])
+    const configurations = new Set([path.join(common, "config"), path.join(common, "config.worktree"), path.join(gitDirectory, "config.worktree"),
+      ...[system, global].flatMap(value => value.split(/\r?\n/).filter(Boolean).map(file => path.resolve(checkout, file)))])
+    // A new nested repository must revoke the fence, even if its family/root
+    // happens to be inside the already verified physical checkout.
+    const nested: string[] = []
+    for (let directory = checkout; directory !== root; directory = path.dirname(directory)) {
+      if (files.size >= 128) return fallback
+      files.add(directory); files.add(path.join(directory, ".git")); nested.push(directory)
+    }
+    const snapshot = [...files].map(file => [file, familyFenceEntry(file)] as const)
+    // Git skipped an existing nested .git entry. Its incomplete/invalid layout
+    // can become discoverable in place: keep Git's resolver, not a layout parser.
+    const nestedGit = new Set(nested.map(directory => path.join(directory, ".git")))
+    if (snapshot.some(([file, entry]) => nestedGit.has(file) && entry !== null)) return fallback
+    const configSnapshot = [...configurations].map(file => [file, familyFenceEntry(file)] as const)
+    const headFile = path.join(gitDirectory, "HEAD")
+    let headIdentity = familyFenceEntry(headFile, false)
+    // Git reads AFTER the filesystem snapshot, so configuration/root resolution
+    // cannot be captured first and then silently paired with changed inputs.
+    const [resolved, config] = await Promise.all([
+      git(checkout, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir"]),
+      git(checkout, ["config", "--null", "--list", "--includes"]),
+    ])
+    if (resolved !== paths || config.split("\0").some(entry => {
+      const key = entry.split("\n", 1)[0].toLowerCase()
+      return key === "include.path" || key.startsWith("includeif.")
+    })) return fallback
+    const current = (): string => {
+      try {
+        if (!isDeepStrictEqual(familyRoutingEnvironment(), environment)
+          || snapshot.some(([file, expected]) => !isDeepStrictEqual(familyFenceEntry(file), expected))) throw new Error("changed")
+        // HEAD is required for discovery, but its branch/content is not identity.
+        // Metadata changes (including in-place writes) need Git's fresh routing
+        // check. Adopt a legitimate update only while that exact stamp is stable;
+        // every later fence still rereads it, never borrowing a cached approval.
+        const head = familyFenceEntry(headFile, false)
+        if (!isDeepStrictEqual(head, headIdentity)) {
+          const family = fallback()
+          if (!isDeepStrictEqual(familyFenceEntry(headFile, false), head)
+            || !isDeepStrictEqual(familyRoutingEnvironment(), environment)
+            || snapshot.some(([file, expected]) => !isDeepStrictEqual(familyFenceEntry(file), expected))) throw new Error("changed")
+          headIdentity = head
+          return family
+        }
+        // Config bytes are only a change detector, NOT an authority fingerprint.
+        // ponytail: config edits retain Git instead of adding a config parser.
+        // Recheck routing semantics with Git on changes; unrelated edits remain
+        // valid, and newly introduced includes cannot borrow the old fast path.
+        if (configSnapshot.some(([file, expected]) => !isDeepStrictEqual(familyFenceEntry(file), expected))) return fallback()
+        // A nested bare repository has no .git entry. Its discovery may change
+        // routing, but ordinary HEAD/branch/content writes are never fingerprinted.
+        if (nested.some(directory => ["objects", "refs"].every(entry => {
+          try { return statSync(path.join(directory, entry)).isDirectory() }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error }
+        }))) return fallback()
+        return physicalIdentity(common)
+      } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
+    }
+    current()
+    return current
+  } catch { return fallback }
+}
+
+function familyRoutingEnvironment(): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(process.env)
+    .map(([key, value]) => [process.platform === "win32" ? key.toUpperCase() : key, value] as const)
+    .filter(([key]) => key.startsWith("GIT_") || ["HOME", "XDG_CONFIG_HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "PATH"].includes(key))
+    .sort(([left], [right]) => left.localeCompare(right)))
+}
+
+/** Bounded, fresh descriptor reads; directory timestamps are deliberately absent
+ * because ordinary Git writes do not change the checkout's physical identity. */
+function familyFenceEntry(file: string, content = true): unknown {
+  let named: import("node:fs").BigIntStats
+  try { named = lstatSync(file, { bigint: true }) }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error }
+  const identity = [realpathSync(file), named.dev, named.ino, named.birthtimeNs,
+    ...(content ? [] : [named.mtimeNs, named.ctimeNs, named.size])]
+  if (named.isSymbolicLink()) {
+    if (content && !statSync(file).isDirectory()) throw new Error("indirect Git input")
+    return ["alias", ...identity]
+  }
+  if (named.isDirectory()) return ["directory", ...identity]
+  if (!content && named.isFile()) return ["file", ...identity]
+  if (!named.isFile() || named.size > 65536n) throw new Error("unbounded Git input")
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  try {
+    const stat = fstatSync(fd, { bigint: true })
+    if (!stat.isFile() || stat.dev !== named.dev || stat.ino !== named.ino || stat.size > 65536n) throw new Error("changed")
+    const bytes = Buffer.alloc(65537)
+    let size = 0
+    while (size < bytes.length) {
+      const count = readSync(fd, bytes, size, bytes.length - size, size)
+      if (!count) break
+      size += count
+    }
+    const after = lstatSync(file, { bigint: true })
+    if (size > 65536 || after.dev !== stat.dev || after.ino !== stat.ino || after.birthtimeNs !== stat.birthtimeNs) throw new Error("changed")
+    return ["file", ...identity, bytes.subarray(0, size)]
+  } finally { closeSync(fd) }
 }
 
 interface Marker {

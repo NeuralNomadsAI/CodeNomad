@@ -9,7 +9,7 @@ import { type RecurrenceChildRecord, type RecurrenceEffectRecord,
 import { RecurrenceAuthority, recurrenceQualificationDigest, type RecurrenceAuthorityAdapter,
   type RecurrenceQualificationRequest } from "../../missions/recurrence-authority-core"
 import type { RecurrenceAuthorityDocument, NativeRecurrenceAuthorityStore } from "../../missions/recurrence-authority-store"
-import { readFamilyAuthorityIdentity, readFamilyAuthorityIdentitySync } from "../../workspaces/family-authority-claim"
+import { createFamilyAuthorityIdentityFence, readFamilyAuthorityIdentitySync } from "../../workspaces/family-authority-claim"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 import type { NativeRecurrenceOwner } from "./native-authority-provider"
 import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
@@ -51,6 +51,7 @@ export function nativeRecurrenceAdapter(input: {
   observeSettlement?: RecurrenceAuthorityAdapter["observeSettlement"]
 }): RecurrenceAuthorityAdapter {
   const { provider, signer } = input, store = provider.store
+  const signerRoots = new Map<string, () => string>()
   const owner = (): true => {
     assertSynchronousAuthorityGuard(input.owner.assertCurrent, "policy-unqualified")
     if (input.owner.namespace !== store.scope.namespace || input.owner.daemonStorageID !== store.scope.daemonStorageID)
@@ -63,10 +64,11 @@ export function nativeRecurrenceAdapter(input: {
     owner()
     return assertSynchronousAuthorityGuard(() => signer.assertProtectedCurrent(request), "policy-unqualified")
   }
-  const rootCurrent = (roots: readonly SignedRecurrenceStandingIntent["body"]["roots"][number][]): true => {
+  const rootCurrent = (roots: readonly SignedRecurrenceStandingIntent["body"]["roots"][number][], fences: ReadonlyMap<string, () => string>): true => {
     for (const root of roots) {
       if (root.mode !== "git" || physical(realpathSync(root.directory)) !== root.checkout
-        || physical(realpathSync(root.family)) !== root.family || readFamilyAuthorityIdentitySync(root.directory) !== root.family)
+        || physical(realpathSync(root.family)) !== root.family
+        || (fences.get(root.directory)?.() ?? readFamilyAuthorityIdentitySync(root.directory)) !== root.family)
         rejectAuthority("binding-mismatch")
     }
     return true
@@ -82,8 +84,12 @@ export function nativeRecurrenceAdapter(input: {
     return true
   }
   return {
-    readSigners: async () => { owner(); const signers = await signer.readSigners(); owner(); return signers },
-    assertSignerCurrent: snapshot => { owner(); rootCurrent(snapshot.roots); return assertSynchronousAuthorityGuard(() => signer.assertSignerCurrent(snapshot), "untrusted-signer") },
+    readSigners: async () => {
+      owner(); const signers = await signer.readSigners()
+      for (const root of signers.flatMap(signer => signer.roots)) signerRoots.set(root.directory, await createFamilyAuthorityIdentityFence(root.directory))
+      owner(); return signers
+    },
+    assertSignerCurrent: snapshot => { owner(); rootCurrent(snapshot.roots, signerRoots); return assertSynchronousAuthorityGuard(() => signer.assertSignerCurrent(snapshot), "untrusted-signer") },
     qualify: async (request, signal) => {
       signal.throwIfAborted()
       owner()
@@ -94,10 +100,13 @@ export function nativeRecurrenceAdapter(input: {
         rejectAuthority("binding-mismatch")
       // Native Location and project were checked on provider acquisition. Verify
       // every exact physical checkout/family, not a directory prefix or a label.
+      const roots = new Map<string, () => string>()
       for (const root of request.parent.body.roots) {
+        const fence = signerRoots.get(root.directory) ?? await createFamilyAuthorityIdentityFence(root.directory)
         if (root.mode !== "git" || physical(await realpath(root.directory)) !== root.checkout
-          || physical(await realpath(root.family)) !== root.family || await readFamilyAuthorityIdentity(root.directory) !== root.family)
+          || physical(await realpath(root.family)) !== root.family || fence() !== root.family)
           rejectAuthority("binding-mismatch")
+        roots.set(root.directory, fence)
       }
       const actualSource = provider.readCurrent(provider.sourceKey)
       if (actualSource === undefined) rejectAuthority("observation-unavailable")
@@ -108,7 +117,7 @@ export function nativeRecurrenceAdapter(input: {
       const current = (): true => {
         signal.throwIfAborted()
         protectedCurrent(request)
-        rootCurrent(request.parent.body.roots)
+        rootCurrent(request.parent.body.roots, roots)
         human && assertSynchronousAuthorityGuard(human, "policy-unqualified")
         ledger(store, request.ledger)
         if (request.purpose === "human") {
