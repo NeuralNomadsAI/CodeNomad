@@ -32,8 +32,8 @@ Tant que le service OpenCode tourne, il possède les échéances et les passages
 finis même si CodeNomad et son backend sont fermés. Le sommeil de la machine
 peut entraîner un rattrapage borné dans ce même processus. **Le redémarrage du
 service peut perdre le Job de calendrier en RAM** pendant que CodeNomad est fermé.
-Rouvrir CodeNomad réconcilie l'état natif puis réarme automatiquement les seules
-Missions encore autorisées, sans nouveau Play ni rejeu d'effet incertain.
+Rouvrir CodeNomad affiche le calendrier interrompu et attend **Reprendre** avant
+de réarmer la Mission encore autorisée, sans rejeu d'effet incertain.
 L'auto-réveil pendant que CodeNomad reste fermé après redémarrage n'est plus un
 gate de livraison ; les preuves historiques correspondantes restent datées.
 
@@ -110,8 +110,8 @@ autorisation persistée ne dispense pas de l'environnement complet ni des fences
 **Critère d'acceptation :** fermer les clients et le backend CodeNomad ; le service
 OpenCode seul retrouve les racines autorisées et admet exactement un passage,
 avec son profil, ses permissions et ses identités durables **tant qu'il tourne**.
-Après un redémarrage du service, rouvrir CodeNomad réarme automatiquement le
-calendrier encore autorisé, sans rejouer un effet incertain. Les preuves de lancement
+Après un redémarrage du service, rouvrir CodeNomad affiche le calendrier interrompu ;
+seul un Reprendre explicite le réarme, sans rejouer un effet incertain. Les preuves de lancement
 indépendant d'un backend ne démontrent pas ce parcours.
 
 ## 1. Preuves et limites du contrat natif
@@ -236,7 +236,7 @@ avec IDs/contracts déterministes. Un changement de racine/profil exige adoption
 explicite ; jamais « trouver un autre propriétaire disponible ».
 
 La liaison storage/daemon doit rester exacte pendant la vie du service et lors
-du réarmement automatique à la réouverture de CodeNomad, sans accepter une autre
+du Reprendre explicite après réouverture de CodeNomad, sans accepter une autre
 DB au même endpoint. Une identité durable de namespace Mission, créée une
 fois dans le storage natif et relue via challenge typé, est une piste **H**, pas
 une API `ctx.storage.identity` existante. Comparer aussi les identités natives du

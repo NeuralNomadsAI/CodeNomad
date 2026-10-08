@@ -37,8 +37,8 @@ La programmation doit continuer pendant que le service OpenCode tourne, y compri
 après la fermeture de l'interface et du backend CodeNomad. Son **redémarrage peut
 perdre le planificateur en RAM** tant que CodeNomad reste fermé : la reprise
 automatique à froid n'est pas exigée. Conserver la programmation et les identités
-durables ; **rouvrir CodeNomad réconcilie puis réarme automatiquement** les seules
-Missions encore autorisées, sans nouveau Play ni rejeu d'un effet inconnu.
+durables ; **rouvrir CodeNomad affiche Planification interrompue et demande
+Reprendre**. Aucun passage ne repart silencieusement ni ne rejoue un effet inconnu.
 
 ## Protections et coordination
 

@@ -18,8 +18,8 @@ remain retained, non-activated, separately scoped evidence, not native-plugin
 autonomy acceptance. Active integration assignments now target native admission,
 profile/environment, authority, storage and service-lifetime scheduling in OpenCode.
 As clarified on 2026-10-08, a service restart may lose the in-memory schedule
-Job while CodeNomad is closed. Reopening CodeNomad must reconcile and automatically
-rearm eligible schedules without replay; unattended cold wake is not a release gate.
+Job while CodeNomad is closed. Reopening CodeNomad must show the interruption;
+only an explicit Resume may rearm it without replay. Unattended cold wake is not a release gate.
 
 **Latest scoped status:** ordinary server **2,370 pass / 0 fail / 8 skipped**,
 625 inputs unchanged; latest complete no-capture browser **761 pass / 1 fail /
