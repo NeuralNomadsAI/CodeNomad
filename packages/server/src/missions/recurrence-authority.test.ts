@@ -8,7 +8,7 @@ import { type MissionStorage } from "./journal"
 import { type MissionJsonValue } from "./model"
 import { RECURRENCE_STORAGE_PREFIX, type RecurrenceConfig } from "./recurrence-contract"
 import { NativeMissionRecurrenceStore } from "./recurrence-store"
-import { authenticateRecurrenceStanding, recurrenceEffectID, recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY, RECURRENCE_AUTHORITY_MAX_BYTES,
+import { authenticateRecurrenceStanding, recurrenceEffectID, recurrenceHumanRequestID, recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY, RECURRENCE_AUTHORITY_MAX_BYTES,
   type RecurrenceAuthorityScope, type RecurrenceChildRecord, type RecurrenceEffect, type RecurrenceEffectReceipt,
   type RecurrenceSettlement, type RecurrenceStandingIntent, type SignedRecurrenceStandingIntent } from "./recurrence-authority-contract"
 import { RecurrenceAuthority, recurrenceQualificationDigest, type RecurrenceAuthorityAdapter, type RecurrenceQualificationRequest } from "./recurrence-authority-core"
@@ -116,11 +116,14 @@ async function fixture() {
   async function signed(overrides: Partial<RecurrenceStandingIntent> = {}): Promise<SignedRecurrenceStandingIntent> {
     const previous = await store.read()
     const selected = overrides.config ?? previous?.parent.body.config ?? config
+    const epoch = overrides.epoch ?? (previous?.parent.body.epoch ?? 0) + 1, action = overrides.action ?? "authorize"
     const body: RecurrenceStandingIntent = { ...scope, authorityID: signer.authorityID, keyID: signer.keyID, roots: selected.roots,
       version: 1, policy: RECURRENCE_AUTHORITY_POLICY, action: "authorize", scheduleRevision: previous?.parent.body.scheduleRevision ?? 0,
-      epoch: (previous?.parent.body.epoch ?? 0) + 1, expectedRevision: previous?.revision ?? null,
+      epoch, expectedRevision: previous?.revision ?? null, requestID: recurrenceHumanRequestID(scope.scheduleID, epoch, action),
       provisioningGeneration: signer.provisioningGeneration, signerDigest: authoritySignerDigest(signer.publicKey),
-      config: selected, configDigest: authorityDigest(selected), budgets: { effects: 16, nativeCalls: 2, inboxMessages: 3, publications: 2 }, ...overrides }
+      config: selected, configDigest: authorityDigest(selected), profileSource: { profileID: scope.profileID,
+        executionHost: scope.executionHost, configYamlPath: "/owned/profile/config.yaml" },
+      budgets: { effects: 16, nativeCalls: 2, inboxMessages: 3, publications: 2 }, ...overrides }
     return { body, signature: sign(null, recurrenceStandingSigningBytes(body), keys.privateKey).toString("base64") }
   }
   async function authorize(overrides: Partial<RecurrenceStandingIntent> = {}) {
@@ -179,8 +182,14 @@ test("domain-separated trusted-map parent authentication; forged keys, scopes, p
     recurrenceStandingSigningBytes(parent.body), attacker.privateKey).toString("base64"), publicKey: attacker.publicKey.export({ type: "spki", format: "der" }).toString("base64") }, [f.signer]))
   assert.throws(() => authenticateRecurrenceStanding(parent, []))
   assert.throws(() => authenticateRecurrenceStanding(parent, [f.signer, f.signer]))
+  assert.throws(() => authenticateRecurrenceStanding(parent, [{ ...f.signer, projectID: "foreign" }]))
+  assert.throws(() => authenticateRecurrenceStanding(parent, [{ ...f.signer, roots: [{ ...root, directory: "/foreign" }] }]))
   assert.throws(() => authenticateRecurrenceStanding(parent, [{ ...f.signer, qualification: "old-writer-unexcluded" }]))
   assert.throws(() => authenticateRecurrenceStanding({ ...parent, body: { ...parent.body, configDigest: "0".repeat(64) } }, [f.signer]))
+  assert.throws(() => authenticateRecurrenceStanding({ ...parent, body: { ...parent.body, requestID: "other_human" } }, [f.signer]))
+  assert.throws(() => authenticateRecurrenceStanding({ ...parent, body: { ...parent.body,
+    profileSource: { ...parent.body.profileSource, configYamlPath: "/foreign/config.yaml" } } }, [f.signer]))
+  assert.throws(() => authenticateRecurrenceStanding({ ...parent, body: { ...parent.body, requestID: undefined } }, [f.signer]))
   await assert.rejects(f.core.authorize(parent, signal()), /assertion|false == true/i)
   for (const change of [{ daemonStorageID: "other" }, { scheduleID: "other" }, { namespace: "c3dceeba-0e9f-4b6c-9445-81262411a2b8" }]) {
     const wrong = await f.signed(change); f.humanReservations.add(authorityDigest(wrong))
@@ -266,6 +275,8 @@ test("human reauthorization is CAS, monotonic and refuses outstanding children; 
   assert.equal(results.filter(result => result.status === "fulfilled").length, 1)
   assert.equal((await f.store.read())!.parent.body.epoch, 2)
   await assert.rejects(f.core.authorize(first, signal()), /revision-conflict/)
+  await assert.rejects(f.authorize({ action: "pause", profileSource: { profileID: scope.profileID,
+    executionHost: scope.executionHost, configYamlPath: "/different/config.yaml" } }), /epoch-conflict/)
   await f.authorize({ action: "pause" })
   await f.authorize()
   const grant = await f.reserve()

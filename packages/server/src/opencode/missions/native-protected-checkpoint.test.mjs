@@ -198,7 +198,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const execution={agent:"build",model:{providerID:"fixture",id:"fixture"}},config={consigne:"Owned protected checkpoint proof",clock:{time:"07:00",zone:"UTC"},
     profileID:scope.profileID,executionHost:scope.executionHost,profiles:{coordinator:execution,roles:{specialist:execution}},taskMode:"native",roots:[rootIdentity],watchedConversationIDs:[],publication:{policy:"disabled",conversationIDs:[]}}
   const keys=generateKeyPairSync("ed25519"),body={...scope,authorityID:"fixture-authority",keyID:"fixture-public-key",roots:[rootIdentity],version:1,policy:p.RECURRENCE_AUTHORITY_POLICY,
-    scheduleRevision:0,epoch:1,expectedRevision:null,provisioningGeneration:"human-fixture-generation",signerDigest:p.authoritySignerDigest(keys.publicKey),action:"authorize",configDigest:p.authorityDigest(config),config,budgets:{effects:2,nativeCalls:0,inboxMessages:0,publications:0}}
+     scheduleRevision:0,epoch:1,expectedRevision:null,requestID:p.recurrenceHumanRequestID(scope.scheduleID,1,"authorize"),provisioningGeneration:"human-fixture-generation",signerDigest:p.authoritySignerDigest(keys.publicKey),action:"authorize",configDigest:p.authorityDigest(config),config,profileSource:{profileID:scope.profileID,executionHost:scope.executionHost,configYamlPath:"/fixture/config.yaml"},budgets:{effects:2,nativeCalls:0,inboxMessages:0,publications:0}}
   const signed={body,signature:sign(null,p.recurrenceStandingSigningBytes(body),keys.privateKey).toString("base64")}
   const initial={version:1,scope,revision:0,parent:signed,settledSequence:0,lastArchiveDigest:null,child:null}
   const checkpoint=doc=>({daemonStorageID:scope.daemonStorageID,epoch:doc.parent.body.epoch,revision:doc.revision,headDigest:p.authorityDigest(doc)})
@@ -243,7 +243,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   // Separate explicit HUMAN Pause, not signing/re-enrolling in a due passage.
   // Read-side denial is monotonic; the missing authoritative write-side CAS is
   // NOT claimed solved by this fixture's one sequential atomic staging write.
-  const pauseBody={...body,epoch:2,expectedRevision:2,action:"pause"},pauseParent={body:pauseBody,signature:sign(null,p.recurrenceStandingSigningBytes(pauseBody),keys.privateKey).toString("base64")}
+  const pauseBody={...body,epoch:2,expectedRevision:2,action:"pause",requestID:p.recurrenceHumanRequestID(scope.scheduleID,2,"pause")},pauseParent={body:pauseBody,signature:sign(null,p.recurrenceStandingSigningBytes(pauseBody),keys.privateKey).toString("base64")}
   const pausedHead={...next,revision:3,parent:pauseParent},denialRecord={...publicRecord,parent:pauseParent,parentDigest:p.authorityDigest(pauseParent),checkpoint:checkpoint(pausedHead),pending}
   await storage.atomic("standing.json",denialRecord);const denialBytes=await readFile(publicFile)
   const epochDenial=await call(restored,"recheck",{kind:"epoch-denial",sessionID:session.id,operationID});assert.equal(epochDenial.readSideEpochDenial,true,JSON.stringify(epochDenial))

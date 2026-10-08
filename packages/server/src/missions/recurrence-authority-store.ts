@@ -171,6 +171,7 @@ export class NativeRecurrenceAuthorityStore {
         || next.parent.body.epoch !== before.parent.body.epoch + 1 || before.child && next.parent.body.action === "authorize"
         || !same(before.child, next.child) || next.settledSequence !== before.settledSequence
         || next.parent.body.action !== "authorize" && (!same(before.parent.body.config, next.parent.body.config)
+          || !same(before.parent.body.profileSource, next.parent.body.profileSource)
           || !same(before.parent.body.budgets, next.parent.body.budgets) || before.parent.body.scheduleRevision !== next.parent.body.scheduleRevision)) rejectAuthority("authorization-blocked")
     }
     if (before.child && !next.child) {

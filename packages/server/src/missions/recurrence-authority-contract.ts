@@ -9,6 +9,11 @@ import { derivedExecutionSchema } from "./derived-call-protocol"
 import { stableToken } from "./journal"
 
 export const RECURRENCE_AUTHORITY_POLICY = "codenomad.missions.recurrence-standing/human-signed-v1" as const
+/** Exact schedule-local human identity. Native epoch CAS makes historical IDs
+ * unreplayable without an unbounded host-side request history. */
+export function recurrenceHumanRequestID(scheduleID: string, epoch: number, action: "authorize" | "pause" | "revoke"): string {
+  return `rhuman_${recurrenceAuthorityDigest({ scheduleID, epoch, action })}`
+}
 export const RECURRENCE_AUTHORITY_MAX_BYTES = 256 * 1024
 /** Qualification includes a ledger plus exact source/receipt evidence. */
 export const RECURRENCE_QUALIFICATION_MAX_BYTES = 768 * 1024
@@ -21,6 +26,9 @@ const positive = counter.min(1)
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
 const uniqueIDs = (max: number) => z.array(id).max(max).refine(items => new Set(items).size === items.length)
 const binding = authorityBindingSchema.omit({ missionID: true, coordinatorSessionID: true })
+export const recurrenceProfileSourceSchema = z.object({ profileID: id, executionHost: id,
+  configYamlPath: z.string().min(1).max(4096).refine(value => !value.includes("\0")) }).strict()
+export type RecurrenceProfileSource = z.infer<typeof recurrenceProfileSourceSchema>
 export const recurrenceAuthorityScopeSchema = binding.omit({ authorityID: true, keyID: true, roots: true }).extend({
   scheduleID: recurrenceIDSchema, daemonStorageID: id,
 }).strict()
@@ -30,11 +38,13 @@ export const recurrenceAuthorityBudgetsSchema = z.object({ effects: positive.max
   inboxMessages: counter.max(256), publications: counter.max(32) }).strict()
 export const recurrenceStandingIntentSchema = binding.extend({
   version: z.literal(1), policy: z.literal(RECURRENCE_AUTHORITY_POLICY), scheduleID: recurrenceIDSchema,
-  daemonStorageID: id, scheduleRevision: counter, epoch: positive, expectedRevision: counter.nullable(),
+  daemonStorageID: id, scheduleRevision: counter, epoch: positive, expectedRevision: counter.nullable(), requestID: recurrenceIDSchema,
   provisioningGeneration: id, signerDigest: digest, action: z.enum(["authorize", "pause", "revoke"]),
-  configDigest: digest, config: recurrenceConfigSchema, budgets: recurrenceAuthorityBudgetsSchema,
+  configDigest: digest, config: recurrenceConfigSchema, profileSource: recurrenceProfileSourceSchema, budgets: recurrenceAuthorityBudgetsSchema,
 }).strict().superRefine((body, context) => {
-  if (body.configDigest !== authorityDigest(body.config) || body.profileID !== body.config.profileID
+  if (body.requestID !== recurrenceHumanRequestID(body.scheduleID, body.epoch, body.action)
+    || body.configDigest !== authorityDigest(body.config) || body.profileID !== body.config.profileID
+    || body.profileSource.profileID !== body.profileID || body.profileSource.executionHost !== body.executionHost
     || body.executionHost !== body.config.executionHost || canonicalAuthority(body.roots) !== canonicalAuthority(body.config.roots)) {
     context.addIssue({ code: "custom", message: "Standing configuration binding differs" })
   }

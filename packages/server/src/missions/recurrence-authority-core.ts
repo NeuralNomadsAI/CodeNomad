@@ -64,7 +64,8 @@ export class RecurrenceAuthority {
       if (body.epoch !== (before?.parent.body.epoch ?? 0) + 1 || !before && body.action !== "authorize"
         || before && body.scheduleRevision < before.parent.body.scheduleRevision
         || before && body.action !== "authorize" && (body.scheduleRevision !== before.parent.body.scheduleRevision
-          || !equal(body.config, before.parent.body.config) || !equal(body.budgets, before.parent.body.budgets))) rejectAuthority("epoch-conflict")
+          || !equal(body.config, before.parent.body.config) || !equal(body.profileSource, before.parent.body.profileSource)
+          || !equal(body.budgets, before.parent.body.budgets))) rejectAuthority("epoch-conflict")
       // An archive-only tear may reconcile this EXACT signed decision with fresh
       // protected human admission; a different intent never borrows its epoch.
       const archived = await this.store.readParent(body.epoch)

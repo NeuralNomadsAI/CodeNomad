@@ -38,7 +38,7 @@ import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { acquireNativeRecurrenceAuthorityProvider, NATIVE_RECURRENCE_STORAGE_ID_KEY, nativeRecurrenceAnchorKey } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-authority-provider.ts"))};
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from ${JSON.stringify(path.resolve("packages/server/src/missions/authority-store.ts"))};
 import { authorityDigest, authoritySignerDigest } from ${JSON.stringify(path.resolve("packages/server/src/missions/authority-protocol.ts"))};
-import { recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY } from ${JSON.stringify(path.resolve("packages/server/src/missions/recurrence-authority-contract.ts"))};
+import { recurrenceHumanRequestID, recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY } from ${JSON.stringify(path.resolve("packages/server/src/missions/recurrence-authority-contract.ts"))};
 const method={input:{type:"object"},output:{type:"object"}};
 const rpc = Rpc.define({id:"private.missions.authority-provider",methods:{check:method,bump:method,claimed:method},events:{}});
 const namespace="9f6f590e-271d-477f-8c02-7a6a119d63b9", storageID="private-native-storage";
@@ -65,8 +65,8 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const config={consigne:"Private metadata proof",clock:{time:"07:00",zone:"UTC"},profileID:scope.profileID,executionHost:scope.executionHost,
    profiles:{coordinator:execution,roles:{specialist:execution}},taskMode:"native",roots:[root],watchedConversationIDs:[],publication:{policy:"disabled",conversationIDs:[]}};
   const body={...scope,authorityID:"fixture-authority",keyID:"fixture-key",roots:[root],version:1,policy:RECURRENCE_AUTHORITY_POLICY,
-   action:"authorize",scheduleRevision:0,epoch:1,expectedRevision:null,provisioningGeneration:"fixture-generation",
-   signerDigest:authoritySignerDigest(keys.publicKey),config,configDigest:authorityDigest(config),budgets:{effects:2,nativeCalls:0,inboxMessages:0,publications:0}};
+    action:"authorize",scheduleRevision:0,epoch:1,expectedRevision:null,requestID:recurrenceHumanRequestID(scope.scheduleID,1,"authorize"),provisioningGeneration:"fixture-generation",
+    signerDigest:authoritySignerDigest(keys.publicKey),config,configDigest:authorityDigest(config),profileSource:{profileID:scope.profileID,executionHost:scope.executionHost,configYamlPath:"/fixture/config.yaml"},budgets:{effects:2,nativeCalls:0,inboxMessages:0,publications:0}};
   const parent={body,signature:sign(null,recurrenceStandingSigningBytes(body),keys.privateKey).toString("base64")};
   const initial={version:1,scope,revision:0,parent,settledSequence:0,lastArchiveDigest:null,child:null};
   yield* Effect.promise(()=>provider.archiveParent(parent,null,()=>true));
@@ -90,7 +90,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   // Reproduce retirement queued after the LAST check inside each async
   // operation: only the shared final synchronous transaction hook can catch it.
   const retirementRegressions=[];
-  const nextBody={...body,epoch:2,expectedRevision:0,action:"pause"};
+   const nextBody={...body,epoch:2,expectedRevision:0,action:"pause",requestID:recurrenceHumanRequestID(scope.scheduleID,2,"pause")};
   const nextParent={body:nextBody,signature:sign(null,recurrenceStandingSigningBytes(nextBody),keys.privateKey).toString("base64")};
   for(const api of ["publish","archiveParent"])for(const returned of ["false","rejected-promise"]){
    let retired=false,calls=0;
