@@ -1,3 +1,5 @@
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
+
 # Missions : contrat de continuité et d'autorisation
 
 Étude initiale : 2026-10-01. État réconcilié : 2026-10-08. Contrat cible,

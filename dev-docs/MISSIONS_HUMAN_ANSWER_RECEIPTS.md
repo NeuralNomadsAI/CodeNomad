@@ -1,5 +1,7 @@
 # Native human-answer receipts (2026-10-08)
 
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Its simple Wayfinder UI-answer mark also replaces signed answer receipts for one-time missions; other one-time receipts are unchanged. Historical content is retained.
+
 This is the bounded producer/consumer source tranche on assembly `25c5f03b`,
 not live OpenCode, NSIS or installed-Mission qualification.
 

@@ -1,5 +1,7 @@
 # Protected host Missions authority staging
 
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
+
 ## Implemented, not activated
 
 `packages/server/src/missions/host-authority/` now implements protected local

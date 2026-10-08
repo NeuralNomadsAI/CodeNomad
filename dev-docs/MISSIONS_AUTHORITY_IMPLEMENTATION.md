@@ -1,5 +1,7 @@
 # Native Missions continuity authority core
 
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
+
 2026-10-02. **Core implementation only, not enabled or release-qualified.**
 The completed private prototype is documented in `MISSIONS_AUTHORITY_SPIKE.md`;
 it was not rerun. These modules neither provision a signer nor register a plugin,

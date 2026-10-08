@@ -1,5 +1,7 @@
 # Native-first Missions: assembled-product acceptance
 
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
+
 ## Current status — 2026-10-07
 
 This document retains the stronger signed-child/product acceptance design and

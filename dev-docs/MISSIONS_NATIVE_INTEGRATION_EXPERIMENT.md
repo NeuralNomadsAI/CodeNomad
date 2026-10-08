@@ -1,5 +1,7 @@
 # Native Mission integration — provisional executable proof
 
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
+
 2026-10-03. **Research candidate only, not an architecture selection or product
 activation.** The independently verified three lane-1 files remain immutable.
 No production modules, signed authority, root guards, Pocock policy, CSS or i18n

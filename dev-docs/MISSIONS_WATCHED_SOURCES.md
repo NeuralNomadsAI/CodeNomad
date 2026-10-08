@@ -1,5 +1,7 @@
 # Watched-conversation passage inputs (offline implementation)
 
+> Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
+
 PR #866's daily-review source cursor use case now uses the actual acquired native
 `Session.messages`/`Session.message` methods from `native-service-adapter.ts`.
 No native service, database fixture, installed product, or live Mission was used

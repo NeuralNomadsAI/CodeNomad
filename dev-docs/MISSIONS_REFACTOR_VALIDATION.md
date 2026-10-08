@@ -1,5 +1,31 @@
 # Missions refactor: integration qualification record
 
+## Simplification decision — 2026-10-08
+
+The user's explicit recurring-missions decision supersedes the historical signed
+authority and delivery organization below. The current recurring contract is
+[`MISSIONS_RECURRING_SIMPLE.md`](MISSIONS_RECURRING_SIMPLE.md), not the older PR
+description's recurring authority requirements. One-time Missions published in
+PR #866 retain their existing receipts; only the Wayfinder UI-answer mark applies
+to both execution modes. This decision is a target, not implementation acceptance.
+
+Six active fronts now own bounded delivery against that single contract:
+
+1. **docs** — authoritative simple contract, AGENTS rules and supersession banners.
+2. **day-test** — complete useful daily passage and restart/no-second-message journey.
+3. **scheduler/controls** — plugin-kv revision CAS, authenticated requestID controls,
+   native Job lifetime, Interrupted projection and explicit Resume/Run now.
+4. **passage/tools/settlement** — write-ahead native identities, backend-independent
+   Mission tools, isolated journals and family/queue-based atomic settlement.
+5. **UI** — title/clock/status/result/history/actions and honest uncertain controls.
+6. **human mark** — InterruptionDock backend mark and Wayfinder gate in both modes.
+
+Frozen branches, commits, uncommitted handoffs and historical checks remain
+preserved and inactive; do not discard or silently reinterpret them as simplified
+contract acceptance. The old grants/epochs/effect-receipt/replay gates below are
+historical for recurring missions. Integration and isolated journey qualification
+remain required; this decision authorizes no installation, daemon mutation or push.
+
 ## Current delivery index — 2026-10-08
 
 The reintroduction is open in [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866),
