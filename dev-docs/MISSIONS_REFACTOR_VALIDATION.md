@@ -80,6 +80,25 @@ native/private qualification remains deferred until that first complete build;
 the premature isolated source-fixture receipts below remain exceptions, not
 packaged acceptance. The shared daemon and live Mission are not test targets.
 
+At local assembly `9eed6d4a`, paused CREATE/UI, frozen templates/notes/briefs,
+watched-source inputs and the actual due pre-reservation/cursor-finish consumer
+are joined. All top-level `packages/server/src/missions/*.test.ts` pass
+**742/742**, with no skips/cancellations, using the same browser condition and
+default test concurrency. Server, UI and Electron typechecks and `build:missions`
+pass. The nine recurring Solid browser tests and targeted native-shaped due
+regression also pass; none launches a native daemon. Domain receipt:
+`C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11cc573d1001ziYZAVspTBsMKi.out`.
+
+During CREATE merge verification, `sh_11cbedd3e001rXrGSmzeTPLgMe` finished
+**39/40**: its root-reuse fixture expected invalid roots to survive signer reads,
+but the joined acquisition now rejects them earlier. The corrected fixture
+asserts both the early rejection and the subsequent final-fence rejection;
+targeted adapter/due/budget tests then pass **10/10**, without relaxing native
+fences or test deadlines. This does not erase the initial failed receipt.
+Play/control, Run now, current-passage/result readers, native tool/business
+composition, human-answer provenance and artifact-replacement qualification
+remain separately scoped joins, not accepted by these results.
+
 - Published head at the start of this update: `cfea513b`; corrections now pushed
   through `32ee0fc5` include Stop/capacity (`530dc8af` / `bd2a8cee`), tab-local
   preferences/task-session policy/depth (`972910fe`) and inactive recurrence core
