@@ -6,11 +6,19 @@ import { initializeClientState, writeClientLayoutValue } from "../../../src/stor
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
 let nextToken = 0
-serverApi.createPreview = async ({ sessionId, url }) => ({ sessionId, targetUrl: url,
-  token: `preview-${++nextToken}`, proxyUrl: url, createdAt: new Date().toISOString() })
+let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void } | undefined
+serverApi.createPreview = async ({ sessionId, url }) => {
+  const delay = delayedPreview
+  if (delay?.url === url && !delay.requested) {
+    delay.requested = true
+    await delay.promise
+    delayedPreview = undefined
+  }
+  return { sessionId, targetUrl: url, token: `preview-${++nextToken}`, proxyUrl: url, createdAt: new Date().toISOString() }
+}
 serverApi.deletePreview = async () => {}
+await initializeClientState()
 if (new URLSearchParams(location.search).has("legacy")) {
-  await initializeClientState()
   writeClientLayoutValue("opencode-session-previews-v1", JSON.stringify({
     "/repo": { targetUrl: `${location.origin}/page/legacy`, mode: "chat" },
   }))
@@ -23,5 +31,12 @@ Object.assign(shell, {
   openPreview: (sessionId: string, url: string, folder = "/repo") => openSessionPreview(sessionId, url, folder),
   preview: (sessionId: string, folder = "/repo") => getSessionPreview(sessionId, folder),
   previewCount: () => sessionPreviews().size,
+  delayPreview: (url: string) => {
+    let release!: () => void
+    const promise = new Promise<void>(resolve => { release = resolve })
+    delayedPreview = { url, requested: false, promise, release }
+  },
+  isPreviewDelayed: () => Boolean(delayedPreview?.requested),
+  releasePreview: () => delayedPreview?.release(),
 })
 ;(window as any).browserHistoryReady = true

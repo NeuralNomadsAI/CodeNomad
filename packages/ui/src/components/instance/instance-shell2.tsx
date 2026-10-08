@@ -432,12 +432,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
   })
 
-  createEffect(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info" || getSessionPreview(sessionId, props.instance.folder)) return
-    void restoreSessionPreview(sessionId, props.instance.folder).catch((error) => log.warn("Failed to restore web preview", { sessionId, error }))
-  })
-
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
     setSessionPromptApis((current) => ({
       ...current,

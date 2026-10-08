@@ -506,7 +506,7 @@ async fn browser_target_action(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetAction,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     require_local_app_webview(&webview, &state)?;
     let controller = state.browser_controller.clone();
     let owner = webview.label().to_string();

@@ -1,7 +1,7 @@
 import { createSignal, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
+import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -65,6 +65,9 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
         initialAddress={props.preview.targetUrl}
+        initialHistory={props.preview.history}
+        onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
+        onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
         onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
@@ -77,6 +80,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         commentBridge
         labels={{
           back: t("sidecars.back"),
+          forward: t("sessionPreview.forward"),
           refresh: t("sidecars.refresh"),
           path: t("sessionPreview.open.label"),
           invalidUrl: t("sessionPreview.open.invalidUrl"),
