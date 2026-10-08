@@ -9,7 +9,7 @@ import test from "node:test"
 import { authorityDigest, authoritySignerDigest, canonicalAuthority, MISSION_AUTHORITY_POLICY,
   type ProvisionedAuthoritySigner } from "../../missions/authority-protocol"
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
-import { recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY, type RecurrenceStandingIntent,
+import { recurrenceHumanRequestID, recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY, type RecurrenceStandingIntent,
   type SignedRecurrenceStandingIntent } from "../../missions/recurrence-authority-contract"
 import { physical } from "../../missions/host-authority/private-files"
 import { NativeRecurrenceAuthorityStore, type RecurrenceAuthorityDocument } from "../../missions/recurrence-authority-store"
@@ -68,10 +68,13 @@ test("native standing human CAS checks signer, protected decision, physical fami
       familyClaims: new Map([[family, { assertCurrentSync: () => { assert(familyHeld); return true as const },
         assertCurrent: async () => {}, release: async () => {} }]]) }
     const signed = (action: RecurrenceStandingIntent["action"], before: RecurrenceAuthorityDocument | null): SignedRecurrenceStandingIntent => {
+      const epoch = (before?.parent.body.epoch ?? 0) + 1
       const body: RecurrenceStandingIntent = { ...scope, authorityID: signer.authorityID, keyID: signer.keyID, roots: [root],
-        version: 1, policy: RECURRENCE_AUTHORITY_POLICY, action, scheduleRevision: 0, epoch: (before?.parent.body.epoch ?? 0) + 1,
+        version: 1, policy: RECURRENCE_AUTHORITY_POLICY, action, scheduleRevision: 0, epoch,
+        requestID: recurrenceHumanRequestID(scope.scheduleID, epoch, action),
         expectedRevision: before?.revision ?? null, provisioningGeneration: signer.provisioningGeneration,
         signerDigest: authoritySignerDigest(signer.publicKey), config: JSON.parse(canonicalAuthority(config)),
+        profileSource: { profileID: scope.profileID, executionHost: scope.executionHost, configYamlPath: path.join(directory, "config.yaml") },
         configDigest: authorityDigest(config), budgets: { effects: 4, nativeCalls: 0, inboxMessages: 0, publications: 0 } }
       return { body, signature: sign(null, recurrenceStandingSigningBytes(body), keys.privateKey).toString("base64") }
     }
