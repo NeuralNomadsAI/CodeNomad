@@ -59,7 +59,7 @@ export function MissionEditor(props: {
   const [watched, setWatched] = createSignal<string[]>(recurrenceHold?.watchedConversationIDs ?? [])
   const [objective, setObjective] = createSignal(recurrenceHold?.instructions ?? held?.objective ?? original?.objective ?? "")
   const instructions = objective
-  const title = () => titleOverride() ?? instructions().split(/\r?\n/, 1)[0].trim().slice(0, 200)
+  const title = () => titleOverride() ?? instructions().split(/\r?\n/, 1)[0].trim().slice(0, 120)
   const [notes, setNotes] = createSignal(recurrenceHold?.notes ?? held?.notes ?? original?.notes ?? "")
   const [template, setTemplate] = createSignal<MissionMap["template"]>(recurrenceHold?.template ?? held?.template ?? "custom")
   const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles ?? held?.profiles))
@@ -307,7 +307,7 @@ export function MissionEditor(props: {
           </label>
         </Show>
         <Show when={kind === "create" && mode() === "recurring"}>
-          <label>{t("missions.recurrence.scheduleTitle")}<input required maxLength={200} value={title()} disabled={pending() || uncertain()} onInput={e => setTitleOverride(e.currentTarget.value)} /></label>
+          <label>{t("missions.recurrence.scheduleTitle")}<input required maxLength={120} value={title()} disabled={pending() || uncertain()} onInput={e => setTitleOverride(e.currentTarget.value)} /></label>
           <label>{t("missions.recurrence.instructions")}<textarea required maxLength={MISSION_LIFECYCLE_TEXT_LIMIT} value={instructions()} disabled={pending() || uncertain()} onInput={e => setObjective(e.currentTarget.value)} /></label>
           <div class="mission-recurrence-clock">
             <label>{t("missions.recurrence.time")}<input type="time" required value={time()} disabled={pending() || uncertain()} onInput={e => setTime(e.currentTarget.value)} /></label>

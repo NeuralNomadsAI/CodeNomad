@@ -9,6 +9,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import type {} from "./fixtures/mission-editor-lifetime"
+import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -33,7 +34,8 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: {
+  await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions/recurrence")
+    ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) : {
     available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0,
   } }))
   await page.route("**/workspaces/fixture/instance/api/{agent,model}**", async route => {
@@ -92,6 +94,9 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     return route.fulfill({ json: body.patch })
   })
   await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({
+      version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [],
+    }) })
     if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
     writes.push(route.request().postDataJSON())
     return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown native result" } })
@@ -191,6 +196,9 @@ test("creation waits for owned defaults and sends their exact snapshot without o
     return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } })
   })
   await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({
+      version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [],
+    }) })
     if (route.request().method() !== "GET") {
       writes.push(route.request().postDataJSON())
       return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown result" } })
@@ -244,9 +252,12 @@ test("recurring creation shares the draft, prefills its title and picks named co
   await page.route("**/api/workspaces/fixture/missions**", route => {
     if (route.request().method() === "POST") {
       writes.push(route.request().postDataJSON())
-      return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown result" } })
+      return route.fulfill({ status: 503, json: { error: "Recurrence creation unavailable or uncertain" } })
     }
-    return route.fulfill({ json: { version: 1, available: true, projectID: "project", missions: [], schedules: [], generatedAt: 1 } })
+    if (new URL(route.request().url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({
+      version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [],
+    }) })
+    return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1 } })
   })
   await page.route("**/workspaces/fixture/instance/api/location**", route => route.fulfill({ json: {
     directory: "/fixture", project: { id: "project" },
@@ -271,7 +282,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(await form.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
     await zone.fill("America/New_York")
     assert.equal(await zone.getAttribute("aria-invalid"), "false")
-    const title = form.locator('input[maxlength="200"]')
+    const title = form.locator('input[maxlength="120"]')
     assert.equal(await title.inputValue(), "Daily review")
     assert.equal(await form.locator("textarea").first().inputValue(), "Daily review\nReview the latest work and report changes.")
     assert.equal(await form.locator('input[type="number"]').count(), 0)

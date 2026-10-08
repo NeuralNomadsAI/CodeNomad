@@ -1,22 +1,9 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
-import type { MissionRecurrenceCurrent } from "../../../server/src/api-types"
-
-export type RecurrenceAction = "play" | "pause" | "stop" | "resume" | "run-now"
-export interface RecurrenceHistoryItem {
-  passageID: string; dueAt: number; settledAt: number
-  outcome: "completed" | "failed" | "stopped" | "ended-without-report"
-  missionID?: string; conversationID?: string
-}
-export interface RecurrenceSchedule {
-  id: string; title: string; clock: { time: string; zone: string }; nextDueAt: number | null
-  state: "paused" | "running" | "interrupted" | "stopped"
-  interruptionReason?: { kind: "service-restart" | "error"; code?: string }
-  pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain"; missionID?: string; conversationID?: string } | null
-  latestResult: RecurrenceHistoryItem | null; history: RecurrenceHistoryItem[]; revision: number
-  actions: RecurrenceAction[]
-  control?: { requestID: string; action: string; status: "pending" | "completed" | "partial" | "unknown" }
-}
-export interface MissionRecurrenceSnapshot { version: 1; projectID: string; schedules: RecurrenceSchedule[] }
+import type { MissionRecurrenceCurrent, MissionRecurrenceSnapshot } from "../../../server/src/api-types"
+export type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
+export type RecurrenceSchedule = MissionRecurrenceSnapshot["schedules"][number]
+export type RecurrenceAction = RecurrenceSchedule["actions"][number]
+export type RecurrenceHistoryItem = RecurrenceSchedule["history"][number]
 import { readRecurrenceScheduleChanged } from "../../../server/src/missions/recurrence-events"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"

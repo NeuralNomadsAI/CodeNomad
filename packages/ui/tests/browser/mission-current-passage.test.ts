@@ -10,6 +10,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
+import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
 
@@ -61,11 +62,11 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       }
       return route.fulfill({ json: { available: true, projectID: "project", missions: ordinary ? [ordinary] : [], generatedAt: 1, discardedEvents: 0 } })
     }
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [{ id: "rec_current", title: "Daily commit review", revision: 2,
-      state: "interrupted", clock: { time: "08:15", zone: "UTC" }, nextDueAt: null, actions: [],
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [{ id: "rec_current", title: "Daily commit review", revision: 2,
+      state: "interrupted", interruptionReason: "service-restart", clock: { time: "08:15", zone: "UTC" }, nextDueAt: null, actions: [], controls: [],
       pending: passageID ? { passageID, status: "running", missionID: mission.id, conversationID: "ses_coordinator" } : null,
       latestResult: passageID ? null : { passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" },
-      history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies MissionRecurrenceSnapshot })
+      history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies MissionRecurrenceSnapshot) })
     if (path.endsWith("/rec_current/current")) {
       reads++
       if (!passageID) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_current", passageID: null } })

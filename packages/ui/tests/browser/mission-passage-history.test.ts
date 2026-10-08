@@ -9,6 +9,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionRecurrenceReadPage } from "../../../server/src/api-types"
 import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
+import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { missionMarkdownPage } from "../../src/lib/mission-markdown-pages"
 import type {} from "./fixtures/mission-passage-history"
 import { captureMissionView } from "./mission-view-capture"
@@ -42,12 +43,12 @@ const schedule = (id: string): MissionRecurrenceSnapshot["schedules"][number] =>
   const history = Array.from({ length: 30 }, (_, n) => ({ passageID: `rcp_${id}_${n}`, dueAt: 1_000 + n * 10,
     settledAt: 1_001 + n * 10, outcome: "completed" as const, missionID: `msn_${n}`, conversationID: `ses_${n}` }))
   return { id, title: `Daily review ${id.replace("rec_", "")}`, revision: 62, state: "paused", clock: { time: "07:00", zone: "UTC" },
-    nextDueAt: null, actions: [], pending: { passageID: "rcp_pending", status: "uncertain" }, latestResult: history.at(-1)!, history }
+    nextDueAt: null, actions: [], controls: [], pending: { passageID: "rcp_pending", status: "uncertain" }, latestResult: history.at(-1)!, history }
 }
 
 test("native reference history uses the shared reader, exact eyes, visible cache demand and no mutation/transcript reads", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 390, height: 800 } })
-  let snapshot: MissionRecurrenceSnapshot = { version: 1, projectID: "project", schedules: [schedule("rec_first"), { ...schedule("rec_second"), pending: null }] }
+  let snapshot: MissionRecurrenceSnapshot = { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [schedule("rec_first"), { ...schedule("rec_second"), pending: null }] }
   let reads = 0, fail = false
   const errors: string[] = [], unexpected: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -60,7 +61,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
   await page.route("**/api/workspaces/fixture/missions/recurrence", route => {
     if (route.request().method() !== "GET") unexpected.push(route.request().url())
     reads++
-    return fail ? route.fulfill({ status: 503, json: { error: "unavailable" } }) : route.fulfill({ json: snapshot })
+    return fail ? route.fulfill({ status: 503, json: { error: "unavailable" } }) : route.fulfill({ json: recurrenceSnapshotSchema.parse(snapshot) })
   })
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
@@ -167,7 +168,7 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
     if (route.request().method() !== "GET" || route.request().url().includes("/missions")) unexpected.push(route.request().url())
     return route.fulfill({ json: {} })
   })
-  await page.route("**/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [data] } }))
+  await page.route("**/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [data] }) }))
   await page.route("**/api/workspaces/fixture/missions/recurrence/*/passages/*?*", async route => {
     assert.equal(route.request().method(), "GET")
     const target = new URL(route.request().url()), passageID = target.pathname.split("/").at(-1)!
@@ -250,7 +251,8 @@ test("late Location response never installs data into a different reader or list
   await page.route("**/api/workspaces/fixture/missions/recurrence", async route => {
     const read = ++reads
     if (read === 2) await held
-    await route.fulfill({ json: { version: 1, projectID: "project", schedules: [schedule(read <= 2 ? "rec_old" : "rec_new")] } }).catch(() => {})
+    const directory = new URL(route.request().url()).searchParams.get("directory") ?? "/fixture"
+    await route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory }, schedules: [schedule(read <= 2 ? "rec_old" : "rec_new")] }) }).catch(() => {})
   })
   try {
     await page.goto(url)
@@ -287,7 +289,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
   await page.route("**/api/workspaces/fixture/missions/recurrence", async route => {
     reads++
     if (holdNext) { holdNext = false; entered(); await new Promise<void>(resolve => { release = resolve }) }
-    await route.fulfill({ json: { version: 1, projectID: "project", schedules: [data] } }).catch(() => {})
+    await route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [data] }) }).catch(() => {})
   })
   await page.route("**/api/workspaces/fixture/missions/recurrence/*/passages/*?*", route => {
     resultReads++
@@ -374,7 +376,7 @@ test("numeric reader drafts commit on Enter/blur without losing keyboard focus d
     if (route.request().method() !== "GET" || route.request().url().includes("/missions")) unexpected.push(route.request().url())
     return route.fulfill({ json: {} })
   })
-  await page.route("**/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [data] } }))
+  await page.route("**/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [data] }) }))
   await page.route("**/api/workspaces/fixture/missions/recurrence/*/passages/*?*", async route => {
     assert.equal(route.request().method(), "GET")
     const target = new URL(route.request().url()), section = Number(target.searchParams.get("section")), selectedPage = Number(target.searchParams.get("page"))

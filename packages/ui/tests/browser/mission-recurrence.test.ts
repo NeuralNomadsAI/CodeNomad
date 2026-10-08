@@ -13,6 +13,8 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
+import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
+import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -28,6 +30,21 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+function scheduleFixture(): RecurrenceSchedule {
+  return { id: "rec_fixture", title: "Daily source review", revision: 2, state: "running", clock: { time: "08:15", zone: "UTC" },
+    nextDueAt: Date.UTC(2026, 9, 9, 8, 15), pending: null, latestResult: null, history: [], controls: [], actions: ["pause", "stop", "run-now"] }
+}
+function snapshotFixture(schedule: RecurrenceSchedule) {
+  return recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture",
+    location: { directory: "/fixture" }, schedules: [schedule] })
+}
+test("browser schedule fixtures satisfy the real snapshot schema and reject contract drift", () => {
+  const fixture = snapshotFixture(scheduleFixture())
+  assert.equal(recurrenceSnapshotSchema.safeParse(fixture).success, true)
+  assert.equal(recurrenceSnapshotSchema.safeParse({ ...fixture, schedules: [{ ...fixture.schedules[0], state: "paused" }] }).success, false)
+  assert.equal(recurrenceSnapshotSchema.safeParse({ ...fixture, schedules: [{ ...fixture.schedules[0], controls: undefined }] }).success, false)
+})
+
 test("unified list retains one-time missions, next passage, explicit Resume and confirmed Stop without replay", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
   page.setDefaultTimeout(10_000)
@@ -37,7 +54,8 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     nextDueAt: Date.UTC(2026, 9, 9, 8, 15), state: "running",
     pending: { passageID: "pas_current", status: "running" }, latestResult: null,
     history: [{ passageID: "pas_previous", dueAt: Date.UTC(2026, 9, 8, 8, 15), settledAt: Date.UTC(2026, 9, 8, 8, 30), outcome: "completed" }],
-    revision: 2, actions: ["resume", "stop", "run-now"] }
+    revision: 2, controls: [], actions: ["resume", "stop", "run-now"] }
+  schedule.latestResult = schedule.history.at(-1)!
   const mission = { version: 1, id: "msn_once", projectID: "project", projectCanonical: "/fixture", objective: "One-time review",
     template: "custom", status: "active", runState: "prepared", coordinatorSessionId: "ses_fixture", revision: 0,
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] }
@@ -46,12 +64,21 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission], generatedAt: 1, discardedEvents: 0 } })
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [schedule] } })
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1,
+      projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [schedule] }) })
     if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: "pas_current" } })
     if (path.includes("/control/")) {
       const body = route.request().postDataJSON()
-      if (path.endsWith("/status")) return route.fulfill({ json: { scheduleID: schedule.id, requestID: body.requestID, status: "completed" } })
+      const { directory: _directory, ...identity } = body
+      const input = recurrenceControlRequestSchema.parse({ ...identity, scheduleID: schedule.id })
+      if (path.endsWith("/status")) return route.fulfill({ json: recurrenceControlStatusSchema.parse({ version: 1,
+        ...input, revision: input.expectedRevision + 1, state: "running", outcome: "committed", controlsComplete: true,
+        targets: [], schedulerCancellation: "acknowledged" }) })
       posts.push({ path, body })
+      return route.abort()
+    }
+    if (path.endsWith("/control")) {
+      posts.push({ path, body: recurrenceControlHttpSchema.parse(route.request().postDataJSON()) })
       return route.abort()
     }
     return route.fulfill({ json: {} })
@@ -66,6 +93,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await captureMissionView(page, "schedule-header-next-passage")
     for (const state of ["paused", "stopped"] as const) {
       schedule.state = state
+      schedule.nextDueAt = null
       await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
       await page.locator(".mission-control-index").getByText(state === "paused" ? "Paused" : "Stopped", { exact: true }).waitFor()
       assert.equal(await page.getByText("Next passage:", { exact: false }).count(), 0)
@@ -76,7 +104,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.getByRole("tooltip").getByText("Stop schedule Daily source review", { exact: true }).waitFor()
     await page.mouse.move(1100, 900)
     await page.getByRole("tooltip").waitFor({ state: "hidden" })
-    schedule.state = "interrupted"; schedule.interruptionReason = { kind: "service-restart" }; schedule.pending!.status = "uncertain"
+    schedule.state = "interrupted"; schedule.interruptionReason = "service-restart"; schedule.pending!.status = "uncertain"
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
     await page.getByText(/OpenCode restarted/).waitFor()
     assert.equal(await page.getByText("Next passage:", { exact: false }).count(), 0, "stale due dates stay hidden outside running state")
@@ -94,7 +122,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).click()
     await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).waitFor()
     assert.equal(posts.length, 1)
-    assert.deepEqual(Object.keys(posts[0].body).sort(), ["expectedRevision", "requestID", "scheduleID"])
+    assert.deepEqual(Object.keys(posts[0].body).sort(), ["action", "directory", "expectedRevision", "requestID", "scheduleID"])
     await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).click()
     await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).waitFor({ state: "visible" })
     await page.getByRole("button", { name: /Passage history/ }).click()
@@ -103,6 +131,74 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
     await captureMissionView(page, "unified-list-390-rtl")
     assert.equal(posts.length, 1, "refresh and status never resend")
+    assert.deepEqual(errors, [])
+  } catch (error) { console.error(errors, await page.locator("body").innerText()); throw error } finally { await page.close() }
+})
+
+for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`real ${mode} routes preserve unknown identity without automatic resend`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], errors: string[] = []
+  page.setDefaultTimeout(10_000)
+  page.on("pageerror", error => errors.push(error.message))
+  const schedule = scheduleFixture()
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    const request = route.request(), url = new URL(request.url()), path = url.pathname
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: snapshotFixture(schedule) })
+    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: null } })
+    if (path.endsWith("/run-now")) {
+      assert.deepEqual(Object.keys(request.postDataJSON()).sort(), ["directory", "expectedRevision", "requestID"])
+      const { directory: _directory, ...body } = request.postDataJSON()
+      posts.push(recurrenceManualRequestSchema.parse({ ...body, scheduleID: schedule.id }))
+      return route.abort()
+    }
+    if (path.endsWith("/run-now/status")) {
+      assert.equal(request.method(), "GET")
+      assert.deepEqual([...url.searchParams.keys()].sort(), ["directory", "expectedRevision", "requestID"])
+      const input = recurrenceManualRequestSchema.parse({ scheduleID: schedule.id, requestID: url.searchParams.get("requestID"), expectedRevision: Number(url.searchParams.get("expectedRevision")) })
+      statusReads.push(input)
+      return route.fulfill({ json: recurrenceManualResultSchema.parse({ version: 1, ...input, projectID: "project", projectCanonical: "/fixture",
+        location: { directory: "/fixture" }, outcome: "accepted", passageID: "pas_manual", messageID: "msg_manual", admission: null }) })
+    }
+    if (path.endsWith("/control")) {
+      const input = recurrenceControlHttpSchema.parse(request.postDataJSON()); posts.push(input)
+      const { directory: _directory, retry: _retry, ...identity } = input
+      const status = recurrenceControlStatusSchema.parse({ version: 1, ...identity, revision: input.expectedRevision + 1,
+        state: input.action === "pause" ? "paused" : "stopped", outcome: input.retry ? "committed" : "unknown", controlsComplete: Boolean(input.retry),
+        targets: [{ sessionID: "ses_running", outcome: input.retry ? "acknowledged" : "unknown" }], schedulerCancellation: "acknowledged" })
+      schedule.revision = status.revision!; schedule.state = status.state!; schedule.nextDueAt = null; schedule.controls = [status]
+      const { outcome: _outcome, ...record } = status
+      return route.fulfill({ json: { ...record, targetsKnown: true } })
+    }
+    return route.fulfill({ json: {} })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    await page.getByRole("button", { name: schedule.title, exact: true }).click()
+    if (mode === "manual") {
+      await page.getByRole("button", { name: "Run Daily source review now", exact: true }).click()
+      await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).waitFor()
+      await page.evaluate(() => window.missionEditorLifetime.mount(false))
+      await page.evaluate(() => window.missionEditorLifetime.mount(true))
+      assert.equal(posts.length, 1)
+      await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).click()
+      await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).waitFor({ state: "hidden" })
+      assert.deepEqual(statusReads, posts, "status reads preserve the entire original tuple")
+    } else {
+      const action = mode === "partial-pause" ? "pause" : "stop"
+      await page.getByRole("button", { name: action === "pause" ? "Pause schedule Daily source review" : "Stop schedule Daily source review", exact: true }).click()
+      if (action === "stop") await page.getByRole("group", { name: "Stop Daily source review?" }).getByRole("button", { name: "Stop", exact: true }).click()
+      const retry = page.getByRole("button", { name: "Retry remaining controls for Daily source review", exact: true })
+      await retry.waitFor()
+      assert.equal(posts.length, 1)
+      await page.evaluate(() => window.missionEditorLifetime.mount(false))
+      await page.evaluate(() => window.missionEditorLifetime.mount(true))
+      await retry.click()
+      await retry.waitFor({ state: "hidden" })
+      assert.equal(posts.length, 2)
+      assert.deepEqual(posts[1], { ...posts[0], retry: true })
+    }
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

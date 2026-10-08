@@ -251,7 +251,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule => <>
           <p>{t(`missions.recurrence.state.${schedule().state}`)}</p>
           <Show when={schedule().nextDueAt != null}><p>{t("missions.recurrence.nextDue", { date: new Date(schedule().nextDueAt!).toLocaleString(locale()) })}</p></Show>
-          <Show when={schedule().interruptionReason}><p role="status">{t(schedule().interruptionReason?.kind === "service-restart" ? "missions.recurrence.interruptedRestart" : "missions.recurrence.interruptedError")}</p></Show>
+          <Show when={schedule().interruptionReason}><p role="status">{t(schedule().interruptionReason === "service-restart" ? "missions.recurrence.interruptedRestart" : "missions.recurrence.interruptedError")}</p></Show>
           <Show when={schedule().pending}><p role="status">{t(`missions.recurrence.pending.${schedule().pending!.status}`)}</p></Show>
           <Show when={schedule().history.find(receipt => receipt.passageID === (target()?.itemId ?? schedule().latestResult?.passageID))}>
             {receipt => <Show when={receipt().missionID}><MissionRecurrencePassageReader instanceId={props.instanceId} scope={props.scope}

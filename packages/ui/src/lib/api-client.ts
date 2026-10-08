@@ -1,8 +1,8 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
-import type { MissionRecurrenceSnapshot } from "../stores/mission-recurrence"
-import type { RecurrenceAction, RecurrenceControlStatus } from "./mission-recurrence-control"
-import { recurrenceControlStatusInput, type RecurrenceControlIntent } from "./mission-recurrence-control"
+import type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
+import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
+import { recurrenceControlStatusInput, readRecurrenceControlResult, type RecurrenceControlStatus, type RecurrenceControlIntent } from "./mission-recurrence-control"
 import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
@@ -634,18 +634,29 @@ export const serverApi = {
     const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
   },
-  fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
-    return request<MissionRecurrenceSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
+  async fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
   },
-  controlMissionRecurrence(instanceId: string, scheduleID: string, action: RecurrenceAction, input: RecurrenceControlIntent): Promise<Partial<RecurrenceControlStatus>> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/${action}`, {
+  async controlMissionRecurrence(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
+    return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
       method: "POST", body: JSON.stringify(input),
+    }))
+  },
+  async missionRecurrenceControlStatus(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
+    return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
+      method: "POST", body: JSON.stringify(recurrenceControlStatusInput(input)),
+    }))
+  },
+  async runMissionRecurrenceNow(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
+    const { requestID, expectedRevision, directory } = input
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now`, {
+      method: "POST", body: JSON.stringify({ requestID, expectedRevision, ...(directory ? { directory } : {}) }),
     })
   },
-  missionRecurrenceControlStatus(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
-      method: "POST", body: JSON.stringify(recurrenceControlStatusInput(input)),
-    })
+  async missionRecurrenceRunNowStatus(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
+    const query = new URLSearchParams({ requestID: input.requestID, expectedRevision: String(input.expectedRevision),
+      ...(input.directory ? { directory: input.directory } : {}) })
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now/status?${query}`)
   },
   fetchMissionRecurrencePassagePage(instanceId: string, scheduleID: string, passageID: string,
     input: { section: number; page: number; revision?: number }, signal?: AbortSignal): Promise<MissionRecurrenceReadPage> {
@@ -657,7 +668,7 @@ export const serverApi = {
     notes?: string; template: MissionMap["template"];
     clock: { time: string; zone: string }; watchedConversationIDs: string[];
     profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
-  }): Promise<{ schedule: MissionRecurrenceSnapshot["schedules"][number] }> {
+  }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
   },
   createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
