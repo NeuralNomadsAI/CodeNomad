@@ -43,7 +43,7 @@ async function fixture() {
   const form = { id: "frm_actual", sessionID: "ses_child", title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_question", id: "call_question" } },
     fields: [{ key: "q0", type: "string", title: "Seam", description: "Choose the seam?", custom: true,
       options: [{ value: "Module", label: "Module", description: "Own the boundary" }] }] }
-  let state: { status: string; answer?: { q0: string } } = { status: "pending" }, replies = 0, expired = false, failReply = false, complete = true
+  let state: { status: string; answer?: { q0: string } } = { status: "pending" }, replies = 0, expired = false, failReply = false, loseReply = false, complete = true
   const part = { type: "tool", name: "question", id: "call_question", executed: false, state: { status: "running", input } }
   const message = () => db.prepare("INSERT OR REPLACE INTO session_message VALUES(?,?,?,?)").run("msg_question", "ses_child", "assistant", JSON.stringify({ content: [part] }))
   message()
@@ -64,6 +64,8 @@ async function fixture() {
     assert.ok(get(markKey) || ordinary, "UI mark committed before native reply")
     if (failReply) throw new Error("Native reply failed")
     replies++; state = { status: "answered", answer: structuredClone(value.answer) }; if (complete) finish()
+    // A lost reply: native state changed, but the caller only sees an error.
+    if (loseReply) throw new Error("Native reply lost")
   }) }
   const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
   const locationTag = Context.Service<never, unknown>("@opencode/Location"), formTag = Context.Service<never, unknown>("@opencode/Form")
@@ -114,7 +116,7 @@ async function fixture() {
     } }
   return { native, db, get, put, markKey, decision, form, part, storage, nativeGet, directory, finish,
     secrets: [cookie.id, registration.token],
-    counts: () => replies, expire: () => { expired = true }, fail: () => { failReply = true }, defer: () => { complete = false },
+    counts: () => replies, expire: () => { expired = true }, fail: (value = true) => { failReply = value }, lose: () => { loseReply = true }, defer: () => { complete = false },
     changeState: (status: string) => { state.status = status },
     submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
       headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) }, payload: { answer: { q0: answer } } }),
@@ -144,12 +146,37 @@ test("the same native answer without a human header produces no mark and gate re
   } finally { await f.dispose() }
 })
 
-test("write-ahead mark without a native answered Form never qualifies, including cache expiry", async () => {
-  const f = await fixture()
-  try { f.fail(); assert.equal((await f.submit()).statusCode, 409); assert.ok(f.get(f.markKey)); assert.equal(f.counts(), 0)
-    await assert.rejects(f.native.verify(f.decision)); f.expire(); await assert.rejects(f.native.verify(f.decision))
-  } finally { await f.dispose() }
-})
+const recurring = (f: Awaited<ReturnType<typeof fixture>>) => f.db.prepare("UPDATE session_v2 SET metadata=? WHERE id='ses_root'").run(JSON.stringify({
+  "codenomad.mission": { version: 1, kind: "coordinator", role: "coordinator", missionID: "msn_test", recurrence: { passageID: "passage" } } }))
+
+for (const mode of ["one-time", "recurring"] as const) {
+  test(`${mode}: failed dock forward removes the pending mark; a later ordinary reply never qualifies`, async () => {
+    const f = await fixture()
+    try { if (mode === "recurring") recurring(f)
+      f.fail(); assert.equal((await f.submit()).statusCode, 409); assert.equal(f.counts(), 0)
+      assert.equal(f.get(f.markKey), undefined, "a definitely failed attempt leaves no mark")
+      f.fail(false); assert.equal((await f.submit(false)).statusCode, 200); assert.equal(f.counts(), 1)
+      await assert.rejects(f.native.verify(f.decision)); f.expire(); await assert.rejects(f.native.verify(f.decision))
+    } finally { await f.dispose() }
+  })
+
+  test(`${mode}: a lost native reply stays pending and never qualifies`, async () => {
+    const f = await fixture()
+    try { if (mode === "recurring") recurring(f)
+      f.lose(); assert.equal((await f.submit()).statusCode, 409); assert.equal(f.counts(), 1)
+      assert.equal(f.get(f.markKey)?.state, "pending")
+      await assert.rejects(f.native.verify(f.decision)); f.expire(); await assert.rejects(f.native.verify(f.decision))
+    } finally { await f.dispose() }
+  })
+
+  test(`${mode}: a successful dock reply confirms its exact attempt and qualifies`, async () => {
+    const f = await fixture()
+    try { if (mode === "recurring") recurring(f)
+      assert.equal((await f.submit()).statusCode, 200); assert.equal(f.get(f.markKey)?.state, "confirmed")
+      assert.equal((await f.native.verify(f.decision)).via, "ui")
+    } finally { await f.dispose() }
+  })
+}
 
 test("answered mark survives native Form cache expiry and preserves verbatim free text and descriptions", async () => {
   const f = await fixture()

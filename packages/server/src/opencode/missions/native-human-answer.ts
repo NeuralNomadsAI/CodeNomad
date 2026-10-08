@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Form } from "@opencode/schema/form"
 import { Location } from "@opencode/schema/location"
@@ -26,6 +27,7 @@ const parse = (value: unknown): unknown => {
 }
 type NativeDatabase = { db: { $client: SqlClient.SqlClient;
   transaction<A>(run: () => Effect.Effect<A, unknown>, options: { behavior: "immediate" }): Effect.Effect<A, unknown> } }
+type StoredMark = HumanDecisionMark & { state: "pending" | "confirmed"; attemptID: string }
 type NativeForms = { get(id: string): Effect.Effect<unknown, unknown>; state(id: string): Effect.Effect<unknown, unknown>;
   reply(input: { id: string; answer: Form.Answer }): Effect.Effect<void, unknown> }
 
@@ -89,9 +91,10 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       if (request.projectID !== location.project.id || request.directory !== location.directory) throw new Error("Human decision Location mismatch")
       return run(db.db.transaction(() => Effect.gen(function* () {
         const stored = yield* get(keyFor(request.sessionID, request.formID))
-        if (!object(stored) || stored.via !== "ui" || stored.formID !== request.formID || stored.sessionID !== request.sessionID
-          || !Number.isSafeInteger(stored.answeredAt)) throw new Error("Exact native human mark unavailable")
-        const mark = stored as unknown as HumanDecisionMark
+        // Pending (unconfirmed or uncertain) attempts never qualify.
+        if (!object(stored) || stored.state !== "confirmed" || stored.via !== "ui" || stored.formID !== request.formID
+          || stored.sessionID !== request.sessionID || !Number.isSafeInteger(stored.answeredAt)) throw new Error("Exact native human mark unavailable")
+        const { state: _state, attemptID: _attempt, ...mark } = stored as unknown as StoredMark
         const form = Schema.decodeUnknownSync(Schema.toType(Form.Info))(mark.form)
         const tool = form.metadata?.tool
         if (form.id !== request.formID || form.sessionID !== request.sessionID || !object(tool)
@@ -133,6 +136,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       const binding = await api.binding({ sessionID: body.sessionID, formID: body.formID, profileID: body.profileID, executionHost: body.executionHost })
       if (!same(binding, (({ workspaceID: _, cookieSessionID: _cookie, username: _user, issuedAt: _time, answer: _answer, ...target }) => target)(body)))
         throw new Error("Human answer binding mismatch")
+      const key = keyFor(body.sessionID, body.formID), attemptID = randomUUID()
       const expectedForm = await run(db.db.transaction(() => Effect.gen(function* () {
         assertHumanAnswerFresh(body); yield* session(body.sessionID)
         const form = Schema.decodeUnknownSync(Schema.toType(Form.Info))(yield* forms.get(body.formID))
@@ -145,24 +149,44 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
           if (observed.state.status !== "running") throw new Error("Question already settled")
           matchHumanQuestion(form, observed.input, body.answer)
         }
-        const mark: HumanDecisionMark = { formID: body.formID, sessionID: body.sessionID, answeredAt: Date.now(), via: "ui", form, answer: body.answer }
-        const key = keyFor(body.sessionID, body.formID), old = yield* get(key)
-        if (old !== undefined && (!object(old) || !same(old.form, form) || !same(old.answer, body.answer))) throw new Error("Human answer changed")
-        // Commit the mark before forwarding the native reply. A failed reply
-        // leaves a harmless mark that cannot pass the answered-question gate.
-        if (old === undefined) yield* put(key, mark)
+        const mark: StoredMark = { formID: body.formID, sessionID: body.sessionID, answeredAt: Date.now(), via: "ui", form, answer: body.answer,
+          state: "pending", attemptID }
+        const old = yield* get(key)
+        // The native Form is still pending inside this transaction, so an
+        // earlier unconfirmed attempt did not land and its mark is replaced.
+        if (old !== undefined && (!object(old) || old.state !== "pending")) throw new Error("Human answer already recorded")
+        // Write-ahead pending mark: it never qualifies until this exact
+        // attempt's native reply returns positively and promotes it.
+        yield* put(key, mark)
         current(); assertHumanAnswerFresh(body)
         return form
       }), { behavior: "immediate" }))
-      if (!await verifyHumanAnswerBridge(body, input.proof)) throw new Error("Human answer authentication changed")
-      await run(Effect.gen(function* () {
-        yield* session(body.sessionID)
-        const form = yield* forms.get(body.formID)
+      const settle = (confirmed: boolean) => run(db.db.transaction(() => Effect.gen(function* () {
+        const stored = yield* get(key)
+        if (!object(stored) || stored.state !== "pending" || stored.attemptID !== attemptID) return
+        if (confirmed) { yield* put(key, { ...stored, state: "confirmed" }); return }
+        // Only a Form still observed pending proves the reply did not land;
+        // any other or unreadable state leaves the attempt uncertain (pending).
         const state = Schema.decodeUnknownSync(Schema.toType(Form.State))(yield* forms.state(body.formID))
-        if (!same(form, expectedForm) || state.status !== "pending") throw new Error("Human answer Form changed")
-        current(); assertHumanAnswerFresh(body)
-        yield* forms.reply({ id: body.formID, answer: body.answer })
-      }))
+        if (state.status === "pending") yield* query("DELETE FROM kv WHERE key=?", [nativeKey(key)])
+      }), { behavior: "immediate" }))
+      try {
+        if (!await verifyHumanAnswerBridge(body, input.proof)) throw new Error("Human answer authentication changed")
+        await run(Effect.gen(function* () {
+          yield* session(body.sessionID)
+          const form = yield* forms.get(body.formID)
+          const state = Schema.decodeUnknownSync(Schema.toType(Form.State))(yield* forms.state(body.formID))
+          if (!same(form, expectedForm) || state.status !== "pending") throw new Error("Human answer Form changed")
+          current(); assertHumanAnswerFresh(body)
+          yield* forms.reply({ id: body.formID, answer: body.answer })
+        }))
+      } catch (error) {
+        await settle(false).catch(() => undefined)
+        throw error
+      }
+      // A failed promotion leaves the mark pending: the gate stays unmet rather
+      // than reporting a native reply that did land as failed.
+      await settle(true).catch(() => undefined)
       return { status: "answered" as const }
     },
   }

@@ -180,8 +180,13 @@ unprocessed source messages were consumed. No signed source-read receipts.
 ## Wayfinder human decision mark — both execution modes
 
 When the user answers a native Form through CodeNomad's InterruptionDock, the
-backend records `{ formID, sessionID, answeredAt, via: "ui" }`.
-The Wayfinder human gate accepts only a native Form with the matching UI mark.
+backend records `{ formID, sessionID, answeredAt, via: "ui" }` in two phases:
+a `pending` mark with a fresh `attemptID` before forwarding, promoted to
+`confirmed` only after the native reply returns positively for that attempt.
+A definitely failed forward (Form still observed pending) removes the mark; a
+lost/uncertain reply leaves it pending forever. Pending never qualifies, so a
+later non-UI answer cannot borrow an earlier failed UI attempt; Wayfinder may ask again.
+The Wayfinder human gate accepts only a native Form with the matching confirmed UI mark.
 An ordinary native answer without that mark is not a proven UI human decision.
 Do not infer identity from answer text, tool completion or the agent's assertion.
 
