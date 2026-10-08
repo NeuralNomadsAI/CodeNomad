@@ -201,7 +201,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
      <Show when={selectedSchedule()}>
        <Show when={currentPassage.loading() && !currentPassage.snapshot()}><p role="status">{props.t("missions.control.loading")}</p></Show>
        <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-       <Show when={currentPassage.snapshot() && !mission()}><p>{props.t(currentPassage.snapshot()?.passageID ? "missions.recurrence.pending" : "missions.recurrence.currentEmpty")}</p></Show>
+       <Show when={currentPassage.snapshot() && !mission() && !currentPassage.snapshot()?.passageID}><p>{props.t("missions.recurrence.currentEmpty")}</p></Show>
      </Show>
      <Show when={mission()}>{selected => <MissionTracking
     instanceId={props.instanceId} mission={selected()} activity={observedActivity()} activeSessionId={props.activeSessionId()}
@@ -384,7 +384,7 @@ const MissionIndex: Component<{
         const mission = () => props.missions.find(mission => mission.id === id)!
         const recovery = props.recovery(mission)
         const recoveryAction = createMemo(() => id === props.selectedId ? recovery.action() : undefined)
-        return <MissionListItem text={<><span class="badge-shape">{props.t("missions.simple.oneTime")}</span> {mission().objective}</>} title={mission().objective}
+         return <MissionListItem text={mission().objective} secondary={<span class="neutral-badge badge-shape">{props.t("missions.simple.oneTime")}</span>} title={mission().objective}
           selected={id === props.selectedId} onSelect={() => props.onSelect(id)}
           statusKind={mission().status === "active" ? mission().runState ?? "active" : mission().status}
           status={props.t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")

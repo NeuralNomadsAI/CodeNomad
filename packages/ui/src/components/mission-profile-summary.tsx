@@ -16,6 +16,6 @@ export function MissionProfileSummary(props: { profiles?: MissionProfiles; templ
           || t("missions.control.execution.nativeDefault")
         : t("missions.control.execution.nativeDefault")}
     </>}</For>
-    }>{t("missions.control.execution.nativeDefault")}</Show>
+    }>{t("missions.simple.profilesNative")}</Show>
   </p>
 }

@@ -5,6 +5,7 @@ import { createMissionListActions } from "./mission-list-item-actions"
 
 export interface MissionListItemProps {
   text: JSX.Element
+  secondary?: JSX.Element
   title?: string
   status: JSX.Element
   statusKind?: string
@@ -87,7 +88,10 @@ export function MissionListItem(props: MissionListItemProps) {
     classList={{ "mission-list-item-compact": props.compact, "mission-list-item-selected": props.selected, "mission-list-item-overflow": collapsed() }}>
     <Show when={props.onSelect} fallback={<div class="mission-list-text" title={props.title}>{props.text}</div>}>
       <button type="button" class="mission-list-text mission-list-select" title={props.title} aria-label={props.title}
-        aria-current={props.selected ? "true" : undefined} onClick={() => props.onSelect?.()}>{props.text}</button>
+        classList={{ "mission-list-with-mode": Boolean(props.secondary) }}
+        aria-current={props.selected ? "true" : undefined} onClick={() => props.onSelect?.()}>
+        <Show when={props.secondary} fallback={props.text}><span class="mission-list-primary">{props.text}</span><span class="mission-list-secondary">{props.secondary}</span></Show>
+      </button>
     </Show>
     <div ref={footer} class="mission-list-footer">
       <div ref={status} class="mission-list-status">{props.status}</div>

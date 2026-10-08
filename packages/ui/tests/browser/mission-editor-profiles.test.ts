@@ -230,7 +230,7 @@ test("creation waits for owned defaults and sends their exact snapshot without o
 })
 
 test("recurring creation shares the draft, prefills its title and picks named conversations without budgets", async () => {
-  const page = await browser.newPage({ locale: "en-US", viewport: { width: 700, height: 1100 } })
+   const page = await browser.newPage({ locale: "en-US", timezoneId: "America/New_York", viewport: { width: 700, height: 1100 } })
   const errors: string[] = [], searches: URL[] = [], writes: Array<Record<string, unknown>> = []
   const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
     roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
@@ -263,6 +263,14 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await form.getByLabel("Objective", { exact: true }).fill("Daily review\nReview the latest work and report changes.")
     const mode = form.locator("select").filter({ has: page.locator('option[value="recurring"]') })
     await mode.selectOption("recurring")
+    const zone = form.getByLabel("Time zone (IANA)", { exact: true })
+    assert.equal(await zone.inputValue(), "America/New_York")
+    await zone.fill("Not/A_Time_Zone")
+    assert.equal(await zone.getAttribute("aria-invalid"), "true")
+    await form.getByRole("alert").filter({ hasText: "Enter a valid IANA time zone" }).waitFor()
+    assert.equal(await form.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    await zone.fill("America/New_York")
+    assert.equal(await zone.getAttribute("aria-invalid"), "false")
     const title = form.locator('input[maxlength="200"]')
     assert.equal(await title.inputValue(), "Daily review")
     assert.equal(await form.locator("textarea").first().inputValue(), "Daily review\nReview the latest work and report changes.")

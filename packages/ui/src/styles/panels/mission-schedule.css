@@ -1,4 +1,5 @@
 .mission-schedule-detail {
+  container: mission-schedule / inline-size;
   display: grid;
   gap: var(--space-sm);
   min-width: 0;
@@ -22,4 +23,11 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
+}
+.mission-recurrence-controls .mission-schedule-resume,
+.mission-recurrence-controls .mission-schedule-run-now { width: auto; gap: var(--space-xs); padding-inline: var(--space-sm); }
+.mission-recurrence-controls .mission-schedule-resume { color: var(--button-primary-text); background: var(--button-primary-bg); }
+.mission-schedule-action-label { display: none; }
+@container mission-schedule (min-width: 300px) {
+  .mission-schedule-action-label { display: inline; }
 }

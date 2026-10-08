@@ -23,6 +23,10 @@
   overflow-wrap: anywhere;
 }
 .mission-list-select { border: 0; border-radius: 0; background: transparent; color: inherit; cursor: pointer; }
+.mission-list-with-mode { display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.mission-list-primary { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: var(--font-weight-medium); }
+.mission-list-secondary { min-width: 0; }
+.mission-list-secondary .neutral-badge { max-width: 100%; padding-block: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mission-list-select:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: 1px; }
 .mission-list-footer { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
 .mission-list-status {

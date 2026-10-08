@@ -830,7 +830,7 @@ test("disclosures, mission selection and reader survive native invalidations, re
     await page.locator(".mission-reader").waitFor()
     assert.equal(await reports.getAttribute("aria-expanded"), "true")
     assert.equal(await page.getByRole("button", { name: "Work", exact: true }).getAttribute("aria-expanded"), "false")
-    assert.equal(await missionRows(page).locator('.mission-list-select[aria-current="true"]').innerText(), "One-time Objective two")
+    assert.equal(await missionRows(page).locator('.mission-list-select[aria-current="true"]').getAttribute("aria-label"), "Objective two")
     await page.getByRole("button", { name: "Back to chat" }).click()
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.screenshot({ path: screenshotPath("mission-control-browser"), fullPage: true })

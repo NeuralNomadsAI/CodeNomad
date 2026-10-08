@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
@@ -38,6 +38,7 @@ export function MissionEditor(props: {
   onRecurrenceRefresh?: () => void
 }) {
   const { t } = useI18n()
+  const zoneErrorId = createUniqueId()
   const config = useConfig()
   // The revision and draft belong to this editor, not to live snapshot refreshes.
   const action = props.action, original = action.mission, kind = action.kind
@@ -51,6 +52,10 @@ export function MissionEditor(props: {
   const [titleOverride, setTitleOverride] = createSignal<string | undefined>(recurrenceHold && "title" in recurrenceHold && typeof recurrenceHold.title === "string" ? recurrenceHold.title : undefined)
   const [time, setTime] = createSignal(recurrenceHold?.clock.time ?? "09:00")
   const [zone, setZone] = createSignal(recurrenceHold?.clock.zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const zoneValid = createMemo(() => {
+    if (!/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/.test(zone().trim())) return false
+    try { new Intl.DateTimeFormat(undefined, { timeZone: zone().trim() }); return true } catch { return false }
+  })
   const [watched, setWatched] = createSignal<string[]>(recurrenceHold?.watchedConversationIDs ?? [])
   const [objective, setObjective] = createSignal(recurrenceHold?.instructions ?? held?.objective ?? original?.objective ?? "")
   const instructions = objective
@@ -142,9 +147,7 @@ export function MissionEditor(props: {
           || !selected.roles[role].model?.providerID || !selected.roles[role].model?.id)) {
         setError(t("missions.recurrence.profilesRequired")); return
       }
-      let validZone = false
-      try { new Intl.DateTimeFormat("en", { timeZone: zone().trim() }); validZone = true } catch { /* Native validation follows. */ }
-      if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time()) || !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/.test(zone().trim()) || !validZone) {
+      if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time()) || !zoneValid()) {
         setError(t("missions.recurrence.clockInvalid")); return
       }
       const ids = watchedIDs()
@@ -308,7 +311,9 @@ export function MissionEditor(props: {
           <label>{t("missions.recurrence.instructions")}<textarea required maxLength={MISSION_LIFECYCLE_TEXT_LIMIT} value={instructions()} disabled={pending() || uncertain()} onInput={e => setObjective(e.currentTarget.value)} /></label>
           <div class="mission-recurrence-clock">
             <label>{t("missions.recurrence.time")}<input type="time" required value={time()} disabled={pending() || uncertain()} onInput={e => setTime(e.currentTarget.value)} /></label>
-            <label>{t("missions.recurrence.zone")}<input required maxLength={100} value={zone()} disabled={pending() || uncertain()} onInput={e => setZone(e.currentTarget.value)} /></label>
+            <label>{t("missions.recurrence.zone")}<input required maxLength={100} value={zone()} aria-label={t("missions.recurrence.zone")} aria-invalid={!zoneValid()}
+              aria-describedby={!zoneValid() ? zoneErrorId : undefined} disabled={pending() || uncertain()} onInput={e => setZone(e.currentTarget.value)} />
+              <Show when={!zoneValid()}><span id={zoneErrorId} role="alert">{t("missions.simple.zoneInvalid")}</span></Show></label>
           </div>
           <MissionConversationPicker instanceId={props.instanceId} directory={props.directory} projectID={props.projectID}
             value={watchedIDs()} disabled={pending() || uncertain()} active={() => mode() === "recurring" && (props.active?.() ?? true)} onChange={setWatched} />
@@ -361,7 +366,7 @@ export function MissionEditor(props: {
         else void missionStore.refresh(props.instanceId)
       }}>{t("missions.control.refresh")}</button></Show>
       <button type="submit" class="button-primary" disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)
-        || kind === "create" && mode() === "recurring" && (!sourceLocationReady() || !sourceInputBudget().sufficient)
+        || kind === "create" && mode() === "recurring" && (!zoneValid() || !sourceLocationReady() || !sourceInputBudget().sufficient)
         || (kind !== "delete" && !(mode() === "recurring" ? instructions() : objective()).trim())}>
         {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
       </button>
