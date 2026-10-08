@@ -36,7 +36,6 @@ export type NativeRecurrenceLifecycleCommand = { kind: "synthetic"; input: {
 } }
 const method = Schema.declare<(input: never) => NativeEffect>((value): value is (input: never) => NativeEffect => Predicate.isFunction(value))
 const serviceShape = Schema.Struct({ get: method, create: method, environment: method, prompt: method, synthetic: method, inbox: method })
-const nativeEffect = Schema.declare<NativeEffect>((value): value is NativeEffect => Effect.isEffect(value))
 const variablesShape = Schema.Record(Schema.String, Schema.String)
 
 /** Acquire INSIDE an existing native Effect plugin/RPC context. Captures only its
@@ -70,7 +69,12 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       // The native get is preparation; a moved/retargeted root is rejected in
       // the SAME synchronous callback that invokes the native mutation.
       const session = pinned ? yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* service.get(pinned.id)) : undefined
-      const entered = yield* Effect.sync(() => {
+      const prepared = yield* Effect.sync(operation)
+      if (!Effect.isEffect(prepared)) rejectAuthority("effect-unavailable")
+      // Native methods construct lazy Effects. Recheck AFTER construction and
+      // consume the one-use fence in the suspension evaluated immediately
+      // before the native Effect, with no intervening asynchronous codec read.
+      const result = yield* Effect.suspend(() => {
         options?.signal?.throwIfAborted(); assertCurrent()
         if (pinned && (!session || session.id !== pinned.id || session.parentID
           || session.projectID !== pinned.projectID || session.location.directory !== pinned.location.directory
@@ -79,10 +83,9 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
           rejectAuthority("binding-mismatch")
         }
         assertSynchronousAuthorityGuard(current, "policy-unqualified")
-        return operation()
+        return prepared
       })
-      const result = yield* Schema.decodeUnknownEffect(nativeEffect)(entered)
-      return yield* Schema.decodeUnknownEffect(decode)(yield* result)
+      return yield* Schema.decodeUnknownEffect(decode)(result)
     })
     return Effect.runPromise(Effect.provide(effect, graph), { signal: options?.signal })
   }

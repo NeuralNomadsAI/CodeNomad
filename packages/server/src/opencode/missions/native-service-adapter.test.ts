@@ -147,3 +147,37 @@ test("relocation or profile change during preparation blocks ENV and synthetic a
     })
   })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
 })
+
+test("Pause after lazy Effect construction but before evaluation admits no create, ENV, prompt or synthetic", async () => {
+  const metadata = { "codenomad.mission": { version: 1, missionID: "msn_owned", kind: "coordinator", role: "coordinator" } }
+  const expected = { id: "ses_owned", projectID: "project", location: { directory }, agent: "worker",
+    model: { providerID: "provider", id: "model" }, metadata }
+  const root = Schema.decodeUnknownSync(Session.Info)({ id: expected.id, projectID: expected.projectID,
+    location: expected.location, agent: expected.agent, model: expected.model, metadata,
+    cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 } })
+  let paused = false, constructed = 0, effects = 0
+  const lazy = (result: unknown) => { constructed++; paused = true; return Effect.sync(() => { effects++; return result }) }
+  const service = { get: () => Effect.succeed(root), inbox: () => Effect.succeed([]),
+    create: () => lazy(root), environment: (input: { variables: Record<string, string> }) => lazy(input.variables),
+    prompt: () => lazy(receipt(command)), synthetic: () => lazy(receipt({ ...command, kind: "synthetic" })) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const current = () => { assert.equal(paused, false, "Pause must fence the lazy native Effect"); return true as const }
+      const create = { id: expected.id, title: "Mission coordinator", location: { directory },
+        agent: expected.agent, model: expected.model, metadata }
+      for (const action of [
+        () => native.create(create, {}, current),
+        () => native.environment({ sessionID: expected.id, variables: { MARKER: "fresh" } }, {}, current, expected),
+        () => native.admit(command, {}, current, expected),
+        () => native.admit({ ...command, kind: "synthetic" }, {}, current, expected),
+      ]) {
+        paused = false
+        await assert.rejects(action(), /policy-unqualified/)
+      }
+      assert.equal(constructed, 4)
+      assert.equal(effects, 0)
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})
