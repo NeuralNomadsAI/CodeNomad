@@ -6,6 +6,7 @@ import { authenticateRecurrenceStanding, recurrenceEffectID, type RecurrenceChil
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import { MissionControl } from "../../missions/control"
+import { matchesExecution } from "../../missions/execution"
 import type { MissionInputTransport } from "../../missions/control-types"
 import type { MissionStorage } from "../../missions/journal"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
@@ -85,7 +86,7 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
     location: { directory: provider.location.directory },
     metadata: { "codenomad.mission": { version: 1, missionID: grant.missionID, kind: "coordinator", role: "coordinator" } },
     agent: coordinator.agent, model: coordinator.model }
-  const exactRoot: NativeRootPlacement = { id: request.id, projectID: scope.projectID,
+  let exactRoot: NativeRootPlacement = { id: request.id, projectID: scope.projectID,
     location: { directory: request.location.directory, ...(native.location.workspaceID === undefined ? {} : { workspaceID: native.location.workspaceID }) },
     agent: request.agent, model: request.model, metadata: request.metadata }
   const previous = await passage.journal.snapshot()
@@ -96,6 +97,8 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
   invocation = { operationID: create.operation.operationID, input: { kind: "create", request } }
   try {
     const session = await native.create(request, { signal }, () => { current(); return create.assertCurrent() })
+    if (!session.agent || !session.model) rejectAuthority("effect-unavailable")
+    exactRoot = Object.freeze({ ...exactRoot, agent: session.agent, model: Object.freeze({ ...session.model }) })
     // The typed native return is the only producer of this positive ACK.
     invocation.acknowledgement = { operationID: create.operation.operationID, outcome: "applied", evidenceID: session.id }
     await acknowledge(create.operation.operationID)
@@ -145,7 +148,7 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
     const target = await native.get({ sessionID: grant.coordinatorSessionID }, { signal })
     if (target.id !== grant.coordinatorSessionID || target.parentID || target.projectID !== scope.projectID
       || target.location.directory !== provider.location.directory || target.location.workspaceID !== native.location.workspaceID
-      || target.agent !== request.agent || canonicalAuthority(target.model) !== canonicalAuthority(request.model)) rejectAuthority("binding-mismatch")
+      || !matchesExecution(request, target) || !matchesExecution(exactRoot, target)) rejectAuthority("binding-mismatch")
     await native.environment({ sessionID: grant.coordinatorSessionID, variables: { ...variables } }, { signal },
       () => { current(); return start.assertCurrent() }, exactRoot)
     invocation.acknowledgement = { operationID: start.operation.operationID, outcome: "applied",
@@ -250,7 +253,7 @@ export async function reconcileNativeRecurrenceRoot(input: Omit<PassageInput, "b
   if (session.id !== grant.coordinatorSessionID || session.parentID || session.projectID !== scope.projectID
     || session.location.directory !== provider.location.directory || session.location.workspaceID !== native.location.workspaceID
     || session.title !== title || canonicalAuthority(session.metadata) !== canonicalAuthority(metadata)
-    || session.agent !== coordinator.agent || canonicalAuthority(session.model) !== canonicalAuthority(coordinator.model)) {
+    || !matchesExecution(coordinator, session)) {
     rejectAuthority("binding-mismatch")
   }
   current()

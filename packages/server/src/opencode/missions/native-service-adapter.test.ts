@@ -181,3 +181,35 @@ test("Pause after lazy Effect construction but before evaluation admits no creat
     })
   })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
 })
+
+test("omitted native variant accepts materialized default but never a high variant at root ENV/message entry", async () => {
+  const metadata = { "codenomad.mission": { version: 1, missionID: "msn_owned", kind: "coordinator", role: "coordinator" } }
+  const request = { id: "ses_owned", title: "Mission coordinator", location: { directory },
+    agent: "worker", model: { providerID: "provider", id: "model" }, metadata }
+  const expected = { ...request, projectID: "project" }
+  let variant = "default", writes = 0
+  const session = () => Schema.decodeUnknownSync(Session.Info)({ ...expected,
+    model: { ...request.model, variant }, cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 } })
+  const service = { get: () => Effect.sync(session), create: () => Effect.sync(() => { writes++; return session() }),
+    inbox: () => Effect.succeed([]), environment: (input: { variables: Record<string, string> }) => Effect.sync(() => {
+      writes++; return input.variables
+    }), prompt: () => Effect.sync(() => { writes++; return receipt(command) }),
+    synthetic: () => Effect.sync(() => { writes++; return receipt({ ...command, kind: "synthetic" }) }) }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const native = yield* acquireMissionNativeService()
+    yield* Effect.promise(async () => {
+      const current = () => true as const
+      assert.equal((await native.create(request, {}, current)).model?.variant, "default")
+      await native.environment({ sessionID: request.id, variables: { MARKER: "fresh" } }, {}, current, expected)
+      await native.admit({ ...command, kind: "synthetic" }, {}, current, expected)
+      assert.equal(writes, 3)
+      variant = "high"
+      await assert.rejects(native.environment({ sessionID: request.id, variables: {} }, {}, current, expected), /binding-mismatch/)
+      await assert.rejects(native.admit({ ...command, kind: "synthetic" }, {}, current, expected), /binding-mismatch/)
+      await assert.rejects(native.create(request, {}, current), /effect-unavailable/)
+      assert.equal(writes, 4, "wrong create ACK is unknown, not a successful matching profile")
+    })
+  })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
+})

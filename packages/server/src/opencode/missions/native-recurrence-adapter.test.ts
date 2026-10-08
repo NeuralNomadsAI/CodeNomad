@@ -118,7 +118,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
     let afterCreate = () => {}
     function makeSession(request: { id: string; title: string; location: { directory: string }; metadata: Record<string, unknown>;
       agent: string; model: { providerID: string; id: string } }) {
-      return { ...request, projectID: scope.projectID }
+      return { ...request, model: { ...request.model, variant: "default" }, projectID: scope.projectID }
     }
     const nativeService = { location: { directory, project: { id: scope.projectID, canonical: directory } },
       assertCurrent: () => { assert(live); return true as const },

@@ -5,6 +5,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import type { NativeMissionSession } from "../../missions/control-types"
 import { canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
+import { matchesExecution } from "../../missions/execution"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import type { AutonomousMissionCommand } from "./autonomous-contract"
 
@@ -78,8 +79,8 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
         options?.signal?.throwIfAborted(); assertCurrent()
         if (pinned && (!session || session.id !== pinned.id || session.parentID
           || session.projectID !== pinned.projectID || session.location.directory !== pinned.location.directory
-          || session.location.workspaceID !== pinned.location.workspaceID || session.agent !== pinned.agent
-          || !isDeepStrictEqual(session.model, pinned.model) || !isDeepStrictEqual(session.metadata, pinned.metadata))) {
+          || session.location.workspaceID !== pinned.location.workspaceID
+          || !matchesExecution(pinned, session) || !isDeepStrictEqual(session.metadata, pinned.metadata))) {
           rejectAuthority("binding-mismatch")
         }
         assertSynchronousAuthorityGuard(current, "policy-unqualified")
@@ -109,7 +110,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       const session = await run(() => service.create(request), Schema.toType(Session.Info), options, current)
       if (session.id !== request.id || session.parentID || session.projectID !== location.project.id
         || session.location.directory !== request.location.directory || session.location.workspaceID !== location.workspaceID
-        || session.agent !== request.agent || !isDeepStrictEqual(session.model, request.model)
+        || !matchesExecution(request, session)
         || !isDeepStrictEqual(session.metadata, request.metadata)) rejectAuthority("effect-unavailable")
       return session
     },
