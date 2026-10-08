@@ -93,13 +93,17 @@ test("real shell retains separate Electron histories across chat, sessions, proj
       assert.equal(await first.evaluate((guest: any) => guest.getWebContentsId()), guestId)
     }
     const firstPane = page.locator('[data-session-id="session"] .window-shell')
+    await firstPane.getByRole("button", { name: "Close", exact: true }).click()
+    await first.waitFor({ state: "hidden" })
+    assert.equal((await preview(page, "session")).mode, "chat")
+    assert.equal(await page.locator("webview").count(), 2)
+    await page.getByRole("button", { name: "Open web preview", exact: true }).click()
+    await first.waitFor({ state: "visible" })
+    assert.equal(await first.evaluate((guest: any) => guest.getWebContentsId()), guestId)
+    assert.equal(await first.evaluate((guest: any) => guest.executeJavaScript('document.querySelector("#draft").value')), "Keep this form")
     await firstPane.getByRole("button", { name: "Back", exact: true }).click()
     await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, `${base}/page/a`)
     assert.equal((await preview(page, "second")).targetUrl, `${base}/page/c`)
-    await firstPane.getByRole("button", { name: "Close", exact: true }).click()
-    await first.waitFor({ state: "detached" })
-    assert.equal(await preview(page, "session"), null, "closing must not immediately restore the preview")
-    assert.equal(await page.locator("webview").count(), 1)
     await page.evaluate(() => (window as any).fixture.selectSession("second"))
     assert.equal((await preview(page, "second")).targetUrl, `${base}/page/c`)
     assert.deepEqual(errors, [])
@@ -116,7 +120,7 @@ test("Tauri retains hidden native registrations and restores the correct session
     await page.waitForFunction(() => (window as any).fixture.native.calls.some((c: any) => c.command === "browser_target_register"))
     const registration = await page.evaluate(() => (window as any).fixture.native.calls.find((c: any) => c.command === "browser_target_register").payload.registrationId)
     await page.evaluate(({ registration, url }) => (window as any).fixture.native.navigate(registration, url), { registration, url: `${base}/page/b` })
-    await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+    await page.locator('[data-session-id="session"] .window-shell').getByRole("button", { name: "Close", exact: true }).click()
     await page.waitForFunction(id => (window as any).fixture.native.calls.some((c: any) => c.command === "browser_target_update" && c.payload.registrationId === id && c.payload.visible === false), registration)
     await page.evaluate(() => (window as any).fixture.selectSession("second"))
     await page.evaluate(url => (window as any).fixture.openPreview("second", url), `${base}/page/c`)
@@ -137,7 +141,7 @@ test("Tauri retains hidden native registrations and restores the correct session
   } finally { await page.close() }
 })
 
-test("the legacy project URL is adopted once and closing does not restore it again", async () => {
+test("the legacy project URL is adopted once and the cross only hides its retained preview", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1200, height: 900 } })
   try {
     await prepare(page, "web", "&legacy=1")
@@ -152,8 +156,8 @@ test("the legacy project URL is adopted once and closing does not restore it aga
     await page.getByRole("button", { name: "Open web preview", exact: true }).click()
     const pane = page.locator('[data-session-id="session"] .window-shell')
     await pane.getByRole("button", { name: "Close", exact: true }).click()
-    assert.equal(await preview(page, "session"), null)
+    assert.equal((await preview(page, "session")).mode, "chat")
     await page.evaluate(() => { (window as any).fixture.selectSession("second"); (window as any).fixture.selectSession("session") })
-    assert.equal(await preview(page, "session"), null)
+    assert.equal((await preview(page, "session")).targetUrl, `${base}/page/legacy`)
   } finally { await page.close() }
 })

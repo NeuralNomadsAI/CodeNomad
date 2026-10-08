@@ -1,7 +1,7 @@
 import { createSignal, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, closeSessionPreview, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
+import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -60,7 +60,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
       <BrowserFrame
         active={props.active}
-        onClose={() => void closeSessionPreview(props.preview.storageKey)}
+        onClose={() => showSessionChat(props.preview.storageKey)}
         sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
