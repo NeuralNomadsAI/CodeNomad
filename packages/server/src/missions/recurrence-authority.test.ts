@@ -574,6 +574,49 @@ test("accepted passage is recorded while its native child is live; settlement ar
   assert.equal(finished.settledCount, 1)
 })
 
+test("committed Pause permits a late applied receipt and child terminal with a fresh evidence signal", async () => {
+  const f = await fixture(); await f.authorize(); const grant = await f.reserve()
+  const lease = await f.claim(grant.grantID, { kind: "create" }); f.invoke(lease)
+  const due = new AbortController()
+  due.abort("dispatch was cancelled by Pause")
+  await f.authorize({ action: "pause" })
+  await assert.rejects(f.claim(grant.grantID, { kind: "start" }), /authorization-blocked/)
+  // A cancelled dispatch signal cannot become the receipt's evidence lifetime.
+  await assert.rejects(f.core.acknowledgeEffect(grant.grantID, lease.operation.operationID,
+    (await f.store.read())!.revision, due.signal))
+  await f.acknowledge(grant.grantID, lease.operation.operationID)
+  f.terminal((await f.store.read())!.child!)
+  const archive = await f.core.settle(grant.grantID, (await f.store.read())!.revision, signal())
+  assert.equal(archive.settlement.outcome, "completed")
+  assert.equal(archive.settlement.effects[0]?.outcome, "applied")
+  assert.equal((await f.store.read())!.parent.body.action, "pause")
+})
+
+test("crash after authority archive parks original pending until exact metadata finish; no replay or next passage", async () => {
+  const f = await fixture(); await f.authorize()
+  const grant = await f.reserve(), effect = await f.claim(grant.grantID, { kind: "create" })
+  f.invoke(effect)
+  const pending = (await f.source.read(scope.scheduleID))!
+  await f.source.recordAdmission(scope.scheduleID, { kind: "accepted", passageID: grant.passage.id,
+    messageID: grant.messageID, missionID: grant.missionID, conversationID: grant.coordinatorSessionID },
+  pending.createdAt + 1, f.qualifiedCurrent)
+  f.terminal((await f.store.read())!.child!)
+  const archived = await f.core.settle(grant.grantID, (await f.store.read())!.revision, signal())
+  const effects = f.effects()
+  assert.equal((await f.store.read())!.child, null)
+  assert.equal((await f.source.read(scope.scheduleID))!.pending?.passage.id, grant.passage.id)
+  assert.equal((await f.store.readPassage(grant.passage.id))?.settlement.evidenceID, archived.settlement.evidenceID)
+  await assert.rejects(f.reserve(), /cannot trigger/)
+  await assert.rejects(f.claim(grant.grantID, { kind: "start" }))
+  assert.equal(f.effects(), effects, "no native operation is replayed after the crash boundary")
+  const finished = await f.source.finish(scope.scheduleID, { passageID: grant.passage.id, messageID: grant.messageID,
+    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome: "completed",
+    artifactMessageIDs: [], cursors: [] }, pending.createdAt + 2, f.qualifiedCurrent)
+  assert.equal(finished.pending, null)
+  assert.equal((await f.reserve()).sequence, 2, "a new sequence needs explicit old metadata settlement")
+  assert.equal(f.effects(), effects)
+})
+
 test("1,025 passages retain permanent replay evidence with constant hot state and untouched ordinary authority/user bytes", async () => {
   const f = await fixture(); await f.authorize()
   const ordinaryKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/project/${f.store.projectToken}`
