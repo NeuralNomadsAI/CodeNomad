@@ -246,6 +246,23 @@ the separately integrated native control/kernel writer and complete packaged
 NSIS/installation/private-native qualification remain distinct gates. No such
 fixture, installation, daemon mutation or push accompanied this UI join.
 
+The follow-up denial-capability increment on `5bef28d6` separates native denial
+authority from execution display state: a retained replacement artifact may show
+Unavailable while positively verified actions still authorize Pause/Stop. The
+UI preserves Play/Resume's existing execution eligibility and original-tuple
+Retry fences; an unqualified snapshot still grants no action. Its added Solid
+case verifies visible enabled denial actions and exactly one native-schema-valid
+Pause POST, with no Resume/new-work admission or refresh replay. The complete
+focused selection passed **20/20** (`sh_11d16de6a001g53O1EwB3qaSTO`), and
+independent rereview reported zero P0/P1/P2 findings
+(`ses_ee2eb740affeqL9kUe9SCJzc7q`). Both typechecks and UI build passed; receipt:
+`C:/Users/Admin/AppData/Local/Temp/opencode/missions-ui-denial-capability-20261008-selfchecks.txt`.
+The first increment selection remains **19 pass / 1 fail**
+(`sh_11d14aea4001Ls9YyKYRGngN9k`): it removed the established disabled Stop
+button during partial Pause. The correction retained that behavior and assertion
+rather than weakening it. The prior 19-case join and all earlier failed receipts
+above retain their original scope; this does not qualify native/private execution.
+
 No complete NSIS build or replacement installation has occurred. The requested
 native/private qualification remains deferred until that first complete build;
 the premature isolated source-fixture receipts below remain exceptions, not

@@ -54,8 +54,9 @@ function RecurrenceControls(props: { schedule: Schedule; identity: string; insta
     && props.schedule.controlCapability?.version === 1 && Array.isArray(props.schedule.controlCapability.actions)
     && props.schedule.controlCapability.actions.includes(action)
     && (action !== "play" || !props.schedule.pendingPassageID)
-    && (action === "play" ? ["paused", "interrupted"].includes(props.schedule.state)
-      : action === "pause" ? props.schedule.state === "running" : props.schedule.state !== "stopped")
+    // Denial authority is independent of the execution/activity projection: an
+    // unavailable replacement artifact can still authorize Pause/Stop safely.
+    && (action === "play" ? ["paused", "interrupted"].includes(props.schedule.state) : props.schedule.controlRetry?.action !== action)
   const retry = () => {
     const retry = props.schedule.controlRetry, control = props.schedule.nativeControl
     if (!retry || retry.scheduleID !== props.schedule.id || !["pause", "stop"].includes(retry.action)

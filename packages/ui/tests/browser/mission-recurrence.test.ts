@@ -675,3 +675,52 @@ for (const action of ["pause", "stop"] as const) test(`partial ${action} retains
     if (action === "stop") assert.equal(await row.getByRole("button", { name: /Play schedule|Resume schedule|Stop schedule/ }).count(), 0)
   } finally { await page.close() }
 })
+
+test("Unavailable execution still exposes verified denial actions without Resume or new-work admission", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), posts: Array<{ path: string; body: unknown }> = []
+  const id = "rec_retained_artifact"
+  let verified = false
+  let schedule: any = { id, revision: 4, scheduleRevision: 1, state: "unavailable", epoch: 2,
+    clock: { time: "09:00", zone: "UTC" }, pendingPassageID: null, pendingStatus: null, pendingAdmission: null,
+    settledCount: 0, latestResult: null, history: [] }
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    if (route.request().method() !== "GET") posts.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() })
+    return route.fulfill({ json: {} })
+  })
+  await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } }))
+  await page.route("**/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: { version: 1, projectID: "project",
+    schedules: [{ ...schedule, ...(verified ? { controlCapability: { version: 1, actions: schedule.epoch === 2 ? ["pause", "stop"] : ["stop"] } } : {}) }] } }))
+  await page.route(`**/missions/recurrence/${id}/control`, route => {
+    const body = recurrenceControlHttpSchema.parse(route.request().postDataJSON())
+    posts.push({ path: new URL(route.request().url()).pathname, body })
+    assert.deepEqual(body, { scheduleID: id, requestID: recurrenceHumanRequestID(id, 3, "pause"), action: "pause",
+      expectedRevision: 4, expectedEpoch: 2, directory: "/fixture" })
+    schedule = { ...schedule, revision: 5, epoch: 3 }
+    return route.fulfill({ json: { version: 1, scheduleID: id, requestID: body.requestID, revision: 5, epoch: 3,
+      state: "paused", controlsComplete: true, schedulerCancellation: "acknowledged" } })
+  })
+  try {
+    await page.goto(url)
+    const row = page.locator(".mission-recurrence-item"), pause = row.getByRole("button", { name: `Pause schedule ${id}`, exact: true })
+    await row.getByText("Unavailable", { exact: true }).waitFor()
+    assert.equal(await row.getByRole("button", { name: /Pause schedule|Stop schedule|Play schedule|Resume schedule/ }).count(), 0,
+      "unknown execution without verified actions grants no controls")
+    verified = true
+    await page.evaluate(id => window.missionEditorLifetime.invalidateRecurrence(id), id)
+    await pause.waitFor()
+    await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-recurrence-controls button[aria-label^="Pause schedule"]'); return button && !button.disabled })
+    assert.equal(await row.getByText("Unavailable", { exact: true }).count(), 1)
+    assert.equal(await row.getByRole("button", { name: `Stop schedule ${id}`, exact: true }).isEnabled(), true)
+    assert.equal(await row.getByRole("button", { name: /Play schedule|Resume schedule/ }).count(), 0)
+    await pause.click()
+    await pause.waitFor({ state: "hidden" })
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].path, `/api/workspaces/fixture/missions/recurrence/${id}/control`)
+    await page.getByRole("button", { name: "Refresh schedules" }).click()
+    await page.waitForResponse(response => response.url().endsWith("/missions/recurrence"))
+    assert.equal(posts.length, 1, "refresh cannot repeat denial or admit new work")
+    assert.equal(await row.getByRole("button", { name: /Play schedule|Resume schedule/ }).count(), 0)
+  } finally { await page.close() }
+})
