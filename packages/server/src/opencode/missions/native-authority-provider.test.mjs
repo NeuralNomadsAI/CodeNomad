@@ -122,11 +122,12 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const expected={...before,revision:input.revision};
   const revision=yield* Effect.promise(()=>provider.publish(expected,{...before,revision:input.revision+1},()=>true));
   return {revision};
- })),claimed:input=>guarded(Effect.gen(function*(){
-  const exit=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope).pipe(Effect.exit);
-  assert.equal(exit._tag,"Failure","Actual native execution claim must refuse capability");
-  assert.match(Cause.pretty(exit.cause),/policy-unqualified/);
-  return {nativeClaimDenied:true};
+  })),claimed:input=>guarded(Effect.gen(function*(){
+   // Metadata-only CAS may observe an event-bearing/busy Session. This does
+   // not qualify its native effects, which require separate call-entry proof.
+   const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope);
+   assert.equal((yield* Effect.promise(()=>provider.read())).revision,1);
+   return {nativeMetadataAccepted:true};
  }))});
 });}});`)
   await build({ entryPoints: [entry], outfile: path.join(plugin, "index.mjs"), bundle: true, platform: "node", format: "esm",
@@ -199,12 +200,12 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   while (!providerRequests) { assert(Date.now() < deadline, "Native execution did not reach private provider"); await delay(50) }
   const claimed = await client.rpc.call({ rpcID: "private.missions.authority-provider", method: "claimed", location: { directory: isolated.project },
     input: { sessionID: session.id } }, options())
-  assert.deepEqual(claimed.output, { nativeClaimDenied: true })
+   assert.deepEqual(claimed.output, { nativeMetadataAccepted: true })
   await other.session.interrupt({ sessionID: session.id, continue: false }, options())
   assert.deepEqual(await sourceHashes(), sourceInputs, "Source changed during native proof")
   const receipt = { nativeVersion: info.version, cliSha256: fingerprint, graph: result.output, privateRoot: isolated.root,
     sourceInputs, officialSourceInputs, twoNativeLocations: true, staleRevisionDenied: true,
-    actualCompetingStandaloneExecutionDenied: true, enrollmentProvisioningInjected: true, signerAuthorityClaimed: false,
+     actualCompetingStandaloneMetadataReadAllowed: true, enrollmentProvisioningInjected: true, signerAuthorityClaimed: false,
     managedServiceProof: false, permanentWriterAuthority: false, wholeDatabaseRollbackProof: false, productionActivated: false }
   await writeFile(path.join(isolated.root, "results.json"), JSON.stringify(receipt, null, 2))
   console.log(JSON.stringify(receipt))

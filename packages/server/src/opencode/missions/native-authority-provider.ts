@@ -8,10 +8,12 @@ import type { SqlClient } from "effect/unstable/sql"
 import { authorityDigest, canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
+import { RECURRENCE_STORAGE_PREFIX } from "../../missions/recurrence-contract"
+import { stableToken } from "../../missions/journal"
 import { recurrenceAuthorityScopeSchema, RECURRENCE_AUTHORITY_MAX_BYTES, type RecurrenceAuthorityScope, type SignedRecurrenceStandingIntent } from "../../missions/recurrence-authority-contract"
 import { NativeRecurrenceAuthorityStore, recurrenceAuthorityDocumentSchema, type RecurrenceAuthorityDocument } from "../../missions/recurrence-authority-store"
 import type { MissionStorage } from "../../missions/journal"
-import { validateClaimFence } from "../session-pruning/claim-fence"
+import { validateRecurrenceMetadataFence } from "./native-recurrence-metadata-fence"
 
 const PLUGIN_ID = "codenomad.missions"
 const PREFIX = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence`
@@ -35,19 +37,17 @@ const databaseShape = Schema.Struct({ db: Schema.Struct({ transaction: method,
     && Predicate.hasProperty(value, "transactionService") && Context.isKey(value.transactionService)) }) })
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
 const SELECT_VALUE = "SELECT value FROM kv WHERE key=?"
-// The existing native claim validator is deliberately given only its six fixed
-// read statements. This private read shim never opens a database or escapes.
+// This private read shim permits only the metadata CAS statements.
 const claimQueries = new Set([
   "PRAGMA database_list", "SELECT 1 FROM sqlite_schema WHERE type='trigger' LIMIT 1", SELECT_VALUE,
   "SELECT directory,project_id,workspace_id,time_suspended,time_compacting,revert FROM session_v2 WHERE id=?",
-  "SELECT owner_id FROM event_sequence WHERE aggregate_id=?", "SELECT 1 FROM event WHERE aggregate_id=? LIMIT 1",
 ])
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, RECURRENCE_AUTHORITY_MAX_BYTES) === canonicalAuthority(b, RECURRENCE_AUTHORITY_MAX_BYTES)
 
 /** Native metadata COMMIT capability, not RecurrenceAuthorityAdapter or a
  * permanent writer lease. Uses the CURRENT daemon connection and its real
- * BEGIN IMMEDIATE transaction; the native idle execution claim is read, never
- * forged/released. Managed ownership, signer/profile/family qualification and
+ * BEGIN IMMEDIATE transaction; enrolled Session maintenance/placement is checked
+ * but existing events are not a metadata-CAS exclusion. Managed ownership, signer/profile/family qualification and
  * independently protected cold rollback checkpoints remain producer obligations.
  * Acquire in native HTTP/RPC context; sealed setup cannot fabricate that graph. */
 export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acquireNativeAuthorityProvider")(function* (
@@ -67,6 +67,7 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     || session.location.workspaceID !== location.workspaceID) rejectAuthority("binding-mismatch")
   const { db } = found.value as NativeDatabase, client = db.$client
   const anchorKey = nativeRecurrenceAnchorKey(scope, session.id)
+  const sourceKey = `${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${scope.projectID}\0${scope.projectCanonical}`, 24)}/${scope.scheduleID}`
   const anchor = { version: 1, scope, sessionID: session.id, location: { directory: session.location.directory,
     ...(session.location.workspaceID === undefined ? {} : { workspaceID: session.location.workspaceID }) } }
   const graph = yield* Effect.context<never>()
@@ -103,9 +104,9 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
   } as unknown as DatabaseSync
   const nativeFence = (): true => {
     assertActive()
-    const blocked = validateClaimFence(readClaim, sessionID, { key: nativeKey(challengeKey), nonce,
+    validateRecurrenceMetadataFence(readClaim, { sessionID, challengeKey: nativeKey(challengeKey), nonce,
       directory: location.directory, projectID: scope.projectID, workspaceID: session.location.workspaceID })
-    if (blocked || syncValue(namespaceKey) !== scope.namespace || syncValue(NATIVE_RECURRENCE_STORAGE_ID_KEY) !== scope.daemonStorageID
+    if (syncValue(namespaceKey) !== scope.namespace || syncValue(NATIVE_RECURRENCE_STORAGE_ID_KEY) !== scope.daemonStorageID
       || !same(syncValue(anchorKey) ?? null, anchor)) {
       rejectAuthority("policy-unqualified")
     }
@@ -184,6 +185,20 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     return assertSynchronousAuthorityGuard(current, "policy-unqualified")
   }
   return Object.freeze({ daemonStorageID: scope.daemonStorageID, ledgerKey: store.key,
+    location: Object.freeze({ directory: location.directory, projectID: location.project.id,
+      projectCanonical: location.project.canonical, sessionID: session.id }),
+    store,
+    /** Keep the same native IMMEDIATE frame around the entire business CAS. */
+    transact: <A>(current: () => true, operation: () => Promise<A>): Promise<A> =>
+      Effect.runPromise(inTransaction(current, () => Effect.promise(operation))),
+    assertCurrent: nativeFence,
+    readCurrent: (key: string): unknown => {
+      nativeFence()
+      // No arbitrary plugin KV access: only this scope's exact immutable/live keys.
+      if (key !== sourceKey) allowed(key, false)
+      return syncValue(key)
+    },
+    sourceKey,
     read: () => store.read(),
     publish: (expected: Readonly<RecurrenceAuthorityDocument> | null, next: RecurrenceAuthorityDocument, current: () => true) => {
       const pinned = expected ? recurrenceAuthorityDocumentSchema.parse(JSON.parse(canonicalAuthority(expected))) : null

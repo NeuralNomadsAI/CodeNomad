@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
+import { execFileSync } from "node:child_process"
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs"
 import { lstat, mkdir, open, opendir, realpath, rmdir, unlink } from "node:fs/promises"
 import path from "node:path"
@@ -20,6 +21,19 @@ export class FamilyAuthorityError extends Error {
 export async function readFamilyAuthorityIdentity(ownedDirectory: string): Promise<string> {
   try { return physicalIdentity(await readGitCommonDirectory(await realpath(ownedDirectory))) }
   catch { throw new FamilyAuthorityError("family-identity-unavailable") }
+}
+
+/** Final native write fence cannot await the worker. Repeat Git's actual
+ * common-directory resolution, including worktree/config redirects, rather
+ * than treating a retained family claim as proof the checkout still belongs. */
+export function readFamilyAuthorityIdentitySync(ownedDirectory: string): string {
+  try {
+    const checkout = realpathSync(ownedDirectory)
+    const common = execFileSync("git", ["-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { encoding: "utf8", windowsHide: true, timeout: 3000, maxBuffer: 8192 }).replace(/\r?\n$/, "")
+    if (!path.isAbsolute(common)) throw new Error("Git common directory is not absolute")
+    return physicalIdentity(realpathSync(common))
+  } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
 }
 
 interface Marker {
