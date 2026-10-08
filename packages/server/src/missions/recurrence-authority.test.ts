@@ -533,6 +533,34 @@ test("committed archive digest rejects schema-valid outcome/evidence corruption 
   }
   f.values.set(key, archive as unknown as MissionJsonValue)
   assert(same(await f.store.readPassage(grant.passage.id), archive))
+  f.values.delete(key)
+  await assert.rejects(f.store.read(), /storage-invalid/, "a committed digest cannot conceal a deleted passage")
+  f.values.set(key, archive as unknown as MissionJsonValue)
+  f.values.delete(index)
+  await assert.rejects(f.store.read(), /storage-invalid/, "deleting the index cannot conceal the committed sequence")
+})
+
+test("accepted passage is recorded while its native child is live; settlement archives before finish", async () => {
+  const f = await fixture(); await f.authorize()
+  const grant = await f.reserve(), pending = (await f.source.read(scope.scheduleID))!
+  const effect = await f.claim(grant.grantID, { kind: "create" }); f.invoke(effect)
+  const admitted = await f.source.recordAdmission(scope.scheduleID, { kind: "accepted", passageID: grant.passage.id,
+    messageID: grant.messageID, missionID: grant.missionID, conversationID: grant.coordinatorSessionID }, pending.createdAt + 1, f.qualifiedCurrent)
+  assert.equal((await f.store.read())!.child?.grant.grantID, grant.grantID)
+  assert.deepEqual(admitted.pending?.admission, { kind: "accepted", passageID: grant.passage.id,
+    messageID: grant.messageID, missionID: grant.missionID, conversationID: grant.coordinatorSessionID })
+  await assert.rejects(f.source.finish(scope.scheduleID, { passageID: grant.passage.id, messageID: "wrong_message",
+    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome: "completed",
+    artifactMessageIDs: [], cursors: [] }, pending.createdAt + 2, f.qualifiedCurrent), /passage conflict/)
+  f.terminal((await f.store.read())!.child!)
+  const archive = await f.core.settle(grant.grantID, (await f.store.read())!.revision, signal())
+  assert.equal(archive.child.grant.passage.id, pending.pending!.passage.id)
+  assert.equal((await f.store.read())!.settledSequence, 1)
+  const finished = await f.source.finish(scope.scheduleID, { passageID: grant.passage.id, messageID: grant.messageID,
+    missionID: grant.missionID, conversationID: grant.coordinatorSessionID, outcome: "completed",
+    artifactMessageIDs: [], cursors: [] }, pending.createdAt + 2, f.qualifiedCurrent)
+  assert.equal(finished.pending, null)
+  assert.equal(finished.settledCount, 1)
 })
 
 test("1,025 passages retain permanent replay evidence with constant hot state and untouched ordinary authority/user bytes", async () => {

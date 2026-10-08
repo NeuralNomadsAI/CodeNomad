@@ -41,7 +41,12 @@ export class NativeRecurrenceAuthorityStore {
       // exact retirement may finish bookkeeping without replaying execution.
       if (doc.settledSequence) {
         const last = await this.get(`${this.parentKey}/settled/${doc.settledSequence}`)
-        if (last !== doc.lastArchiveDigest) rejectAuthority("storage-invalid")
+        if (!last || typeof last !== "object" || Array.isArray(last)) rejectAuthority("storage-invalid")
+        const { digest, passageID } = last as Record<string, unknown>
+        if (digest !== doc.lastArchiveDigest || typeof passageID !== "string") rejectAuthority("storage-invalid")
+        const archive = await this.readPassage(passageID)
+        if (!archive || archive.child.grant.sequence !== doc.settledSequence
+          || recurrenceAuthorityDigest(archive) !== digest) rejectAuthority("storage-invalid")
       }
     }
     await this.namespace()
@@ -77,7 +82,8 @@ export class NativeRecurrenceAuthorityStore {
     this.assertChild(archive.child); this.assertSettlement(archive)
     await this.assertArchiveCommit(archive)
     await this.immutable(`${this.parentKey}/passages/${archive.child.grant.passage.id}`, archive, fence)
-    await this.immutable(`${this.parentKey}/settled/${archive.child.grant.sequence}`, recurrenceAuthorityDigest(archive), fence)
+    await this.immutable(`${this.parentKey}/settled/${archive.child.grant.sequence}`,
+      { digest: recurrenceAuthorityDigest(archive), passageID: archive.child.grant.passage.id }, fence)
   }
   transaction<T>(expectedRevision: number | null, operation: (before: RecurrenceAuthorityDocument | undefined) => Promise<{
     document: RecurrenceAuthorityDocument; result: T; assertCurrent(): true
@@ -149,7 +155,8 @@ export class NativeRecurrenceAuthorityStore {
     const committed = await this.get(`${this.parentKey}/settled/${archive.child.grant.sequence}`)
     // Absence is valid only as uncommitted archive evidence; exact-byte immutable
     // publication still governs tear recovery. An existing commitment must match.
-    if (committed !== undefined && committed !== recurrenceAuthorityDigest(archive)) rejectAuthority("storage-invalid")
+    if (committed !== undefined && !same(committed,
+      { digest: recurrenceAuthorityDigest(archive), passageID: archive.child.grant.passage.id })) rejectAuthority("storage-invalid")
   }
   private async monotonic(before: RecurrenceAuthorityDocument | undefined, next: RecurrenceAuthorityDocument): Promise<void> {
     if (!before) {
