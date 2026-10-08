@@ -36,6 +36,8 @@ Windows Tauri uses a child webview owned by the local application window. Comman
 
 The UI routes an autonomous open request to the one loaded instance containing the session, claims the request for one local window, selects that session, and opens its preview. Hidden or duplicate targets are rejected rather than selected implicitly.
 
+Each session has its own preview record, scoped by project folder and session ID. Returning to chat, selecting another session, viewing Info or hiding the project keeps explicitly opened browser guests mounted, preserving their native history and document state. Guest DOM order remains stable; inactive transcripts and composers still unmount under the existing memory policy. Electron unregisters hidden guests from automation without destroying them; Tauri hides its existing child. The preview toolbar's X closes and releases that session's browser. Closing the project/window or restarting the renderer ends the live native history; only the last URL/mode is persisted. Older project-wide URLs are adopted once by the first restoring session rather than copied into every conversation.
+
 ## Focused Validation
 
 - Server: `automation-plugin.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions
@@ -43,3 +45,4 @@ The UI routes an autonomous open request to the one loaded instance containing t
 - Electron: `browser-controller.test.ts`, `browser-webview-security.test.ts`, preload tests
 - Tauri: `browser_controller.rs` and `browser_controller_regressions.rs` tests, including actual capability resolution, primary-renderer cleanup, window counting, lock ordering and expired dispatch
 - UI: `browser-frame-security.test.ts`, `lib/native/browser.test.ts` and `tests/browser/browser-frame-native.test.ts` (real Solid/Electron guests, insecure HTTP, registration disposal and Tauri IPC failure recovery). Linux Electron rendering requires a display; CI runs the browser suite under Xvfb.
+- Session lifetime: `tests/browser/session-browser-history.test.ts` exercises the real instance shell/store, a real Electron guest and the Tauri IPC boundary across chat/session/project/Info transitions, Back, explicit close and legacy URL migration.

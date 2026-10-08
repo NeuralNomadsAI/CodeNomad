@@ -64,6 +64,7 @@ const VIEWPORT_OPTIONS = [
 ]
 
 interface BrowserFrameProps {
+  active?: boolean
   onClose?: () => void
   sessionId?: string
   title: string
@@ -341,7 +342,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const reportNativeError = (error: unknown) => {
-    if (!disposed) props.onNavigationError?.(error)
+    if (!disposed && props.active !== false) props.onNavigationError?.(error)
   }
 
   const requestNativeTarget = (address: string) => {
@@ -393,7 +394,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
     const syncRegistration = () => {
       const rect = webview.getBoundingClientRect()
-      const visible = active && rect.width > 0 && rect.height > 0
+      const visible = active && props.active !== false && rect.width > 0 && rect.height > 0
       const sessionId = props.sessionId
       if (!webviewReady || !sessionId || registering) return
       if (registered && registeredSessionId !== sessionId) {
@@ -502,6 +503,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       reportNativeError(error)
     }
     const bounds = () => {
+      if (props.active === false) return null
       if (viewportMenuOpen() || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return null
       const rect = element.getBoundingClientRect()
       const clip = frameWrapRef?.getBoundingClientRect() ?? rect

@@ -6,6 +6,7 @@ import { readClientLayoutValue, writeClientLayoutValue } from "./client-state"
 interface SessionPreviewRecord extends PreviewSession {
   mode: "preview" | "chat"
   storageKey: string
+  instanceFolder: string
 }
 
 interface StoredSessionPreview {
@@ -24,9 +25,9 @@ const restorePromises = new Map<string, Promise<SessionPreviewRecord | null>>()
 const operationVersions = new Map<string, number>()
 let storageInitialized = false
 
-function beginOperation(sessionId: string): number {
-  const version = (operationVersions.get(sessionId) ?? 0) + 1
-  operationVersions.set(sessionId, version)
+function beginOperation(storageKey: string): number {
+  const version = (operationVersions.get(storageKey) ?? 0) + 1
+  operationVersions.set(storageKey, version)
   return version
 }
 
@@ -81,14 +82,24 @@ function storePreview(storageKey: string, preview: StoredSessionPreview | null) 
   persistStorage()
 }
 
-function getSessionPreview(sessionId: string, storageKey = sessionId): SessionPreviewRecord | null {
-  initializeStorage()
-  const preview = sessionPreviews().get(storageKey)
-  return preview ? { ...preview, sessionId } : null
+function previewKey(sessionId: string, instanceFolder: string): string {
+  return JSON.stringify([instanceFolder, sessionId])
 }
 
-async function openSessionPreview(sessionId: string, url: string, storageKey = sessionId): Promise<SessionPreviewRecord> {
+export function getPreviewSessionIds(instanceFolder: string): string[] {
+  return [...sessionPreviews().values()].filter((preview) => preview.instanceFolder === instanceFolder).map((preview) => preview.sessionId)
+}
+
+function getSessionPreview(sessionId: string, instanceFolder = ""): SessionPreviewRecord | null {
   initializeStorage()
+  const storageKey = previewKey(sessionId, instanceFolder)
+  const preview = sessionPreviews().get(storageKey)
+  return preview ?? null
+}
+
+async function openSessionPreview(sessionId: string, url: string, instanceFolder = ""): Promise<SessionPreviewRecord> {
+  initializeStorage()
+  const storageKey = previewKey(sessionId, instanceFolder)
   const operationVersion = beginOperation(storageKey)
   const existing = sessionPreviews().get(storageKey)
   const preview = await serverApi.createPreview({ sessionId, url })
@@ -98,7 +109,7 @@ async function openSessionPreview(sessionId: string, url: string, storageKey = s
     if (current) return { ...current, sessionId }
     throw new Error("Preview navigation was superseded")
   }
-  const record: SessionPreviewRecord = { ...preview, mode: "preview", storageKey }
+  const record: SessionPreviewRecord = { ...preview, mode: "preview", storageKey, instanceFolder }
   setSessionPreviews((prev) => {
     const next = new Map(prev)
     next.set(storageKey, record)
@@ -109,10 +120,18 @@ async function openSessionPreview(sessionId: string, url: string, storageKey = s
   return record
 }
 
-function restoreSessionPreview(sessionId: string, storageKey = sessionId): Promise<SessionPreviewRecord | null> {
+function restoreSessionPreview(sessionId: string, instanceFolder = ""): Promise<SessionPreviewRecord | null> {
   initializeStorage()
+  const storageKey = previewKey(sessionId, instanceFolder)
   const current = sessionPreviews().get(storageKey)
   if (current) return Promise.resolve({ ...current, sessionId })
+  // Adopt the old project-wide URL once, for the first session that restores it.
+  // Other sessions then start independently rather than inheriting its page.
+  if (!storedPreviews.has(storageKey) && instanceFolder && storedPreviews.has(instanceFolder)) {
+    const legacy = storedPreviews.get(instanceFolder)!
+    storedPreviews.delete(instanceFolder)
+    storePreview(storageKey, legacy)
+  }
   const stored = storedPreviews.get(storageKey)
   if (!stored) return Promise.resolve(null)
   const pending = restorePromises.get(storageKey)
@@ -125,7 +144,7 @@ function restoreSessionPreview(sessionId: string, storageKey = sessionId): Promi
       const currentPreview = sessionPreviews().get(storageKey)
       return currentPreview ? { ...currentPreview, sessionId } : null
     }
-    const record: SessionPreviewRecord = { ...preview, mode: stored.mode, storageKey }
+    const record: SessionPreviewRecord = { ...preview, mode: stored.mode, storageKey, instanceFolder }
     setSessionPreviews((prev) => new Map(prev).set(storageKey, record))
     return record
   }).finally(() => restorePromises.delete(storageKey))
@@ -168,8 +187,9 @@ function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
 async function closeSessionPreview(storageKey: string) {
   beginOperation(storageKey)
   const current = sessionPreviews().get(storageKey)
+  // Clear persistence before notifying the active-session restore effect.
+  storePreview(storageKey, null)
   if (!current) {
-    storePreview(storageKey, null)
     return
   }
   setSessionPreviews((prev) => {
@@ -177,7 +197,6 @@ async function closeSessionPreview(storageKey: string) {
     next.delete(storageKey)
     return next
   })
-  storePreview(current.storageKey, null)
   await serverApi.deletePreview(current.token).catch(() => undefined)
 }
 
