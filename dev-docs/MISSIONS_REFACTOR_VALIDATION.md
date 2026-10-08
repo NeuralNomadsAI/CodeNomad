@@ -61,6 +61,15 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
   this failure. Repeated synchronous Git-family reads are under investigation,
   without relaxing that deadline or calling a lower-concurrency rerun acceptance.
   Receipt: `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c2b5378001zfigd0lRoWOMeX.out`.
+- At `6f9d485a`, the same broader offline adapter selection, default concurrency
+  and original due deadline passed **165/165**, with no skips/cancellations.
+  The extra case exercises delayed presence I/O: real callback acknowledgements
+  replace the incorrect fixed-sleep observation, without changing production
+  retention. Verified Git routing uses a fresh filesystem fence in normal cases
+  and retains Git fallback for ambiguous/configuration-changed routing. The
+  original due failure and the separate perf-branch presence/owner/baseline
+  failures remain failures, not erased by this result. Receipt:
+  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c66a8e2001ITpweypnekKJve.out`.
 - Upstream 2.0.24's active-Location Form/Permission/Shell lists materialize before
   the 1,024-result check. Unknown/over-bound coverage remains pending; no inactive
   worktree scan is used. Failed, interrupted, background and unrecognised effect
