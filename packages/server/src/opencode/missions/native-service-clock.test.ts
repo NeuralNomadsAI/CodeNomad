@@ -84,10 +84,14 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
     let entered!: () => void, cancelled = false
     const waiting = new Promise<void>(resolve => { entered = resolve })
     const latest = { ...input, epoch: 4 }
-    await Effect.runPromiseWith(app)(startNativeRecurrenceClock(latest, (_graph, _current, signal) =>
+    await Effect.runPromiseWith(app)(startNativeRecurrenceClock(latest, (_graph, current, signal) =>
       new Promise<"pending">(resolve => {
         entered()
-        signal.addEventListener("abort", () => { cancelled = true; resolve("pending") }, { once: true })
+        signal.addEventListener("abort", () => {
+          cancelled = true
+          assert.equal(current(), true, "cancelled dispatch retains the borrowed graph for bounded positive receipt draining")
+          resolve("pending")
+        }, { once: true })
       })))
     const last = [...jobs.values()][3]!
     const fiber = Effect.runFork(last.run)

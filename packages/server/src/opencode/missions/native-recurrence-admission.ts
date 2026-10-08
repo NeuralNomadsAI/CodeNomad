@@ -14,15 +14,15 @@ import type { MissionNativeService, NativeCreateInput, NativeRootPlacement } fro
 import type { AutonomousProfileSource } from "./autonomous-environment"
 import { readAutonomousMissionEnvironment } from "./autonomous-environment"
 import { controlOperationID } from "../../missions/receipt-identity"
+import { DateTime } from "effect"
 import type { NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
-import type { acquireNativeManagedOwner } from "./native-managed-owner"
-import type { SynchronousFamilyAuthorityClaim } from "../../workspaces/family-authority-claim"
+import type { NativeRecurrenceOwner } from "./native-authority-provider"
 
-type Owner = import("effect").Effect.Success<ReturnType<typeof acquireNativeManagedOwner>>
+type Owner = NativeRecurrenceOwner
 
 type PassageInput = {
   document: Readonly<RecurrenceDocument>; provider: NativeRecurrenceAuthorityProvider
-  signer: NativeStandingSigner; owner: Owner; familyClaims: ReadonlyMap<string, SynchronousFamilyAuthorityClaim>
+  signer: NativeStandingSigner; owner: Owner
   storage: MissionStorage; native: MissionNativeService; profile: AutonomousProfileSource
   signal: AbortSignal
   /** Daemon-service lifetime, never the due Job's cancellable dispatch signal. */
@@ -123,8 +123,11 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
         || receipt.payload.text !== authorizedCommand.input.text
         || canonicalAuthority(receipt.payload.metadata) !== canonicalAuthority(authorizedCommand.input.metadata)) rejectAuthority("effect-unavailable")
       invocation.acknowledgement = { operationID: authorizedMessage.operation.operationID, outcome: "applied", evidenceID: receipt.id }
+      const created = DateTime.toEpochMillis(receipt.time.created)
+      if (!Number.isFinite(created) || created < 0) rejectAuthority("effect-unavailable")
       return { nativeAcknowledgement: { missionID: grant.missionID, operationID: route.operationID,
-        sessionID: grant.coordinatorSessionID, action: "start", disposition: "start-admitted", admission: receipt } }
+        sessionID: grant.coordinatorSessionID, action: "start", disposition: "start-admitted",
+        admission: { ...receipt, time: { created } } } }
     },
   })
   current()

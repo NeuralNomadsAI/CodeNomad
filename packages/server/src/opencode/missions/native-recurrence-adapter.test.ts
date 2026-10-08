@@ -6,6 +6,7 @@ import { realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import { DateTime } from "effect"
 import { authorityDigest, authoritySignerDigest, canonicalAuthority, MISSION_AUTHORITY_POLICY,
   type ProvisionedAuthoritySigner } from "../../missions/authority-protocol"
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
@@ -41,7 +42,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
     const profile = { profileID: scope.profileID, executionHost: scope.executionHost,
       configYamlPath: path.join(directory, "config.yaml") }
     const values = new Map<string, unknown>([[`${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`, scope.namespace]])
-    let live = true, human = true, familyHeld = true, evolving = false, protectedParent: SignedRecurrenceStandingIntent | undefined
+    let live = true, human = true, evolving = false, protectedParent: SignedRecurrenceStandingIntent | undefined
     let protectedHead: RecurrenceAuthorityDocument | null = null
     const store = new NativeRecurrenceAuthorityStore({
       get: async key => values.get(key) as Awaited<ReturnType<MissionStorage["get"]>>,
@@ -74,8 +75,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
     const input = { provider, signer: trust, owner: { daemonStorageID: scope.daemonStorageID, namespace: scope.namespace,
        assertCurrent: () => { assert(live); return true as const } },
       invocation: () => invocation,
-      familyClaims: new Map([[family, { assertCurrentSync: () => { assert(familyHeld); return true as const },
-        assertCurrent: async () => {}, release: async () => {} }]]) }
+    }
     const signed = (action: RecurrenceStandingIntent["action"], before: RecurrenceAuthorityDocument | null): SignedRecurrenceStandingIntent => {
       const epoch = (before?.parent.body.epoch ?? 0) + 1
       const body: RecurrenceStandingIntent = { ...scope, authorityID: signer.authorityID, keyID: signer.keyID, roots: [root],
@@ -134,11 +134,11 @@ test("native standing human CAS checks signer, protected decision, physical fami
         current(); nativeMessages++
         return { id: command.input.id, sessionID: command.input.sessionID, type: "synthetic", delivery: command.input.delivery,
           payload: { text: command.input.text, description: "CodeNomad recurring mission start", metadata: command.input.metadata },
-          time: { created: 2 } }
+          time: { created: DateTime.makeUnsafe(2) } }
       },
     }
     const full = await admitNativeRecurrencePassage({ document: pendingSource as never, provider, signer: trust,
-      owner: input.owner, familyClaims: input.familyClaims, storage: finiteStorage, native: nativeService as never,
+      owner: input.owner, storage: finiteStorage, native: nativeService as never,
       profile, signal: new AbortController().signal, settlementSignal: new AbortController().signal,
       beforeEffect: async () => () => { assert(live); return true as const }, now: () => 2 })
     assert.equal(full.kind, "accepted")
@@ -153,7 +153,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
     "three real native effect receipts are admission evidence, not a terminal passage")
     assert.deepEqual(await store.read(), admittedLedger, "failed terminal observation cannot archive or advance the next passage")
     await assert.rejects(admitNativeRecurrencePassage({ document: pendingSource as never, provider, signer: trust,
-      owner: input.owner, familyClaims: input.familyClaims, storage: finiteStorage, native: nativeService as never,
+      owner: input.owner, storage: finiteStorage, native: nativeService as never,
       profile, signal: new AbortController().signal, settlementSignal: new AbortController().signal,
       beforeEffect: async () => () => { assert(live); return true as const } }))
     assert.equal(nativeCreations, 1, "an accepted passage cannot replay native creation")
@@ -163,7 +163,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
     const cancelled = new AbortController()
     afterCreate = () => cancelled.abort()
     await assert.rejects(admitNativeRecurrencePassage({ document: pendingSource as never, provider, signer: trust,
-      owner: input.owner, familyClaims: input.familyClaims, storage: finiteStorage, native: nativeService as never,
+      owner: input.owner, storage: finiteStorage, native: nativeService as never,
       profile, signal: cancelled.signal, settlementSignal: new AbortController().signal,
       beforeEffect: async () => () => { assert(live); return true as const }, now: () => 3 }))
     assert.equal((await store.read())?.child?.effects[0]?.receipt?.outcome, "applied",
@@ -172,7 +172,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
       && (value as { type?: string }).type === "mission.created"), true,
     "the original journal can reconcile after a positive create receipt")
     await assert.rejects(admitNativeRecurrencePassage({ document: pendingSource as never, provider, signer: trust,
-      owner: input.owner, familyClaims: input.familyClaims, storage: finiteStorage, native: nativeService as never,
+      owner: input.owner, storage: finiteStorage, native: nativeService as never,
       profile, signal: new AbortController().signal, settlementSignal: new AbortController().signal,
       beforeEffect: async () => () => { assert(live); return true as const } }))
     assert.equal(nativeCreations, 2, "cancellation cannot replay Session.create")
@@ -215,6 +215,18 @@ test("native standing human CAS checks signer, protected decision, physical fami
     assert.equal((await adapter.observeEffect(child, operation, new AbortController().signal)).receipt.evidenceID,
       grant.coordinatorSessionID, "Pause after native call entry cannot erase its positive original ACK")
     assert.equal(nativeCreates, 1)
+    const core = new RecurrenceAuthority(store, adapter)
+    evolving = true
+    values.set(store.key, reserved)
+    await assert.rejects(core.acknowledgeEffect(grant.grantID, operation.operationID, reserved.revision,
+      new AbortController().signal), /authorization-blocked/,
+    "a torn signed Pause archive cannot donate its epoch to a receipt")
+    values.set(store.key, pausedChild)
+    const positive = await core.acknowledgeEffect(grant.grantID, operation.operationID, pausedChild.revision,
+      new AbortController().signal)
+    assert.equal(positive.outcome, "applied", "committed Pause reconciles the original call without a new effect lease")
+    assert.equal((await store.read())?.child?.effects[0]?.receipt?.evidenceID, grant.coordinatorSessionID)
+    evolving = false
     const acknowledged = { ...reserved, revision: 2, child: { ...child, effects: [{ ...operation,
       receipt: { operationID: operation.operationID, outcome: "applied" as const, evidenceID: grant.coordinatorSessionID } }] } }
     values.delete(nextParent)
@@ -238,7 +250,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
       assertCurrent: () => { assert(live); return true as const }, get: async () => session,
       create: async () => { createdAgain++; throw new Error("must not replay Session.create") } }
     const reconcile = () => reconcileNativeRecurrenceRoot({ document: pendingSource as never, provider,
-      signer: trust, owner: input.owner, familyClaims: input.familyClaims, storage: journalStorage,
+      signer: trust, owner: input.owner, storage: journalStorage,
       native: native as never, profile, signal: new AbortController().signal,
       settlementSignal: new AbortController().signal, now: () => 2 })
     assert.equal((await reconcile()).mission.runState, "prepared", "crash between native receipt and journal reconciles")
@@ -261,8 +273,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
     protectedHead = stopped; protectedParent = signed("authorize", stopped)
     await assert.rejects(applyNativeStandingDecision(input, protectedParent, new AbortController().signal))
     protectedHead = null; await assert.rejects(applyNativeStandingDecision(input, signed("revoke", stopped), new AbortController().signal))
-    familyHeld = false; assert.throws(() => adapter.assertSignerCurrent({ ...signer, signerDigest: authoritySignerDigest(keys.publicKey) }))
-    familyHeld = true
+    assert.equal(adapter.assertSignerCurrent({ ...signer, signerDigest: authoritySignerDigest(keys.publicKey) }), true)
     const other = path.join(directory, "unrelated")
     execFileSync("git", ["init", "-q", other])
     renameSync(path.join(directory, ".git"), path.join(directory, ".git-original"))

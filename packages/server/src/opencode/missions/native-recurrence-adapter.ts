@@ -9,9 +9,9 @@ import { type RecurrenceChildRecord, type RecurrenceEffectRecord,
 import { RecurrenceAuthority, recurrenceQualificationDigest, type RecurrenceAuthorityAdapter,
   type RecurrenceQualificationRequest } from "../../missions/recurrence-authority-core"
 import type { RecurrenceAuthorityDocument, NativeRecurrenceAuthorityStore } from "../../missions/recurrence-authority-store"
-import { readFamilyAuthorityIdentity, readFamilyAuthorityIdentitySync, type SynchronousFamilyAuthorityClaim } from "../../workspaces/family-authority-claim"
+import { readFamilyAuthorityIdentity, readFamilyAuthorityIdentitySync } from "../../workspaces/family-authority-claim"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
-import type { acquireNativeManagedOwner } from "./native-managed-owner"
+import type { NativeRecurrenceOwner } from "./native-authority-provider"
 import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
 import { authorityDigest } from "../../missions/authority-protocol"
 import { controlOperationID } from "../../missions/receipt-identity"
@@ -20,10 +20,9 @@ import { observeNativeRecurrenceSettlement } from "./native-recurrence-settlemen
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, 768 * 1024) === canonicalAuthority(b, 768 * 1024)
 
-/** Supplied only by the protected HUMAN signing producer, never by RPC input.
- * Its synchronous check reads the independent private checkpoint/reservation,
- * including the exact previous native ledger head and the original human request.
- * Merely possessing an Ed25519 signature is not human admission. */
+/** Due work reads the Play-owned native key, archived signed parent and current
+ * schedule/ledger. A human decision is admitted only by authenticated Play;
+ * due execution never calls captureHumanIntent or signs another decision. */
 export interface NativeStandingSigner {
   readSigners(): Promise<readonly ProvisionedAuthoritySigner[]>
   assertSignerCurrent(signer: AuthoritySignerSnapshot): true
@@ -41,15 +40,15 @@ export type NativeRecurrenceInvocation = {
   acknowledgement?: { operationID: string; outcome: "applied"; evidenceID: string }
 }
 
-/** Native capability + original protected signer + held physical family claims.
+/** Native capability + signed parent + fresh physical Git family identity.
  * Construction never enrolls an anchor, creates a key or opens a new database. */
 export function nativeRecurrenceAdapter(input: {
   provider: NativeRecurrenceAuthorityProvider
   signer: NativeStandingSigner
-  owner: import("effect").Effect.Success<ReturnType<typeof acquireNativeManagedOwner>>
-  familyClaims: ReadonlyMap<string, SynchronousFamilyAuthorityClaim>
+  owner: NativeRecurrenceOwner
   invocation?: () => NativeRecurrenceInvocation | undefined
   settlementStorage?: MissionStorage
+  observeSettlement?: RecurrenceAuthorityAdapter["observeSettlement"]
 }): RecurrenceAuthorityAdapter {
   const { provider, signer } = input, store = provider.store
   const owner = (): true => {
@@ -69,9 +68,6 @@ export function nativeRecurrenceAdapter(input: {
       if (root.mode !== "git" || physical(realpathSync(root.directory)) !== root.checkout
         || physical(realpathSync(root.family)) !== root.family || readFamilyAuthorityIdentitySync(root.directory) !== root.family)
         rejectAuthority("binding-mismatch")
-      const claim = input.familyClaims.get(root.family)
-      if (!claim) rejectAuthority("authorization-blocked")
-      assertSynchronousAuthorityGuard(claim.assertCurrentSync, "policy-unqualified")
     }
     return true
   }
@@ -120,7 +116,11 @@ export function nativeRecurrenceAdapter(input: {
           if (fresh === undefined || !same(parseRecurrenceDocument(fresh, store.scope.projectID,
             store.scope.projectCanonical, store.scope.scheduleID), source)) rejectAuthority("observation-unavailable")
         }
-        if (request.purpose !== "human") pending(request.ledger?.parent ?? request.parent)
+        // Only dispatch acquires a new effect lease. Receipt/terminal paths
+        // reconcile the original child after a committed Pause/Stop; the core
+        // still rejects a torn next-epoch parent before either transaction.
+        if (request.purpose !== "human" && request.purpose !== "receipt" && request.purpose !== "settle")
+          pending(request.ledger?.parent ?? request.parent)
         if (request.purpose === "reserve") {
           const actual = provider.readCurrent(provider.sourceKey)
           if (actual === undefined || !same(parseRecurrenceDocument(actual, store.scope.projectID,
@@ -128,6 +128,7 @@ export function nativeRecurrenceAdapter(input: {
         }
         if (request.purpose === "effect" || request.purpose === "receipt") {
           if (!request.effect || !request.ledger?.child || !same(request.ledger.child.parent, request.parent)
+            || request.purpose === "receipt" && request.effect.receipt?.outcome !== "applied"
             || request.purpose === "receipt" && !request.ledger.child.effects.some(item => item.operationID === request.effect!.operationID
               && same(item.effect, request.effect!.effect))
             || request.purpose === "effect" && request.ledger.child.effects.some(item => item.operationID === request.effect!.operationID
@@ -192,10 +193,10 @@ export function nativeRecurrenceAdapter(input: {
       current()
       return { receipt, assertCurrent: current }
     },
-    observeSettlement: (child: Readonly<RecurrenceChildRecord>, signal) => {
+    observeSettlement: input.observeSettlement ?? ((child: Readonly<RecurrenceChildRecord>, signal) => {
       if (!input.settlementStorage) rejectAuthority("observation-unavailable")
       return observeNativeRecurrenceSettlement(provider, input.settlementStorage, child, signal)
-    },
+    }),
   }
 }
 

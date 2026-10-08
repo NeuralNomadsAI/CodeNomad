@@ -100,14 +100,27 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
           || location.project.canonical !== input.projectCanonical) throw new Error("Recurrence Location changed")
         const entry = MutableHashMap.get(locations.rcMap.state.map, ref)
         if (locations.rcMap.state._tag !== "Open" || Option.isNone(entry)) throw new Error("Recurrence Location unavailable")
-        return yield* Effect.tryPromise((signal) => due(Context.add(graph, sessionTag, session), () => {
-          signal.throwIfAborted()
-          const current = MutableHashMap.get(locations.rcMap.state.map, ref)
-          if (locations.rcMap.state._tag !== "Open" || Option.isNone(current) || current.value !== entry.value) {
-            throw new Error("Recurrence Location replaced")
-          }
-          return true
-        }, signal))
+        let pending: Promise<RecurrenceRunOutcome> | undefined
+        const invocation = Effect.tryPromise((signal) => {
+          pending = due(Context.add(graph, sessionTag, session), () => {
+            const current = MutableHashMap.get(locations.rcMap.state.map, ref)
+            if (locations.rcMap.state._tag !== "Open" || Option.isNone(current) || current.value !== entry.value) {
+              throw new Error("Recurrence Location replaced")
+            }
+            return true
+          }, signal)
+          return pending
+        })
+        // Job cancellation aborts NEW dispatch immediately. Keep this borrowed
+        // graph alive for a bounded original positive ACK/receipt drain; after
+        // the deadline its Scope retires and all late effects fail closed.
+        return yield* invocation.pipe(Effect.ensuring(Effect.promise(async () => {
+          if (!pending) return
+          await new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, 30_000)
+            void pending!.then(() => { clearTimeout(timer); resolve() }, () => { clearTimeout(timer); resolve() })
+          })
+        })))
       }))
       // A healthy accepted passage stays pending until its terminal archive;
       // polling it never admits another effect, but must not retire tomorrow's Job.

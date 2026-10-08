@@ -13,7 +13,7 @@ import { recurrenceAuthorityScopeSchema, RECURRENCE_AUTHORITY_MAX_BYTES, type Re
 import { NativeRecurrenceAuthorityStore, recurrenceAuthorityDocumentSchema, type RecurrenceAuthorityDocument } from "../../missions/recurrence-authority-store"
 import type { MissionStorage } from "../../missions/journal"
 import { validateRecurrenceEntryFence, validateRecurrenceMetadataFence } from "./native-recurrence-metadata-fence"
-import type { acquireNativeManagedOwner } from "./native-managed-owner"
+export type NativeRecurrenceOwner = Readonly<{ namespace: string; daemonStorageID: string; assertCurrent(): true }>
 
 const PLUGIN_ID = "codenomad.missions"
 const PREFIX = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence`
@@ -56,7 +56,7 @@ const same = (a: unknown, b: unknown) => canonicalAuthority(a, RECURRENCE_AUTHOR
  * checked without borrowing a Session or creating an anchor. */
 export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acquireNativeAuthorityProvider")(function* (
   ctx: Pick<Plugin.Context, "storage" | "location">, rawScope: RecurrenceAuthorityScope,
-  owner: import("effect").Effect.Success<ReturnType<typeof acquireNativeManagedOwner>>,
+  owner: NativeRecurrenceOwner,
 ) {
   const found = yield* Effect.serviceOption(databaseTag), origin = yield* Effect.serviceOption(locationTag)
   if (Option.isNone(found) || Option.isNone(origin)) return yield* Effect.fail(new Error("Native authority graph unavailable"))
