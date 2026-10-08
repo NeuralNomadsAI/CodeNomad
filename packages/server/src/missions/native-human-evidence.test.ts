@@ -13,9 +13,9 @@ function fixture() {
   const input = { questions: [question] }
   const content = [{ type: "text", text: "User has answered your questions" }]
   const metadata = { answers: [["Module"]] }
-  const questionPart = { type: "tool", id: request.toolCallID, name: "question", state: {
+  const questionPart = { type: "tool", id: request.toolCallID, name: "question", executed: false, state: {
     status: "completed", input, metadata, content } }
-  const delegationPart = { type: "tool", id: request.nativeCall.toolCallID, name: "task",
+  const delegationPart = { type: "tool", id: request.nativeCall.toolCallID, name: "task", executed: false,
     state: { status: "running", input: {}, metadata: { sessionID: request.sessionID } } }
   const message = { type: "assistant", id: request.messageID, content: [questionPart] }
   const delegationMessage = { type: "assistant", id: request.nativeCall.parentMessageID, content: [delegationPart] }
@@ -26,7 +26,7 @@ function fixture() {
     fields: [{ key: "q0", type: "string", title: question.header, description: question.question, custom: true,
       options: question.options.map(option => ({ value: option.label, ...option })) }],
     state: { status: "answered", answer: { q0: "Module" } } }
-  const base = { created: 100, data: { sessionID: child.id, assistantMessageID: request.messageID, id: request.toolCallID, executed: true } }
+  const base = { created: 100, data: { sessionID: child.id, assistantMessageID: request.messageID, id: request.toolCallID, executed: false } }
   const called = { ...base, id: "event_called", type: "session.tool.called",
     durable: { aggregateID: "aggregate_child", seq: 1, version: 1 }, data: { ...base.data, input } }
   const success = { ...base, id: "event_success", type: "session.tool.success",
@@ -88,6 +88,10 @@ const failures: Array<[string, (f: ReturnType<typeof fixture>) => void]> = [
   ["duplicate exact tool", f => { f.message.content.push(structuredClone(f.questionPart)) }],
   ["running question", f => { f.questionPart.state.status = "running" }],
   ["question name is not text inference", f => { f.questionPart.name = "execute" }],
+  ["provider-hosted question is not a native local Form", f => { f.questionPart.executed = true }],
+  ["provider-hosted delegation is not the original native child call", f => { f.delegationPart.executed = true }],
+  ["provider-hosted durable call is not local question evidence", f => { f.called.data.executed = true }],
+  ["provider-hosted durable result is not local question evidence", f => { f.success.data.executed = true }],
   ["ordinary descendant is not task child", f => { f.child.parentID = "ses_ordinary_descendant" }],
   ["foreign project", f => { f.child.projectID = "project_foreign" }],
   ["moved session", f => { f.child.location = { directory: "D:/foreign" } }],

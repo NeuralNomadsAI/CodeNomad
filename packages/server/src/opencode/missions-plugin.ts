@@ -31,6 +31,7 @@ import { buildAssignmentPrompt } from "../missions/recipes"
 import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
+import type { NativeHumanAnswerGate } from "../missions/human-answer"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -123,7 +124,7 @@ export interface MissionsPluginPolicy {
 }
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
-  policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation): Promise<() => Promise<void>> {
+  policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -168,6 +169,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     transport,
     createManagedRoot,
     authorizeNativeReport: policy?.authorizeNativeReport,
+    humanGate,
     validateProfiles: async (profiles, directory, taskMode) => {
       if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory), taskMode)
     },

@@ -14,11 +14,12 @@ interface Binding extends MissionCreationOperation {
   connection: ServiceConnection
   locations: readonly { directory: string; identity: string }[]
 }
-interface HeldCreation { binding: Binding; state: "preparing" | "dispatched" | "uncertain"; releasePermit(): void }
+interface HeldCreation { binding: Binding; state: "preparing" | "dispatched" | "uncertain"; releasePermit(): void; reconcile?: () => void }
 const CAPACITY = 128
 // Backend/fence-scoped, bounded retention, not an authority store or dispatcher.
 // Unknown writes have NO expiry, negative-GET release, new-generation adoption or
-// retry runner. This presence-backed native API has no terminal mutation receipt.
+// retry runner. Creation has no terminal mutation receipt; a separate fixed
+// human-answer consumer may settle only its exact original native receipt.
 const held = new WeakMap<WorktreeDeletionFence, Map<string, HeldCreation>>()
 
 export class MissionCreationHoldError extends Error {
@@ -31,6 +32,22 @@ export class MissionCreationHoldError extends Error {
 
 export function missionCreationDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
+}
+
+/** Exact receipt-only settlement for an original admitted operation. Caller
+ * must positively validate the original native disposition; never resend. */
+export function reconcileMissionCreationHold(fence: WorktreeDeletionFence, binding: Binding) {
+  const record = held.get(fence)?.get(binding.key)
+  if (!record) return undefined
+  const { connection, ...scope } = binding, { connection: previous, ...oldScope } = record.binding
+  if (connection !== previous || missionCreationDigest(scope) !== missionCreationDigest(oldScope))
+    throw new MissionCreationHoldError("creation-conflict")
+  return () => {
+    connection.assertCurrent()
+    if (held.get(fence)?.get(binding.key) !== record || record.state === "preparing" || !record.reconcile)
+      throw new MissionCreationHoldError("creation-uncertain")
+    record.reconcile()
+  }
 }
 
 /** Register BEFORE dispatch, using the original exact physical permit. A repeat
@@ -50,6 +67,12 @@ export function holdMissionCreation(fence: WorktreeDeletionFence, binding: Bindi
   const record: HeldCreation = { binding: { ...binding, locations: binding.locations.map(item => ({ ...item })) }, state: "preparing", releasePermit: release }
   registry.set(binding.key, record)
   let finished = false, proven = false
+  record.reconcile = () => {
+    binding.connection.assertCurrent()
+    proven = true; finished = true
+    if (registry.get(binding.key) === record) registry.delete(binding.key)
+    release()
+  }
   return {
     dispatched() {
       if (finished || record.state !== "preparing") throw new MissionCreationHoldError("creation-uncertain")

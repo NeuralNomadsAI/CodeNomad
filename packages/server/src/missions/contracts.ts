@@ -6,7 +6,7 @@ import { parseNativeBinding, sameNativeCall } from "./native-report-provenance"
 
 const nativeID = z.string().min(1).max(240).regex(/^[^\s\x00-\x1f\x7f]+$/)
 const decisionAnswer = z.union([z.string().min(1).max(20_000), z.array(z.string().min(1).max(20_000)).min(1).max(32)])
-const nativeDecisionProvenance = z.object({
+export const nativeDecisionProvenance = z.object({
   kind: z.literal("native-form-answer"),
   contract: taskContractReferenceSchema,
   nativeCall: z.object({ generation: z.number().int().positive().safe(), parentSessionID: nativeID,

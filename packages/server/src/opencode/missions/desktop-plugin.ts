@@ -7,8 +7,9 @@ import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
 import { retainMissionWork } from "./lifetime"
 import { NativeMissionAuthorityStore } from "../../missions/authority-store"
+import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 
-export function desktopPlugin(presenceDirectory: string | readonly string[], ownerReady: (ready: boolean) => void = () => {}): Plugin.Plugin {
+export function desktopPlugin(presenceDirectory: string | readonly string[], ownerReady: (ready: boolean) => void = () => {}, humanGate?: NativeHumanAnswerGate): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: ctx => {
@@ -27,7 +28,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], own
             if (result?.outcome !== "removed" && result?.outcome !== "retained") throw new Error("Invalid mission cleanup acknowledgement")
             return { outcome: result.outcome, ...(isCleanupReason(result.reason) ? { reason: result.reason } : {}) }
           },
-          }, undefined, (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>)
+          }, undefined, (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate)
           return async () => { ownerReady(false); await dispose() }
         } catch (error) { ownerReady(false); throw error }
       }, console.error, () => retainMissionWork(() => journal.snapshot()))

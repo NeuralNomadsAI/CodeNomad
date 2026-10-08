@@ -28,7 +28,7 @@ const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
 let messageId = "msg_0000"
 const model = { providerID: "fixture", id: "fixture" }
 let time = 1000, fail = false, hold = false, release: (() => void) | undefined
-const replies: any[] = [], windows: any[] = []
+const replies: any[] = [], replyOptions: any[] = [], windows: any[] = []
 let completed: string[][] | undefined
 const longQuestions = [
   { header: "Deployment", question: "How should we deploy the updated interruption dock to existing workspaces?", options: [
@@ -62,8 +62,9 @@ const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async ({ sessionID }: any) => ({ id: sessionID, title: sessionID, location: { directory: "/fixture" }, time: { created: 1, updated: time } }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
-    form: { reply: async (input: any) => {
+    form: { reply: async (input: any, options: any) => {
       replies.push(input)
+      replyOptions.push(options ?? null)
       if (hold) await new Promise<void>(resolve => { release = resolve })
       if (fail) throw new Error("Reply failed")
       if (input.formID === "question") {
@@ -137,7 +138,7 @@ const store = messageStoreBus.getOrCreate(instanceId)
 ;(window as any).fixture = {
   activationFrames, active: setActive, conversationFocus: setConversationFocus, phone: setPhone,
   focusHandled: () => focusHandled,
-  replies, windows,
+  replies, replyOptions, windows,
   notifications: getToastHistory,
   invalidateRecovery: () => { clearReloadableInstanceState(instanceId); invalidatePendingRequestSync(instanceId) },
   theme: setThemePreference,

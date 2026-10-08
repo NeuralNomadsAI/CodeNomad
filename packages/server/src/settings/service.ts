@@ -87,7 +87,7 @@ export class SettingsService {
     )
   }
 
-  /** Same channel/config identity as host-lifetime Play; never browser input. */
+  /** Selected desktop profile; same identity used at Mission Play. */
   getProfileScope() {
     const channel = process.env.CODENOMAD_UPDATE_CHANNEL?.trim().toLowerCase()
       || (process.env.CODENOMAD_DEV === "1" ? "dev" : "stable")

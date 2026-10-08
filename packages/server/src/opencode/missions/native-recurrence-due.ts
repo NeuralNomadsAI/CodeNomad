@@ -14,6 +14,7 @@ import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission, type Recur
 import { acquireNativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
+import { acquireNativeHumanAnswers } from "./native-human-answer"
 import { nativeRecurrenceAdapter, type NativeStandingSigner } from "./native-recurrence-adapter"
 import { observeNativeRecurrenceTerminalSettlement } from "./native-recurrence-settlement"
 import { acquireMissionNativeService } from "./native-service-adapter"
@@ -174,6 +175,10 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         },
         admit: (document, beforeEffect) => admitNativeRecurrencePassage({ document, provider, signer, owner,
           storage, native, profile: signed.parent.body.profileSource, signal,
+          humanGate: request => run(Effect.gen(function* () {
+            const answers = yield* acquireNativeHumanAnswers(exactCtx)
+            return yield* Effect.promise(() => answers.verify(request))
+          })),
           settlementSignal: AbortSignal.timeout(120_000), beforeEffect }),
       }
       const runner = new MissionRecurrenceRunner(source, admission, now)

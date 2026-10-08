@@ -447,7 +447,7 @@ export class DeveloperCdp {
     if (typeof objectId !== "string") throw new Error("Chrome could not resolve the element")
     await this.command(state, "Runtime.callFunctionOn", {
       objectId,
-      functionDeclaration: "function () { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement; if (!(element instanceof HTMLElement)) throw new Error('Element is unavailable'); element.click(); }",
+      functionDeclaration: "function () { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement; if (!(element instanceof HTMLElement)) throw new Error('Element is unavailable'); globalThis.__codenomadAutomationDepth = (globalThis.__codenomadAutomationDepth || 0) + 1; try { element.click(); } finally { globalThis.__codenomadAutomationDepth--; } }",
     })
     await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
   }

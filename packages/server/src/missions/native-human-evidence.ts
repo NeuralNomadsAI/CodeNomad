@@ -1,6 +1,7 @@
 import type { FormDetail, OpenCode, SessionLogOutput, SessionMessageGetOutput } from "@opencode/client"
 import { validateNativeDecisionArtifact, type NativeDecisionProvenance } from "./contracts"
 import type { NativeObservationSource } from "./native-call-observation"
+import type { HumanAnswerReservation } from "./human-answer"
 
 type SessionClient = ReturnType<typeof OpenCode.make>["session"]
 export type NativeDecisionReadClient = Pick<SessionClient, "get" | "log"> & {
@@ -19,13 +20,14 @@ export type NativeFormAnswerObservation = NativeDecisionProvenance & {
   question: string
   answer: string | string[]
   /** Cached native Form state, NOT durable Form lifecycle or human identity. */
-  durability: "unqualified"
-  humanPrincipal: "unknown"
+  durability: "unqualified" | "native-signed-receipt"
+  humanPrincipal: "unknown" | "codenomad-human"
+  humanReceiptID?: string
   toolCalled: NativeObservationSource
   toolAnswered: NativeObservationSource
 }
 export type NativeDecisionEvidenceResult = {
-  status: "unqualified" | "unknown"
+  status: "qualified" | "unqualified" | "unknown"
   evidence?: NativeFormAnswerObservation
   reasons: string[]
   requiredChannel: readonly ["durable-native-form-lifecycle", "authenticated-backend-human-reply-receipt"]
@@ -41,6 +43,9 @@ export type NativeDecisionEvidenceDependencies = {
    * This read module does not mint authority even when this check succeeds. */
   assertCurrent(request: Readonly<NativeDecisionEvidenceRequest>): void
   maxEvents?: number
+  /** Construction-owned native passage gate; reads exact signed native storage
+   * and positively matches its actual answer/call. Never a model JSON receipt. */
+  humanGate?(request: Readonly<NativeDecisionEvidenceRequest>): Promise<HumanAnswerReservation>
 }
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value)
@@ -60,7 +65,7 @@ function questionTool(message: SessionMessageGetOutput, messageID: string, toolI
     || message.content.length > 128) throw new Error("native-message-mismatch")
   const tools = message.content.filter(part => part.type === "tool" && part.id === toolID)
   if (tools.length !== 1 || tools[0].type !== "tool" || tools[0].name !== name
-    || tools[0].state.status === "streaming") throw new Error("native-tool-mismatch")
+    || tools[0].executed !== false || tools[0].state.status === "streaming") throw new Error("native-tool-mismatch")
   return tools[0]
 }
 
@@ -158,7 +163,9 @@ export async function verifyNativeDecisionEvidence(request: NativeDecisionEviden
     if (delegation.state.status === "streaming" || delegation.state.metadata?.sessionID !== child.id) throw new Error("native-invocation-child-mismatch")
     const message = await read(() => deps.client.message.get({ sessionID: child.id, messageID: request.messageID }, { signal }))
     const tool = questionTool(message, request.messageID, request.toolCallID, "question")
-    const form = await read(() => deps.client.form.get({ sessionID: child.id, formID: request.formID }, { signal }))
+    const receipt = deps.humanGate && await read(() => deps.humanGate!(request))
+    const form = receipt ? JSON.parse(JSON.stringify({ ...receipt.form, state: { status: "answered", answer: receipt.answer } })) as FormDetail
+      : await read(() => deps.client.form.get({ sessionID: child.id, formID: request.formID }, { signal }))
     const answers = observeAnswer(form, tool, request)
     let called: NativeObservationSource | undefined, answered: NativeObservationSource | undefined
     let aggregateID: string | undefined, seq = 0, bytes = 0, count = 0, synced = false
@@ -187,7 +194,8 @@ export async function verifyNativeDecisionEvidence(request: NativeDecisionEviden
         aggregateID = event.durable.aggregateID; seq = event.durable.seq; seenIDs.add(event.id)
         if (event.type !== "session.tool.called" && event.type !== "session.tool.success" && event.type !== "session.tool.failed") continue
         if (event.data.assistantMessageID !== request.messageID || event.data.id !== request.toolCallID) continue
-        if (event.data.executed !== true) throw new Error("native-question-not-executed")
+        // `executed` means provider-hosted execution, not local completion.
+        if (event.data.executed !== false) throw new Error("native-question-provider-executed")
         if (event.type === "session.tool.called") {
           if (called || answered || event.durable.version !== 1 || !equal(event.data.input, tool.state.input)) {
             throw new Error("native-question-call-conflict")
@@ -211,12 +219,21 @@ export async function verifyNativeDecisionEvidence(request: NativeDecisionEviden
     const currentChild = await read(() => deps.client.get({ sessionID: child.id }, { signal }))
     assertSession(currentChild, child.id)
     if (currentChild.parentID !== parent.id) throw new Error("native-session-family-mismatch")
-    const currentForm = await read(() => deps.client.form.get({ sessionID: child.id, formID: request.formID }, { signal }))
-    if (!equal(form, currentForm)) throw new Error("native-form-changed")
+    if (receipt) {
+      const currentReceipt = await read(() => deps.humanGate!(request))
+      if (!equal(receipt, currentReceipt) || receipt.state !== "settled" || receipt.messageID !== request.messageID
+        || receipt.toolCallID !== request.toolCallID || receipt.called.id !== called.id || receipt.called.seq !== called.seq
+        || receipt.answered?.id !== answered.id || receipt.answered.seq !== answered.seq) throw new Error("native-human-receipt-changed")
+    } else {
+      const currentForm = await read(() => deps.client.form.get({ sessionID: child.id, formID: request.formID }, { signal }))
+      if (!equal(form, currentForm)) throw new Error("native-form-changed")
+    }
     check()
-    result.status = "unqualified"
-    result.evidence = { ...provenance, durability: "unqualified", humanPrincipal: "unknown", toolCalled: called, toolAnswered: answered }
-    result.reasons.push("native-form-lifecycle-not-durable", "native-form-reply-principal-unavailable", "question-result-does-not-retain-form-id")
+    result.status = receipt ? "qualified" : "unqualified"
+    result.evidence = { ...provenance, durability: receipt ? "native-signed-receipt" : "unqualified",
+      humanPrincipal: receipt ? "codenomad-human" : "unknown", ...(receipt ? { humanReceiptID: receipt.identity } : {}),
+      toolCalled: called, toolAnswered: answered }
+    if (!receipt) result.reasons.push("native-form-lifecycle-not-durable", "native-form-reply-principal-unavailable", "question-result-does-not-retain-form-id")
   } catch {
     // Dispose this read's transport even if a revoked fence prevents iterator
     // cleanup. Local cancellation is not a native Form/session mutation.

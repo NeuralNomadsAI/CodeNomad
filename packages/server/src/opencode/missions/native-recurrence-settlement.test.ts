@@ -135,13 +135,13 @@ test("finite terminal observation keeps success strict and records admitted nati
 
   const childID = "ses_child", prompt = "Investigate", tool = { sessionID: childID, status: "completed" }
   rootMessages = [{ id: "msg_assistant", type: "assistant", data: JSON.stringify({ content: [{ type: "tool", id: "call_child",
-    name: "subagent", executed: true, state: { status: "completed", input: { prompt, agent: "build",
+    name: "subagent", executed: false, state: { status: "completed", input: { prompt, agent: "build",
       description: "Investigate" }, metadata: tool } }] }) }]
   events.splice(4, 1,
     { id: "evt_4", seq: 4, type: "session.tool.called.1", data: JSON.stringify({ sessionID: coordinatorSessionID,
-      assistantMessageID: "msg_assistant", id: "call_child", executed: true }) },
+      assistantMessageID: "msg_assistant", id: "call_child", executed: false }) },
     { id: "evt_5", seq: 5, type: "session.tool.success.2", data: JSON.stringify({ sessionID: coordinatorSessionID,
-      assistantMessageID: "msg_assistant", id: "call_child", executed: true, metadata: tool }) },
+      assistantMessageID: "msg_assistant", id: "call_child", executed: false, metadata: tool }) },
     { id: "evt_6", seq: 6, type: "session.execution.succeeded.1", data: JSON.stringify({ sessionID: coordinatorSessionID }) })
   currentHead = 6
   const childEvents = [

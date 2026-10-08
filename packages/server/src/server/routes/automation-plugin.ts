@@ -13,6 +13,8 @@ import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
 import { missionRecoveryRejection } from "../../missions/recovery-error"
+import { verifyMissionHumanAnswer } from "./mission-human-answer"
+import type { SettingsService } from "../../settings/service"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -21,6 +23,7 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
+  settings?: Pick<SettingsService, "getProfileScope">
 }
 
 interface DeveloperNativeStatus {
@@ -54,6 +57,12 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
+    if (body?.mode === "human-answer-verify") {
+      if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
+      try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
+        { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings }, lifetime.signal) }) }
+      catch { return reply.code(403).send({ error: "Human answer admission unavailable" }) }
+    }
     if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })

@@ -60,6 +60,35 @@ async function fixture(width = 1100, theme: "light" | "dark" = "light") {
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
 
+test("human answer origin follows the actual dock click/key input, never trusted script submission", async () => {
+  for (const action of ["dom-click", "request-submit", "pointer", "keyboard", "explicit-automation"] as const) {
+    const { page, errors } = await fixture()
+    try {
+      await page.evaluate(() => (window as any).fixture.ask())
+      await page.evaluate(() => {
+        (window as any).fixture.submitTrust = []
+        document.addEventListener("submit", event => (window as any).fixture.submitTrust.push(event.isTrusted), true)
+      })
+      await answer(page).fill(`Exact ${action} answer`)
+      const submit = page.locator('.interruption-dock button[type="submit"]:visible')
+      await submit.waitFor()
+      if (action === "dom-click") await submit.evaluate(element => (element as HTMLButtonElement).click())
+      else if (action === "request-submit") await submit.evaluate(element => (element as HTMLButtonElement).form!.requestSubmit())
+      else if (action === "keyboard") await answer(page).press("Enter")
+      else {
+        if (action === "explicit-automation") await page.evaluate(() => { (window as any).__codenomadAutomationDepth = 1 })
+        await submit.click()
+      }
+      await page.waitForFunction(() => (window as any).fixture.replies.length === 1)
+      const result = await page.evaluate(() => ({ reply: (window as any).fixture.replies[0], options: (window as any).fixture.replyOptions[0] }))
+      assert.deepEqual(result.reply.answer, { q0: `Exact ${action} answer` })
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.submitTrust), [true], `${action}: trusted submit alone proves nothing`)
+      assert.equal(result.options?.headers?.["x-codenomad-human-answer"], action === "pointer" || action === "keyboard" ? "1" : undefined, action)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  }
+})
+
 test("incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
   const { page, errors } = await fixture(393)
   try {

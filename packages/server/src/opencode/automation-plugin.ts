@@ -265,6 +265,22 @@ export function parseBrowserAction(input: unknown): BrowserAction {
   }
 }
 
+/** Fixed human-answer proof callback. The cookie exists only in this private
+ * transport envelope; native storage/model output never receives it. */
+export async function verifyHumanAnswerBridge(body: import("../missions/human-answer").HumanAnswerProof, proof: string): Promise<boolean> {
+  const { assertHumanAnswerFresh, humanAnswerProof } = await import("../missions/human-answer")
+  assertHumanAnswerFresh(body)
+  for (const registration of await registrations()) {
+    if (humanAnswerProof(body, registration.token) !== proof) continue
+    try {
+      const result = await callBridge(registration, { mode: "human-answer-verify", sessionID: body.sessionID, command: body })
+      assertHumanAnswerFresh(body)
+      return result.status === 200 && (result.body.result as { admitted?: unknown } | undefined)?.admitted === true
+    } catch { return false }
+  }
+  return false
+}
+
 async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const directories = automationBridgeDirectories()

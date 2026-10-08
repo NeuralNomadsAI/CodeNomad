@@ -18,7 +18,8 @@ import {
 import { buildActorContext, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
-import { resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
+import { resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
+import type { NativeHumanAnswerGate } from "./human-answer"
 import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
@@ -78,12 +79,30 @@ export class MissionControl {
     createManagedRoot?: MissionManagedRootCreation
     isActive?: () => boolean
     authorizeNativeReport?: MissionNativeReportAuthorization
+    humanGate?: NativeHumanAnswerGate
   }) {
     this.journal = new MissionJournal(options.storage, options.project.id, options.project.canonical, options.now)
   }
 
   snapshot(): Promise<MissionSnapshot> {
     return this.journal.snapshot()
+  }
+
+  private async verifyHumanDecision(mission: MissionMap, taskKey: string, sessionID: string,
+    call: import("./model").MissionNativeBinding, artifact: import("./model").MissionJsonValue | undefined): Promise<void> {
+    if (!this.options.humanGate) throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
+    const provenance = validateNativeDecisionArtifact({ contract: { missionID: mission.id, taskKey, generation: call.generation },
+      call, sessionID, artifact })
+    const session = await this.ownedSession(sessionID)
+    this.assertActive()
+    const receipt = await this.options.humanGate({ ...provenance, projectID: mission.projectID,
+      directory: session.location.directory, delegationToolName: "subagent" })
+    this.assertActive()
+    if (receipt.state !== "settled" || receipt.principal.kind !== "codenomad-human"
+      || receipt.binding.projectID !== mission.projectID || receipt.binding.sessionID !== sessionID
+      || receipt.binding.formID !== provenance.formID || receipt.messageID !== provenance.messageID
+      || receipt.toolCallID !== provenance.toolCallID || !isDeepStrictEqual(receipt.answer[provenance.fieldKey], provenance.answer))
+      throw new MissionControlError("Exact native human-decision receipt unavailable", "policy-unqualified")
   }
 
   /** A point-in-time readout only: no task result, prompt, notification or profile change. */
@@ -787,10 +806,11 @@ export class MissionControl {
       if (input.outcome === "blocked") throw new MissionControlError("A final mission outcome must be completed or failed", "invalid-final-outcome")
       if (input.outcome === "completed" && mission.template === "wayfinder"
         && mission.tasks.some(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
-        // Cached Forms and question outputs have no durable Form ID/principal
-        // producer in the supported ABI. Preserve evidence, never infer a human
-        // decision from model JSON or an originating-human grant lease.
-        throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
+        for (const task of mission.tasks.filter(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
+          const report = task.report
+          if (!report?.nativeCall) throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
+          await this.verifyHumanDecision(mission, task.key, report.sessionId, report.nativeCall, report.artifact)
+        }
       }
       if (mission.tasks.some(hasUnsettledNativeExecution)) {
         throw new MissionControlError("Native work needs an observed invocation end before the mission can finish", "outstanding-execution")
@@ -864,10 +884,9 @@ export class MissionControl {
           artifact: input.artifact, nativeDecision: { contract: { missionID: mission.id, taskKey: task.key, generation: native.call.generation },
             call: native.call, sessionID } }) }
         catch { throw new MissionControlError("Native decision report requires exact Form provenance", "invalid-report-contract") }
-        // The observation reader intentionally returns only unknown/unqualified.
-        // There is no authenticated durable human-reply producer to admit this
-        // completed decision. Do not replace it with a callback/boolean receipt.
-        throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
+        native.current()
+        await this.verifyHumanDecision(mission, task.key, sessionID, native.call, input.artifact)
+        native.current()
       }
       const previous = mission.reports.find(report => report.taskKey === task.key && sameNativeCall(report.nativeCall, native.call))
       if (previous) {

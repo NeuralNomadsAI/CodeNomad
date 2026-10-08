@@ -3,6 +3,7 @@ import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
 import { sdkManager } from "../lib/sdk-manager"
+import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -2047,14 +2048,16 @@ async function sendPermissionResponse(
   }
 }
 
-async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer): Promise<void> {
+async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer, interaction?: FormAnswerInteraction): Promise<void> {
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
+  const humanSubmit = form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
+  const options = formRequestOptions(form)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
     await getRootClient(instanceId).session.form.reply(
       { sessionID: form.sessionID, formID: form.id, answer },
-      formRequestOptions(form),
+      humanSubmit ? { ...options, headers: { ...options?.headers, "x-codenomad-human-answer": "1" } } : options,
     )
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)

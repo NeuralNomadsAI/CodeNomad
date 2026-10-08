@@ -114,7 +114,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
           return <div ref={editor} class="interruption-editor" hidden={!expanded() || current()?.key !== key} inert={!expanded() || current()?.key !== key}>
             <Show when={item().kind === "form"} fallback={<InterruptionPermission instanceId={props.instanceId} permission={item().payload as ReturnType<typeof getPermissionQueue>[number]} />}>
               <FormRequest form={item().payload as ReturnType<typeof getFormQueue>[number]}
-                onReply={answer => sendFormReply(props.instanceId, item().payload.id, answer)} onCancel={() => sendFormCancel(props.instanceId, item().payload.id)} />
+                onReply={(answer, interaction) => sendFormReply(props.instanceId, item().payload.id, answer, interaction)} onCancel={() => sendFormCancel(props.instanceId, item().payload.id)} />
             </Show>
           </div>
         }}</For>

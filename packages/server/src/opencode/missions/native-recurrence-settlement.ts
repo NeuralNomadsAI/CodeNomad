@@ -208,7 +208,8 @@ async function observeSettlement(provider: NativeRecurrenceAuthorityProvider,
       }
       if (event.type === "session.tool.called.1") {
         const id = event.data.id, messageID = event.data.assistantMessageID
-        if (typeof id !== "string" || typeof messageID !== "string" || event.data.executed !== true || tools.has(id))
+        // Native local tool calls carry executed:false; true is provider-hosted.
+        if (typeof id !== "string" || typeof messageID !== "string" || event.data.executed !== false || tools.has(id))
           rejectAuthority("observation-unavailable")
         tools.set(id, { seq: event.seq as number, messageID })
       }
@@ -220,7 +221,7 @@ async function observeSettlement(provider: NativeRecurrenceAuthorityProvider,
       const part = parts[0]
       if (!call || call.seq >= event.seq || event.type !== "session.tool.success.2" || parts.length !== 1
         || !object(part) || !object(part.state) || part.state.status !== "completed"
-        || event.data.executed !== true || part.executed !== true
+        || event.data.executed !== false || part.executed !== false
         || !same(event.data.metadata ?? null, part.state.metadata ?? null)) rejectAuthority("observation-unavailable")
       if (part.name === "subagent") {
         const metadata = event.data.metadata

@@ -7,6 +7,8 @@ import { enrollmentSchema, observeNativeManagedOwner } from "./native-managed-ow
 import { CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 import { nativeRecurrenceHandlers } from "./native-recurrence-create"
+import { HUMAN_ANSWER_RPC, type NativeHumanAnswerGate } from "../../missions/human-answer"
+import { acquireNativeHumanAnswers } from "./native-human-answer"
 
 export const MANAGED_OWNER_RPC_ID = "codenomad.missions.managed-owner"
 export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods: {
@@ -35,10 +37,20 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
+    const humanGate: NativeHumanAnswerGate = request => run(Effect.gen(function* () {
+      const answers = yield* acquireNativeHumanAnswers(ctx)
+      return yield* Effect.promise(() => answers.verify(request))
+    }).pipe(Effect.orDie))
     const nativeCtx = { ...ctx, rpc: withNativeRecurrenceRpc(ctx) }
+    yield* ctx.rpc.register(Rpc.define(HUMAN_ANSWER_RPC), {
+      binding: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.binding(input)) }).pipe(Effect.orDie),
+      reply: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.reply(input)) }).pipe(Effect.orDie),
+      reconcile: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.reconcile(input)) }).pipe(Effect.orDie),
+      verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
+    }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {
         try {
-          await run(fromPromise(promisePlugin(presenceDirectory, ready => { ownerReady = ready })).effect(nativeCtx))
+          await run(fromPromise(promisePlugin(presenceDirectory, ready => { ownerReady = ready }, humanGate)).effect(nativeCtx))
           try { await run(ctx.rpc.register(MANAGED_OWNER_RPC, { observe: () => Effect.scoped(
             Effect.gen(function* () {
               if (!ownerReady || !ownerRpcReady) return yield* Effect.fail(new Error("Native owner authority unavailable"))

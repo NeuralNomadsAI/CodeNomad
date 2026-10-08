@@ -20,6 +20,7 @@ import { controlOperationID } from "../../missions/receipt-identity"
 import { DateTime } from "effect"
 import type { NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
 import type { NativeRecurrenceOwner } from "./native-authority-provider"
+import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 
 type Owner = NativeRecurrenceOwner
 
@@ -31,6 +32,7 @@ type PassageInput = {
   /** Daemon-service lifetime, never the due Job's cancellable dispatch signal. */
   settlementSignal: AbortSignal
   beforeEffect(): Promise<() => true>; now?: () => number
+  humanGate?: NativeHumanAnswerGate
 }
 
 /** One due passage; durable operation reservations precede each native effect.
@@ -305,6 +307,7 @@ export async function reconcileNativeRecurrenceRoot(input: Omit<PassageInput, "b
   if (passage.missionID !== grant.missionID || passage.messageID !== grant.messageID) rejectAuthority("binding-mismatch")
   const control = new MissionControl({ project: { id: scope.projectID, canonical: scope.projectCanonical,
     location: { directory: provider.location.directory } }, storage: passage.storage, now: input.now,
+    humanGate: input.humanGate,
     sessions: { get: value => native.get(value, { signal: input.settlementSignal }),
       create: async () => rejectAuthority("authorization-blocked"),
       prompt: async () => rejectAuthority("authorization-blocked"),
