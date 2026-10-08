@@ -447,6 +447,55 @@ test("captured native tools/RPCs refuse after unload and all registrations dispo
   assert.equal((await f.journal.snapshot()).missions[0].reports.length, 0)
 })
 
+test("durable teardown drains both registrations, preserves failures, and never retries an unknown disposal", async () => {
+  for (const failing of ["codenomad.missions", CODENOMAD_MISSIONS_AUTHORITY_RPC.id]) {
+    const f = fixture()
+    const register = f.context.rpc.register
+    const wrapped = (async (definition: any, handlers: any) => {
+      const installed = await register(definition, handlers)
+      return { ...installed, dispose: async () => {
+        await installed.dispose()
+        if (definition.id === failing) throw new Error(`${failing} disposal failed`)
+      } }
+    }) as typeof register
+    const dispose = await setupDurableMissionsPlugin({ ...f.context, rpc: { register: wrapped } as unknown as DurableMissionsContext["rpc"] })
+    await assert.rejects(dispose(), /disposal failed/)
+    assert.equal(f.counts.disposed, 4, "map and authority registration disposals were both attempted")
+    await assert.rejects(dispose(), /disposal failed/)
+    assert.equal(f.counts.disposed, 4, "uncertain disposal is not replayed")
+  }
+})
+
+test("held context cannot mutate system or tools after disposal and is included in the drain", async t => {
+  for (const heldRead of [1, 2]) {
+    const f = fixture(); await f.seed(false, true)
+    const dispose = await setupDurableMissionsPlugin(f.context)
+    let release!: () => void, entered!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const reading = new Promise<void>(resolve => { entered = resolve })
+    t.after(() => release())
+    const scan = f.storage.scan.bind(f.storage)
+    let reads = 0
+    f.storage.scan = async options => {
+      if (++reads === heldRead) { entered(); await gate }
+      return scan(options)
+    }
+    const event = { sessionID: "ses_actor", system: [] as Array<{ type: "text"; text: string }>,
+      tools: { mission_delegate: {}, mission_revise: {}, mission_briefing: {} } }
+    const context = f.hooks[0](event)
+    await reading
+    assert.equal(event.system.length, heldRead === 1 ? 0 : 1)
+    let drained = false
+    const closing = dispose().then(() => { drained = true })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(drained, false, "context work is included in the disposal drain")
+    release()
+    await Promise.all([context, closing])
+    assert.equal(event.system.length, heldRead === 1 ? 0 : 1)
+    assert.deepEqual(Object.keys(event.tools).sort(), ["mission_briefing", "mission_delegate", "mission_revise"])
+  }
+})
+
 test("owned-root checks veto foreign delegation before journal writes; authorized revision/finalization use real controls", async t => {
   const f = fixture(); const saved = await f.seed(true)
   const dispose = await setupDurableMissionsPlugin(f.context, f.host); t.after(dispose); await f.provision()
