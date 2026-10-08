@@ -67,7 +67,9 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
           return true
         }, signal))
       }))
-      if (outcome === "unknown" || outcome === "pending" || outcome === "inactive") return outcome
+      // A healthy accepted passage stays pending until its terminal archive;
+      // polling it never admits another effect, but must not retire tomorrow's Job.
+      if (outcome === "unknown" || outcome === "inactive") return outcome
       yield* Effect.sleep(60_000 - Date.now() % 60_000)
     }
   })).pipe(Effect.updateContext((_origin: Context.Context<never>) => Context.empty()))

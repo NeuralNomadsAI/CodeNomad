@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import test from "node:test"
 import { Location } from "@opencode/schema/location"
-import { Context, Effect, Exit, Fiber, RcMap, Schema, Scope } from "effect"
+import { Context, Effect, Exit, Fiber, Option, RcMap, Schema, Scope } from "effect"
 import { cancelNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
 
 const jobTag = Context.Service<never, unknown>("@opencode/Job")
@@ -50,13 +50,13 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
     const due = async (_graph: Context.Context<never>, current: () => true) => {
       dueCalls++
       assert.equal(current(), true)
-      return "pending" as const
+      return "unknown" as const
     }
 
     await Effect.runPromise(Effect.scoped(RcMap.get(map, ref)))
     await Effect.runPromise(RcMap.invalidate(map, ref))
     await Effect.runPromiseWith(app)(startNativeRecurrenceClock(input, due))
-    assert.equal(await Effect.runPromise([...jobs.values()][0]!.run), "pending")
+    assert.equal(await Effect.runPromise([...jobs.values()][0]!.run), "unknown")
     assert.equal(loads, 2)
     assert.equal(dueCalls, 1)
     await Effect.runPromiseWith(app)(startNativeRecurrenceClock(input, due))
@@ -102,5 +102,17 @@ test("a daemon Job reacquires its exact Location after the originating graph is 
     await Effect.runPromise(Fiber.interrupt(sleeper))
     assert(Exit.isFailure(await Effect.runPromise(Fiber.await(sleeper))),
       "ordinary not-due passages wait interruptibly instead of pinning the origin Scope")
+
+    let passagePending!: () => void
+    const reserved = new Promise<void>(resolve => { passagePending = resolve })
+    await Effect.runPromiseWith(app)(startNativeRecurrenceClock({ ...input, epoch: 6 }, async () => {
+      passagePending()
+      return "pending"
+    }))
+    const nextDay = Effect.runFork([...jobs.values()][5]!.run)
+    await reserved
+    assert(Option.isNone(await Effect.runPromise(Fiber.await(nextDay).pipe(Effect.timeoutOption(20)))),
+      "an accepted pending passage keeps tomorrow's service clock, without a second admission")
+    await Effect.runPromise(Fiber.interrupt(nextDay))
   } finally { await Effect.runPromise(Scope.close(scope, Exit.void)) }
 })
