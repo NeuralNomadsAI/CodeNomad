@@ -53,6 +53,14 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
 - The scoped one-shot safety review against `d0724eca` found no actionable
   P0/P1/P2 regression in the plugin wrapper, presence cleanup or read-only route.
   This is not the final gatekeeper review of the assembled recurring product.
+- At `2985f090`, the broader `opencode/missions/*.test.ts` run explicitly
+  excluded `presence-native.test.ts` and selected no private native fixture.
+  It finished **163 pass / 1 fail**, with no skips or cancellations. The due
+  admission test exceeded its existing 30-second phase deadline under concurrent
+  suite load (`native-recurrence-due.test.ts:210`); targeted passes do not erase
+  this failure. Repeated synchronous Git-family reads are under investigation,
+  without relaxing that deadline or calling a lower-concurrency rerun acceptance.
+  Receipt: `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c2b5378001zfigd0lRoWOMeX.out`.
 - Upstream 2.0.24's active-Location Form/Permission/Shell lists materialize before
   the 1,024-result check. Unknown/over-bound coverage remains pending; no inactive
   worktree scan is used. Failed, interrupted, background and unrecognised effect
