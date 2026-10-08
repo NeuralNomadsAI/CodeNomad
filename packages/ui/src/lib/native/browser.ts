@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import type { RuntimeEnvironment } from "../runtime-env"
 import type { BrowserEmulationPreset } from "./browser-emulation"
+import { historyUrl, type NativeBrowserHistory } from "../browser-history"
 
 export interface BrowserTargetBounds {
   x: number
@@ -57,6 +58,21 @@ export async function updateTauriBrowserTarget(
 
 export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string): Promise<void> {
   await invoke("browser_target_action", { payload: { registrationId, action, url } })
+}
+
+export async function readBrowserHistory(registrationId: string, guestWebContentsId?: number): Promise<NativeBrowserHistory> {
+  const value = window.electronAPI?.browserTargetHistory
+    ? await window.electronAPI.browserTargetHistory(guestWebContentsId!)
+    : await invoke<NativeBrowserHistory>("browser_target_action", { payload: { registrationId, action: "history" } })
+  if (!value || !Array.isArray(value.entries) || value.entries.length > 32 || !Number.isInteger(value.index)
+    || value.index < -1 || value.index >= value.entries.length
+    || value.entries.some(entry => !entry || !Number.isSafeInteger(entry.id) || !historyUrl(entry.url))) throw new Error("Native browser history is unavailable")
+  return value
+}
+
+export async function goToBrowserHistoryEntry(registrationId: string, entryId: number, guestWebContentsId?: number): Promise<void> {
+  if (window.electronAPI?.browserTargetHistory) { await window.electronAPI.browserTargetHistory(guestWebContentsId!, entryId); return }
+  await invoke("browser_target_action", { payload: { registrationId, action: "history-go", entryId } })
 }
 
 export async function unregisterTauriBrowserTarget(registrationId: string): Promise<void> {
