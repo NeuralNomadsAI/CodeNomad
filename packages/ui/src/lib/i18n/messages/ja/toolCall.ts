@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "検索結果が見つかりませんでした。",
+  "toolCall.websearch.provider": "ウェブ検索プロバイダー",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "入れ子のツール呼び出し",
+  "toolCall.execute.more": "さらに {count} 件の呼び出しを省略しました。",
+  "toolCall.execute.truncated": "ネイティブ出力が切り詰められました。完全な出力：",
   "toolCall.pending.waitingToRun": "実行待ち...",
   "toolCall.error.label": "エラー:",
 
@@ -56,6 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "ディレクトリ一覧を取得中...",
 
   "toolCall.renderer.bash.title.timeout": "タイムアウト: {timeout}",
+  "toolCall.output.truncated": "[表示用に出力を省略しました。完全な出力にアクセスするにはコピーしてください]",
+  "toolCall.output.tooLarge": "構造化出力が大きすぎるため表示を省略しました。",
+  "toolCall.task.steps.truncated": "最新の{count}件の手順を表示しています。以前の手順は省略されています。",
   "toolCall.renderer.read.detail.offset": "オフセット: {offset}",
   "toolCall.renderer.read.detail.limit": "上限: {limit}",
 
@@ -151,4 +160,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} 件のファイル)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} 件のファイル)",
   "toolCall.applyPatch.fileFallback": "ファイル {number}",
+  "toolCall.permission.diff.previous": "差分の前のページ",
+  "toolCall.permission.diff.next": "差分の次のページ",
+  "toolCall.permission.diff.page": "{total} ページ中 {page} ページ",
+  "toolCall.permission.diff.reviewRequired": "すべてのページを確認するか、パッチ全体をコピーすると承認できます。",
 } as const

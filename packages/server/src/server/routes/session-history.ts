@@ -54,9 +54,15 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       // just its lexical ancestor or native project ID. Never expose provenance
       // or counts/excerpts from an independent nested clone to the browser.
       const owned = [] as typeof output.sessions
+      // Ownership is location-scoped. Reuse it only within this request, never
+      // across inventory changes or independent clones sharing a project ID.
+      const locationKey = (value: { directory: string; workspaceID?: string }) => JSON.stringify([value.directory, value.workspaceID])
+      const ownership = new Map<string, boolean>()
       for (const candidate of output.sessions) {
         if (input.sessionID && candidate.sessionID !== input.sessionID) throw new Error("Invalid history owner")
-        if (await manager.ownsLocation(request.params.id, readLocationRef(candidate), client)) owned.push(candidate)
+        const key = locationKey(candidate)
+        if (!ownership.has(key)) ownership.set(key, await manager.ownsLocation(request.params.id, readLocationRef(candidate), client))
+        if (ownership.get(key)) owned.push(candidate)
       }
       const ownedIDs = new Set(owned.map(candidate => candidate.sessionID))
       const next = output.cursor ? { directory, page: output.cursor, binding }

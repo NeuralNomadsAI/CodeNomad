@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, extractDiffPayload, getRelativePath, getToolName, isToolStateCompleted, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, extractDiffPayload, getRelativePath, getToolName, isToolStateCompleted, limitToolOutputForRender, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { getDiffToolSearchText } from "../search-text"
 
@@ -22,7 +22,7 @@ export const editRenderer: ToolRenderer = {
 
     const diffPayload = extractDiffPayload(toolName(), state)
     if (diffPayload) {
-      return { language: "diff", copyText: diffPayload.diffText, suppressInnerHeader: false }
+      return { language: "diff", getCopyText: () => diffPayload.diffText, suppressInnerHeader: false }
     }
 
     const { metadata } = readToolStatePayload(state)
@@ -30,7 +30,7 @@ export const editRenderer: ToolRenderer = {
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
     const copyText = diffText || fallback
     if (!copyText) return undefined
-    return { language: "diff", copyText, wrapToggle: true, suppressInnerHeader: true }
+    return { language: "diff", getCopyText: () => copyText, wrapToggle: true, suppressInnerHeader: true }
   },
   renderBody({ toolState, toolName, renderDiff, renderMarkdown }) {
     const state = toolState()
@@ -44,7 +44,8 @@ export const editRenderer: ToolRenderer = {
     const { metadata } = readToolStatePayload(state)
     const diffText = typeof metadata.diff === "string" ? metadata.diff : null
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
-    const content = ensureMarkdownContent(diffText || fallback, "diff", true)
+    const value = diffText || fallback
+    const content = ensureMarkdownContent(value ? limitToolOutputForRender(value) : value, "diff", true)
     if (!content) return null
 
     return renderMarkdown({ content, size: "large", disableHighlight: state.status === "running" })

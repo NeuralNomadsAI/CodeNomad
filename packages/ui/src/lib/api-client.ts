@@ -1,7 +1,9 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
+  PermissionReceiptPage,
   PruneResult,
   BinaryValidationResult,
   ConfigFileContentRequest,
@@ -19,7 +21,12 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   PreviewSession,
+  PluginActivationMutationRequest,
+  PluginActivationMutationResponse,
+  PluginControlLocation,
+  PluginControlsSnapshot,
   ProviderUsageResponse,
+  ProviderAccountsSnapshot,
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
@@ -40,6 +47,7 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceCreateResponse,
   WorkspaceDescriptor,
+  WorkspacePendingRequestsResponse,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
 
@@ -181,6 +189,11 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
+    const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
+    if (cursor) params.set("cursor", cursor)
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
+  },
   fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
       method: "POST", body: JSON.stringify({ sessionID, target }), signal,
@@ -215,8 +228,8 @@ export const serverApi = {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
   },
 
-  fetchProviderUsage(providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
-    const params = new URLSearchParams()
+  fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
+    const params = new URLSearchParams({ instanceId, sessionId })
     if (modelId) params.set("modelId", modelId)
     const query = params.toString()
     return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
@@ -358,6 +371,23 @@ export const serverApi = {
       body: JSON.stringify(body),
     })
   },
+  getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+    const params = new URLSearchParams({ directory: location.directory })
+    if (location.workspaceID) params.set("workspaceID", location.workspaceID)
+    return request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal })
+  },
+  getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
+  },
+  setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
+  },
+  setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
+    return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    })
+  },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
     return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
       method: "POST",
@@ -367,26 +397,33 @@ export const serverApi = {
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
+  getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
+    const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
+    for (const directory of optionalDirectories) query.append("optionalDirectories", directory)
+    return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
+  },
   cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
     return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
       method: "POST",
       body: JSON.stringify(payload),
     })
   },
-  listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
+  listWorkspaceFiles(id: string, relativePath = ".", directory?: string, signal?: AbortSignal): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
-    return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`)
+    if (directory) params.set("directory", directory)
+    return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`, { signal })
   },
   searchWorkspaceFiles(
     id: string,
     query: string,
-    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal },
+    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal; directory?: string },
   ): Promise<WorkspaceFileSearchResponse> {
     const trimmed = query.trim()
     if (!trimmed) {
       return Promise.resolve([])
     }
     const params = new URLSearchParams({ q: trimmed })
+    if (opts?.directory) params.set("directory", opts.directory)
     if (opts?.limit) {
       params.set("limit", String(opts.limit))
     }
@@ -399,6 +436,10 @@ export const serverApi = {
     )
     return opts?.signal ? retryFileSearch(search, opts.signal) : search()
   },
+  previewWorkspaceFile(id: string, relativePath: string, directory: string, signal?: AbortSignal): Promise<WorkspaceFileResponse> {
+    const params = new URLSearchParams({ path: relativePath, directory })
+    return request(`/api/workspaces/${encodeURIComponent(id)}/files/preview?${params}`, { signal })
+  },
   readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
     if (options?.encoding) {
@@ -408,8 +449,9 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
-  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string }): Promise<void> {
+  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string }): Promise<void> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.directory) params.set("directory", options.directory)
     if (options?.worktree && options.worktree !== "root") {
       params.set("worktree", options.worktree)
     }
@@ -426,6 +468,16 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
       { signal },
     )
+  },
+  fetchGitHistory(id: string, slug: string, offset = 0, head?: string, signal?: AbortSignal): Promise<GitHistoryPage> {
+    const query = new URLSearchParams({ offset: String(offset), ...(head ? { head } : {}) })
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history?${query}`, { signal })
+  },
+  fetchGitCommit(id: string, slug: string, commit: string, signal?: AbortSignal): Promise<GitCommitDetails> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}`, { signal })
+  },
+  fetchGitCommitDiff(id: string, slug: string, commit: string, path: string, signal?: AbortSignal): Promise<GitCommitDiff> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}?${new URLSearchParams({ path })}`, { signal })
   },
   fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
     const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
@@ -465,6 +517,14 @@ export const serverApi = {
     )
   },
 
+  getProviderAccounts(instanceId: string, integrationID: string, directory: string): Promise<ProviderAccountsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}?${new URLSearchParams({ directory })}`)
+  },
+  setProviderAccountSelection(instanceId: string, integrationID: string, directory: string, enabled: boolean): Promise<ProviderAccountsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}`, {
+      method: "PUT", body: JSON.stringify({ directory, enabled }),
+    })
+  },
   fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
     return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)
   },

@@ -2,6 +2,7 @@ import { For, Show, type Component } from "solid-js"
 import { Expand } from "lucide-solid"
 import type { Attachment } from "../../types/attachment"
 import { useI18n } from "../../lib/i18n"
+import { getInlineFileUsage } from "./device-file-selection"
 
 interface PromptAttachmentsBarProps {
   attachments: Attachment[]
@@ -17,9 +18,13 @@ const PromptAttachmentsBar: Component<PromptAttachmentsBarProps> = (props) => {
       <For each={props.attachments}>
         {(attachment) => {
           const isText = attachment.source.type === "text"
+          const detail = () => attachment.source.type !== "file" ? undefined : /^data:/i.test(attachment.url)
+            ? t("promptInput.attachFiles.deviceDetail", { name: attachment.filename, bytes: getInlineFileUsage([attachment]).bytes })
+            : t("promptInput.attachFiles.projectDetail", { path: attachment.source.path })
           return (
-            <div class="attachment-chip" title={attachment.source.type === "file" ? attachment.source.path : undefined}>
+            <div class="attachment-chip" title={detail()}>
               <span class="font-mono">{attachment.display}</span>
+              <Show when={detail()}><span class="text-xs text-secondary">{detail()}</span></Show>
               <Show when={isText}>
                 <button
                   type="button"

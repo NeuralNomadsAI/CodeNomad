@@ -8,8 +8,7 @@ import {
   type JSX,
   type Setter,
 } from "solid-js"
-import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
-import ArrowBackIcon from "@suid/icons-material/ArrowBack"
+import { ArrowRight, ArrowLeft } from "lucide-solid"
 
 import type { TranslateParams } from "../../../lib/i18n"
 
@@ -119,11 +118,11 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   }
 
   const leftAppBarButtonIcon = () => {
-    return createComponent(ArrowForwardIcon, { fontSize: "small" })
+    return createComponent(ArrowRight, { size: 20, "aria-hidden": true })
   }
 
   const rightAppBarButtonIcon = () => {
-    return createComponent(ArrowBackIcon, { fontSize: "small" })
+    return createComponent(ArrowLeft, { size: 20, "aria-hidden": true })
   }
 
   const handleLeftAppBarButtonClick = () => {

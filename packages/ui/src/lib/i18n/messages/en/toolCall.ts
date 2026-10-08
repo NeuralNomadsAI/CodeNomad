@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "No search results found.",
+  "toolCall.websearch.provider": "Web search provider",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "Nested tool calls",
+  "toolCall.execute.more": "{count} additional calls omitted.",
+  "toolCall.execute.truncated": "Native output truncated. Full output:",
   "toolCall.pending.waitingToRun": "Waiting to run...",
   "toolCall.error.label": "Error:",
 
@@ -29,6 +35,10 @@ export const toolCallMessages = {
   "toolCall.diff.enableWordWrap": "Enable word wrap",
   "toolCall.diff.disableWordWrap": "Disable word wrap",
   "toolCall.diff.copyPatch": "Copy patch",
+  "toolCall.permission.diff.previous": "Previous diff page",
+  "toolCall.permission.diff.next": "Next diff page",
+  "toolCall.permission.diff.page": "Page {page} of {total}",
+  "toolCall.permission.diff.reviewRequired": "Review every page or copy the complete patch to enable approval.",
 
   "toolCall.diagnostics.title": "Diagnostics",
   "toolCall.diagnostics.ariaLabel": "Diagnostics",
@@ -56,6 +66,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Listing directory...",
 
   "toolCall.renderer.bash.title.timeout": "Timeout: {timeout}",
+  "toolCall.output.truncated": "[Output truncated for rendering; copy to access the full output]",
+  "toolCall.output.tooLarge": "Structured output omitted from rendering because it is too large.",
+  "toolCall.task.steps.truncated": "Showing the most recent {count} steps; older steps are omitted.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 

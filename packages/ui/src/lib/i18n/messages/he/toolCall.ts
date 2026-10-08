@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "לא נמצאו תוצאות חיפוש.",
+  "toolCall.websearch.provider": "ספק חיפוש ברשת",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "קריאות כלים מקוננות",
+  "toolCall.execute.more": "{count} קריאות נוספות הוסתרו.",
+  "toolCall.execute.truncated": "הפלט המקורי קוצר. הפלט המלא:",
   "toolCall.pending.waitingToRun": "ממתין להרצה...",
   "toolCall.error.label": "שגיאה:",
 
@@ -56,6 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "מפרט ספרייה...",
 
   "toolCall.renderer.bash.title.timeout": "פסק זמן: {timeout}",
+  "toolCall.output.truncated": "[הפלט קוצר לצורך תצוגה; יש להעתיק כדי לגשת לפלט המלא]",
+  "toolCall.output.tooLarge": "הפלט המובנה לא מוצג מכיוון שהוא גדול מדי.",
+  "toolCall.task.steps.truncated": "מוצגים {count} השלבים האחרונים; שלבים קודמים הושמטו.",
   "toolCall.renderer.read.detail.offset": "היסט: {offset}",
   "toolCall.renderer.read.detail.limit": "מגבלה: {limit}",
 
@@ -151,4 +160,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} קובץ)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} קבצים)",
   "toolCall.applyPatch.fileFallback": "קובץ {number}",
+  "toolCall.permission.diff.previous": "עמוד ההבדלים הקודם",
+  "toolCall.permission.diff.next": "עמוד ההבדלים הבא",
+  "toolCall.permission.diff.page": "עמוד {page} מתוך {total}",
+  "toolCall.permission.diff.reviewRequired": "יש לעיין בכל העמודים או להעתיק את התיקון המלא כדי לאפשר אישור.",
 } as const

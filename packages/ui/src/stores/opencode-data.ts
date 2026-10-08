@@ -8,12 +8,14 @@ import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
 import { getLogger } from "../lib/logger"
+import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
 
 const log = getLogger("session")
 
 type DataEntry = {
   data: Data
   emit: (event: OpenCodeEvent) => void
+  fencePendingReads: (sessionId: string) => void
   syncMessages: (sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) => Promise<boolean>
   syncAuthoritative: (sessionId: string, isCurrent: () => boolean) => Promise<boolean>
   dispose: () => void
@@ -22,6 +24,21 @@ type DataEntry = {
 type QueuedTranscriptEvent = {
   event: OpenCodeEvent
   onApplied?: (data: Data) => void
+  publication?: TranscriptPublication
+}
+
+type TranscriptPublication = (input: {
+  instanceId: string
+  sessionId: string
+  data: Data
+  events: readonly OpenCodeEvent[]
+}) => void
+
+// Opt-in publications observe a reduced chunk, not individual event states.
+// Legacy onDeferred callbacks remain per-event ordering barriers.
+export type OpenCodeDataEventAdmission = {
+  deferred: boolean
+  publication?: TranscriptPublication
 }
 
 type TranscriptEntry = {
@@ -37,6 +54,7 @@ type TranscriptEntry = {
   freshEntry?: DataEntry
   retryCount: number
   retryTimer?: ReturnType<typeof setTimeout>
+  retireWhenDrained: boolean
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -46,6 +64,8 @@ const MAX_TRANSCRIPT_MESSAGES = MESSAGE_WINDOW_PAGE_SIZE
 // ponytail: overflow collapses all native deltas; one quiet, revision-stable fresh snapshot becomes authority.
 const MAX_TRANSCRIPT_EVENT_QUEUE = 4096
 const MAX_ROTATION_RESERVE = 64
+const TRANSCRIPT_REPLAY_BUDGET_MS = 8
+const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
@@ -56,6 +76,20 @@ const messageRevisions = new Map<string, number>()
 const fullDataRevisions = new Map<string, number>()
 const instanceGenerations = new Map<string, number>()
 const instanceDataRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
+const unobservedCompactions = new Set<string>()
+type CompactionDeltaContext = {
+  instanceId: string
+  directory: string
+  onDeferred?: (data: Data) => void
+  onResynced?: (data: Data) => void
+  publication?: TranscriptPublication
+}
+const coalescedCompactionEvents = new WeakSet<object>()
+const compactionDeltas = createCompactionDeltaBuffer<CompactionDeltaContext>((event, context) => {
+  coalescedCompactionEvents.add(event)
+  applyOpenCodeDataEvent(context.instanceId, context.directory, event, context.onDeferred, context.onResynced, false,
+    context.publication ? { deferred: false, publication: context.publication } : undefined)
+})
 let nextInstanceGeneration = 0
 
 function messageRevisionKey(instanceId: string, sessionId: string): string {
@@ -129,6 +163,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
+                  // A current native page can already contain buffered text.
+                  // Reduce it before taking read authority, never append it
+                  // again to a page that was fetched after delta admission.
+                  compactionDeltas.flush(instanceId, input.sessionID)
                   const snapshot = messageSnapshots.get(input.sessionID)
                   if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
                   const revision = eventRevisions.get(input.sessionID) ?? 0
@@ -136,6 +174,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
+                  compactionDeltas.flush(instanceId, input.sessionID)
                   if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) continue
                   return response
                 }
@@ -165,6 +204,9 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       data,
       emit(details: OpenCodeEvent) {
         emit(details)
+      },
+      fencePendingReads(sessionId: string) {
+        eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) {
         messageSnapshots.set(sessionId, messages)
@@ -227,6 +269,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     resyncing: false,
     resyncGeneration: 0,
     retryCount: 0,
+    retireWhenDrained: false,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -443,7 +486,9 @@ async function resyncAuthoritativeTranscript(
     previous.dispose()
 
     transcript.onResynced?.(fresh.data)
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
+    retireDrainedTranscript(instanceId, sessionId, transcript)
   } catch {
     if (!isResyncCurrent(instanceId, sessionId, transcript, generation, fresh)) return
     transcript.resyncing = false
@@ -467,25 +512,63 @@ function enqueueTranscriptEvent(
   }
 }
 
-function drainTranscriptQueue(
+async function drainTranscriptQueue(
   instanceId: string,
   sessionId: string,
   transcript: TranscriptEntry,
   entry: DataEntry,
   generation: number,
-): boolean {
+): Promise<boolean> {
+  const current = () => isRotationCurrent(instanceId, sessionId, transcript, entry, generation)
   while (transcript.queue.length > 0) {
-    if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
-    const queued = transcript.queue[0]
-    const runningCompactions = entry.data.session.message.list(sessionId)
-      .filter((message) => message.type === "compaction" && message.status === "running").length
-    if (eventMayAppendMessage(queued.event, runningCompactions)
-      && entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES) return true
-    transcript.queue.shift()
-    entry.emit(queued.event)
-    if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
-    queued.onApplied?.(entry.data)
-    if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
+    if (!current()) return false
+    const started = performance.now()
+    let count = 0
+    let needsRotation = false
+    let publication: TranscriptPublication | undefined
+    let events: OpenCodeEvent[] = []
+    const publish = () => {
+      if (publication && events.length) publication({ instanceId, sessionId, data: entry.data, events })
+      events = []
+      return current()
+    }
+    while (transcript.queue.length && count < MAX_TRANSCRIPT_REPLAY_CHUNK) {
+      if (!current()) return false
+      const queued = transcript.queue[0]
+      // A different publication or an event-specific callback is an ordering
+      // barrier: never run its side effects against a later event's state.
+      if (queued.onApplied || queued.publication !== publication) {
+        if (!publish()) return false
+        publication = queued.publication
+        if (count && performance.now() - started >= TRANSCRIPT_REPLAY_BUDGET_MS) break
+        // Publication can admit more events or collapse the queue.
+        if (transcript.queue[0] !== queued) return false
+      }
+      const messages = entry.data.session.message.list(sessionId)
+      const runningCompactions = messages.filter((message) => message.type === "compaction" && message.status === "running").length
+      if (eventMayAppendMessage(queued.event, runningCompactions) && messages.length >= MAX_TRANSCRIPT_MESSAGES) {
+        needsRotation = true
+        break
+      }
+      transcript.queue.shift()
+      entry.emit(queued.event)
+      if (!current()) return false
+      if (queued.publication) events.push(queued.event)
+      if (queued.onApplied) {
+        queued.onApplied(entry.data)
+        if (!current()) return false
+        if (!publish()) return false
+      }
+      count += 1
+      if (performance.now() - started >= TRANSCRIPT_REPLAY_BUDGET_MS) break
+    }
+    if (!publish()) return false
+    if (!transcript.queue.length) return true
+    // A real task boundary lets input/timers run, including hidden windows.
+    // Microtasks (including SDK sync) do not provide that opportunity.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    if (!current()) return false
+    if (needsRotation) return true
   }
   return true
 }
@@ -520,7 +603,7 @@ async function rotateTranscript(
         () => isRotationCurrent(instanceId, sessionId, transcript, entry, generation),
       )
       if (!synced || !isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return
-      if (!drainTranscriptQueue(instanceId, sessionId, transcript, entry, generation)) return
+      if (!await drainTranscriptQueue(instanceId, sessionId, transcript, entry, generation)) return
       if (transcript.queue.length === 0) break
     }
   } catch {
@@ -534,6 +617,7 @@ async function rotateTranscript(
   } finally {
     if (transcript.rotationGeneration === generation) transcript.rotating = false
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== entry) entry.dispose()
+    retireDrainedTranscript(instanceId, sessionId, transcript)
   }
 }
 
@@ -569,7 +653,10 @@ export function applyOpenCodeDataEvent(
   event: OpenCodeEvent,
   onDeferred?: (data: Data) => void,
   onResynced?: (data: Data) => void,
+  skipUnobservedCompaction = false,
+  admission?: OpenCodeDataEventAdmission,
 ): Data {
+  if (admission) admission.deferred = false
   if (event.type === "server.connected") destroyOpenCodeData(instanceId)
   const primary = ensureData(instanceId, directory)
   // This native reducer owns transcript/inbox projection only. CodeNomad's
@@ -577,6 +664,20 @@ export function applyOpenCodeDataEvent(
   // with sync:false, feeding these events to createData starts HTTP refreshes.
   if (!/^(session|permission|form)\./.test(event.type)) return primary.data
   const sessionId = eventSessionId(event)
+  const coalesced = coalescedCompactionEvents.delete(event)
+  if (typeof sessionId === "string" && !coalesced) {
+    if (event.type === "session.compaction.ended" || event.type === "session.compaction.failed"
+      || event.type === "session.deleted" || event.type === "session.revert.committed") {
+      // Terminal events replace summary text. Destructive events must not let
+      // a delayed fragment resurrect a removed or invalidated compaction.
+      compactionDeltas.cancel(instanceId, sessionId)
+      unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
+    } else if (event.type !== "session.compaction.delta") {
+      // A second start or another same-session event observes preceding text
+      // in native order; unrelated sessions never force a flush.
+      compactionDeltas.flush(instanceId, sessionId)
+    }
+  }
   if (event.type === "session.deleted" && typeof sessionId === "string") {
     const key = messageRevisionKey(instanceId, sessionId)
     const transcript = transcriptEntries.get(key)
@@ -591,32 +692,69 @@ export function applyOpenCodeDataEvent(
     fullDataRevisions.delete(key)
     return transcript?.entry.data ?? primary.data
   }
+  if (typeof sessionId === "string" && !coalesced) {
+    const key = messageRevisionKey(instanceId, sessionId)
+    fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
+    if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
+    if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
+    if (skipUnobservedCompaction && event.type.startsWith("session.compaction.") && !transcriptEntries.has(key)) {
+      // No native reducer/visible transcript is observing this session. The
+      // next activation loads authoritative messages instead of storing deltas.
+      if (event.type === "session.compaction.started") unobservedCompactions.add(key)
+      if (event.type === "session.compaction.ended" || event.type === "session.compaction.failed") unobservedCompactions.delete(key)
+      return primary.data
+    }
+  }
   const transcript = typeof sessionId === "string"
     ? ensureTranscript(instanceId, sessionId, directory)
     : undefined
   const entry = transcript?.entry ?? primary
   if (transcript && typeof sessionId === "string") {
-    const key = messageRevisionKey(instanceId, sessionId)
-    fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
-    if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
-    if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
+    if (event.type === "session.compaction.started") unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
+    // A new execution must not inherit a preceding idle event's deferred cleanup.
+    if (event.type === "session.execution.started" || eventMayAppendMessage(event)) transcript.retireWhenDrained = false
   }
   if (transcript && typeof sessionId === "string") {
     if (onResynced) transcript.onResynced = onResynced
+    if (event.type === "session.compaction.delta" && unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))) {
+      // Activation during a previously unobserved compaction has no start row
+      // in the SDK reducer. Recover its exact native summary instead of making
+      // up a start or appending a delta to a REST page that already includes it.
+      transcript.preserveNativePageOnResync = true
+      collapseTranscriptQueue(instanceId, sessionId, transcript)
+      if (admission) admission.deferred = true
+      return transcript.entry.data
+    }
     if (transcript.needsAuthoritativeResync || transcript.resyncing) {
       collapseTranscriptQueue(instanceId, sessionId, transcript)
+      if (admission) admission.deferred = true
       return transcript.entry.data
+    }
+    if (event.type === "session.compaction.delta" && !coalesced) {
+      // Admission fences both CodeNomad and SDK reads immediately, even though
+      // the reactive payload is reduced only once per interval.
+      entry.fencePendingReads(sessionId)
+      if (admission) admission.deferred = true
+      compactionDeltas.push(instanceId, sessionId, event, { instanceId, directory, onDeferred, onResynced, publication: admission?.publication })
+      return entry.data
     }
     if (transcript.rotating
       || (eventMayAppendMessage(event, transcript.entry.data.session.message.list(sessionId)
         .filter((message) => message.type === "compaction" && message.status === "running").length)
         && transcript.entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES)) {
-      enqueueTranscriptEvent(instanceId, sessionId, transcript, { event, onApplied: onDeferred })
+      if (admission) admission.deferred = true
+      enqueueTranscriptEvent(instanceId, sessionId, transcript, { event, onApplied: onDeferred, publication: admission?.publication })
       startTranscriptRotation(instanceId, sessionId, transcript)
       return transcript.entry.data
     }
   }
   entry.emit(event)
+  if (coalesced) {
+    onDeferred?.(entry.data)
+    if (!transcript || (isTranscriptCurrent(instanceId, sessionId!, transcript) && transcript.entry === entry)) {
+      admission?.publication?.({ instanceId, sessionId: sessionId!, data: entry.data, events: [event] })
+    }
+  }
   return entry.data
 }
 
@@ -625,6 +763,8 @@ export function getOpenCodeMessageRevision(instanceId: string, sessionId: string
 }
 
 export function invalidateOpenCodeSessionContent(instanceId: string, sessionId: string): void {
+  compactionDeltas.cancel(instanceId, sessionId)
+  unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
   const key = messageRevisionKey(instanceId, sessionId)
   bumpMutationRevision(key)
   messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
@@ -692,7 +832,48 @@ export function projectOpenCodeMessages(
   }
 }
 
-export function destroyOpenCodeData(instanceId: string): void {
+function retireDrainedTranscript(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!transcript.retireWhenDrained || !isTranscriptCurrent(instanceId, sessionId, transcript)
+    || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
+    || transcript.retryTimer || transcript.queue.length) return
+  destroyOpenCodeData(instanceId, sessionId)
+}
+
+export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent): void {
+  const sessionId = eventSessionId(event)
+  if (sessionId === undefined) return
+  if (event.type === "session.deleted") destroyOpenCodeData(instanceId, sessionId)
+  if (event.type !== "session.idle") return
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (!transcript) return
+  // The caller has projected the synchronous page. Queued terminal updates and
+  // overflow recovery must publish their final page before releasing its reducer.
+  transcript.retireWhenDrained = true
+  retireDrainedTranscript(instanceId, sessionId, transcript)
+}
+
+export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
+  if (sessionId !== undefined) {
+    compactionDeltas.cancel(instanceId, sessionId)
+    unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
+    const key = messageRevisionKey(instanceId, sessionId)
+    const transcript = transcriptEntries.get(key)
+    if (transcript) {
+      invalidateTranscript(transcript)
+      transcript.entry.dispose()
+      transcriptEntries.delete(key)
+    }
+    // Payload lifetime is shorter than request authority: a pending native page
+    // must never see a pre-mutation revision again after idle/eviction. These
+    // scalar fences are released on deletion or a fenced instance-generation reset.
+    fullDataRevisions.delete(key)
+    instanceDataRevision(instanceId)[1]((current) => current + 1)
+    return
+  }
+  compactionDeltas.clear(instanceId)
+  for (const key of unobservedCompactions) {
+    if (key.startsWith(`${instanceId}\0`)) unobservedCompactions.delete(key)
+  }
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()
   entries.delete(instanceId)

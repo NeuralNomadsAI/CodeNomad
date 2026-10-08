@@ -1,6 +1,7 @@
 import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode/client"
 import { isSessionBusyError } from "@opencode/client"
 import type { Attachment } from "../types/attachment"
+import { promptSkills } from "../lib/prompt-skills"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
@@ -12,11 +13,12 @@ import { canonicalContent } from "../../../server/src/opencode/session-pruning/r
 import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
 import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
@@ -187,6 +189,7 @@ async function sendMessage(
   const textPartId = createId("prt")
 
   const preparedPrompt = preparePromptDisplayText(prompt, attachments)
+  const skills = promptSkills(attachments, preparedPrompt.promptToSend, options.restoredPayload)
   const restoredDisplayText = options.restoredPayload?.metadata?.displayText
   if (typeof restoredDisplayText === "string" && options.restoredPayload?.text.startsWith(restoredDisplayText)) {
     preparedPrompt.promptToSend += options.restoredPayload.text.slice(restoredDisplayText.length)
@@ -234,6 +237,8 @@ async function sendMessage(
           filename: att.filename,
           synthetic: true,
         })
+      } else if (source.type === "skill") {
+        optimisticParts.push({ id: createId("prt"), type: "skill", skillId: source.id, name: source.name })
       } else if (source.type === "agent") {
         const mention = getAgentMention(preparedPrompt.promptToSend, source.name)
           ?? remapMention(options.restoredPayload?.agents?.find((agent) => agent.name === source.name)?.mention)
@@ -282,6 +287,7 @@ async function sendMessage(
       isEphemeral: true,
       clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
     })
+    store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
     store.markSendPending(messageId)
   }
 
@@ -299,12 +305,7 @@ async function sendMessage(
     text: preparedPrompt.promptToSend,
     ...(files.length > 0 ? { files } : {}),
     ...(agents.length > 0 ? { agents } : {}),
-    ...(options.restoredPayload?.skills ? {
-      skills: options.restoredPayload.skills.flatMap((skill) => {
-        const mention = remapMention(skill.mention)
-        return skill.mention && !mention ? [] : [{ id: skill.id, ...(mention ? { mention } : {}) }]
-      }),
-    } : {}),
+    ...(skills.length ? { skills } : {}),
     ...(options.restoredPayload ? { metadata: { ...options.restoredPayload.metadata, displayText: prompt } } : {}),
     ...(options.delivery ? { delivery: options.delivery } : {}),
     ...(options.delivery === "queue" ? { resume: false } : {}),
@@ -402,12 +403,11 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   log.info("abortSession", { instanceId, sessionId })
 
   try {
-    const descendantIds = getDescendantSessions(instanceId, sessionId)
-      .filter((session) => isSessionBusy(instanceId, session.id))
-      .map((session) => session.id)
-    const sessionIds = [...descendantIds, sessionId]
-    log.info("session.interrupt", { instanceId, sessionIds })
-    await Promise.all(sessionIds.map((targetSessionId) => client.session.interrupt({ sessionID: targetSessionId })))
+    // Match the TUI: interrupt the selected execution, not its session tree.
+    // Cancelling background children can publish completion notifications that
+    // wake this parent again after its interruption has already settled.
+    log.info("session.interrupt", { instanceId, sessionId })
+    await client.session.interrupt({ sessionID: sessionId, resume: true })
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)
@@ -559,7 +559,11 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
 }
 
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
-  await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+  await admitSessionAction(instanceId, sessionId, async () => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+  })
 }
 
 function applyUpdatedMessage(instanceId: string, sessionId: string, source: SessionMessageInfo): void {

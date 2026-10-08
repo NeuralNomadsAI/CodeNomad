@@ -27,6 +27,7 @@ export async function forwardRuntimeRequest(args: {
   args.reply.raw.once("close", disconnect)
   if (args.reply.raw.destroyed || args.request.raw.aborted) controller.abort()
   try {
+    controller.signal.throwIfAborted()
     const headers = new Headers()
     for (const [key, value] of Object.entries(args.headers)) {
       if (typeof value === "string") headers.set(key, value)

@@ -188,7 +188,7 @@ test("an unverified newer major is not blocked but cannot be downgraded by resta
   assert.equal((await service.getStatus()).canRestart, false)
   assert.equal((await service.start()).serviceState, "ready")
   assert.equal((await service.getStatus()).versionAssessment, "untested")
-  await assert.rejects(service.start(true), /not an older runtime/)
+  await assert.rejects(service.start(true), /cannot safely replace/)
 })
 
 test("optional upgrades retain explicit activation for an admitted but older daemon", async () => {
@@ -212,6 +212,90 @@ test("optional upgrades retain explicit activation for an admitted but older dae
   assert.equal(restarts, 0)
   assert.equal((await service.start(true)).serviceState, "ready")
   assert.equal(restarts, 1)
+})
+
+test("same-version troubleshooting restart is explicit for host and WSL; reload never restarts", async () => {
+  for (const binaryPath of ["/fixture/opencode", "\\\\wsl.localhost\\Ubuntu\\usr\\bin\\opencode"]) {
+    let pid = 123, restarts = 0, reloads = 0, reconnects = 0
+    const endpoint = () => {
+      const value: Endpoint = { url: "http://127.0.0.1:9876" }
+      rememberRuntime(value, { version: "2.0.22", pid, discovery: "info" })
+      return value
+    }
+    const service = new OpenCodeUpdateService(deps({
+      resolveBinary: () => ({ path: binaryPath, label: "Fixture" }),
+      probeBinary: () => ({ valid: true, version: "2.0.22" }), resolveLatestVersion: async () => "2.0.22",
+      lifecycle: async () => ({ discover: async () => endpoint(), ensure: async () => { assert.fail("retain the running daemon") },
+        restart: async () => { restarts++; pid++; return endpoint() } }),
+      upgradeBinary: async () => { assert.fail("restart must not install a version") },
+      reload: async () => { reloads++ }, reconnect: async () => { reconnects++ },
+    }))
+    const status = await service.getStatus()
+    assert.equal(status.serviceState, "ready")
+    assert.equal(status.updateAvailable, false)
+    assert.equal(status.canRestart, true)
+    assert.equal(status.canReload, true)
+    await service.start()
+    await service.reload()
+    assert.equal(restarts, 0)
+    assert.equal(pid, 123, "configuration reload preserves the process")
+    assert.equal(reloads, 1)
+    const restarted = await service.start(true)
+    assert.equal(restarts, 1)
+    assert.equal(pid, 124)
+    assert.equal(reconnects, 2)
+    assert.equal(restarted.serviceState, "ready")
+    assert.equal(restarted.canRestart, true, "troubleshooting stays available after a restart")
+  }
+})
+
+test("troubleshooting restart refuses unknown identity/builds and a newer daemon", async () => {
+  for (const version of [undefined, "custom-build", "2.0.23"]) {
+    const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+    if (version) rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
+    const service = new OpenCodeUpdateService(deps({
+      probeBinary: () => ({ valid: true, version: "2.0.22" }),
+      lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { assert.fail("no fallback start") },
+        restart: async () => { assert.fail("must not stop an unverified or newer daemon") } }),
+    }))
+    assert.equal((await service.getStatus()).canRestart, false)
+    await assert.rejects(service.start(true), /cannot safely replace/)
+  }
+})
+
+test("same-version restart coalesces, excludes reload, and never retries a failed mutation", async () => {
+  let restarts = 0, reconnects = 0
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+  rememberRuntime(endpoint, { version: "2.0.22", pid: 123, discovery: "info" })
+  const service = new OpenCodeUpdateService(deps({
+    probeBinary: () => ({ valid: true, version: "2.0.22" }),
+    lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { assert.fail("no fallback start") },
+      restart: async () => { restarts++; entered(); await gate; throw new Error("restart failed") } }),
+    reconnect: async () => { reconnects++ },
+  }))
+  const first = service.start(true)
+  assert.equal(service.start(true), first)
+  await reached
+  await assert.rejects(service.reload(), /action is in progress/)
+  assert.equal(restarts, 1)
+  release()
+  await assert.rejects(first, /restart failed/)
+  assert.equal(restarts, 1)
+  assert.equal(reconnects, 0)
+})
+
+test("a lifecycle without restart cannot expose or silently emulate it", async () => {
+  const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+  rememberRuntime(endpoint, { version: "2.0.22", pid: 123, discovery: "info" })
+  const service = new OpenCodeUpdateService(deps({
+    probeBinary: () => ({ valid: true, version: "2.0.22" }),
+    lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { assert.fail("no fallback start") } }),
+  }))
+  assert.equal((await service.getStatus()).canRestart, false)
+  await assert.rejects(service.start(true), /restart unavailable/)
 })
 
 test("explicit configuration reload is admitted, fenced and serialized with service actions", async () => {
@@ -277,29 +361,29 @@ test("beta version comparison remains numeric", () => {
   assert.equal(compareOpenCodeVersionStrings("0.0.0-beta-10000", "0.0.0-beta-9999") > 0, true)
 })
 
-test("2.0.7 through 2.0.16 remain usable; recommendation only offers an optional update", async () => {
-  for (const version of ["2.0.7", "2.0.8", "2.0.9", "2.0.10", "2.0.11", "2.0.12", "2.0.13", "2.0.14", "2.0.15", "2.0.16"]) {
+test("2.0.7 through 2.0.24 remain usable; recommendation only offers an optional update", async () => {
+  for (const version of ["2.0.7", "2.0.8", "2.0.9", "2.0.10", "2.0.11", "2.0.12", "2.0.13", "2.0.14", "2.0.15", "2.0.16", "2.0.17", "2.0.18", "2.0.19", "2.0.20", "2.0.21", "2.0.22", "2.0.23", "2.0.24"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
-      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.0.16",
+      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.0.24",
       lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
     }))
     const status = await service.start()
     assert.equal(status.minimumVersion, "2.0.7")
-    assert.equal(status.recommendedVersion, "2.0.16")
+    assert.equal(status.recommendedVersion, "2.0.24")
     assert.equal(status.state, "ready")
     assert.equal(status.serviceState, "ready")
-    assert.equal(status.versionAssessment, version === "2.0.16" ? "tested" : "untested", "only the current recommendation is release-qualified")
+    assert.equal(status.versionAssessment, version === "2.0.24" ? "tested" : "untested", "only the current recommendation is release-qualified")
     assert.equal(status.incompatibilityReason, undefined)
-    assert.equal(status.canUpgrade, version !== "2.0.16")
+    assert.equal(status.canUpgrade, version !== "2.0.24")
     assert.equal(status.canRestart, false)
   }
 })
 
 test("a current daemon remains usable through an older selected discovery CLI", async () => {
   const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
-  rememberRuntime(endpoint, { version: "2.0.16", pid: 123, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.0.24", pid: 123, discovery: "info" })
   const service = new OpenCodeUpdateService(deps({
     probeBinary: () => ({ valid: true, version: "2.0.3" }),
     lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),

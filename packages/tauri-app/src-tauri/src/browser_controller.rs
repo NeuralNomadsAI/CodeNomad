@@ -8,6 +8,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Window};
 
+#[cfg(windows)]
+#[path = "browser_emulation.rs"]
+mod emulation;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserTargetRegistration {
@@ -39,6 +43,7 @@ pub(crate) struct BrowserTargetAction {
     registration_id: String,
     action: String,
     url: Option<String>,
+    preset: Option<String>,
 }
 
 #[derive(Clone)]
@@ -69,6 +74,7 @@ struct OpenClaim {
 
 #[derive(Default)]
 struct Inner {
+    emulation_profiles: HashMap<String, String>,
     registrations: HashMap<String, Registration>,
     renderer_versions: HashMap<String, u64>,
     refs: HashMap<String, HashMap<String, i64>>,
@@ -80,6 +86,7 @@ struct Inner {
 
 #[derive(Clone)]
 pub(crate) struct BrowserController {
+    emulation_lock: Arc<Mutex<()>>,
     inner: Arc<(Mutex<Inner>, Condvar)>,
     profile: Arc<std::path::PathBuf>,
     registration_sequence: Arc<AtomicU64>,
@@ -88,6 +95,7 @@ pub(crate) struct BrowserController {
 impl BrowserController {
     pub(crate) fn new(profile: std::path::PathBuf) -> Self {
         Self {
+            emulation_lock: Arc::new(Mutex::new(())),
             inner: Arc::new((Mutex::new(Inner::default()), Condvar::new())),
             profile: Arc::new(profile),
             registration_sequence: Arc::new(AtomicU64::new(1)),
@@ -152,6 +160,8 @@ impl BrowserController {
                 PhysicalSize::new(input.bounds.width, input.bounds.height),
             )
             .map_err(|error| format!("failed to create browser preview: {error}"))?;
+        #[cfg(windows)]
+        crate::windows_browser_accelerators::bind(&webview);
         if let Err(error) = install_webview2_handlers(
             &webview,
             self.clone(),
@@ -296,6 +306,7 @@ impl BrowserController {
             .get_webview(&registration.webview_label)
             .ok_or_else(|| "Browser preview is no longer available".to_string())?;
         match input.action.as_str() {
+            "emulate" => self.emulate(app, window_label, &input),
             "back" => webview
                 .eval("history.back()")
                 .map_err(|error| error.to_string()),
@@ -334,6 +345,7 @@ impl BrowserController {
             return Err("Browser target belongs to another window".to_string());
         }
         let registration = inner.registrations.remove(registration_id).unwrap();
+        inner.emulation_profiles.remove(registration_id);
         inner.refs.remove(registration_id);
         inner.navigation_versions.remove(registration_id);
         inner.page_load_expectations.remove(registration_id);

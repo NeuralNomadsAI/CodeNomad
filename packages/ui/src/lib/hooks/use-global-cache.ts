@@ -1,6 +1,8 @@
 import { type Accessor, createMemo } from "solid-js"
 import {
+  type CacheAuthority,
   type CacheEntryParams,
+  captureCacheAuthority,
   getCacheEntry,
   setCacheEntry,
   clearCacheScope,
@@ -14,6 +16,7 @@ import {
  * automatically fall back to the global buckets.
  */
 export function useGlobalCache(params: UseGlobalCacheParams): GlobalCacheHandle {
+  let pendingAuthority: CacheAuthority | undefined
   const resolvedEntry = createMemo<CacheEntryParams>(() => {
     const instanceId = normalizeId(resolveValue(params.instanceId))
     const sessionId = normalizeId(resolveValue(params.sessionId))
@@ -35,10 +38,12 @@ export function useGlobalCache(params: UseGlobalCacheParams): GlobalCacheHandle 
 
   return {
     get<T>() {
-      return getCacheEntry<T>(resolvedEntry())
+      const entry = resolvedEntry()
+      return getCacheEntry<T>(entry)
     },
-    set<T>(value: T | undefined) {
-      setCacheEntry(resolvedEntry(), value)
+    set<T>(value: T | undefined, authority?: CacheAuthority) {
+      setCacheEntry(resolvedEntry(), value, authority ?? pendingAuthority)
+      pendingAuthority = undefined
     },
     clearScope() {
       clearCacheScope(scopeParams())
@@ -53,6 +58,9 @@ export function useGlobalCache(params: UseGlobalCacheParams): GlobalCacheHandle 
     },
     params() {
       return resolvedEntry()
+    },
+    authority() {
+      return pendingAuthority = captureCacheAuthority(resolvedEntry())
     },
   }
 }
@@ -80,9 +88,10 @@ interface UseGlobalCacheParams {
 
 interface GlobalCacheHandle {
   get<T>(): T | undefined
-  set<T>(value: T | undefined): void
+  set<T>(value: T | undefined, authority?: CacheAuthority): void
   clearScope(): void
   clearSession(): void
   clearInstance(): void
   params(): CacheEntryParams
+  authority(): CacheAuthority
 }

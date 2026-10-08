@@ -11,6 +11,10 @@ export class RemoteWindowRegistry {
 
   constructor(private readonly cleanupProxySession: (sessionId: string) => void) {}
 
+  resolve(sender: BrowserWindow["webContents"]): BrowserWindow | undefined {
+    return [...this.records.values()].find(record => !record.window.isDestroyed() && record.window.webContents === sender)?.window
+  }
+
   serialize<T>(profileId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.operations.get(profileId) ?? Promise.resolve()
     const result = previous.catch(() => {}).then(operation)

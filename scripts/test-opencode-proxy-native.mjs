@@ -9,6 +9,7 @@ import { tsImport } from "tsx/esm/api"
 // Called only by the isolated native fixture; no discovery or user storage.
 export async function testNativeProxy({ client, baseUrl, root, authorization, runtimeFetch, connection, exercise }) {
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
+  const { PROMPT_INLINE_FILE_LIMITS } = await tsImport("../packages/server/src/api-types.ts", import.meta.url)
   const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
   const { createInstanceFetch } = await tsImport("../packages/ui/src/lib/sdk-manager.ts", import.meta.url)
   const app = Fastify()
@@ -52,6 +53,12 @@ export async function testNativeProxy({ client, baseUrl, root, authorization, ru
     assert.ok(Array.isArray((await proxy.permission.request.list({ location })).data))
     for (let index = 0; index < 3; index++) created.push(await proxy.session.create({ location }))
     const sessionID = created[0].id
+    for (const parentID of [sessionID, "ses_foreign_parent"]) {
+      const rejected = await app.inject({ method: "POST", url: "/workspaces/native/instance/api/session",
+        payload: { parentID, location } })
+      assert.equal(rejected.statusCode, 403, "Native parent creation must not bypass workspace authority")
+    }
+    console.log("PASS: native parent-create variant stays closed through the production proxy; ordinary root creation remains available")
     await proxy.session.update({ sessionID, title: "Stable proxy fixture" })
     assert.equal((await proxy.session.get({ sessionID })).title, "Stable proxy fixture")
     const page = await proxy.session.list({ directory: root, limit: 1 })
@@ -79,6 +86,16 @@ export async function testNativeProxy({ client, baseUrl, root, authorization, ru
       }
     }
     await exercise?.(proxy, sessionID)
+    const inlineSessionID = created[1].id
+    const inlineFile = Buffer.alloc(PROMPT_INLINE_FILE_LIMITS.maxFileBytes, 0x61).toString("base64")
+    await proxy.session.prompt({
+      sessionID: inlineSessionID,
+      text: "Acknowledge the attached transport fixture.",
+      files: [{ name: "inline-limit.txt", uri: `data:text/plain;base64,${inlineFile}` }],
+    })
+    await proxy.session.wait({ sessionID: inlineSessionID }, { signal: AbortSignal.timeout(60_000) })
+    assert((await proxy.message.list({ sessionID: inlineSessionID, limit: 20 })).data.some(message => message.type === "user"))
+    console.log(`PASS: ${PROMPT_INLINE_FILE_LIMITS.maxFileBytes}-byte inline file through real proxy and OpenCode endpoint`)
     // Export remains a direct native read; it is deliberately not added to the
     // guarded UI allowlist merely for this fixture.
     const exported = await client.session.export({ sessionID })

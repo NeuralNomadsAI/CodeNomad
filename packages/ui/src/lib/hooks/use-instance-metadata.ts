@@ -29,7 +29,7 @@ function metadataMatchesLocation(metadata: Instance["metadata"] | undefined, loc
 
 function hasMetadataLoaded(metadata?: Instance["metadata"], location?: LocationRef): boolean {
   if (!metadata) return false
-  if (metadata.project === undefined || metadata.mcpStatus === undefined || metadata.plugins === undefined) return false
+  if (metadata.project === undefined || metadata.mcpStatus === undefined) return false
   return !location || metadataMatchesLocation(metadata, location)
 }
 
@@ -56,31 +56,20 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
   request.promise = (async () => {
     try {
       const requestLocation = toRequestLocation(location)
-      const [projectResult, projectsResult, mcpResult, pluginResult] = await Promise.allSettled([
+      const [projectResult, projectsResult, mcpResult] = await Promise.allSettled([
         loadInstanceProjectMetadata(instance, options),
         client.project.list(),
         client.mcp.list({ location: requestLocation }, requestLocationOptions(location)),
-        client.plugin.list({ location: requestLocation }, requestLocationOptions(location)),
       ])
 
       const currentProject = getInstanceMetadata(instance.id)?.project
       const listedProject = currentProject && projectsResult.status === "fulfilled"
         ? projectsResult.value.find((project) => project.id === currentProject.id)
         : undefined
-      const plugins = pluginResult.status === "fulfilled"
-        ? pluginResult.value.data.flatMap((plugin) => {
-            const status = plugin.state?.status ?? (plugin as unknown as { status?: string }).status
-            return status === "active" && typeof plugin.id === "string" && !plugin.id.startsWith("opencode.")
-              ? [plugin.id]
-              : []
-          })
-        : undefined
-
       const latestMetadata = getInstanceMetadata(instance.id) ?? currentMetadata
       const updates: Instance["metadata"] = { ...(latestMetadata ?? {}) }
       if (latestMetadata && !metadataMatchesLocation(latestMetadata, location)) {
         updates.mcpStatus = undefined
-        updates.plugins = undefined
       }
 
       if (projectResult.status === "fulfilled" && currentProject && listedProject?.vcs) {
@@ -89,10 +78,6 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
 
       if (mcpResult.status === "fulfilled") {
         updates.mcpStatus = mcpResult.value
-      }
-
-      if (pluginResult.status === "fulfilled") {
-        updates.plugins = plugins ?? []
       }
 
       if (!updates?.version && instance.binaryVersion) {

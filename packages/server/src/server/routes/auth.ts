@@ -98,7 +98,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.post("/api/auth/login", async (request, reply) => {
     const body = LoginSchema.parse(request.body ?? {})
-    const ok = deps.authManager.validateLogin(body.username, body.password)
+    const ok = await deps.authManager.validateLogin(body.username, body.password)
     if (!ok) {
       reply.code(401).send({ error: "Invalid credentials" })
       return
@@ -147,7 +147,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     const body = PasswordSchema.parse(request.body ?? {})
     try {
-      const status = deps.authManager.setPassword(body.password)
+      const status = await deps.authManager.setPassword(body.password)
       reply.send({ ok: true, ...status })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

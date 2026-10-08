@@ -4,7 +4,7 @@ import { createEffect, createRoot } from "solid-js"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data.ts"
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -18,6 +18,15 @@ function deferred<T>() {
     reject = fail
   })
   return { promise, resolve, reject }
+}
+
+async function waitForReplay(done: () => boolean): Promise<void> {
+  // Replay now crosses macrotask boundaries; a single setImmediate only
+  // observes an intermediate chunk, not necessarily the settled projection.
+  for (let turn = 0; turn < 500 && !done(); turn++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  }
+  assert.ok(done(), "cooperative transcript replay did not settle")
 }
 
 function stubAuthoritativeSession(client: any, sessionId: string, messages: () => Promise<any>) {
@@ -207,6 +216,7 @@ describe("OpenCode data projection", () => {
         assert.ok(data.session.message.list(sessionId).length <= 200)
       }
 
+      await waitForReplay(() => Boolean(messageStoreBus.getOrCreate(instanceId).getMessage("live-204")))
       const ids = messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)
       assert.equal(ids.length, 200)
       assert.equal(ids.includes("live-0"), false)
@@ -363,7 +373,7 @@ describe("OpenCode data projection", () => {
         } as any)
         assert.ok(data.session.message.list(sessionId).length <= 200)
       }
-      await new Promise<void>((resolve) => setImmediate(resolve))
+      await waitForReplay(() => data.session.message.list(sessionId).at(-1)?.id === "m0999")
 
       const messages = data.session.message.list(sessionId) as any[]
       assert.ok(messages.length <= 200)
@@ -412,7 +422,7 @@ describe("OpenCode data projection", () => {
           data: { sessionID: sessionId, assistantMessageID: "m201", agent: "build", model: { providerID: "provider", id: "model" } },
         } as any, () => { deferredApplications += 1 })
       })
-      await new Promise<void>((resolve) => setImmediate(resolve))
+      await waitForReplay(() => deferredApplications === 2)
 
       const ids = data.session.message.list(sessionId).map((message) => message.id)
       assert.equal(deferredApplications, 2)
@@ -430,6 +440,7 @@ describe("OpenCode data projection", () => {
       const sessionId = "session"
       const targetId = "z-target"
       const store = messageStoreBus.getOrCreate(instanceId)
+      let mutationApplied = false
       const applyProjection = (data: ReturnType<typeof applyOpenCodeDataEvent>) => {
         projectOpenCodeMessages(instanceId, sessionId, data)
         if (mutation === "cancel") store.removeMessage(targetId, sessionId)
@@ -456,9 +467,9 @@ describe("OpenCode data projection", () => {
         data = applyOpenCodeDataEvent(instanceId, "/work", mutation === "cancel"
           ? { id: "cancel", type: "session.inbox.cancelled", created: 402, data: { sessionID: sessionId, inboxID: targetId } } as any
           : { id: "revert", type: "session.revert.committed", created: 402, data: { sessionID: sessionId, to: targetId } } as any,
-        applyProjection)
+        (next) => { applyProjection(next); mutationApplied = true })
         applyProjection(data)
-        await new Promise<void>((resolve) => setImmediate(resolve))
+        await waitForReplay(() => mutationApplied)
 
         assert.equal(data.session.message.get(sessionId, targetId), undefined)
         assert.equal(store.getMessage(targetId), undefined)
@@ -1123,6 +1134,29 @@ describe("OpenCode data projection", () => {
       const message = store.getMessage(messageId)
       assert.deepEqual(message?.partIds, [`${messageId}-text`])
       assert.equal((message?.parts[`${messageId}-text`]?.data as any)?.text, "ping")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("keeps another session's live reducer after a terminal event", () => {
+    const instanceId = "opencode-data-session-isolation"
+    const event = (sessionID: string, type: string, data: Record<string, unknown> = {}) => ({
+      id: `${sessionID}-${type}`, type, created: 1,
+      data: { sessionID, assistantMessageID: `${sessionID}-assistant`, ...data },
+    } as any)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.step.started", {
+        agent: "build", model: { providerID: "provider", id: "model" },
+      }))
+      const idle = event("idle", "session.idle")
+      applyOpenCodeDataEvent(instanceId, "/work", idle)
+      finishOpenCodeDataEvent(instanceId, idle)
+      applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.started"))
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.delta", { ordinal: 0, delta: "kept" }))
+      projectOpenCodeMessages(instanceId, "active", data)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("active-assistant")?.parts["active-assistant-text-0"]?.data as any)?.text, "kept")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)

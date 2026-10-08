@@ -1,4 +1,16 @@
 /* Shared density contract for dialogs, popovers, and floating windows. */
+.window-shell[data-draggable] { z-index: 50; overflow-y: auto; }
+.window-shell[data-draggable] [data-window-drag-handle] {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  background: var(--surface-base);
+}
+
 :is(.modal-surface, .window-shell) {
   --window-header-height: var(--chrome-height);
   --window-control-height: var(--control-height-sm);

@@ -6,12 +6,22 @@ import type {
   Preferences,
   RecentFolder,
 } from "./config/schema"
-import type { OpenCodeEvent } from "@opencode/client"
+import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
+export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
  * These types are consumed by both the CLI implementation and any UI clients.
  */
+
+export const PROMPT_INLINE_FILE_LIMITS = {
+  maxFileBytes: 5 * 1024 * 1024,
+  maxFiles: 10,
+  maxTotalBytes: 20 * 1024 * 1024,
+  // Covers the aggregate raw-byte budget after base64 expansion plus JSON metadata.
+  maxRequestBodyBytes: 32 * 1024 * 1024,
+} as const
 
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
@@ -61,9 +71,33 @@ export type WorkspaceCreateResponse = WorkspaceDescriptor & {
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
 
+/** Only successful exact-directory coverage may remove local interruptions. */
+export interface WorkspacePendingRequestLocation {
+  location: { directory: string }
+  permissions: PermissionRequest[]
+  forms: FormInfo[]
+}
+
+export type WorkspacePendingRequestsResponse = { supported: false } | {
+  supported: true
+  directories: Array<{
+    directory: string
+    status: "ok"
+    locations: WorkspacePendingRequestLocation[]
+  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }
+    // An optional historical hint is outside current ownership; never empty queue authority.
+    | { directory: string; status: "excluded"; locations?: never }>
+}
+
 export interface WorkspaceDeleteResponse {
   id: string
   status: WorkspaceStatus
+}
+
+export interface ProviderAccountsSnapshot {
+  supported: boolean
+  enabled: boolean
+  logins: Record<string, string>
 }
 
 export interface ProviderUsageWindow {
@@ -84,6 +118,7 @@ export interface ProviderUsageResponse {
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
+  unavailableReason?: "native-credential-api-unavailable"
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -180,6 +215,7 @@ export interface WorktreeGitDiffResponse {
   before: string
   after: string
   isBinary?: boolean
+  image?: import("./git-history-types").GitImageDiff
 }
 
 export interface WorktreeGitDiffRequest {
@@ -288,6 +324,101 @@ export interface ConfigFileContentRequest {
   contents: string
 }
 
+export type PluginControlScope = "global" | "project"
+export type WebSearchSelection = string | false | null
+export interface WebSearchSettingsSnapshot {
+  location: PluginControlLocation
+  effective: WebSearchSelection
+  scopes: Array<{ scope: PluginControlScope; path: string; selection: WebSearchSelection }>
+}
+export interface WebSearchSettingsMutation {
+  location: PluginControlLocation
+  scope: PluginControlScope
+  provider: WebSearchSelection
+}
+export type PluginConfigScope = PluginControlScope | "other" | "virtual"
+
+export interface PluginControlLocation {
+  directory: string
+  workspaceID?: string
+}
+
+export type PluginRuntimeSource =
+  | { type: "builtin" }
+  | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }
+  | { type: "local"; path: string }
+  | { type: "sdk" }
+
+export interface PluginRuntimeInventoryEntry {
+  key: string
+  id?: string
+  source: PluginRuntimeSource
+  features: { server?: true; tui?: true; rpc?: true }
+  state: { status: "active" } | { status: "failed"; error: string; ref?: string }
+}
+
+export interface PluginConfiguredRule {
+  selector: string
+  enabled: boolean
+  scope: PluginConfigScope
+  path?: string
+  order: number
+  entryIndex: number
+}
+
+export interface PluginConfiguredSource {
+  target: string
+  scope: PluginConfigScope
+  path?: string
+  entryIndex: number
+  hasOptions: boolean
+}
+
+export type PluginScopeRuleState = "default" | "enabled" | "disabled"
+
+export interface PluginActivationControl {
+  id: string
+  runtime?: PluginRuntimeInventoryEntry
+  /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
+  builtin: boolean
+  effective: PluginScopeRuleState
+  global: PluginScopeRuleState
+  project: PluginScopeRuleState
+  controllingRule?: PluginConfiguredRule
+}
+
+export interface PluginControlTarget {
+  scope: PluginControlScope
+  path: string
+  exists: boolean
+}
+
+export interface PluginControlsSnapshot {
+  location: PluginControlLocation
+  runtime: PluginRuntimeInventoryEntry[]
+  configured: {
+    rules: PluginConfiguredRule[]
+    sources: PluginConfiguredSource[]
+  }
+  controls: PluginActivationControl[]
+  targets: PluginControlTarget[]
+}
+
+export interface PluginActivationMutationRequest {
+  location: PluginControlLocation
+  pluginId: string
+  scope: PluginControlScope
+  enabled: boolean
+}
+
+export interface PluginActivationMutationResponse {
+  snapshot: PluginControlsSnapshot
+  rule: string
+  target: PluginControlTarget
+  changed: boolean
+  reloadPending: boolean
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
@@ -368,6 +499,8 @@ export interface BinaryUpdateRequest {
 
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
 export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
+export const PENDING_RECONCILIATION_HEADER = "x-codenomad-pending-reconciliation" as const
+export const PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS = 30_000
 
 export interface BinaryValidationResult {
   valid: boolean
@@ -504,6 +637,25 @@ export type WorkspaceEventType =
   | "instance.eventStatus"
   | "yolo.stateChanged"
   | "yolo.autoAccepted"
+  | "permission.receiptsChanged"
+
+export interface PermissionReceipt {
+  requestId: string
+  sessionId: string
+  action?: string
+  resources: string[]
+  requestMessage?: string
+  source?: { messageId: string; callId: string }
+  decision: "once" | "always" | "reject"
+  reason?: string
+  origin: "codenomad" | "yolo" | "native"
+  resolvedAt: number
+}
+
+export interface PermissionReceiptPage {
+  receipts: PermissionReceipt[]
+  next?: string
+}
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -521,6 +673,7 @@ export type WorkspaceEventPayload =
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
+  | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
 
 export interface NetworkAddress {
   ip: string
@@ -574,6 +727,8 @@ export interface ServerMeta {
   /** Reachable direct-access addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
+  /** CodeNomad backend OS and Node runtime architecture, never the UI or OpenCode host. */
+  system?: { platform: string; arch: string }
   ui?: UiMeta
   support?: SupportMeta
   /** Optional update info (dev channel only). */

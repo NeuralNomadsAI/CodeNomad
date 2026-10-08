@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 let server: ViteDevServer, browser: Browser, baseUrl: string
@@ -13,7 +14,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection", "scroll-input"].find(name => req.url?.includes(name)) ?? "session"
+          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection", "scroll-input", "user-html"].find(name => req.url?.includes(name)) ?? "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -34,7 +35,15 @@ after(async () => { await browser?.close(); await server?.close() })
 async function open(name: string, run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US" })
   const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
+  const boundaryDiagnostics: Array<Record<string, unknown>> = []
+  page.on("pageerror", error => {
+    errors.push(error.message)
+    if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) boundaryDiagnostics.push({ kind: "pageerror", message: error.message, stack: error.stack })
+  })
+  if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) {
+    page.on("console", message => boundaryDiagnostics.push({ kind: "console", type: message.type(), text: message.text() }))
+    page.on("requestfailed", request => boundaryDiagnostics.push({ kind: "requestfailed", url: request.url(), error: request.failure()?.errorText }))
+  }
   await page.addInitScript(`(() => {
     window.fixtureScrollEvents = [];
     for (const type of ['wheel', 'scroll', 'pointerdown']) document.addEventListener(type, event => {
@@ -45,20 +54,85 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
       if (window.fixtureScrollEvents.length > 80) window.fixtureScrollEvents.shift();
     }, { capture: true, passive: true });
   })()`)
-  await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
-  try {
-    await page.goto(`${baseUrl}/fixture?${name}`)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await run(page)
-    assert.deepEqual(errors, [])
-  } catch (error) {
-    console.error("Browser fixture failure", name, await page.evaluate(() => ({
-      state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
-      streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
-    })))
-    throw error
-  } finally { await page.close() }
+  await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ receipts: [] }) })
+    }
+    return route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" })
+  })
+  await runWithDiagnosticCleanup({
+    run: async () => {
+      await page.goto(`${baseUrl}/fixture?${name}`)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await run(page)
+      assert.deepEqual(errors, [])
+    },
+    diagnose: async () => {
+      console.error("Browser fixture failure", name, await page.evaluate(() => ({
+        state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
+        streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
+      })), { boundaryDiagnostics })
+    },
+    cleanup: () => page.close(),
+    onObservationError: error => console.error("Browser fixture diagnostic capture failed", name, error, { boundaryDiagnostics }),
+    onCleanupError: error => console.error("Browser fixture cleanup failed", name, error, { boundaryDiagnostics }),
+  })
 }
+
+test("user HTML remains literal through live delivery and history while assistant HTML still renders", async () => {
+  await open("session", async page => {
+    const html = '<span className={attrClass}>\n<span className="bold">{unit.name}</span> joined to the team.\n</span>\n\n將 此模式 抽離為元件\n\n<div class="html-sample"><span>who</span> , message\n{children ?? null}</div>'
+    await page.locator("textarea:visible").first().fill(html)
+    await page.locator("textarea:visible").first().press("Enter")
+    await page.waitForFunction(() => document.querySelector('[data-message-role="user"]')?.textContent?.includes('<div class="html-sample">'))
+    assert.equal(await page.locator('[data-message-role="user"] .html-sample').count(), 0)
+    await page.evaluate(html => { const f = (window as any).fixture; f.start(); f.delta(html); f.end(html) }, html)
+    await page.locator('[data-message-role="assistant"] .html-sample').waitFor()
+    await page.evaluate(() => (window as any).fixture.reload())
+    await page.evaluate(() => (window as any).fixture.switchAway())
+    await page.evaluate(() => (window as any).fixture.return())
+    await page.waitForFunction(() => document.querySelector('[data-message-role="user"]')?.textContent?.includes('<div class="html-sample">'))
+    assert.equal(await page.locator('[data-message-role="user"] .html-sample').count(), 0)
+    await page.locator('[data-message-role="assistant"] .html-sample').waitFor()
+    assert.ok((await page.locator('[data-message-role="user"]').first().textContent())?.includes('className="bold"'))
+  })
+})
+
+test("user HTML mode preserves Markdown, pasted disclosures and code source and fences legacy caches", async () => {
+  await open(process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE ? "user-html&trace=1" : "user-html", async page => {
+    await page.locator("#root").evaluate(root => { root.style.display = "block"; root.style.height = "auto" })
+    await page.locator("#user strong").waitFor()
+    await page.locator("#assistant .sample-html").waitFor()
+    const { html, code } = await page.evaluate(() => (window as any).fixture)
+    assert.ok((await page.locator("#user").textContent())?.includes(html))
+    assert.equal(await page.locator("#user .sample-html").count(), 0)
+    assert.equal(await page.locator("#user code.inline-code").textContent(), code)
+    assert.equal((await page.locator("#user pre code").textContent())?.trimEnd(), code)
+    await page.waitForFunction(() => document.querySelector("#malformed .markdown-body p"))
+    const malformed = await page.locator("#malformed").textContent()
+    assert.ok(malformed?.includes('<img/src=x onerror="window.htmlExecuted=true">'))
+    assert.ok(malformed?.includes("if (x<y) z()"))
+    assert.equal(await page.locator("#malformed img, #malformed script").count(), 0)
+    assert.equal(await page.evaluate(() => (window as any).htmlExecuted), undefined)
+    await page.locator("#pasted summary").click()
+    await page.waitForFunction(() => document.querySelector("#pasted .markdown-body")?.textContent?.includes('<div class="sample-html">'))
+    assert.equal(await page.locator("#pasted .sample-html").count(), 0)
+    assert.equal(await page.locator("#cache .cached-html").count(), 0)
+    assert.equal(await page.locator("#cache .markdown-body").textContent(), html)
+    await page.evaluate(() => (window as any).fixture.literal(false))
+    await page.locator("#cache .cached-html").waitFor()
+    await page.evaluate(() => (window as any).fixture.literal(true))
+    await page.waitForFunction(() => !document.querySelector("#cache .cached-html"))
+    assert.equal(await page.locator("#cache .markdown-body").textContent(), html)
+    await page.locator('.message-timeline-segment[data-message-id="user-preview"]').hover()
+    await page.getByRole("tooltip").waitFor()
+    assert.equal(await page.getByRole("tooltip").locator(".sample-html").count(), 0)
+    assert.ok((await page.getByRole("tooltip").textContent())?.includes('<div class="sample-html">'))
+    await page.locator('.message-timeline-segment[data-message-id="assistant-preview"]').hover()
+    await page.getByRole("tooltip").locator(".sample-html").waitFor()
+    if (process.env.CODENOMAD_HTML_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_HTML_CAPTURE, fullPage: true })
+  })
+})
 
 test("new-session reply renders live after optimistic-send reordering, and survives a return", async () => {
   await open("session", async page => {
@@ -76,6 +150,24 @@ test("new-session reply renders live after optimistic-send reordering, and survi
     await page.evaluate(() => (window as any).fixture.return())
     await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("must remain visible"))
     assert.equal(await page.locator('.message-stream-block[data-message-id="msg_assistant"]').count(), 1)
+  })
+})
+
+test("a mounted response renders a newly appended consecutive text part without remounting", async () => {
+  await open("session", async page => {
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.start()
+      fixture.delta("First content part")
+      fixture.end("First content part")
+    })
+    const row = page.locator('.message-stream-block[data-message-id="msg_assistant"]')
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("First content part"))
+    await row.evaluate(element => { (window as any).originalMessageRow = element })
+    await page.evaluate(() => (window as any).fixture.appendTextPart("Appended content part"))
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Appended content part"))
+    assert.equal(await row.evaluate(element => element === (window as any).originalMessageRow), true)
+    assert.ok((await row.textContent())?.includes("First content part"))
   })
 })
 

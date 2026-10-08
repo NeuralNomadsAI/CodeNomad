@@ -183,4 +183,14 @@ describe("native session message normalization", () => {
     assert.equal(aborted.info.error?.name, "MessageAbortedError")
     assert.equal(aborted.message.parts.length, 1)
   })
+
+  it("retains optional provider response bodies without replacing the display message", () => {
+    const error = { type: "ProviderError", message: "rate limited", status: 429, response: { body: '{"retry_after":60}' } }
+    const result = normalizeSessionMessage("session", {
+      id: "provider-response", type: "assistant", agent: "build", model: { providerID: "p", id: "m" },
+      content: [], error, time: { created: 1 },
+    })
+    assert.equal(result.message.status, "error")
+    assert.deepEqual(result.info.error, { ...error, name: "ProviderError", data: { message: "rate limited" } })
+  })
 })

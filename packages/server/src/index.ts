@@ -7,6 +7,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
 import { SettingsService } from "./settings/service"
@@ -35,6 +36,8 @@ import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
+import { PermissionReceipts } from "./permissions/receipts"
+import { PermissionReceiptStore } from "./permissions/receipt-store"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
@@ -422,10 +425,14 @@ async function main() {
   const previewManager = new PreviewManager()
   const yoloLogger = logger.child({ component: "yolo" })
   const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
+  const permissionReceipts = new PermissionReceipts(
+    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus, yoloLogger,
+  )
+  permissionReceipts.start()
   const yoloManager = new AutoAcceptManager({
     eventBus,
     logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager }),
+    replier: createOpencodePermissionReplier({ workspaceManager, permissionReceipts }),
     persistence: sessionMetadataPersistence,
   })
   yoloManager.start()
@@ -507,6 +514,9 @@ async function main() {
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
+  const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
+    eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
+  })
 
   const httpServer = options.http || nativeParent.available
     ? createHttpServer({
@@ -528,6 +538,8 @@ async function main() {
         remoteProxySessionManager,
         remoteControlManager,
         yoloManager,
+        permissionReceipts,
+        panelExtensions,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -557,6 +569,8 @@ async function main() {
         remoteProxySessionManager,
         remoteControlManager,
         yoloManager,
+        permissionReceipts,
+        panelExtensions,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -672,13 +686,19 @@ async function main() {
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopRemoteControl: () => remoteControlManager.shutdown(),
-          stopWorkspaces: () => workspaceManager.shutdown(),
+          stopWorkspaces: async () => {
+            instanceEventBridge.shutdown()
+            yoloManager.stop()
+            await permissionReceipts.stop()
+            await workspaceManager.shutdown()
+          },
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
             await automationLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()
+            await permissionReceipts.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {

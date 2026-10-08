@@ -1,4 +1,5 @@
 @import "./messaging/message-base.css";
+@import "./messaging/permission-receipts.css";
 @import "./messaging/prompt-input.css";
 @import "./messaging/prompt-input-footer.css";
 @import "./messaging/message-section.css";
@@ -11,6 +12,8 @@
 @import "./messaging/session-timeline-rail.css";
 @import "./messaging/tool-call.css";
 @import "./messaging/tool-call/images.css";
+@import "./messaging/tool-call/question.css";
 @import "./messaging/log-view.css";
 @import './messaging/timeline-virtual-list.css';
 @import './messaging/timeline-preview.css';
+@import "./messaging/search-highlights.css";

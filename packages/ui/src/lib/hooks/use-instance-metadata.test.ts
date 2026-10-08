@@ -23,32 +23,19 @@ describe("instance metadata", () => {
           return { location: responseLocation, data: [] }
         },
       },
-      plugin: {
-        list: async (input: unknown) => {
-          locations.push(input)
-          return {
-            location: responseLocation,
-            data: [
-              { id: "opencode.plan", state: { status: "active" } },
-              { id: "ponytail", state: { status: "active" } },
-              { id: "broken", state: { status: "failed", error: "broken" } },
-            ],
-          }
-        },
-      },
+      plugin: { list: async () => { throw new Error("generic metadata must not read plugins") } },
     }
 
     try {
       const location = { directory: "/repo/worktree" }
       await loadInstanceMetadata({ id: instanceId, folder: "/repo", client } as any, { location })
       assert.equal(getInstanceMetadata(instanceId)?.project?.vcs, "git")
-      assert.deepEqual(getInstanceMetadata(instanceId)?.plugins, ["ponytail"])
       assert.equal(hasMetadataLoaded(getInstanceMetadata(instanceId), location), true)
       assert.equal(hasMetadataLoaded(getInstanceMetadata(instanceId), { directory: "/repo/worktree" }), true)
       assert.equal(hasMetadataLoaded(getInstanceMetadata(instanceId), { directory: "/repo" }), false)
-      assert.deepEqual(locations, Array.from({ length: 2 }, () => ({
+      assert.deepEqual(locations, [{
         location: { directory: "/repo/worktree" },
-      })))
+      }])
     } finally {
       clearInstanceMetadata(instanceId)
     }
@@ -66,9 +53,7 @@ describe("instance metadata", () => {
         list: async () => { await gate; return [] },
       },
       mcp: { list: async () => { await gate; return { data: [label] } } },
-      plugin: {
-        list: async () => { await gate; return { data: [{ id: label, state: { status: "active" } }] } },
-      },
+      plugin: { list: async () => { throw new Error("generic metadata must not read plugins") } },
     })
 
     try {
@@ -86,9 +71,8 @@ describe("instance metadata", () => {
     }
   })
 
-  it("does not treat stale plugin inventory as loaded after a location switch", async () => {
+  it("treats location metadata as loaded without fetching plugin inventory", async () => {
     const instanceId = "metadata-location-partial-failure"
-    let failPlugins = false
     const project = { id: "project", directory: "/repo", canonical: "/repo" }
     const client = {
       location: { get: async () => ({ directory: "/repo", project }) },
@@ -104,26 +88,18 @@ describe("instance metadata", () => {
           data: [],
         }),
       },
-      plugin: {
-        list: async () => {
-          if (failPlugins) throw new Error("plugin inventory unavailable")
-          return { data: [{ id: "root-plugin", state: { status: "active" } }] }
-        },
-      },
+      plugin: { list: async () => { throw new Error("generic metadata must not read plugins") } },
     }
 
     try {
       await loadInstanceMetadata({ id: instanceId, folder: "/repo", client } as any)
-      assert.deepEqual(getInstanceMetadata(instanceId)?.plugins, ["root-plugin"])
 
-      failPlugins = true
       const worktree = { directory: "/repo/worktree" }
       await loadInstanceMetadata({ id: instanceId, folder: "/repo", client } as any, { location: worktree })
 
       const metadata = getInstanceMetadata(instanceId)
       assert.equal(metadata?.mcpStatus?.location.directory, worktree.directory)
-      assert.equal(metadata?.plugins, undefined)
-      assert.equal(hasMetadataLoaded(metadata, worktree), false)
+      assert.equal(hasMetadataLoaded(metadata, worktree), true)
     } finally {
       clearInstanceMetadata(instanceId)
     }

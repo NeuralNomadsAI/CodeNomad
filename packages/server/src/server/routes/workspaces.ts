@@ -10,6 +10,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { GitRequiredError } from "../../workspaces/git-requirement"
+import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -34,10 +35,12 @@ const WorkspaceCreationReleaseSchema = z.object({
 
 const WorkspaceFilesQuerySchema = z.object({
   path: z.string().optional(),
+  directory: z.string().trim().min(1).optional(),
 })
 
 const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
+  directory: z.string().trim().min(1).optional(),
   encoding: z.enum(["utf-8", "base64"]).optional(),
   worktree: z.string().trim().optional(),
 })
@@ -61,6 +64,7 @@ const WorktreeGitCommitBodySchema = z.object({
 })
 
 const WorkspaceFileSearchQuerySchema = z.object({
+  directory: z.string().trim().min(1).optional(),
   q: z.string().trim().min(1, "Query is required"),
   limit: z.coerce.number().int().positive().max(200).optional(),
   type: z.enum(["all", "file", "directory"]).optional(),
@@ -71,6 +75,31 @@ const WorkspaceFileSearchQuerySchema = z.object({
 })
 
 export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
+  app.get<{ Params: { id: string } }>("/api/workspaces/:id/files/preview", async (request, reply) => {
+    try {
+      const query = z.object({ path: z.string().min(1), directory: z.string().min(1).optional() }).parse(request.query)
+      return await deps.workspaceManager.previewFile(request.params.id, query.path, query.directory)
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
+  app.get<{ Params: { id: string; slug: string } }>("/api/workspaces/:id/worktrees/:slug/git-history", async (request, reply) => {
+    try {
+      const query = z.object({ offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0), head: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).optional() }).parse(request.query)
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+      return await getGitHistory(directory, query.offset, query.head)
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
+
+  app.get<{ Params: { id: string; slug: string; commit: string } }>("/api/workspaces/:id/worktrees/:slug/git-history/:commit", async (request, reply) => {
+    try {
+      const query = z.object({ path: z.string().min(1).optional() }).parse(request.query)
+      const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).parse(request.params.commit)
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+      return query.path === undefined ? await getGitCommit(directory, commit)
+        : await getGitCommitDiff(directory, commit, query.path)
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
   app.get("/api/workspaces", async () => {
     return deps.workspaceManager.list()
   })
@@ -148,7 +177,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/files", async (request, reply) => {
     try {
       const query = WorkspaceFilesQuerySchema.parse(request.query ?? {})
-      return await deps.workspaceManager.listFiles(request.params.id, query.path ?? ".")
+      return await deps.workspaceManager.listFiles(request.params.id, query.path ?? ".", query.directory)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
@@ -164,7 +193,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
         limit: query.limit,
         type: query.type,
         refresh: query.refresh,
-      })
+      }, query.directory)
     } catch (error) {
       if (error instanceof WorkspaceSearchBusyError) {
         reply.header("Retry-After", "1").code(503).type("text/plain").send(error.message)
@@ -198,6 +227,15 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
+      if (query.directory) {
+        const directory = query.directory
+        const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
+          await deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+        })
+        if (!mutation) return
+        reply.code(204)
+        return
+      }
       if (query.worktree && query.worktree !== "root") {
         const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
         if (!directory) return

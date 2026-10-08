@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "Arama sonucu bulunamadı.",
+  "toolCall.websearch.provider": "Web arama sağlayıcısı",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "İç içe araç çağrıları",
+  "toolCall.execute.more": "{count} ek çağrı gizlendi.",
+  "toolCall.execute.truncated": "Yerel çıktı kısaltıldı. Tam çıktı:",
   "toolCall.pending.waitingToRun": "Çalıştırılmayı bekliyor...",
   "toolCall.error.label": "Hata:",
   "toolCall.header.copyTitle": "Araç çağrısı başlığını kopyala",
@@ -136,4 +142,8 @@ export const toolCallMessages = {
   "formRequest.cancel": "İptal",
   "formRequest.openExternal": "Harici formu aç",
   "formRequest.selectPlaceholder": "Bir seçenek seçin",
+  "toolCall.permission.diff.previous": "Önceki fark sayfası",
+  "toolCall.permission.diff.next": "Sonraki fark sayfası",
+  "toolCall.permission.diff.page": "Sayfa {page} / {total}",
+  "toolCall.permission.diff.reviewRequired": "Onayı etkinleştirmek için her sayfayı inceleyin veya yamanın tamamını kopyalayın.",
 } as const

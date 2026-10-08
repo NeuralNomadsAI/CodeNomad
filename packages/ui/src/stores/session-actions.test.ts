@@ -4,9 +4,11 @@ import { after, afterEach, before, describe, it } from "node:test"
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
+import { createSkillAttachment } from "../types/attachment"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import {
   abortSession,
+  compactSession,
   deleteMessagePart,
   deleteMessageTechnicalParts,
   deleteTechnicalPartGroup,
@@ -313,9 +315,9 @@ describe("session instruction sync", () => {
 })
 
 describe("session interruption", () => {
-  it("interrupts the selected session and its active descendants", async () => {
-    const interrupted: string[] = []
-    seed({ session: { interrupt: async ({ sessionID }: { sessionID: string }) => { interrupted.push(sessionID) } } })
+  it("matches TUI interruption without cancelling children that can wake the parent again", async () => {
+    const interrupted: unknown[] = []
+    seed({ session: { interrupt: async (input: unknown) => { interrupted.push(input) } } })
     const root = sessions().get(instanceId)!.get(sessionId)!
     setSessions(new Map([[instanceId, new Map([
       [sessionId, root],
@@ -326,7 +328,11 @@ describe("session interruption", () => {
 
     await abortSession(instanceId, sessionId)
 
-    assert.deepEqual(interrupted.sort(), ["child-working", "grandchild-working", sessionId].sort())
+    assert.deepEqual(interrupted, [{ sessionID: sessionId, resume: true }])
+
+    // A child selected directly is still independently interruptible.
+    await abortSession(instanceId, "child-working")
+    assert.deepEqual(interrupted[1], { sessionID: "child-working", resume: true })
   })
 })
 
@@ -858,6 +864,33 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("admits compaction after an in-flight prompt", async () => {
+    const admissions: string[] = []
+    let releasePrompt!: () => void
+    const promptPending = new Promise<void>((resolve) => { releasePrompt = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        admissions.push("prompt")
+        await promptPending
+        return { id: input.id }
+      },
+      compact: async () => { admissions.push("compact") },
+    } })
+
+    const prompt = sendMessage(instanceId, sessionId, "first")
+    await new Promise((resolve) => setImmediate(resolve))
+    const compact = compactSession(instanceId, sessionId)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(admissions, ["prompt"])
+
+    releasePrompt()
+    await Promise.all([prompt, compact])
+    assert.deepEqual(admissions, ["prompt", "compact"])
+  })
+
   it("admits concurrent prompts in submission order", async () => {
     const prompts: string[] = []
     let releaseFirst!: () => void
@@ -980,7 +1013,7 @@ describe("native prompt serialization", () => {
       filename: "reviewer",
       mediaType: "text/plain",
       source: { type: "agent", name: "reviewer" },
-    }], {
+    }, createSkillAttachment("skill", "Skill")], {
       restoredPayload: {
         text: "original @reviewer @skill\n\nhidden note",
         metadata: { displayText: "original @reviewer @skill", source: "queued" },

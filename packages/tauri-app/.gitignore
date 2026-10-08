@@ -1,6 +1,7 @@
 src-tauri/target
 src-tauri/Cargo.lock
 src-tauri/resources/
+src-tauri/gen/schemas/
 target
 node_modules
 dist

@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "खोज परिणाम फेला परेन।",
+  "toolCall.websearch.provider": "वेब खोज प्रदायक",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "नेस्टेड उपकरण कलहरू",
+  "toolCall.execute.more": "थप {count} कलहरू लुकाइएका छन्।",
+  "toolCall.execute.truncated": "नेटिभ आउटपुट छोट्याइएको छ। पूरा आउटपुट:",
   "toolCall.pending.waitingToRun": "चलाउनको लागि पर्खँदै...",
   "toolCall.error.label": "त्रुटि:",
 
@@ -56,6 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "डाइरेक्टरी सूचीबद्ध गर्दै...",
 
   "toolCall.renderer.bash.title.timeout": "समय समाप्त: {timeout}",
+  "toolCall.output.truncated": "[प्रदर्शनका लागि आउटपुट छोट्याइएको छ; पूर्ण आउटपुटका लागि प्रतिलिपि गर्नुहोस्]",
+  "toolCall.output.tooLarge": "संरचित आउटपुट धेरै ठूलो भएकाले प्रदर्शन गरिएको छैन।",
+  "toolCall.task.steps.truncated": "पछिल्ला {count} चरणहरू देखाइँदैछन्; पुराना चरणहरू हटाइएका छन्।",
   "toolCall.renderer.read.detail.offset": "अफसेट: {offset}",
   "toolCall.renderer.read.detail.limit": "सीमा: {limit}",
 
@@ -151,4 +160,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} फाइल)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} फाइलहरू)",
   "toolCall.applyPatch.fileFallback": "फाइल {number}",
+  "toolCall.permission.diff.previous": "भिन्नताको अघिल्लो पृष्ठ",
+  "toolCall.permission.diff.next": "भिन्नताको अर्को पृष्ठ",
+  "toolCall.permission.diff.page": "{total} मध्ये पृष्ठ {page}",
+  "toolCall.permission.diff.reviewRequired": "स्वीकृति सक्षम गर्न हरेक पृष्ठ समीक्षा गर्नुहोस् वा सम्पूर्ण प्याच प्रतिलिपि गर्नुहोस्।",
 } as const

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 
 interface Scenario {
   scope: "restricted" | "unrestricted"
@@ -11,18 +12,25 @@ interface Scenario {
   homePath: string
   rejectedPath?: string
   delayedPath?: string
+  windowsDrives?: boolean
 }
 
 let server: ViteDevServer, browser: Browser, url: string
 
 function metadataFor(scenario: Scenario, requestedPath?: string | null) {
+  if (scenario.windowsDrives && requestedPath === WINDOWS_DRIVES_ROOT) {
+    return { entries: [{ name: "C:", type: "directory" as const, path: "C:/", absolutePath: "C:/" }], metadata: {
+      scope: scenario.scope, currentPath: WINDOWS_DRIVES_ROOT, parentPath: undefined,
+      rootPath: scenario.rootPath, homePath: scenario.homePath, displayPath: "Drives", pathKind: "drives" as const,
+    } }
+  }
   let currentPath = requestedPath || scenario.rootPath
   if (currentPath === ".") currentPath = scenario.rootPath
   if (currentPath !== "." && !currentPath.startsWith("/") && !/^[a-zA-Z]:/.test(currentPath)) {
     currentPath = `${scenario.scope === "unrestricted" ? scenario.homePath : scenario.rootPath}/${currentPath}`
   }
   const relative = currentPath === scenario.rootPath ? "." : currentPath.slice(scenario.rootPath.length).replace(/^\//, "")
-  const parentPath = scenario.scope === "restricted"
+  const parentPath = scenario.windowsDrives && currentPath === "C:/" ? WINDOWS_DRIVES_ROOT : scenario.scope === "restricted"
     ? relative === "." ? undefined : relative.includes("/") ? relative.slice(0, relative.lastIndexOf("/")) : "."
     : currentPath === "/" ? undefined : currentPath.includes("/") ? currentPath.slice(0, currentPath.lastIndexOf("/")) || "/" : undefined
   const entries = currentPath.endsWith("/start") ? ["projects", "pictures"].map((name) => ({
@@ -56,7 +64,8 @@ async function openFixture(page: Page, scenario: Scenario, query: string): Promi
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(metadataFor(scenario, requested)) })
   })
   await page.goto(`${url}?${query}`)
-  await page.locator(".directory-browser-current-path").waitFor()
+  // Rendering the field does not mean the asynchronous French messages are ready.
+  await page.getByRole("combobox", { name: "Chemin du dossier", exact: true }).waitFor()
   return errors
 }
 
@@ -90,28 +99,33 @@ before(async () => {
 after(async () => { await browser?.close(); await server?.close() })
 
 for (const mode of ["directories", "files"] as const) {
-  test(`parent is offered once in the address, not repeated in the folder list (${mode})`, async () => {
-    const page = await browser.newPage()
+  test(`parent stays visible in the list without a duplicate address option (${mode})`, async () => {
+    const page = await browser.newPage({ locale: "fr-FR" })
     const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, `initialPath=/ws/start&mode=${mode}`)
     try {
-      assert.equal(await page.getByRole("button", { name: "Up one level" }).count(), 0)
+      const parent = page.getByRole("button", { name: "Remonter d'un niveau", exact: true })
+      await parent.waitFor()
       await field(page).focus()
-      assert.deepEqual(await options(page).allTextContents(), ["Dossier parent"])
-      await options(page).first().click()
+      assert.deepEqual(await options(page).allTextContents(), ["Racine de l’espace de travail"])
+      await field(page).fill("/ws/unsubmitted")
+      await parent.click()
       await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws")
-      assert.equal(await page.getByRole("button", { name: "Up one level" }).count(), 0)
+      assert.equal(await parent.count(), 0, "restricted root must not offer navigation outside its boundary")
+    } catch (error) {
+      console.error("Parent navigation failure", await field(page).inputValue(), await page.locator("body").innerText())
+      throw error
     } finally { assert.deepEqual(errors, []); await page.close() }
   })
 }
 
-test("restricted browser offers parent and loaded children without the server-root shortcut", async () => {
-  const page = await browser.newPage()
+test("restricted browser offers the workspace root and loaded children", async () => {
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
     await field(page).focus()
-    assert.deepEqual(await options(page).allTextContents(), ["Dossier parent"])
+    assert.deepEqual(await options(page).allTextContents(), ["Racine de l’espace de travail"])
     await field(page).fill("/ws/start/pro")
-    assert.deepEqual(await options(page).allTextContents(), ["Dossier parent", "projects"])
+    assert.deepEqual(await options(page).allTextContents(), ["Racine de l’espace de travail", "projects"])
     await options(page).filter({ hasText: "projects" }).click()
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws/start/projects")
     await field(page).click()
@@ -122,12 +136,83 @@ test("restricted browser offers parent and loaded children without the server-ro
   } finally { assert.deepEqual(errors, []); await page.close() }
 })
 
+for (const mode of ["directories", "files"] as const) {
+  test(`workspace root is distinct from the initial folder and home (${mode})`, async () => {
+    const page = await browser.newPage({ locale: "fr-FR" })
+    const errors = await openFixture(page, { scope: "unrestricted", rootPath: "/srv", homePath: "/home/user" }, `initialPath=/srv/start/deep&mode=${mode}`)
+    try {
+      await field(page).focus()
+      const root = options(page).filter({ hasText: "Racine de l’espace de travail" })
+      assert.equal(await root.count(), 1)
+      assert.equal(await root.getAttribute("title"), "/srv")
+      await field(page).fill("/unsubmitted")
+      await root.click()
+      await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/srv")
+      await field(page).click()
+      assert.deepEqual(await options(page).allTextContents(), ["Revenir à deep", "Accueil"])
+      await options(page).filter({ hasText: "Revenir à deep" }).click()
+      await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/srv/start/deep")
+      // Parent remains reachable without focusing the address, even with no child entries.
+      await page.getByRole("button", { name: "Remonter d'un niveau", exact: true }).click()
+      await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/srv/start")
+    } catch (error) {
+      console.error("Parent navigation failure", await field(page).inputValue(), await page.locator("body").innerText())
+      throw error
+    } finally { assert.deepEqual(errors, []); await page.close() }
+  })
+}
+
+test("workspace root remains available when no initial path was supplied", async () => {
+  const page = await browser.newPage({ locale: "fr-FR" })
+  const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "mode=directories")
+  try {
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws")
+    await field(page).fill("/ws/start/deep")
+    await field(page).press("Enter")
+    await field(page).click()
+    assert.deepEqual(await options(page).allTextContents(), ["Racine de l’espace de travail"])
+    await options(page).first().click()
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws")
+  } finally { assert.deepEqual(errors, []); await page.close() }
+})
+
+test("root, home and initial destinations deduplicate when they share a target", async () => {
+  const page = await browser.newPage({ locale: "fr-FR" })
+  const errors = await openFixture(page, { scope: "unrestricted", rootPath: "/srv", homePath: "/srv" }, "initialPath=/srv")
+  try {
+    await field(page).fill("/elsewhere")
+    await field(page).press("Enter")
+    await field(page).click()
+    assert.deepEqual(await options(page).allTextContents(), ["Revenir à srv"])
+    assert.equal(await options(page).first().getAttribute("title"), "/srv")
+    await options(page).first().click()
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/srv")
+    await field(page).click()
+    assert.equal(await options(page).count(), 0)
+  } finally { assert.deepEqual(errors, []); await page.close() }
+})
+
+for (const mode of ["directories", "files"] as const) {
+  test(`Windows drive root goes up to Drives and can return to workspace root (${mode})`, async () => {
+    const page = await browser.newPage({ locale: "fr-FR" })
+    const errors = await openFixture(page, { scope: "unrestricted", rootPath: "C:/ws", homePath: "C:/Users/user", windowsDrives: true }, `initialPath=C:/&mode=${mode}`)
+    try {
+      await page.getByRole("button", { name: "Remonter d'un niveau", exact: true }).click()
+      await page.getByRole("button", { name: "C:", exact: true }).waitFor()
+      assert.equal(await page.getByRole("button", { name: "Remonter d'un niveau", exact: true }).count(), 0)
+      await field(page).focus()
+      await options(page).filter({ hasText: "Racine de l’espace de travail" }).click()
+      await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "C:/ws")
+    } finally { assert.deepEqual(errors, []); await page.close() }
+  })
+}
+
 test("typing filters children; arrow and Enter navigate, while Enter with no selection submits the typed path", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
     await field(page).fill("/ws/start/pic")
-    assert.deepEqual(await options(page).allTextContents(), ["Dossier parent", "pictures"])
+    assert.deepEqual(await options(page).allTextContents(), ["Racine de l’espace de travail", "pictures"])
     await field(page).press("ArrowDown")
     await field(page).press("ArrowDown")
     assert.equal(await field(page).getAttribute("aria-expanded"), "true")
@@ -143,7 +228,7 @@ test("typing filters children; arrow and Enter navigate, while Enter with no sel
 })
 
 test("Escape restores an unsubmitted edit without dismissing the dialog", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
     await field(page).fill("/ws/unsubmitted")
@@ -155,7 +240,7 @@ test("Escape restores an unsubmitted edit without dismissing the dialog", async 
 })
 
 test("unrestricted relative start is offered by canonical home path after navigating away", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "unrestricted", rootPath: "/srv", homePath: "/home/user" }, "initialPath=projects&mode=files")
   try {
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/home/user/projects")
@@ -171,7 +256,7 @@ test("unrestricted relative start is offered by canonical home path after naviga
 })
 
 test("failed start falls back without offering a broken return", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home", rejectedPath: "/missing" }, "initialPath=/missing")
   try {
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws")
@@ -181,7 +266,7 @@ test("failed start falls back without offering a broken return", async () => {
 })
 
 test("reopening clears the previous start destination", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start")
   try {
     await page.evaluate(() => (window as any).directoryBrowserFixture.close())
@@ -194,7 +279,7 @@ test("reopening clears the previous start destination", async () => {
 })
 
 test("a navigation finishing after close and reopen cannot replace the new location", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page,
     { scope: "restricted", rootPath: "/ws", homePath: "/home", delayedPath: "/ws/start/projects" },
     "initialPath=/ws/start")
@@ -216,7 +301,7 @@ test("a navigation finishing after close and reopen cannot replace the new locat
 for (const mode of ["directories", "files"] as const) {
   for (const width of [600, 360]) {
   test(`address dropdown stays inside the dialog and Open occupies its own row at ${width}px (${mode})`, async () => {
-    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "fr-FR" })
     const errors = await openFixture(page, { scope: "unrestricted", rootPath: "/srv", homePath: "/home" }, `initialPath=/srv/start&mode=${mode}`)
     try {
       await field(page).focus()

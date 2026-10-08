@@ -165,6 +165,7 @@ export default function MessagePart(props: MessagePartProps) {
               isDark={isDark()}
               size="base"
               escapeRawHtml
+              literalRawHtml={props.messageType === "user"}
               onRendered={props.onRendered}
             />
           </div>
@@ -175,6 +176,9 @@ export default function MessagePart(props: MessagePartProps) {
 
   return (
     <Switch>
+      <Match when={partType() === "skill"}>
+        <span class="badge-shape attachment-chip max-w-full whitespace-normal break-all" title={t("promptInput.skills.title")}>{String(props.part.name ?? "")}</span>
+      </Match>
       <Match when={partType() === "text"}>
         <Show when={!shouldHideTextPart() && (partHasRenderableText(props.part) || isPrimaryUserTextPart())}>
           <div
@@ -195,6 +199,7 @@ export default function MessagePart(props: MessagePartProps) {
                     isDark={isDark()}
                     size={isAssistantMessage() ? "tight" : "base"}
                     escapeRawHtml
+                    literalRawHtml={props.messageType === "user"}
                     onRendered={props.onRendered}
                   />
                 </Show>
@@ -214,6 +219,7 @@ export default function MessagePart(props: MessagePartProps) {
                           isDark={isDark()}
                           size="base"
                           escapeRawHtml
+                          literalRawHtml
                           onRendered={props.onRendered}
                         />
                       )

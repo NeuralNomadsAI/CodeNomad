@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "Klasöre git",
   "directoryBrowser.goToParent": "Üst klasör",
   "directoryBrowser.goToHome": "Ana Dizin",
+  "directoryBrowser.goToRoot": "Çalışma alanı kökü",
   "directoryBrowser.goToInitial": "{name} konumuna dön",
   "directoryBrowser.selectCurrent": "Geçerli Olanı Seç",
   "directoryBrowser.newFolder": "Yeni Klasör",

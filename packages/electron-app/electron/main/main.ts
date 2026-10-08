@@ -13,6 +13,7 @@ import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
 import { setupCliIPC } from "./ipc"
+import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
 import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
@@ -26,7 +27,7 @@ import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-regi
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
-import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
+import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
@@ -136,6 +137,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     for (const origin of resolveConfiguredRendererOrigins(backendUrl, app.isPackaged, [process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL])) origins.add(origin)
     return [...origins]
   }
+  const bindNotificationBadge = setupNotificationBadgeIPC(ipcMain,
+    sender => registry.resolve(sender)?.window ?? remoteWindows.resolve(sender), getAllowedOrigins,
+    (count, windows) => {
+      if (process.platform !== "win32") { app.setBadgeCount(count); return }
+      const icon = count ? nativeImage.createFromBitmap(notificationBadgeBitmap(count), { width: 32, height: 32 }) : null
+      for (const window of windows) window.setOverlayIcon(icon, count ? String(count) : "")
+    })
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
@@ -223,10 +231,11 @@ function runPrimary(firstIntent: LaunchIntent) {
 
   const createWindow = (windowId: string, persisted = true): LocalWindowRecord => {
     const saved = persisted ? clientState.getWindowState(windowId) : undefined
-    const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map((display) => ({ ...display.workArea, scaleFactor: display.scaleFactor }))) : undefined
+    const minimum = zoomedWindowMinimum(saved?.zoomFactor ?? 1)
+    const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map((display) => ({ ...display.workArea, scaleFactor: display.scaleFactor })), minimum) : undefined
     const window = new BrowserWindow({
       width: bounds?.width ?? DEFAULT_WINDOW_WIDTH, height: bounds?.height ?? DEFAULT_WINDOW_HEIGHT,
-      ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: 800, minHeight: 600,
+      ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: minimum.width, minHeight: minimum.height,
       frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
@@ -244,12 +253,14 @@ function runPrimary(firstIntent: LaunchIntent) {
       lifecycle: navigationLifecycle,
     })
     const tracker = persisted && clientState.isPrimary ? new WindowStateTracker(window, clientState, saved, windowId) : null
+    installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea, saved?.zoomFactor ?? 1)
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
     const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [] }
     registry.add(record)
+    bindNotificationBadge(window)
     bindClientState(window)
     lifecycle.attach(record)
-    installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : window.webContents.setZoomLevel(level))
+    installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : setWindowZoomLevel(window, level))
     setupNavigationGuards(window, navigation, getAllowedOrigins, getLoadingUrl)
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (!secureBrowserWebview(webPreferences, params)) {
@@ -288,8 +299,8 @@ function runPrimary(firstIntent: LaunchIntent) {
       clearWorkspaceMenuWindow(webContentsId)
       remoteOrigins.delete(nativeWindowId)
       insecureOrigins.delete(webContentsId)
-      browserController.removeOwner(window.webContents)
     })
+    browserController.observeOwner(window)
     if (isMac) window.webContents.session.setSpellCheckerEnabled(false)
     if (process.env.NODE_ENV === "development") window.webContents.openDevTools({ mode: "detach" })
     void (backendTargetUrl ? navigateBackend(record, backendTargetUrl) : loadLoading(record))
@@ -439,13 +450,16 @@ function runPrimary(firstIntent: LaunchIntent) {
       }
       const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
       const window = new BrowserWindow({
-        width: 1400, height: 900, minWidth: 800, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
+        width: 1400, height: 900, minWidth: MIN_WINDOW_WIDTH, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
         webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
       })
       const nativeWindowId = window.id
       const webContentsId = window.webContents.id
       const allowedOrigins = new Set([base.origin, target.origin])
+      installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea)
+      installWindowZoomInput(window, (level) => setWindowZoomLevel(window, level))
       remoteWindows.register(payload.id, window, payload.proxySessionId)
+      bindNotificationBadge(window)
       if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
         .filter((candidate) => candidate.webContents.session === remoteSession)
         .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)

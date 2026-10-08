@@ -37,6 +37,7 @@ interface StatusTabProps {
 
   activeSession: Accessor<Session | null>
 
+  isActive: Accessor<boolean>
   expandedItems: Accessor<string[]>
   onExpandedItemsChange: (values: string[]) => void
   customization: Accessor<RightPanelCustomization>
@@ -204,17 +205,17 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     </Show>
   )
 
-  const renderProviderUsage = () => {
-    const session = props.activeSession()
-    if (!session) {
-      return <div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>
-    }
-    return (
-      <div class="border border-base bg-surface-secondary px-3 py-2">
-        <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
-      </div>
-    )
-  }
+  const renderProviderUsage = () => (
+    <Show when={props.activeSession()} fallback={<div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>}>
+      {(session) => (
+        <div class="border border-base bg-surface-secondary px-3 py-2">
+          <ProviderUsagePanel instanceId={props.instanceId} sessionId={session().id} directory={session().location.directory}
+            providerId={session().model.providerId} modelId={session().model.modelId}
+            active={props.isActive() && props.expandedItems().includes("provider-usage")} />
+        </div>
+      )}
+    </Show>
+  )
 
   const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
     const sections = createCoreStatusSectionManifest({
@@ -228,7 +229,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
-        <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
+        <InstanceServiceStatus
+          initialInstance={props.instance}
+          sections={["plugins"]}
+          showSectionHeadings={false}
+          pluginsActive={props.isActive() && isSectionExpanded("plugins")}
+          class="space-y-2"
+        />
       ),
     }).statusSections ?? []
 

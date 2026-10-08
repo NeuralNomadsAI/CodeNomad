@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "Результаты поиска не найдены.",
+  "toolCall.websearch.provider": "Провайдер веб-поиска",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "Вложенные вызовы инструментов",
+  "toolCall.execute.more": "Скрыто дополнительных вызовов: {count}.",
+  "toolCall.execute.truncated": "Нативный вывод сокращён. Полный вывод:",
   "toolCall.pending.waitingToRun": "Ожидание запуска…",
   "toolCall.error.label": "Ошибка:",
 
@@ -56,6 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Просмотр каталога…",
 
   "toolCall.renderer.bash.title.timeout": "Таймаут: {timeout}",
+  "toolCall.output.truncated": "[Вывод сокращён для отображения; скопируйте его для доступа к полному выводу]",
+  "toolCall.output.tooLarge": "Структурированный вывод не отображается, поскольку он слишком большой.",
+  "toolCall.task.steps.truncated": "Показаны последние {count} шагов; более ранние шаги опущены.",
   "toolCall.renderer.read.detail.offset": "Смещение: {offset}",
   "toolCall.renderer.read.detail.limit": "Лимит: {limit}",
 
@@ -151,4 +160,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} файл)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} файлов)",
   "toolCall.applyPatch.fileFallback": "Файл {number}",
+  "toolCall.permission.diff.previous": "Предыдущая страница изменений",
+  "toolCall.permission.diff.next": "Следующая страница изменений",
+  "toolCall.permission.diff.page": "Страница {page} из {total}",
+  "toolCall.permission.diff.reviewRequired": "Просмотрите все страницы или скопируйте полный патч, чтобы разрешить одобрение.",
 } as const

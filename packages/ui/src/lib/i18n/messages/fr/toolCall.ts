@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "Aucun résultat de recherche.",
+  "toolCall.websearch.provider": "Fournisseur de recherche web",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "Appels d’outils imbriqués",
+  "toolCall.execute.more": "{count} appels supplémentaires masqués.",
+  "toolCall.execute.truncated": "Sortie native tronquée. Sortie complète :",
   "toolCall.pending.waitingToRun": "En attente d'exécution...",
   "toolCall.error.label": "Erreur :",
 
@@ -56,6 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Liste du répertoire...",
 
   "toolCall.renderer.bash.title.timeout": "Délai : {timeout}",
+  "toolCall.output.truncated": "[Sortie tronquée pour l’affichage ; copiez-la pour accéder à la sortie complète]",
+  "toolCall.output.tooLarge": "Sortie structurée omise de l’affichage car elle est trop volumineuse.",
+  "toolCall.task.steps.truncated": "Affichage des {count} étapes les plus récentes ; les étapes antérieures sont omises.",
   "toolCall.renderer.read.detail.offset": "Décalage : {offset}",
   "toolCall.renderer.read.detail.limit": "Limite : {limit}",
 
@@ -151,4 +160,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} fichier)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} fichiers)",
   "toolCall.applyPatch.fileFallback": "Fichier {number}",
+  "toolCall.permission.diff.previous": "Page précédente du diff",
+  "toolCall.permission.diff.next": "Page suivante du diff",
+  "toolCall.permission.diff.page": "Page {page} sur {total}",
+  "toolCall.permission.diff.reviewRequired": "Consultez chaque page ou copiez le correctif complet pour activer l’approbation.",
 } as const

@@ -9,6 +9,7 @@ import { loadingScreenMessages } from "./loadingScreen"
 import { logMessages } from "./logs"
 import { markdownMessages } from "./markdown"
 import { messagingMessages } from "./messaging"
+import { permissionReceiptMessages } from "./permission-receipts"
 import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
@@ -29,6 +30,7 @@ export const ruMessages = mergeMessageParts(
   logMessages,
   sessionMessages,
   messagingMessages,
+  permissionReceiptMessages,
   toolCallMessages,
   markdownMessages,
   settingsMessages,

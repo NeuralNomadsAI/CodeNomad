@@ -2,6 +2,7 @@ import { For, Show, createMemo, createSignal, type Component } from "solid-js"
 import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode/client"
 import { useI18n } from "../lib/i18n"
 import { getFormAnswer, isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
+import { isWebSearchProviderForm } from "../lib/websearch-form"
 
 interface FormRequestProps {
   form: FormInfo
@@ -48,6 +49,8 @@ export function shouldRenderFormOptionsAsSelect(options: readonly unknown[] | un
 
 const FormRequest: Component<FormRequestProps> = (props) => {
   const { t } = useI18n()
+  const webSearchProvider = () => isWebSearchProviderForm(props.form)
+  const title = () => webSearchProvider() ? t("toolCall.websearch.provider") : props.form.title
   const [values, setValues] = createSignal<Record<string, FormValue | undefined>>(
     Object.fromEntries(props.form.fields.map((field) => [field.key, getFormFieldDefaultValue(field)])),
   )
@@ -62,6 +65,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault()
+    if (submitting()) return
     const form = event.currentTarget as HTMLFormElement
     if (!form.reportValidity()) return
     const invalidCollection = visibleFields().find((field) => {
@@ -89,6 +93,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   }
 
   const cancel = async () => {
+    if (submitting()) return
     setSubmitting(true)
     setError(null)
     try {
@@ -100,12 +105,25 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   }
 
   return (
-    <form class="form-request" onSubmit={submit} aria-label={props.form.title}>
-      <h3 class="form-request-title">{props.form.title}</h3>
+    <form class="form-request" onSubmit={submit} aria-label={title()} data-websearch-provider={webSearchProvider() || undefined}>
+      <fieldset class="form-request-fields" disabled={submitting()} onFocusIn={event => {
+        const scroller = event.currentTarget
+        const control = event.target
+        // Native focus scrolling can expose only the text baseline of a control.
+        requestAnimationFrame(() => {
+          if (!control.isConnected || document.activeElement !== control || scroller.scrollHeight <= scroller.clientHeight) return
+          const viewport = scroller.getBoundingClientRect()
+          const bounds = control.getBoundingClientRect()
+          if (bounds.bottom > viewport.bottom - 8) scroller.scrollTop += bounds.bottom - viewport.bottom + 8
+          else if (bounds.top < viewport.top + 8) scroller.scrollTop += bounds.top - viewport.top - 8
+        })
+      }}>
+      <legend class="sr-only">{title()}</legend>
+      <h3 class="form-request-title">{title()}</h3>
       <For each={visibleFields()}>
         {(field) => {
           const descriptionId = `form-${props.form.id}-${field.key}-description`
-          const label = () => field.title || field.key
+          const label = () => field.title || (webSearchProvider() ? title() : field.key)
           const stringField = field as Extract<FormField, { type: "string" }>
           const numberField = field as Extract<FormField, { type: "number" | "integer" }>
           const stringOptions = () => stringField.options ?? []
@@ -285,8 +303,9 @@ const FormRequest: Component<FormRequestProps> = (props) => {
           )
         }}
       </For>
+      </fieldset>
       <Show when={error()}>{(message) => <p class="form-request-error" role="alert">{message()}</p>}</Show>
-      <div class="form-request-actions">
+      <div class="form-request-actions window-footer">
         <button type="button" class="selector-button selector-button-secondary" disabled={submitting()} onClick={() => void cancel()}>
           {t("formRequest.cancel")}
         </button>
