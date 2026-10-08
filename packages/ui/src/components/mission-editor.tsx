@@ -22,6 +22,9 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionMap }
 
+// Native passage admission reserves create, start/environment and coordinator-message.
+const MIN_RECURRING_EFFECTS = 3
+
 export function MissionEditor(props: {
   instanceId: string; directory?: string; viewDirectory?: string; projectID?: string; action: MissionEditorAction
   active?: () => boolean
@@ -46,7 +49,7 @@ export function MissionEditor(props: {
   const [time, setTime] = createSignal(recurrenceHold?.clock.time ?? "09:00")
   const [zone, setZone] = createSignal(recurrenceHold?.clock.zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
   const [watched, setWatched] = createSignal(recurrenceHold?.watchedConversationIDs.join("\n") ?? "")
-  const [budgets, setBudgets] = createSignal(recurrenceHold?.budgets ?? { effects: 1, nativeCalls: 8, inboxMessages: 32, publications: 0 })
+  const [budgets, setBudgets] = createSignal(recurrenceHold?.budgets ?? { effects: MIN_RECURRING_EFFECTS, nativeCalls: 8, inboxMessages: 32, publications: 0 })
   const [objective, setObjective] = createSignal(held?.objective ?? original?.objective ?? "")
   const [notes, setNotes] = createSignal(held?.notes ?? original?.notes ?? "")
   const [template, setTemplate] = createSignal<MissionMap["template"]>(held?.template ?? "custom")
@@ -116,8 +119,11 @@ export function MissionEditor(props: {
       if (ids.length > 32 || new Set(ids).size !== ids.length || ids.some(id => !/^[A-Za-z0-9_.:-]{1,240}$/.test(id))) {
         setError(t("missions.recurrence.watchedInvalid")); return
       }
+      if (budgets().effects < MIN_RECURRING_EFFECTS) {
+        setError(t("missions.recurrence.effectsMinimum")); return
+      }
       if (!(["effects", "nativeCalls", "inboxMessages", "publications"] as const).every(key =>
-        Number.isSafeInteger(budgets()[key]) && budgets()[key] >= (key === "effects" ? 1 : 0)
+        Number.isSafeInteger(budgets()[key]) && budgets()[key] >= (key === "effects" ? MIN_RECURRING_EFFECTS : 0)
         && budgets()[key] <= (key === "effects" ? 64 : key === "inboxMessages" ? 256 : 32))) {
         setError(t("missions.recurrence.invalid")); return
       }
@@ -244,13 +250,14 @@ export function MissionEditor(props: {
           <details class="mission-profile-optional"><summary>{t("missions.recurrence.budgets")}</summary>
             <div class="mission-recurrence-budgets">
               <For each={(["effects", "nativeCalls", "inboxMessages", "publications"] as const)}>{key =>
-                <label>{t(`missions.recurrence.${key}`)}<input type="number" required min={key === "effects" ? 1 : 0}
+                <label>{t(`missions.recurrence.${key}`)}<input type="number" required min={key === "effects" ? MIN_RECURRING_EFFECTS : 0}
                   max={key === "effects" ? 64 : key === "inboxMessages" ? 256 : 32}
                   value={budgets()[key]} disabled={pending() || uncertain()}
                   onInput={e => setBudgets(previous => ({ ...previous, [key]: e.currentTarget.valueAsNumber }))} /></label>
               }</For>
             </div>
           </details>
+          <Show when={budgets().effects < MIN_RECURRING_EFFECTS}><p role="alert">{t("missions.recurrence.effectsMinimum")}</p></Show>
           <MissionTaskModeControls value={recurringTaskMode()} disabled={!creationReady() || pending() || uncertain()}
             onChange={setRecurringTaskMode} />
           <MissionProfileSummary template="custom" profiles={recurringProfiles()} />
@@ -325,7 +332,9 @@ export function MissionEditor(props: {
         if (mode() === "recurring") props.onRecurrenceRefresh?.()
         else void missionStore.refresh(props.instanceId)
       }}>{t("missions.control.refresh")}</button></Show>
-      <button type="submit" class="button-primary" disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true) || (kind !== "delete" && !(mode() === "recurring" ? instructions() : objective()).trim())}>
+      <button type="submit" class="button-primary" disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)
+        || kind === "create" && mode() === "recurring" && budgets().effects < MIN_RECURRING_EFFECTS
+        || (kind !== "delete" && !(mode() === "recurring" ? instructions() : objective()).trim())}>
         {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
       </button>
     </footer>

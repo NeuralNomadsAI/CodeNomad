@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "Zamanlama kaydedilemedi. Alanları ve profilleri kontrol edin.",
   "missions.recurrence.budgets": "Geçiş başına sınırlar",
   "missions.recurrence.effects": "Etkiler",
+  "missions.recurrence.effectsMinimum": "Oluşturma, başlatma ve koordinatöre mesaj için en az 3 işlem gerekir.",
   "missions.recurrence.nativeCalls": "Yerel çağrılar",
   "missions.recurrence.inboxMessages": "Gelen mesajlar",
   "missions.recurrence.publications": "Yayınlar",

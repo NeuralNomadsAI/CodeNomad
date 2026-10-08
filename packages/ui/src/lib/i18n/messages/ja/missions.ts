@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "保存できませんでした。入力項目とプロファイルを確認してください。",
   "missions.recurrence.budgets": "実行ごとの上限",
   "missions.recurrence.effects": "操作",
+  "missions.recurrence.effectsMinimum": "作成、開始、調整役へのメッセージに最低 3 回の操作が必要です。",
   "missions.recurrence.nativeCalls": "ネイティブ呼び出し",
   "missions.recurrence.inboxMessages": "受信メッセージ",
   "missions.recurrence.publications": "公開",

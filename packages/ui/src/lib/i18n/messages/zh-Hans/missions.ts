@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "无法保存日程。请检查字段和配置。",
   "missions.recurrence.budgets": "每次执行的限额",
   "missions.recurrence.effects": "操作",
+  "missions.recurrence.effectsMinimum": "创建、启动和向协调员发消息至少需要 3 次操作。",
   "missions.recurrence.nativeCalls": "原生调用",
   "missions.recurrence.inboxMessages": "收件消息",
   "missions.recurrence.publications": "发布",

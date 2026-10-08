@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "Enregistrement impossible. Vérifiez les champs et les profils.",
   "missions.recurrence.budgets": "Limites par passage",
   "missions.recurrence.effects": "Effets",
+  "missions.recurrence.effectsMinimum": "Au moins 3 effets sont nécessaires pour créer, démarrer et écrire au coordinateur.",
   "missions.recurrence.nativeCalls": "Appels natifs",
   "missions.recurrence.inboxMessages": "Messages reçus",
   "missions.recurrence.publications": "Publications",

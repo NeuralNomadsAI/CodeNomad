@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "The schedule could not be saved. Check its fields and profiles.",
   "missions.recurrence.budgets": "Passage budgets",
   "missions.recurrence.effects": "Effects",
+  "missions.recurrence.effectsMinimum": "At least 3 effects are needed to create, start and message the coordinator.",
   "missions.recurrence.nativeCalls": "Native calls",
   "missions.recurrence.inboxMessages": "Inbox messages",
   "missions.recurrence.publications": "Publications",

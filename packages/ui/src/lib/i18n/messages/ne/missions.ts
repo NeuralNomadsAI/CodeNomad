@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "तालिका सेभ गर्न सकिएन। विवरण र प्रोफाइल जाँच्नुहोस्।",
   "missions.recurrence.budgets": "प्रत्येक चरणको सीमा",
   "missions.recurrence.effects": "प्रभाव",
+  "missions.recurrence.effectsMinimum": "सिर्जना, सुरु र संयोजकलाई सन्देश पठाउन कम्तीमा ३ कार्य चाहिन्छ।",
   "missions.recurrence.nativeCalls": "नेटिभ कल",
   "missions.recurrence.inboxMessages": "प्राप्त सन्देश",
   "missions.recurrence.publications": "प्रकाशन",

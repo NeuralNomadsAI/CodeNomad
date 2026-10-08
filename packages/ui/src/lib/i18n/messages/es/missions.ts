@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "No se pudo guardar el programa. Comprueba los campos y perfiles.",
   "missions.recurrence.budgets": "Límites por ejecución",
   "missions.recurrence.effects": "Efectos",
+  "missions.recurrence.effectsMinimum": "Se necesitan al menos 3 efectos para crear, iniciar y enviar un mensaje al coordinador.",
   "missions.recurrence.nativeCalls": "Llamadas nativas",
   "missions.recurrence.inboxMessages": "Mensajes recibidos",
   "missions.recurrence.publications": "Publicaciones",

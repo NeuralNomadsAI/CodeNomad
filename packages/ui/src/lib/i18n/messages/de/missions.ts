@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "Zeitplan konnte nicht gespeichert werden. Felder und Profile prüfen.",
   "missions.recurrence.budgets": "Grenzen pro Durchlauf",
   "missions.recurrence.effects": "Auswirkungen",
+  "missions.recurrence.effectsMinimum": "Mindestens 3 Aktionen sind für Erstellen, Starten und eine Nachricht an die Koordination nötig.",
   "missions.recurrence.nativeCalls": "Native Aufrufe",
   "missions.recurrence.inboxMessages": "Eingangs-Nachrichten",
   "missions.recurrence.publications": "Veröffentlichungen",

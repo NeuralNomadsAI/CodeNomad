@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "לא ניתן לשמור את לוח הזמנים. יש לבדוק את השדות והפרופילים.",
   "missions.recurrence.budgets": "מגבלות לכל סבב",
   "missions.recurrence.effects": "פעולות",
+  "missions.recurrence.effectsMinimum": "נדרשות לפחות 3 פעולות ליצירה, הפעלה ושליחת הודעה למתאם.",
   "missions.recurrence.nativeCalls": "קריאות מקוריות",
   "missions.recurrence.inboxMessages": "הודעות נכנסות",
   "missions.recurrence.publications": "פרסומים",

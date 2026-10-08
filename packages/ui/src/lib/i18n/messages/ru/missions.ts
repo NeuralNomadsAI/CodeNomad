@@ -11,6 +11,7 @@ export const missionMessages = {
   "missions.recurrence.invalid": "Не удалось сохранить расписание. Проверьте поля и профили.",
   "missions.recurrence.budgets": "Лимиты прохода",
   "missions.recurrence.effects": "Действия",
+  "missions.recurrence.effectsMinimum": "Нужно минимум 3 действия: создание, запуск и сообщение координатору.",
   "missions.recurrence.nativeCalls": "Нативные вызовы",
   "missions.recurrence.inboxMessages": "Входящие сообщения",
   "missions.recurrence.publications": "Публикации",
