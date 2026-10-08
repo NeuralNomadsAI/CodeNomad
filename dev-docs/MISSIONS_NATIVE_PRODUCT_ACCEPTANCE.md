@@ -6,6 +6,11 @@ This document retains the stronger signed-child/product acceptance design and
 dated receipts below. The target specification is the description of open
 [PR #866](https://github.com/NeuralNomadsAI/CodeNomad/pull/866); current-source
 qualification is indexed in [`MISSIONS_REFACTOR_VALIDATION.md`](MISSIONS_REFACTOR_VALIDATION.md).
+The 2026-10-08 clarification limits unattended scheduling to the lifetime of the
+running OpenCode service: restart may lose the in-memory Job, and reopening
+CodeNomad must reconcile and automatically rearm still-authorized schedules
+without replaying uncertain effects. Stronger cold-restart gates below remain historical
+research, not current PR acceptance criteria.
 The earlier restriction on opening a replacement PR has been superseded by the
 user's explicit publication request. Installation, release and merge remain
 unauthorized for this work.
@@ -13,10 +18,9 @@ unauthorized for this work.
 Native-first task execution, tab-local preferences, explicit task-session policy
 and Location depth are published. Scoped UX and inactive recurrence-core review
 loops close at zero remaining findings. Neither closes this stronger authority
-gate or proves the scheduled product operates with every desktop closed. Current
-Windows production launch qualification refuses the harness Job's forbidden
-breakaway without fallback; the existing full backend/lifetime composition must
-be qualified from an authorized ordinary native parent before activation.
+gate or proves the scheduled product operates with every desktop closed. The
+Windows independent-backend launch refusal belongs to retained host-lifetime
+research, not a prerequisite for OpenCode-owned service-lifetime scheduling.
 
 ## Delivery rule
 
@@ -55,7 +59,7 @@ new execution authority.
 | Shared declaration | Native by default; independent exceptions explicit; no creation or prompt during declaration | Shared descriptor/generation codec, declarations, additive revisions and durable native-default declaration policy delivered |
 | Graph and reuse | Parent/dependency cycles refused; exact source actor and required continuation session ID | Shared graph checks and exact reuse composition implemented; genuine native invocation producer remains required |
 | Signed child authority | Exact parent/message/Tool/task generation; sibling/ancestor isolation; pre-birth capacity | Derived authority/publication and product composition implemented as mandatory-capability seams; real writer proof remains absent |
-| Complete family ENV | Fresh complete backend profile snapshot at each required boundary, including raw descendants | Ordinary owned send path exists; native-family adapter and subsequent-boundary qualification open |
+| Complete family ENV | Fresh complete execution-host profile environment at each required native boundary, including raw descendants, without a running CodeNomad backend | Ordinary owned send path exists; native profile-source and family qualification remain open |
 | Lifecycle | Revocation before effects; bounded exact targets and acknowledgements; late/background wake fences | Existing intent/receipt machinery retained; complete family admission/control integration open |
 | Native observation | Original binding distinct from current call; foreground/background/crash reconstruction | Bounded durable-log observation/reconciliation delivered; background termination and actual resolved profiles remain unknown; guarded publisher absent |
 | Business report | Exact task/invocation provenance; native outcome is not business completion | Shared invocation-aware report control implemented; production writer/atomic-commit proof remains absent |
@@ -65,7 +69,7 @@ new execution authority.
 | Wayfinder | Additive frontier discovery; human Forms; planning rather than an automatic implementation pipeline | Additive revisions and strict decision provenance/observation implemented; durable Form/human-reply producer absent; completed native decisions refuse |
 | Existing session UX | Exact recursive child navigation, steering/queue, fork, compaction and `/btw` | Native session primitives exist; production shell qualification open |
 | Mission UX | Descendant membership/attention; truthful invocation/report/delivery; all ten locales | Recursive observed-family navigation, attention and requested profile editor implemented; historical invocation profile provenance unknown |
-| Genuine native host | Sustained protected channel, actual writer/quiescence, synchronous revocation and originating-human fences | Process/channel foundation exists; genuine Missions producer/sidechannel missing |
+| Native service ownership | Protected writer/quiescence, signed human authority, synchronous revocation and service-owned due work | Existing metadata and Job primitives are scoped proofs; genuine Missions producers remain missing |
 | Desktop packaging | Same trusted resources, runtime/ABI/digests and lifetime topology for Electron/Tauri | Shared resource/entrypoint track in progress; activation and packaged parity open |
 | Physical family/WSL | Real shared checkout ownership, cross-process claims and alias contention | Conservative Git claim store exists; production distribution/WSL qualification open |
 | Final closure | Fresh independent gatekeepers until zero findings; frozen assembled-source validation | Not started; do not infer closure from historical tranche reviews |

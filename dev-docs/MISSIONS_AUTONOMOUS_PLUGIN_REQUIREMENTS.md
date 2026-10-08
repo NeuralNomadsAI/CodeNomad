@@ -21,14 +21,24 @@ maître et de conserver cette exigence pour éviter qu'elle se perde.
 - CodeNomad configure, affiche et pilote ; son serveur n'est pas une dépendance
   d'exécution permanente.
 - Les responsabilités nécessaires à cette autonomie doivent être déplacées côté
-  OpenCode : admission, autorisations, environnement/profil, stockage,
-  restauration à froid et programmation.
+  OpenCode : admission, autorisations, environnement/profil, stockage et
+  programmation pendant que le service fonctionne.
 - La persistance du serveur CodeNomad en arrière-plan n'est **pas** la solution
   demandée ni un remplacement acceptable de cette cible.
 - Clarification transmise ensuite à la session maître : **aucune modification
   d'OpenCode**. L'autonomie doit utiliser les mécanismes existants du service et
   du plugin ; l'absence d'une API nommée « scheduler » ne démontre pas qu'une
   extension upstream soit nécessaire.
+
+## Clarification du 8 octobre 2026 — durée de vie du service
+
+Fermer CodeNomad ou le TUI n'arrête ni OpenCode ni les sessions natives en cours.
+La programmation doit continuer pendant que le service OpenCode tourne, y compris
+après la fermeture de l'interface et du backend CodeNomad. Son **redémarrage peut
+perdre le planificateur en RAM** tant que CodeNomad reste fermé : la reprise
+automatique à froid n'est pas exigée. Conserver la programmation et les identités
+durables ; **rouvrir CodeNomad réconcilie puis réarme automatiquement** les seules
+Missions encore autorisées, sans nouveau Play ni rejeu d'un effet inconnu.
 
 ## Protections et coordination
 
