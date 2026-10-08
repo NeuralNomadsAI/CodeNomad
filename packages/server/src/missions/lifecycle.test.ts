@@ -54,6 +54,60 @@ function fixture() {
 }
 const code = (value: string) => (error: unknown) => error instanceof MissionControlError && error.code === value
 
+test("explicit Pause supersedes a lost start ACK and interrupts its registered root without replaying start", async () => {
+  const f = fixture(), prepared = await f.create()
+  f.failing.add(prepared.coordinatorSessionId)
+  await assert.rejects(f.control().lifecycle(f.action(prepared, "start")), code("control-pending"))
+  const uncertain = (await f.control().snapshot()).missions[0]
+  assert.equal(uncertain.control?.action, "start")
+  assert.equal(uncertain.control?.pending.length, 1)
+  f.failing.clear()
+  const paused = (await f.control().lifecycle(f.action(uncertain, "pause"))).mission
+  assert.equal(paused.runState, "paused")
+  assert.equal(paused.control?.receipts?.[0]?.nativeAcknowledgement?.disposition, "interrupt-observed")
+  assert.deepEqual(f.calls.map(call => call.action), ["start", "pause"])
+})
+
+test("Stop then new Pause then Start cannot reopen work, including a pending Stop", async () => {
+  for (const pending of [false, true]) {
+    const f = fixture(), prepared = await f.create()
+    const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+    await f.delegate(running, "unfinished")
+    const active = (await f.control().snapshot()).missions[0]
+    if (pending) f.failing.add(active.coordinatorSessionId)
+    const stopping = f.control().lifecycle(f.action(active, "stop"))
+    if (pending) await assert.rejects(stopping, code("control-pending"))
+    else await stopping
+    const stopped = (await f.control().snapshot()).missions[0]
+    assert.equal(stopped.status, "stopped")
+    assert.equal(stopped.tasks[0].status, "withdrawn")
+    const count = f.calls.length
+    await assert.rejects(f.control().lifecycle(f.action(stopped, "pause")), code("mission-finished"))
+    await assert.rejects(f.control().lifecycle(f.action(stopped, "start")), code("mission-finished"))
+    const final = (await f.control().snapshot()).missions[0]
+    assert.equal(final.runState, "stopped")
+    assert.equal(final.status, "stopped")
+    assert.equal(final.tasks[0].status, "withdrawn")
+    assert.equal(f.calls.length, count, "terminal denial never dispatches a Pause or Start")
+  }
+})
+
+for (const action of ["pause", "stop"] as const) test(`${action} records native target receipts after final report without rewriting its completed result`, async () => {
+  const f = fixture(), prepared = await f.create()
+  const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+  const journal = new MissionJournal(f.storage, "project", "/repo")
+  await journal.append({ version: 1, id: "evt_final_report", missionID: running.id, projectID: "project", type: "mission.finished",
+    createdAt: running.updatedAt + 1, outcome: "completed", summary: "Original successful result" })
+  const completed = (await f.control().snapshot()).missions[0]
+  assert.equal(completed.status, "completed")
+  const controlled = (await f.control().lifecycle(f.action(completed, action))).mission
+  assert.equal(controlled.status, "completed")
+  assert.equal(controlled.summary, "Original successful result")
+  assert.equal(controlled.control?.receipts?.[0]?.nativeAcknowledgement?.disposition, "interrupt-observed")
+  assert.deepEqual(controlled.control?.pending, [])
+  await assert.rejects(f.control().lifecycle(f.action(controlled, "start")), code("mission-finished"))
+})
+
 test("signed-passage lifecycle ID is exact and ordinary one-shot start ID stays unchanged", async () => {
   const f = fixture(), mission = await f.create(), passageID = "rcp_signed_passage"
   const recurrence = { grantID: "rgrant_signed", passageID, messageID: recurrenceMessageID(passageID),

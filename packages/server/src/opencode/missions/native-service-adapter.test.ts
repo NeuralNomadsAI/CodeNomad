@@ -211,7 +211,7 @@ test("omitted native variant accepts materialized default but never a high varia
       await assert.rejects(native.environment({ sessionID: request.id, variables: {} }, {}, current, expected), /binding-mismatch/)
       await assert.rejects(native.admit({ ...command, kind: "synthetic" }, {}, current, expected), /binding-mismatch/)
       await assert.rejects(native.create(request, {}, current), /effect-unavailable/)
-       assert.equal(writes, 4, "wrong create ACK is unknown, not a successful matching profile")
+      assert.equal(writes, 4, "wrong create ACK is unknown, not a successful matching profile")
     })
   })).pipe(Effect.provideService(sessionTag, service), Effect.provideService(locationTag, location)))
 })

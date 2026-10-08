@@ -13,6 +13,7 @@ import { authorityDigest, canonicalAuthority } from "../../missions/authority-pr
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
 import { readNativeServiceRegistration } from "../../workspaces/native-service-registration"
 import { assertLoopbackServiceUrl } from "../../workspaces/service-state"
+import { nativeDatabaseIdentity } from "./native-database-identity"
 
 const prefix = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence/managed-owner`
 const key = (value: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${value}`
@@ -57,12 +58,11 @@ function privateJSON(file: string): unknown {
   } catch { return deny() } finally { closeSync(fd) }
 }
 function databaseIdentity(file: string) {
-  if (!path.isAbsolute(file) || physical(realpathSync(file)) !== physical(file)) deny()
-  // Privacy is checked on the directory, not by reading/opening the database.
-  verifyPrivateSync(path.dirname(file), true)
-  const stat = lstatSync(file, { bigint: true })
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || stat.ino === 0n) deny()
-  return databaseSchema.parse({ file: physical(file), dev: String(stat.dev), ino: String(stat.ino), birthtime: String(stat.birthtimeNs) })
+  try {
+    // Privacy is checked on the directory, not by reading/opening the database.
+    verifyPrivateSync(path.dirname(file), true)
+    return databaseSchema.parse(nativeDatabaseIdentity(file))
+  } catch { return deny() }
 }
 function executableDigest(file: string) {
   const stat = lstatSync(file)

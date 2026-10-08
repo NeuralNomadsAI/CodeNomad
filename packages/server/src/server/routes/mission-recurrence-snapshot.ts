@@ -108,8 +108,8 @@ export function registerMissionRecurrenceSnapshot(app: FastifyInstance, deps: {
         || !sameLocation(snapshot.location, owned)) return reply.code(502).send({ error: "Foreign Mission recurrence snapshot" })
       const result: MissionRecurrenceSnapshot = { version: 1, projectID: snapshot.projectID, schedules: snapshot.schedules }
       return result
-    } catch (error) {
-      request.log.warn({ err: error, workspaceId: parsed.data }, "Mission recurrence snapshot unavailable")
+    } catch {
+      request.log.warn({ code: "recurrence-snapshot-unavailable" }, "Mission recurrence snapshot unavailable")
       return reply.code(503).send({ error: "Mission recurrence unavailable" })
     } finally { lifetime.dispose() }
   }

@@ -16,15 +16,18 @@ export const recurrenceCurrentContentPage = z.object({ version: z.literal(1), pr
   revision: z.number().int().positive().safe(),
   page: z.number().int().min(0).max(63), pageCount: z.number().int().min(1).max(64), sourceText: z.string().max(9_001), markdownText: z.null(),
 }).strict()
-const id = { type: "string", minLength: 3, maxLength: 100, pattern: "^[A-Za-z0-9_-]{3,100}$" } as const
+const id = { type: "string", minLength: 3, maxLength: 100 } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
+const contentProperties = { scheduleID: id, passageID: id, section: { type: "string", enum: labels },
+  page: { ...counter, maximum: 63 }, revision: { ...counter, minimum: 1 } } as const
 export const recurrenceCurrentContentWire = {
-  input: { type: "object", properties: { scheduleID: id, passageID: id,
-    kind: { type: "string", enum: ["overview", "task", "report", "change"] }, itemId: { type: "string", minLength: 1, maxLength: 240 },
-    section: { type: "string", enum: labels }, page: { ...counter, maximum: 63 }, revision: { ...counter, minimum: 1 },
-  }, required: ["scheduleID", "passageID", "kind"], additionalProperties: false,
-    oneOf: [{ properties: { kind: { const: "overview" } }, not: { required: ["itemId"] } },
-      { properties: { kind: { enum: ["task", "report", "change"] } }, required: ["itemId"] }] },
+  input: { type: "object", oneOf: [
+    { type: "object", properties: { ...contentProperties, kind: { type: "string", const: "overview" } },
+      required: ["scheduleID", "passageID", "kind"], additionalProperties: false },
+    { type: "object", properties: { ...contentProperties, kind: { type: "string", enum: ["task", "report", "change"] },
+      itemId: { type: "string", minLength: 1, maxLength: 240 } },
+      required: ["scheduleID", "passageID", "kind", "itemId"], additionalProperties: false },
+  ] },
   output: { type: "object", properties: { version: { type: "integer", const: 1 }, projectID: { type: "string" },
     projectCanonical: { type: "string" }, location: { type: "object", properties: { directory: { type: "string" }, workspaceID: { type: "string" } }, required: ["directory"], additionalProperties: false },
     scheduleID: id, passageID: id, missionID: { type: "string" }, revision: { ...counter, minimum: 1 },

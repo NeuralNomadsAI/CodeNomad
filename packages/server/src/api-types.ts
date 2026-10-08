@@ -47,7 +47,7 @@ export interface MissionRecurrenceSnapshot {
     pendingStatus: "unknown" | "admitted" | null
     pendingAdmission: { missionID: string; conversationID: string } | null
     settledCount: number
-    /** Null until a signed parent is authenticated; not an inferred epoch. */
+    /** Zero is a proven fresh unsigned CREATE; null is unavailable authority. */
     epoch?: number | null
     /** Supplied only by the qualified native control surface. */
     controlCapability?: { version: 1; actions: Array<"play" | "pause" | "stop"> }

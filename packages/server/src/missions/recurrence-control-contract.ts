@@ -46,8 +46,8 @@ export const recurrenceNativeControlWire = { ...lifecycleOperationSchema, proper
   ] } },
 } } as const
 export const recurrenceControlRequestWire = { type: "object", properties: {
-  scheduleID: { type: "string", minLength: 3, maxLength: 100, pattern: "^[A-Za-z0-9_-]{3,100}$" },
-  requestID: { type: "string", minLength: 3, maxLength: 100, pattern: "^[A-Za-z0-9_-]{3,100}$" },
+  scheduleID: { type: "string", minLength: 3, maxLength: 100 },
+  requestID: { type: "string", minLength: 3, maxLength: 100 },
   action: { type: "string", enum: ["play", "pause", "stop"] },
   expectedRevision: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   expectedEpoch: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },

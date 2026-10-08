@@ -25,6 +25,7 @@ type NativeSessionService = {
   prompt(input: AutonomousMissionCommand["input"]): NativeEffect
   synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"]): NativeEffect
   inbox(id: string): NativeEffect
+  cancelInbox?(input: { sessionID: string; inboxID: string }): NativeEffect
   messages?(input: { sessionID: string; order: "asc"; limit: number; cursor?: { id: string; direction: "next" } }): NativeEffect
   message?(input: { sessionID: string; messageID: string }): NativeEffect
 }
@@ -113,6 +114,10 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     },
     inbox: (sessionID: string, options?: { signal?: AbortSignal }) =>
       run(() => service.inbox(sessionID), Schema.Array(Schema.toType(SessionInbox.Info)).check(Schema.isMaxLength(1024)), options, assertCurrent),
+    cancelInbox: (input: { sessionID: string; inboxID: string }, current: () => true, expected: NativeRootPlacement) => {
+      if (!Predicate.isFunction(service.cancelInbox)) rejectAuthority("effect-unavailable")
+      return run(() => service.cancelInbox!({ ...input }), Schema.Void, undefined, current, expected)
+    },
     sourceMessages: async (input: NativeSourceReadInput, options: { signal?: AbortSignal }, current: () => true,
       placementCurrent: () => true): Promise<NonNullable<RecurrenceEffectReceipt["sourceMessages"]>> => {
       const request = structuredClone(input)

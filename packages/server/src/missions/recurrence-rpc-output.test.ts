@@ -8,14 +8,22 @@ import { lifecycleOperationReadSchema } from "./lifecycle-schema"
 import { Effect } from "effect"
 import { withNativeRecurrenceRpc } from "../opencode/missions/managed-owner-plugin"
 
-test("native read registration preserves the separately qualified control and exact status handlers", async () => {
-  const control = () => Effect.fail(new Error("control not invoked")), status = () => Effect.fail(new Error("status not invoked"))
+test("native registration binds qualified controls alongside exact read handlers, not Promise placeholders", async () => {
+  let placeholders = 0
+  const control = () => { placeholders++; return Effect.fail(new Error("control placeholder invoked")) }
+  const status = () => { placeholders++; return Effect.fail(new Error("status placeholder invoked")) }
   let captured: Record<string, unknown> = {}
   const rpc = { register: (_definition: unknown, handlers: Record<string, unknown>) => Effect.sync(() => { captured = handlers }) }
   const entry = withNativeRecurrenceRpc({ rpc } as never)
   await Effect.runPromise(Effect.scoped(entry.register(CODENOMAD_MISSIONS_RPC, { recurrenceControl: control, recurrenceControlStatus: status } as never)))
-  assert.equal(captured.recurrenceControl, control)
-  assert.equal(captured.recurrenceControlStatus, status)
+  assert.notEqual(captured.recurrenceControl, control)
+  assert.notEqual(captured.recurrenceControlStatus, status)
+  for (const method of ["recurrenceControl", "recurrenceControlStatus"]) {
+    const effect = (captured[method] as (input: unknown) => Effect.Effect<unknown, unknown>)({})
+    assert(Effect.isEffect(effect))
+    await assert.rejects(Effect.runPromise(effect), error => !String(error).includes("placeholder invoked"))
+  }
+  assert.equal(placeholders, 0)
   for (const method of ["recurrenceRead", "recurrenceCreate", "recurrencePassageRead", "recurrenceCurrent", "recurrenceCurrentContent"])
     assert.equal(typeof captured[method], "function")
   assert.ok(CODENOMAD_MISSIONS_RPC.methods.recurrenceControl)

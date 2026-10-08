@@ -94,8 +94,9 @@ test("forged-parent restart stays unavailable through the owned RPC/route withou
     { ...snapshot, schedules: [{ ...snapshot.schedules[0], prompt: "model bytes" }] },
     { ...snapshot, schedules: [{ ...snapshot.schedules[0], pendingAdmission: { missionID: "msn_x", conversationID: "ses_x", model: "private" } }] },
     { ...snapshot, schedules: [{ ...snapshot.schedules[0], history: Array(31).fill({}) }] },
-    { ...snapshot, schedules: [{ ...snapshot.schedules[0], id: "../foreign" }] },
   ]) assert.equal(validateSnapshot(mutated), false, "registered strict JSON Schema rejects oversized/private/foreign-shaped output")
+  // The native wire codec has no pattern keyword; the owned route's domain
+  // decoder below must reject path-shaped IDs before exposing the snapshot.
   assert.equal(jobReads, 0, "a forged ledger must never grant a Job-status projection")
   // No Job survives a restart either. The read retains schedule data, not an invented interruption.
 
@@ -118,7 +119,7 @@ test("forged-parent restart stays unavailable through the owned RPC/route withou
       assert.equal(response.statusCode, 200)
       assert.deepEqual(response.json().schedules[0], { id: scope.scheduleID, revision: 1, scheduleRevision: 0,
         state: "unavailable", clock: config.clock, pendingPassageID: null, pendingStatus: null, pendingAdmission: null, settledCount: 0,
-        latestResult: null, history: [] })
+        latestResult: null, history: [], epoch: null })
       assert(!response.body.includes("Private instructions"))
       assert(!response.body.includes(parent.signature))
       assert(!response.body.includes(directory))
@@ -187,6 +188,7 @@ test("forged-parent restart stays unavailable through the owned RPC/route withou
     for (const corrupt of [
       (snapshot: Awaited<ReturnType<typeof read>>) => ({ ...snapshot, version: 2 }),
       (snapshot: Awaited<ReturnType<typeof read>>) => ({ ...snapshot, schedules: [{ ...snapshot.schedules[0], instructions: "SECRET" }] }),
+      (snapshot: Awaited<ReturnType<typeof read>>) => ({ ...snapshot, schedules: [{ ...snapshot.schedules[0], id: "../foreign" }] }),
       (snapshot: Awaited<ReturnType<typeof read>>) => ({ ...snapshot, schedules: [{ ...snapshot.schedules[0], history: Array(31).fill(projected.latestResult) }] }),
     ]) {
       override = corrupt

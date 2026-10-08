@@ -194,7 +194,7 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
 
     recurrenceCurrent: {
-      input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100, pattern: "^[A-Za-z0-9_-]{3,100}$" } }, required: ["scheduleID"], additionalProperties: false },
+      input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 } }, required: ["scheduleID"], additionalProperties: false },
       output: { type: "object", properties: {
         version: { type: "integer", const: 1 }, projectID: { type: "string" }, projectCanonical: { type: "string" }, location,
         scheduleID: { type: "string", minLength: 3, maxLength: 100 }, passageID: { type: ["string", "null"], minLength: 3, maxLength: 100 }, mission: sharedMissionMap,

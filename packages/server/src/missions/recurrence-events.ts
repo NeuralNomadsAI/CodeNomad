@@ -2,7 +2,7 @@ export const MISSION_RECURRENCE_CHANGED_EVENT = "rpc.codenomad.missions.schedule
 export interface RecurrenceScheduleChanged { scheduleID: string; revision: number }
 export const recurrenceScheduleChangedSchema = {
   type: "object", properties: {
-    scheduleID: { type: "string", minLength: 3, maxLength: 100, pattern: "^[A-Za-z0-9_-]{3,100}$" },
+    scheduleID: { type: "string", minLength: 3, maxLength: 100 },
     revision: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   }, required: ["scheduleID", "revision"], additionalProperties: false,
 } as const

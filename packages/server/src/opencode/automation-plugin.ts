@@ -1,10 +1,11 @@
-import { randomBytes } from "node:crypto"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 import { execFileSync, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { MissionControlError } from "../missions/control-error"
+import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryError } from "../missions/recovery-error"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
@@ -281,7 +282,7 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const directories = automationBridgeDirectories()
   for (const [directoryIndex, directory] of directories.entries()) {
@@ -309,7 +310,7 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
       const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
       if (!registration) continue
       if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
-        await rm(target, { force: true }).catch(() => undefined)
+        if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
       if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && directoryIndex > 0) registration[WINDOWS_INTEROP] = true
@@ -317,6 +318,22 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
     }
   }
   return found.sort((left, right) => right.startedAt - left.startedAt).slice(0, MAX_REGISTRATIONS)
+}
+
+/** An HMAC alone could identify an old registration. Demand a fresh response
+ * from the selected live backend's existing authenticated bridge as well. */
+export async function verifyRecurrenceBridge(body: RecurrenceControlProofBody, proof: string): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/.test(proof)) return false
+  for (const registration of await registrations(false)) {
+    const digest = Buffer.from(signNativeRecurrenceControl(body, registration.token), "hex")
+    if (!timingSafeEqual(digest, Buffer.from(proof, "hex"))) continue
+    try {
+      const reply = await callBridge(registration, { mode: "recurrence-control-verify", sessionID: body.sessionID, command: body })
+      if (reply.status === 200 && reply.body.result && typeof reply.body.result === "object"
+        && "admitted" in reply.body.result && reply.body.result.admitted === true) return true
+    } catch { /* Missing backend is not a reusable human grant. */ }
+  }
+  return false
 }
 
 async function callBridge(

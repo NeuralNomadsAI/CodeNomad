@@ -22,21 +22,21 @@ export const recurrenceReadPage = z.object({ version: z.literal(1), projectID: z
 export type MissionRecurrenceReadPage = z.infer<typeof recurrenceReadPage>
 
 const id = { type: "string", minLength: 1, maxLength: 240 } as const
-const recurrenceID = { type: "string", minLength: 3, maxLength: 100, pattern: "^[A-Za-z0-9_-]{3,100}$" } as const
+const recurrenceID = { type: "string", minLength: 3, maxLength: 100 } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
 const timestamp = { ...counter, maximum: Date.parse("9999-12-28T00:00:00Z") } as const
 const nullableID = { anyOf: [recurrenceID, { type: "null" }] } as const
 const location = { type: "object", properties: { directory: { type: "string", minLength: 1, maxLength: 4096 }, workspaceID: id },
   required: ["directory"], additionalProperties: false } as const
-const receipt = { type: "object", properties: { passageID: recurrenceID, messageID: recurrenceID,
-  dueAt: timestamp, settledAt: timestamp, status: { type: "string", enum: ["completed", "failed", "stopped", "rejected-before-effect"] },
-  missionID: id, conversationID: id, artifactMessageIDs: { type: "array", maxItems: 8, uniqueItems: true, items: id },
-}, required: ["passageID", "messageID", "dueAt", "settledAt", "status"], additionalProperties: false,
-  oneOf: [
-    { properties: { status: { const: "rejected-before-effect" } }, not: { anyOf: [{ required: ["missionID"] }, { required: ["conversationID"] }, { required: ["artifactMessageIDs"] }] } },
-    { properties: { status: { enum: ["completed", "failed", "stopped"] } }, required: ["missionID", "conversationID", "artifactMessageIDs"] },
-  ],
-} as const
+const receiptProperties = { passageID: recurrenceID, messageID: recurrenceID, dueAt: timestamp, settledAt: timestamp } as const
+const receiptRequired = ["passageID", "messageID", "dueAt", "settledAt", "status"] as const
+const receipt = { type: "object", oneOf: [
+  { type: "object", properties: { ...receiptProperties, status: { type: "string", const: "rejected-before-effect" } },
+    required: receiptRequired, additionalProperties: false },
+  { type: "object", properties: { ...receiptProperties, status: { type: "string", enum: ["completed", "failed", "stopped"] },
+    missionID: id, conversationID: id, artifactMessageIDs: { type: "array", maxItems: 8, uniqueItems: true, items: id } },
+    required: [...receiptRequired, "missionID", "conversationID", "artifactMessageIDs"], additionalProperties: false },
+] } as const
 
 /** The single registered native output contract: bounded references, no permissive additionalProperties. */
 export const recurrenceSnapshotOutput = { type: "object", properties: {
@@ -51,7 +51,7 @@ export const recurrenceSnapshotOutput = { type: "object", properties: {
     nativeControl: recurrenceNativeControlWire,
     controlRetry: { ...recurrenceControlRequestWire, properties: { ...recurrenceControlRequestWire.properties,
       action: { type: "string", enum: ["pause", "stop"] } } }, controlsComplete: { type: "boolean" },
-    clock: { type: "object", properties: { time: { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }, zone: { type: "string", minLength: 1, maxLength: 240 } }, required: ["time", "zone"], additionalProperties: false },
+    clock: { type: "object", properties: { time: { type: "string", minLength: 5, maxLength: 5 }, zone: { type: "string", minLength: 1, maxLength: 240 } }, required: ["time", "zone"], additionalProperties: false },
     pendingPassageID: nullableID, pendingStatus: { type: ["string", "null"], enum: ["unknown", "admitted", null] },
     pendingAdmission: { anyOf: [{ type: "null" }, { type: "object", properties: { missionID: id, conversationID: id }, required: ["missionID", "conversationID"], additionalProperties: false }] },
     settledCount: counter, latestResult: { anyOf: [receipt, { type: "null" }] }, history: { type: "array", maxItems: 30, items: receipt },

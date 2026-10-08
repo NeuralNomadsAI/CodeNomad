@@ -40,6 +40,8 @@ export const recurrenceStandingIntentSchema = binding.extend({
   version: z.literal(1), policy: z.literal(RECURRENCE_AUTHORITY_POLICY), scheduleID: recurrenceIDSchema,
   daemonStorageID: id, scheduleRevision: counter, epoch: positive, expectedRevision: counter.nullable(), requestID: recurrenceIDSchema,
   provisioningGeneration: id, signerDigest: digest, action: z.enum(["authorize", "pause", "revoke"]),
+  expectedScheduleRevision: counter.optional(),
+  clockEpoch: positive.optional(),
   configDigest: digest, config: recurrenceConfigSchema, profileSource: recurrenceProfileSourceSchema, budgets: recurrenceAuthorityBudgetsSchema,
 }).strict().superRefine((body, context) => {
   if (body.requestID !== recurrenceHumanRequestID(body.scheduleID, body.epoch, body.action)

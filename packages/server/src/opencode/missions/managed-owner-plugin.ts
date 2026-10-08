@@ -6,6 +6,8 @@ import { desktopPlugin as promisePlugin } from "./desktop-plugin"
 import { enrollmentSchema, observeNativeManagedOwner } from "./native-managed-owner"
 import { CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
+import { readNativeRecurrenceControlStatus } from "./native-recurrence-control-status"
+import { controlNativeRecurrence } from "./native-recurrence-control"
 import { nativeRecurrenceHandlers } from "./native-recurrence-create"
 import { HUMAN_ANSWER_RPC, type NativeHumanAnswerGate } from "../../missions/human-answer"
 import { acquireNativeHumanAnswers } from "./native-human-answer"
@@ -26,7 +28,9 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rp
       ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
         ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
-        recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input) } as typeof handlers
+        recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input),
+        recurrenceControl: (input: unknown) => controlNativeRecurrence(ctx, input),
+        recurrenceControlStatus: (input: unknown) => readNativeRecurrenceControlStatus(ctx, input) } as typeof handlers
       : handlers)
   return new Proxy(ctx.rpc, { get(target, key) {
     return key === "register" ? register : Reflect.get(target, key)

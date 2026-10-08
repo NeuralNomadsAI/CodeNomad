@@ -14,6 +14,7 @@ import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
 import { missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
+import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 import type { SettingsService } from "../../settings/service"
 
 interface AutomationPluginRouteDeps {
@@ -62,6 +63,13 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
         { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings }, lifetime.signal) }) }
       catch { return reply.code(403).send({ error: "Human answer admission unavailable" }) }
+    }
+    if (body?.mode === "recurrence-control-verify") {
+      try {
+        return reply.send({ result: await verifyHumanRecurrenceRequest(body.command, {
+          auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings,
+        }, lifetime.signal) })
+      } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
     if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {

@@ -40,6 +40,9 @@ import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
 import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
+import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
+import { registerMissionRecurrenceControlStatus } from "./routes/mission-recurrence-control-status"
+import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import type { PanelExtensionStore } from "../panel-extensions/store"
@@ -356,8 +359,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   const developerCdp = new DeveloperCdp()
   registerAutomationPluginRoute(app, {
     authManager: deps.authManager,
-    bridgeToken: deps.automationBridgeToken,
     settings: deps.settings,
+    bridgeToken: deps.automationBridgeToken,
     worktreeDeletionFence,
     nativeParent: deps.nativeParent,
     developerCdp,
@@ -366,6 +369,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings })
+  registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
+  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
@@ -1295,6 +1301,7 @@ export function redactSecrets(value: unknown): unknown {
   if (typeof value !== "object") return value
   if (Buffer.isBuffer(value)) return "<redacted>"
   if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return "<redacted>"
+  if (isRecurrenceProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
     /(authorization|cookie|key|code|token|password|secret)/i.test(key) ? "<redacted>" : redactSecrets(entry),

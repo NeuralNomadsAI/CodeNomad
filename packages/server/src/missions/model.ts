@@ -773,7 +773,12 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   }
 
   const lifecycle = projectLifecycle(events)
-  if (lifecycle.runState === "stopped") {
+  const firstStop = events.findIndex(event => event.type === "mission.control-requested" && event.action === "stop")
+  const firstFinished = events.findIndex(event => event.type === "mission.finished")
+  // Denial receipts in the normal final-report/native-settlement interval do
+  // not rewrite the already recorded terminal result. A prior Stop remains terminal.
+  const finishedBeforeStop = firstFinished >= 0 && firstFinished < firstStop
+  if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
     status = "stopped"
     for (const task of tasks.values()) {
       if (["ready", "blocked", "queued", "dispatching"].includes(task.status)) task.status = "withdrawn"

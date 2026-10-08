@@ -31,14 +31,19 @@ export async function controlMission(input: MissionLifecycleInput, options: {
     // A completed old action must never undo a newer pause or terminal stop.
     if (mission.control?.id !== eventID || !mission.control.pending.length) return { mission }
   } else {
-    if (mission.status !== "active") throw new MissionControlError("Finished missions cannot be restarted", "mission-finished")
+    if (mission.control?.action === "stop" && input.action !== "stop") {
+      throw new MissionControlError("Stopped missions cannot be restarted or paused", "mission-finished")
+    }
+    if (mission.status !== "active" && input.action === "start") throw new MissionControlError("Finished missions cannot be restarted", "mission-finished")
     if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before controlling it", "revision-conflict")
-    if (mission.control?.pending.length && input.action !== "stop") throw new MissionControlError("Retry the pending control action first", "control-pending")
+    if (mission.control?.pending.length && input.action === "start") throw new MissionControlError("Retry the pending control action first", "control-pending")
     const state = mission.runState ?? "running"
-    if ((input.action === "start" && state !== "prepared" && state !== "paused") || (input.action === "pause" && state !== "running")) {
+    if ((input.action === "start" && state !== "prepared" && state !== "paused")
+      || (input.action === "pause" && mission.status === "active" && state !== "running" && state !== "prepared")) {
       throw new MissionControlError("Action is not valid in the current mission state", "control-conflict")
     }
-    const targets = mission.actors.filter(actor => input.action !== "start" || actor.kind === "coordinator"
+    const targets = mission.actors.filter(actor => !mission!.tasks.some(task => task.actorSessionId === actor.sessionId && task.nativeBinding))
+      .filter(actor => input.action !== "start" || actor.kind === "coordinator"
       || mission!.tasks.some(task => task.actorSessionId === actor.sessionId && (task.status === "queued" || task.status === "dispatching" || task.outstandingExecution)))
       .map(actor => ({ sessionID: actor.sessionId, location: { ...actor.location } }))
     if (input.recurrence && (input.action !== "start" || input.requestID !== input.recurrence.passageID
