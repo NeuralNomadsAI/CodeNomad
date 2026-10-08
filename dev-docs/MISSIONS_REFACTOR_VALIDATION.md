@@ -60,6 +60,22 @@ Frozen handoffs received (not new validation):
   recurring answer evidence after Pause/Stop/archive, including unknown-reply
   retention. It does not qualify independent-root decision provenance or the
   complete service-owned business/tool lifetime journey.
+- `missions-passage-tools-20261008`, HEAD `119443d5`: business/provider/Job
+  lifetime and independent-session work frozen uncommitted. Last signal/source
+  adjustments postdate its focused passes; no complete journey qualification.
+- `missions-native-tool-receipts-20261008`, HEAD `119443d5`: generic and Code Mode
+  receipt work frozen uncommitted; 29 offline checks and typecheck reported, but
+  production factory/descendant integration remains incomplete.
+
+All five handoffs are now received. Active implementation is limited to:
+1. Native owner, GPT-6.1 Sol: `missions-native-consolidated-20261008`, based on
+   `bd512b72`; recover business/tool deltas and close the full finite passage.
+2. UI owner, GPT-6.1 Sol: existing `missions-ui-final-join-20261008` worktree,
+   branch `experiment/missions-ui-consolidated-20261008`, same `bd512b72` base;
+   rendered usability only, no backend/shared-contract changes.
+The parent remains GPT-6 Astra on the reference assembly. Native pipeline files
+are exclusively assigned during this delivery; parent owns other shared contracts
+and integration. Old worktrees remain preserved and inactive, not new producers.
 
 **Authoritative target clarification (2026-10-07):** Missions runs autonomously
 inside the OpenCode service with both CodeNomad UI and its intermediary backend
