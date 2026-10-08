@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { readLocationRef } from "../../opencode/compatibility/location"
 import { createNativeCodexUsage } from "../../usage/native-codex"
+import { readUsageCredentials } from "../../usage/native-credentials"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 
 const UsageParamsSchema = z.object({ providerId: z.string().trim().min(1) })
@@ -52,7 +53,9 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId })
+          const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
+          signal.throwIfAborted()
+          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth })
           // Session movement, workspace eviction and reconnect fence publication too.
           const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
           const currentLocation = readLocationRef(current.location)

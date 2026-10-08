@@ -25,7 +25,8 @@ function harness() {
     if (url.pathname === "/api/credential") return Response.json({ data: [{ id: "selected", integrationID: "openai", active: true, label: "Secret account",
       value: { type: "oauth", methodID: "chatgpt-headless", access: "secret-token", refresh: "secret-refresh", expires,
         metadata: { accountID: "secret-account" } },
-    }] }, { status: state.oldEndpoint ? 404 : 200 })
+    }, { id: "key", integrationID: "deepinfra", active: true, label: "Key", value: { type: "key", key: "secret-deepinfra" } }] },
+    { status: state.oldEndpoint ? 404 : 200 })
     return Response.json({}, { status: 404 })
   } })
   const connection = { client, assertCurrent: () => {} } as ServiceConnection
@@ -106,12 +107,30 @@ test("session movement during quota fetch fences publication", async () => {
 })
 
 test("owned unknown provider retains a typed unsupported result without a quota request", async () => {
-  const { app } = harness()
+  const { app, state } = harness()
   try {
     const response = await app.inject({ url: url.replace("/usage/openai", "/usage/unknown-provider") })
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().providerId, null)
     assert.equal(response.json().supported, false)
     assert.deepEqual(response.json().windows, {})
+    assert.equal(state.nativeCalls.includes("/api/credential"), false)
   } finally { await app.close() }
+})
+
+test("other providers use the daemon's selected native credential, never returning it", async () => {
+  const { app, logs } = harness()
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://api.deepinfra.com/v1/me?checklist=true")
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer secret-deepinfra")
+    return Response.json({ checklist: { stripe_balance: -4 } })
+  }
+  try {
+    const response = await app.inject({ url: url.replace("/usage/openai", "/usage/deepinfra") })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().ok, true)
+    assert.equal(response.json().windows.credits_balance.valueLabel, "$4.00")
+    assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+  } finally { globalThis.fetch = previousFetch; await app.close() }
 })

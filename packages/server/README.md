@@ -246,10 +246,12 @@ The stream is volatile and has no replay guarantee. After reconnecting, clients 
 
 ### Provider Plan Usage
 
-The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads existing OpenCode and Codex CLI credential files but never modifies them or returns provider secrets through its API. Expired externally owned OAuth sessions must be refreshed by OpenCode or Codex CLI; CodeNomad does not exchange their refresh tokens, so refresh-token rotation cannot be lost.
+The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads the credential each integration currently selects through OpenCode's native credential API; only daemons without that API (before 2.0.20) fall back to the legacy `auth.json`. Claude usage, including the `claude-code` provider registered by opencode-claude, prefers Claude Code's own login (macOS Keychain or `~/.claude/.credentials.json`, honouring `CLAUDE_CONFIG_DIR`), then OpenCode's Anthropic OAuth login, then `CLAUDE_CODE_OAUTH_TOKEN`. CodeNomad never modifies these credentials or returns provider secrets through its API. Expired externally owned OAuth sessions must be refreshed by their owner (OpenCode, Claude Code or Codex CLI); CodeNomad does not exchange their refresh tokens, so refresh-token rotation cannot be lost.
 
 Some optional usage integrations require credentials that OpenCode does not expose. They can be enabled without UI configuration through these environment variables:
 
 - Cursor access token: `CURSOR_ACCESS_TOKEN` or `CURSOR_TOKEN`
 - Ollama Cloud: `OLLAMA_CLOUD_COOKIE`
 - OpenCode Go: `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`
+- ZenMux platform API key (distinct from its inference key): `ZENMUX_PLATFORM_API_KEY`
+- exe.dev usage token: `EXE_DEV_USAGE_TOKEN`

@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 import { oauthProviders, parseCodexUsage } from "./oauth"
+import { readOpenCodeAuth } from "../shared"
 
 test("parses Codex rate limits, credits, and business spend limits", () => {
   const usage = parseCodexUsage({
@@ -33,7 +34,9 @@ test("unscoped Codex requests never read or fall back to host legacy/CLI credent
   }) as unknown as typeof fs.readFileSync
   globalThis.fetch = async () => { calls++; return Response.json({ rate_limit: { primary_window: { used_percent: 5 } } }) }
   try {
-    const usage = await oauthProviders.find(provider => provider.id === "codex")!.fetchQuota()
+    const usage = await oauthProviders.find(provider => provider.id === "codex")!.fetchQuota({
+      openai: { type: "oauth", access: "projected", expires: Date.now() + 3600000 },
+    })
     assert.equal(usage.ok, false)
     assert.equal(reads, 0)
     assert.equal(calls, 0)
@@ -53,7 +56,7 @@ test("rejects empty and malformed Copilot usage payloads after OAuth alias fallb
         assert.equal(new Headers(init?.headers).get("authorization"), "token copilot-access")
         return Response.json(payload)
       }
-      const usage = await oauthProviders.find(provider => provider.id === "github-copilot")!.fetchQuota()
+      const usage = await oauthProviders.find(provider => provider.id === "github-copilot")!.fetchQuota(readOpenCodeAuth())
       assert.equal(usage.ok, false)
       assert.match(usage.error ?? "", /no quota data/)
     }

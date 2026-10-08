@@ -1,21 +1,18 @@
 import type { ProviderUsage, UsageProvider } from "../types"
+import { findClaudeCredential } from "../claude-credential"
 import {
   asObject,
   fetchJson,
+  formatMoney,
   getCredential,
-  getOAuthEntry,
   getString,
   notConfigured,
-  oauthTokenNeedsRefresh,
   result,
   safeFetch,
   toNumber,
   toTimestamp,
   toUsageWindow,
 } from "../shared"
-
-const formatMoney = (value: number | null): string | null =>
-  value === null || !Number.isFinite(value) ? null : value.toFixed(2)
 
 // --- command-code ---
 type CommandCodeCredits = {
@@ -73,8 +70,8 @@ const commandCode: UsageProvider = {
   id: "command-code",
   name: "Command Code",
   aliases: commandCodeAliases,
-  async fetchQuota() {
-    const key = getCredential(commandCodeAliases, ["key", "access", "token"]) ?? getString(process.env.COMMAND_CODE_API_KEY)
+  async fetchQuota(auth) {
+    const key = getCredential(auth, commandCodeAliases, ["key", "access", "token"]) ?? getString(process.env.COMMAND_CODE_API_KEY)
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const orgId = parseOrgId(await requestJson("/alpha/whoami", key))
@@ -95,8 +92,8 @@ const crof: UsageProvider = {
   id: "crof",
   name: "CrofAI",
   aliases: crofAliases,
-  async fetchQuota() {
-    const key = getCredential(crofAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, crofAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload: any = await fetchJson("https://crof.ai/usage_api/", {
@@ -124,8 +121,8 @@ const deepseek: UsageProvider = {
   id: "deepseek",
   name: "DeepSeek",
   aliases: deepseekAliases,
-  async fetchQuota() {
-    const key = getCredential(deepseekAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, deepseekAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload: any = await fetchJson("https://api.deepseek.com/user/balance", {
@@ -170,8 +167,8 @@ const neuralwatt: UsageProvider = {
   id: "neuralwatt",
   name: "NeuralWatt",
   aliases: neuralwattAliases,
-  async fetchQuota() {
-    const key = getCredential(neuralwattAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, neuralwattAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload: any = await fetchJson("https://api.neuralwatt.com/v1/quota", {
@@ -238,7 +235,7 @@ const neuralwatt: UsageProvider = {
 // --- claude ---
 const CLAUDE_DEFAULT_COOLDOWN_MS = 5 * 60 * 1000
 const CLAUDE_MAX_COOLDOWN_MS = 60 * 60 * 1000
-const CLAUDE_REAUTH_ERROR = "Claude session expired. Reconnect the Anthropic integration in OpenCode."
+const CLAUDE_REAUTH_ERROR = "Claude session expired. Use Claude Code or reconnect the Anthropic integration in OpenCode."
 let claudeCredentialFingerprint: string | null = null
 let claudeCachedUsage: ProviderUsage | null = null
 let claudeCooldownUntil = 0
@@ -322,23 +319,22 @@ function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
   return Object.keys(models).length ? { windows, models } : { windows }
 }
 
-const claudeAliases = ["claude", "anthropic"] as const
 const claude: UsageProvider = {
   id: "claude",
   name: "Claude",
-  aliases: claudeAliases,
-  async fetchQuota() {
-    const entry = getOAuthEntry(claudeAliases)
-    const accessToken = getString(entry?.access) ?? getString(entry?.token)
-    if (!accessToken) return notConfigured(this.id, this.name)
-    const refreshToken = getString(entry?.refresh) ?? ""
-    const fingerprint = `${accessToken}\0${refreshToken}`
+  // `claude-code` is registered by the opencode-claude plugin and bills the same subscription.
+  aliases: ["claude", "anthropic", "claude-code"],
+  async fetchQuota(auth) {
+    const credential = findClaudeCredential(auth)
+    if (!credential) return notConfigured(this.id, this.name)
+    const accessToken = credential.access
+    const fingerprint = `${accessToken}\0${credential.refresh ?? ""}`
     if (claudeCredentialFingerprint !== fingerprint) {
       claudeCredentialFingerprint = fingerprint
       claudeCachedUsage = null
       claudeCooldownUntil = 0
     }
-    if (entry?.type === "oauth" && oauthTokenNeedsRefresh(entry)) {
+    if (credential.expires !== null && credential.expires <= Date.now() + 120_000) {
       return result(this.id, this.name, { ok: false, configured: true, error: CLAUDE_REAUTH_ERROR })
     }
     if (Date.now() < claudeCooldownUntil) {

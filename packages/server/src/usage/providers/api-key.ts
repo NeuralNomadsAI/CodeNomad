@@ -15,8 +15,8 @@ const kimi: UsageProvider = {
   id: "kimi-for-coding",
   name: "Kimi for Coding",
   aliases: kimiAliases,
-  async fetchQuota() {
-    const key = getCredential(kimiAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, kimiAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload = await fetchJson("https://api.kimi.com/coding/v1/usages", {
@@ -55,8 +55,8 @@ const nanoGpt: UsageProvider = {
   id: "nano-gpt",
   name: "NanoGPT",
   aliases: nanoAliases,
-  async fetchQuota() {
-    const key = getCredential(nanoAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, nanoAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload = await fetchJson("https://nano-gpt.com/api/subscription/v1/usage", {
@@ -84,8 +84,8 @@ const openRouter: UsageProvider = {
   id: "openrouter",
   name: "OpenRouter",
   aliases: openRouterAliases,
-  async fetchQuota() {
-    const key = getCredential(openRouterAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, openRouterAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload = await fetchJson("https://openrouter.ai/api/v1/credits", {
@@ -119,8 +119,8 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
     id: input.id,
     name: input.name,
     aliases: input.aliases,
-    async fetchQuota() {
-      const key = getCredential(input.aliases, ["key", "token"])
+    async fetchQuota(auth) {
+      const key = getCredential(auth, input.aliases, ["key", "token"])
       if (!key) return notConfigured(this.id, this.name)
       return safeFetch(this.id, this.name, async () => {
         const payload = await fetchJson(input.url, { headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } })
@@ -173,8 +173,8 @@ const wafer: UsageProvider = {
   id: "wafer",
   name: "Wafer.ai",
   aliases: waferAliases,
-  async fetchQuota() {
-    const key = getCredential(waferAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, waferAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload = await fetchJson("https://pass.wafer.ai/v1/inference/quota", {
