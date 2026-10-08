@@ -17,7 +17,7 @@ import { NativeRecurrenceAuthorityStore, type RecurrenceAuthorityDocument } from
 const namespace = "9f6f590e-271d-477f-8c02-7a6a119d63b9"
 const root = { mode: "git" as const, directory: "/owned/project", family: "family", checkout: "/owned/project" }
 const execution = { agent: "worker", model: { providerID: "provider", id: "model" } }
-const config: RecurrenceConfig = { consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+const config: RecurrenceConfig = { template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
   profiles: { coordinator: execution, roles: { specialist: execution } }, taskMode: "native", roots: [root],
   watchedConversationIDs: ["ses_watched"], publication: { policy: "authorized-targets", conversationIDs: ["ses_target"] } }
 const scope: RecurrenceAuthorityScope = { namespace, projectID: "project", projectCanonical: "/owned/project", profileID: "profile",
@@ -494,7 +494,7 @@ test("large valid ledgers exceed ordinary signing-byte limits without stranding 
   const f = await fixture()
   const roots = Array.from({ length: 6 }, (_, index) => ({ ...root, directory: `/owned/${index}/${"x".repeat(3900)}`,
     family: `family_${index}`, checkout: `/checkout_${index}` }))
-  const big: RecurrenceConfig = { ...config, roots, consigne: "x".repeat(20_000) }
+  const big: RecurrenceConfig = { ...config, roots, consigne: "x".repeat(16_384) }
   const source = (await f.source.read(scope.scheduleID))!
   await f.source.configure(source.id, source.revision, big, f.qualifiedCurrent)
   f.setSigners([{ ...f.signer, roots }])
@@ -510,7 +510,7 @@ test("large valid ledgers exceed ordinary signing-byte limits without stranding 
 })
 
 test("receipt and denial/retirement bookkeeping consume reserved headroom without raising the 256-KiB limit", async () => {
-  const roots = Array.from({ length: 12 }, (_, index) => ({ ...root, directory: `/owned/${index}/${"x".repeat(3000)}`,
+  const roots = Array.from({ length: 12 }, (_, index) => ({ ...root, directory: `/owned/${index}/${"x".repeat(3150)}`,
     family: `family_${index}`, checkout: `/checkout_${index}` }))
   async function sizedFixture(length: number) {
     const f = await fixture(), big = { ...config, roots, consigne: "x".repeat(length) }
@@ -532,7 +532,7 @@ test("receipt and denial/retirement bookkeeping consume reserved headroom withou
   const odd = (target - bytes) % 2
   if (odd) effect.messageIDs[31] += "x"
   const length = 16_000 + (target - bytes - odd) / 2
-  assert(length > 0 && length <= 20_000)
+  assert(length > 0 && length <= 16_384)
   const { f, grant } = await sizedFixture(length)
   const lease = await f.claim(grant.grantID, effect)
   assert.equal(Buffer.byteLength(canonicalAuthority(await f.store.read(), RECURRENCE_AUTHORITY_MAX_BYTES)), target)

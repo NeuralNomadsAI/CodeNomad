@@ -60,7 +60,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const keys=generateKeyPairSync("ed25519");
   const root={mode:"git",directory:ctx.location.directory,family:"fixture-family",checkout:ctx.location.directory};
   const execution={agent:"build",model:{providerID:"fixture",id:"fixture"}};
-  const config={consigne:"Private metadata proof",clock:{time:"07:00",zone:"UTC"},profileID:scope.profileID,executionHost:scope.executionHost,
+  const config={template:"custom",consigne:"Private metadata proof",clock:{time:"07:00",zone:"UTC"},profileID:scope.profileID,executionHost:scope.executionHost,
    profiles:{coordinator:execution,roles:{specialist:execution}},taskMode:"native",roots:[root],watchedConversationIDs:[],publication:{policy:"disabled",conversationIDs:[]}};
   const body={...scope,authorityID:"fixture-authority",keyID:"fixture-key",roots:[root],version:1,policy:RECURRENCE_AUTHORITY_POLICY,
     action:"authorize",scheduleRevision:0,epoch:1,expectedRevision:null,requestID:recurrenceHumanRequestID(scope.scheduleID,1,"authorize"),provisioningGeneration:"fixture-generation",

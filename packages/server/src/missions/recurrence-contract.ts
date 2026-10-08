@@ -4,8 +4,10 @@ import { stableToken } from "./journal"
 export { recurrenceMessageID } from "./receipt-identity"
 import { recurrenceMessageID } from "./receipt-identity"
 import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
-import { missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
+import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
+import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
+import { recurrenceInputBudget, recurrenceReadBudget } from "./recurrence-read-budget"
 
 export const RECURRENCE_STORAGE_PREFIX = "codenomad-missions/recurrence-v1"
 export const RECURRENCE_HISTORY_LIMIT = 30
@@ -17,26 +19,41 @@ const id = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
 const counter = z.number().int().nonnegative().safe()
 const timestamp = counter.max(Date.parse("9999-12-28T00:00:00Z"))
 const ids = z.array(id).max(32).refine(items => new Set(items).size === items.length)
+/** Explicit per-passage ceilings; a paused schedule never spends them. */
+export const recurrenceBudgetsSchema = z.object({ effects: counter.min(1).max(64), nativeCalls: counter.max(32),
+  inboxMessages: counter.max(256), publications: counter.max(32) }).strict()
 
 /** Explicit persisted selections, never a dynamic default or native tool-rights
  * sandbox. Ownership, permissions and publication enforcement belong to the
  * authorized admission composition, not standing-consigne text. */
 export const recurrenceConfigSchema = z.object({
-  consigne: z.string().min(1).max(20_000), clock: dailyClockSchema,
+  consigne: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
+  notes: z.string().max(20_000).optional(),
+  template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]),
   profileID: id, executionHost: id,
-  profiles: missionProfilesInputSchema.refine(profiles => {
-    if (!profiles?.coordinator || !profiles.roles?.specialist) return false
-    try { validateMissionProfiles("custom", profiles) } catch { return false }
-    return [profiles.coordinator, ...Object.values(profiles.roles)].every(selection =>
-      !!selection.agent && !!selection.model?.providerID && !!selection.model.id)
-  }, "Recurrence requires exact coordinator/specialist agent and model selections"),
+  profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema,
   roots: z.array(authorityRootSchema).min(1).max(32).refine(roots =>
     new Set(roots.map(root => root.directory)).size === roots.length),
   watchedConversationIDs: ids,
+  // Every authorized passage must reserve create, start and coordinator-message.
+  // Optional here for old unactivated core fixtures; native CREATE requires it.
+  budgets: recurrenceBudgetsSchema.refine(value => value.effects >= 3, "Recurrence needs three fixed effects").optional(),
   publication: z.object({ policy: z.enum(["disabled", "draft-only", "authorized-targets"]), conversationIDs: ids }).strict()
     .refine(value => value.policy === "authorized-targets" ? value.conversationIDs.length > 0 : value.conversationIDs.length === 0),
 }).strict().refine(config => {
+  try { recurrenceStartText(config); return true } catch { return false }
+}, "Recurrence start text exceeds lifecycle capacity").refine(config => {
+  return !config.budgets || recurrenceReadBudget(config.watchedConversationIDs.length, config.budgets).sufficient
+}, "Recurrence needs fixed effects and one funded read per watched conversation").refine(config => {
+  return !config.budgets || recurrenceInputBudget(config).sufficient
+}, "Recurrence whole source input exceeds lifecycle capacity").refine(config => {
+  const profiles = config.profiles
+  if (!profiles?.coordinator || missionProfileRoles[config.template].some(role => !profiles.roles?.[role])) return false
+  try { validateMissionProfiles(config.template, profiles) } catch { return false }
+  return [profiles.coordinator, ...Object.values(profiles.roles ?? {})].every(selection =>
+    !!selection.agent && !!selection.model?.providerID && !!selection.model.id)
+}, "Recurrence requires exact coordinator and playbook role agent/model selections").refine(config => {
   // Leave fixed worst-case room for 30 reference receipts, cursors and an
   // unfinished passage BEFORE dispatch. Settling cannot exhaust the ledger.
   try { canonicalAuthority(config, 64 * 1024); return true } catch { return false }

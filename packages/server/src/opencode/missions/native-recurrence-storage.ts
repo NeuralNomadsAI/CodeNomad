@@ -6,7 +6,7 @@ import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchr
 import { stableToken } from "../../missions/journal"
 import { RECURRENCE_MAX_BYTES, RECURRENCE_SCHEDULE_LIMIT, RECURRENCE_STORAGE_PREFIX, recurrenceIDSchema,
   parseRecurrenceDocument } from "../../missions/recurrence-contract"
-import { NativeMissionRecurrenceStore, type RecurrenceStorage } from "../../missions/recurrence-store"
+import { NativeMissionRecurrenceStore, RecurrenceCreateCapacityError, type RecurrenceStorage } from "../../missions/recurrence-store"
 import type { MissionJsonValue } from "../../missions/model"
 
 const pluginID = "codenomad.missions"
@@ -58,7 +58,8 @@ export const acquireNativeRecurrenceStore = Effect.fn("missions.acquireNativeRec
           if (previous !== undefined) throw new Error("Recurrence revision conflict")
           const count = (yield* query("SELECT count(*) AS count FROM kv WHERE substr(key,1,?)=?",
             [databasePrefix.length, databasePrefix]))[0]?.count
-          if (typeof count !== "number" || count >= RECURRENCE_SCHEDULE_LIMIT) throw new Error("Recurrence storage capacity")
+          if (typeof count !== "number") throw new Error("Recurrence storage capacity unavailable")
+          if (count >= RECURRENCE_SCHEDULE_LIMIT) throw new RecurrenceCreateCapacityError()
           guard()
           yield* query("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?) ON CONFLICT(key) DO NOTHING",
             [databaseKey, bytes, Date.now(), Date.now()])

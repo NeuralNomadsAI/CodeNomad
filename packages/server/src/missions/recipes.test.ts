@@ -39,6 +39,16 @@ test("coordinator preserves explicit native reuse and additive frontier planning
   assert.match(context, /omit contract/)
 })
 
+test("optional working notes stay verbatim in the map and are quoted as untrusted actor context for every playbook", () => {
+  const notes = "  Optional <working notes> & technical context\n  "
+  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+    const map = { ...mission, template, notes }
+    const context = buildActorContext(map, "ses_coordinator")
+    assert.ok(context.includes("<mission-notes>  Optional &lt;working notes&gt; &amp; technical context\n  </mission-notes>"))
+    assert.equal(map.notes, notes)
+  }
+})
+
 test("every coordinator plans all requested workstreams and launches independent work before waiting", () => {
   for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
     const context = buildActorContext({ ...mission, template }, "ses_coordinator")

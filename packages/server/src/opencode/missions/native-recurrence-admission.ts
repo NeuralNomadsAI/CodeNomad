@@ -310,9 +310,12 @@ export async function reconcileNativeRecurrenceRoot(input: Omit<PassageInput, "b
       prompt: async () => rejectAuthority("authorization-blocked"),
       synthetic: async () => rejectAuthority("authorization-blocked") }, transport })
   const { mission } = await control.create({ requestID: grant.passage.id, objective: doc.config.consigne,
-    template: "custom", profiles: doc.config.profiles, taskMode: doc.config.taskMode, prepared: true,
+    notes: doc.config.notes,
+    template: doc.config.template, profiles: doc.config.profiles, taskMode: doc.config.taskMode, prepared: true,
     coordinatorSessionID: grant.coordinatorSessionID, expectedCoordinatorLocation: session.location })
   if (mission.id !== grant.missionID || mission.coordinatorSessionId !== grant.coordinatorSessionID
+    || mission.template !== doc.config.template
+    || mission.notes !== doc.config.notes
     || canonicalAuthority(mission.profiles) !== canonicalAuthority(doc.config.profiles)
     || mission.taskMode !== doc.config.taskMode) rejectAuthority("binding-mismatch")
   return { control, mission }

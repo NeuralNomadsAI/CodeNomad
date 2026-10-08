@@ -2,7 +2,7 @@ import { createHash, verify } from "node:crypto"
 import { z } from "zod"
 import { authorityBindingSchema, authorityDigest, authoritySignerDigest, canonicalAuthority, MISSION_AUTHORITY_POLICY,
   rejectAuthority, snapshotAuthoritySigner, type AuthoritySignerSnapshot, type ProvisionedAuthoritySigner } from "./authority-protocol"
-import { recurrenceConfigSchema, recurrenceIDSchema, recurrenceMessageID, recurrencePassageID,
+import { recurrenceBudgetsSchema, recurrenceConfigSchema, recurrenceIDSchema, recurrenceMessageID, recurrencePassageID,
   parseRecurrenceDocument, type RecurrenceDocument } from "./recurrence-contract"
 import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { derivedExecutionSchema } from "./derived-call-protocol"
@@ -35,8 +35,7 @@ export const recurrenceAuthorityScopeSchema = binding.omit({ authorityID: true, 
 }).strict()
 export type RecurrenceAuthorityScope = z.infer<typeof recurrenceAuthorityScopeSchema>
 /** Per-passage ceilings; unknown invocations remain charged. No TTL or renewal. */
-export const recurrenceAuthorityBudgetsSchema = z.object({ effects: positive.max(64), nativeCalls: counter.max(32),
-  inboxMessages: counter.max(256), publications: counter.max(32) }).strict()
+export const recurrenceAuthorityBudgetsSchema = recurrenceBudgetsSchema
 export const recurrenceStandingIntentSchema = binding.extend({
   version: z.literal(1), policy: z.literal(RECURRENCE_AUTHORITY_POLICY), scheduleID: recurrenceIDSchema,
   daemonStorageID: id, scheduleRevision: counter, epoch: positive, expectedRevision: counter.nullable(), requestID: recurrenceIDSchema,
@@ -46,7 +45,8 @@ export const recurrenceStandingIntentSchema = binding.extend({
   if (body.requestID !== recurrenceHumanRequestID(body.scheduleID, body.epoch, body.action)
     || body.configDigest !== authorityDigest(body.config) || body.profileID !== body.config.profileID
     || body.profileSource.profileID !== body.profileID || body.profileSource.executionHost !== body.executionHost
-    || body.executionHost !== body.config.executionHost || canonicalAuthority(body.roots) !== canonicalAuthority(body.config.roots)) {
+    || body.executionHost !== body.config.executionHost || canonicalAuthority(body.roots) !== canonicalAuthority(body.config.roots)
+    || (body.config.budgets && canonicalAuthority(body.budgets) !== canonicalAuthority(body.config.budgets))) {
     context.addIssue({ code: "custom", message: "Standing configuration binding differs" })
   }
 })

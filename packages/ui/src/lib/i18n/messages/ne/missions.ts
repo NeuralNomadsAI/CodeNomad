@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "नेटिभ कल",
   "missions.recurrence.inboxMessages": "प्राप्त सन्देश",
   "missions.recurrence.publications": "प्रकाशन",
-  "missions.recurrence.profilesRequired": "संयोजक र विशेषज्ञ दुवैका लागि एजेन्ट र मोडेल छान्नुहोस्।",
+  "missions.recurrence.profilesRequired": "संयोजक र कार्ययोजनाको प्रत्येक भूमिकाका लागि एजेन्ट र मोडेल छान्नुहोस्।",
   "missions.recurrence.pausedHint": "सेभ गर्दा रोकिएको तालिका बन्छ। नेटिभ नियन्त्रण उपलब्ध नभएसम्म यो चल्न सक्दैन।",
   "missions.recurrence.list": "दोहोरिने तालिका",
   "missions.recurrence.empty": "अहिलेसम्म दोहोरिने तालिका छैन।",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "कार्य हटाएपछि वा मिसन रोकेपछि प्रतिवेदन गरिएको",
   "missions.control.history.before": "अघि",
   "missions.control.history.after": "पछि",
+  "missions.recurrence.instructionsTooLong": "पुनरावर्ती सुरु निर्देशनहरू {limit} अक्षरभित्र राख्नुहोस्।",
+  "missions.recurrence.capacity": "पुनरावर्ती तालिकाको क्षमता पुग्यो। केही सिर्जना भएन; ठाउँ खाली गरेपछि स्पष्ट रूपमा फेरि प्रयास गर्नुहोस्।",
+  "missions.recurrence.sourceBudgetMinimum": "चयन गरिएका अनुसरण संवादका लागि कम्तीमा {effects} कार्य र {inbox} सन्देश आवश्यक छन्।",
+  "missions.recurrence.sourceInputTooLong": "निर्देशन र अनुसरण संवादको सन्दर्भ {limit} अक्षरभित्र हुनुपर्छ। निर्देशन छोट्याउनुहोस् वा अनुसरण संवाद हटाउनुहोस्।",
+  "missions.recurrence.sourceLocationUnavailable": "मूल स्रोत स्थान प्रमाणित गर्न सकिएन। तालिका सिर्जना गर्नुअघि ताजा गर्नुहोस्।",
 } as const

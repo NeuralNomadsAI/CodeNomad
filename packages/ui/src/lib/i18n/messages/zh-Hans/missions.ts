@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "原生调用",
   "missions.recurrence.inboxMessages": "收件消息",
   "missions.recurrence.publications": "发布",
-  "missions.recurrence.profilesRequired": "请为协调员和专家分别选择代理和模型。",
+  "missions.recurrence.profilesRequired": "请为协调员和任务方案中的每个角色选择代理和模型。",
   "missions.recurrence.pausedHint": "保存后创建暂停的日程。原生控制功能可用前不能运行。",
   "missions.recurrence.list": "定期日程",
   "missions.recurrence.empty": "暂无定期日程。",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "在任务退役或任务组停止后上报",
   "missions.control.history.before": "之前",
   "missions.control.history.after": "之后",
+  "missions.recurrence.instructionsTooLong": "请将定期启动指令限制在 {limit} 个字符以内。",
+  "missions.recurrence.capacity": "定期计划数量已达上限。未创建任何内容；释放名额后请手动重试。",
+  "missions.recurrence.sourceBudgetMinimum": "所选跟踪对话至少需要 {effects} 次操作和 {inbox} 条消息预算。",
+  "missions.recurrence.sourceInputTooLong": "指令与跟踪对话上下文总计必须在 {limit} 个字符以内。请缩短指令或移除跟踪对话。",
+  "missions.recurrence.sourceLocationUnavailable": "无法验证原生来源位置。请刷新后再创建计划。",
 } as const

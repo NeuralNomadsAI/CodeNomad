@@ -20,7 +20,14 @@ export function canonicalScope(channel: string, config: string, cwd: string, hom
   return { channel, configIdentity: identity, key: createHash("sha256").update(`${channel}\0${identity}`).digest("hex") }
 }
 export function validateScope(scope: Scope): void {
-  if (!scope || canonicalScope(scope.channel, scope.configIdentity, process.cwd(), process.cwd()).key !== scope.key)
+  // The owned native host already issued this lexical identity. Tauri folds
+  // ASCII on Windows; Electron folds Unicode. Validate, never reissue its key.
+  const identity = scope?.configIdentity
+  if (!scope || typeof scope.channel !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(scope.channel) || scope.channel.length > 240
+    || typeof identity !== "string" || identity.length > 4096 || identity.includes("\0") || identity.trim() !== identity
+    || !path.isAbsolute(identity) || path.resolve(identity) !== identity || !/\.ya?ml$/i.test(identity)
+    || process.platform === "win32" && identity.replace(/[A-Z]/g, letter => letter.toLowerCase()) !== identity
+    || createHash("sha256").update(`${scope.channel}\0${identity}`).digest("hex") !== scope.key)
     throw new HostError("scope-mismatch")
 }
 export interface Owner { pid: number; startIdentity: string }

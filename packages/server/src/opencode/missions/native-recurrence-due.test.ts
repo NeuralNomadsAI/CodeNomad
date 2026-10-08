@@ -79,7 +79,7 @@ test("signed Play admits one native due passage after desktop detach and Locatio
     const ctx = { storage, location } as unknown as Parameters<typeof nativeRecurrenceDue>[0]
     const selection = { agent: "worker", model: { providerID: "provider", id: "model" } }
     const family = await readFamilyAuthorityIdentity(directory)
-    const config = { consigne: "Review", clock: { time: "00:00", zone: "UTC" }, profileID: "profile", executionHost: "native",
+    const config = { template: "custom" as const, consigne: "Review", clock: { time: "00:00", zone: "UTC" }, profileID: "profile", executionHost: "native",
       roots: [{ mode: "git" as const, directory, checkout: physical(directory), family }],
       profiles: { coordinator: selection, roles: { specialist: selection } }, taskMode: "native" as const,
       watchedConversationIDs: [], publication: { policy: "disabled" as const, conversationIDs: [] } }

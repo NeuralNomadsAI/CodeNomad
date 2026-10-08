@@ -3,6 +3,7 @@ import test from "node:test"
 import Ajv from "ajv"
 import { lifecycleOperationSchema, nativeAcknowledgementSchema, parseMissionLifecycleReply, parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { controlResumeAdmissionID } from "./receipt-identity"
+import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
 
 const identity = { missionID: "msn_fixture", operationID: "evt_control", sessionID: "ses_actor" }
 const expected = { ...identity, action: "start" as const }
@@ -18,6 +19,17 @@ test("strict lifecycle replies preserve the exact full native admission without 
   const ack = start(), before = structuredClone(ack)
   assert.deepEqual(parseMissionLifecycleReply({ nativeAcknowledgement: ack }, expected), ack)
   assert.deepEqual(ack, before)
+})
+
+test("frozen recurrence start text fits the unchanged native lifecycle receipt boundary", () => {
+  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+    const config = { template, taskMode: "native" as const, consigne: "x".repeat(MISSION_LIFECYCLE_TEXT_LIMIT) }
+    const ack = start(); ack.admission.payload.text = recurrenceStartText(config)
+    assert.ok(parseMissionNativeAcknowledgement(ack, expected))
+    assert.throws(() => recurrenceStartText({ ...config, consigne: config.consigne + "x" }), /lifecycle capacity/)
+    ack.admission.payload.text += "x"
+    assert.equal(parseMissionNativeAcknowledgement(ack, expected), undefined)
+  }
 })
 
 test("boolean interrupted:false and target-missing are distinct known observations", () => {

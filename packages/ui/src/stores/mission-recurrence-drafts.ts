@@ -1,9 +1,12 @@
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import type { MissionTemplateId } from "../../../server/src/missions/model"
 import { copyMissionProfiles } from "./mission-creation-drafts"
 
 export interface RecurrenceDraft {
   requestID: string
   instructions: string
+  notes?: string
+  template: MissionTemplateId
   clock: { time: string; zone: string }
   watchedConversationIDs: string[]
   budgets: { effects: number; nativeCalls: number; inboxMessages: number; publications: number }

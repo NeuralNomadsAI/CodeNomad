@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "ネイティブ呼び出し",
   "missions.recurrence.inboxMessages": "受信メッセージ",
   "missions.recurrence.publications": "公開",
-  "missions.recurrence.profilesRequired": "調整役と専門役の両方にエージェントとモデルを選んでください。",
+  "missions.recurrence.profilesRequired": "調整役とプレイブックの各役割にエージェントとモデルを選んでください。",
   "missions.recurrence.pausedHint": "保存すると停止状態のスケジュールが作成されます。ネイティブ操作が利用可能になるまで実行できません。",
   "missions.recurrence.list": "定期スケジュール",
   "missions.recurrence.empty": "定期スケジュールはまだありません。",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "タスクの廃止またはミッションの停止後に報告されました",
   "missions.control.history.before": "変更前",
   "missions.control.history.after": "変更後",
+  "missions.recurrence.instructionsTooLong": "定期開始の指示は {limit} 文字以内にしてください。",
+  "missions.recurrence.capacity": "定期スケジュールの上限に達しました。何も作成されていません。枠を空けてから明示的に再試行してください。",
+  "missions.recurrence.sourceBudgetMinimum": "選択した追跡会話には最低 {effects} 件の操作と {inbox} 件のメッセージが必要です。",
+  "missions.recurrence.sourceInputTooLong": "指示と追跡会話のコンテキストは {limit} 文字以内にしてください。指示を短くするか追跡会話を削除してください。",
+  "missions.recurrence.sourceLocationUnavailable": "ネイティブのソース場所を確認できませんでした。スケジュール作成前に更新してください。",
 } as const

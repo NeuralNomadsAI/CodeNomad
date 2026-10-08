@@ -1578,9 +1578,18 @@ fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
+    let selected_config = std::env::var("CLI_CONFIG").ok();
+    let backend_config = identity::resolve_selected_config(selected_config.as_deref(), &cwd, &home);
+    // Native listening/certificate readers and every backend spawn must select
+    // this same ORIGINAL source, resolved before any startup cwd can change.
+    if let Some(config) = backend_config.as_deref() {
+        std::env::set_var("CLI_CONFIG", config);
+    } else {
+        std::env::remove_var("CLI_CONFIG");
+    }
     let scope = identity::resolve_scope(
         std::env::var("CODENOMAD_UPDATE_CHANNEL").ok().as_deref(),
-        std::env::var("CLI_CONFIG").ok().as_deref(),
+        selected_config.as_deref(),
         env!("CARGO_PKG_VERSION"),
         !is_dev_mode(),
         &cwd,
@@ -1660,7 +1669,11 @@ fn main() {
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
-            manager: CliProcessManager::new(),
+            manager: CliProcessManager::with_profile(
+                setup_scope.channel.clone(),
+                setup_scope.config_identity.clone(),
+                backend_config.clone(),
+            ),
             developer_mode,
             browser_controller: browser_controller::BrowserController::new(
                 setup_scope.webview_data_directory.join("browser"),

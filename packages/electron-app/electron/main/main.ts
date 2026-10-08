@@ -27,7 +27,7 @@ import { CliProcessManager } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 
@@ -41,6 +41,12 @@ function resolveStoragePaths() {
     appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
     cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
+  // The backend must use the exact desktop profile channel for paused Mission metadata.
+  process.env.CODENOMAD_UPDATE_CHANNEL = scope.channel
+  process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY = scope.configIdentity
+  const originalConfig = resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
+  if (originalConfig) process.env.CLI_CONFIG = originalConfig
+  else delete process.env.CLI_CONFIG
   const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })

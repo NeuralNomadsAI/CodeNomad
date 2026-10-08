@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { generateKeyPairSync, sign } from "node:crypto"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -23,21 +23,26 @@ import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provi
 import { applyNativeStandingDecision, nativeRecurrenceAdapter, type NativeStandingSigner } from "./native-recurrence-adapter"
 import { reconcileNativeRecurrenceRoot } from "./native-recurrence-admission"
 import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
+import { missionProfileRoles } from "../../missions/playbook-profiles"
 
-test("native standing human CAS checks signer, protected decision, physical family and native head", async () => {
+for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) test(`native ${template} standing human CAS checks signer, protected decision, physical family and native head`, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "recurrence-native-"))
   try {
     execFileSync("git", ["init", "-q", temporary])
-    const directory = realpathSync(temporary), family = await readFamilyAuthorityIdentity(directory)
-    const root = { mode: "git" as const, directory, checkout: physical(directory), family }
+    const checkout = realpathSync(temporary), nested = path.join(checkout, "packages", "server")
+    await mkdir(nested, { recursive: true })
+    const directory = template === "custom" ? nested : checkout, family = await readFamilyAuthorityIdentity(directory)
+    const root = { mode: "git" as const, directory, checkout: physical(checkout), family }
     const scope = { namespace: "9f6f590e-271d-477f-8c02-7a6a119d63b9", projectID: "project",
       projectCanonical: directory, profileID: "profile", executionHost: "host", scheduleID: "watch", daemonStorageID: "native" }
     const keys = generateKeyPairSync("ed25519")
     const signer: ProvisionedAuthoritySigner = { ...scope, authorityID: "authority", keyID: "key", roots: [root],
       publicKey: keys.publicKey, provisioningGeneration: "generation", policy: MISSION_AUTHORITY_POLICY, qualification: "qualified" }
-    const config = { consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: scope.profileID,
+    const config = { template, consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: scope.profileID,
+      notes: "  Preserve optional <working notes> & whitespace\n  ",
       executionHost: scope.executionHost, roots: [root], profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
-        roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },
+        roles: Object.fromEntries(missionProfileRoles[template].map(role => [role,
+          { agent: "worker", model: { providerID: "provider", id: "model" } }])) },
       taskMode: "native", watchedConversationIDs: [], publication: { policy: "disabled", conversationIDs: [] } } as const
     const profile = { profileID: scope.profileID, executionHost: scope.executionHost,
       configYamlPath: path.join(directory, "config.yaml") }
@@ -132,6 +137,7 @@ test("native standing human CAS checks signer, protected decision, physical fami
       admit: async (command: { input: { id: string; sessionID: string; text: string; metadata: Record<string, unknown>; delivery: string } },
         _options: unknown, current: () => true) => {
         current(); nativeMessages++
+        assert.equal(command.input.text, config.consigne, "notes stay out of the bounded raw start message")
         return { id: command.input.id, sessionID: command.input.sessionID, type: "synthetic", delivery: command.input.delivery,
           payload: { text: command.input.text, description: "CodeNomad recurring mission start", metadata: command.input.metadata },
           time: { created: DateTime.makeUnsafe(2) } }
@@ -142,6 +148,9 @@ test("native standing human CAS checks signer, protected decision, physical fami
       profile, signal: new AbortController().signal, settlementSignal: new AbortController().signal,
       beforeEffect: async () => () => { assert(live); return true as const }, now: () => 2 })
     assert.equal(full.kind, "accepted")
+    const created = [...finiteValues.values()].find(value => (value as { type?: string }).type === "mission.created") as { template: string; notes?: string }
+    assert.equal(created.template, template, "finite MissionControl.create must reuse the frozen playbook")
+    assert.equal(created.notes, config.notes)
     assert.equal(full.messageID, pendingSource.pending.passage.messageID)
     assert.equal(nativeCreations, 1)
     assert.equal(nativeMessages, 1)
@@ -276,15 +285,15 @@ test("native standing human CAS checks signer, protected decision, physical fami
     assert.equal(adapter.assertSignerCurrent({ ...signer, signerDigest: authoritySignerDigest(keys.publicKey) }), true)
     const other = path.join(directory, "unrelated")
     execFileSync("git", ["init", "-q", other])
-    renameSync(path.join(directory, ".git"), path.join(directory, ".git-original"))
+    renameSync(path.join(checkout, ".git"), path.join(checkout, ".git-original"))
     try {
-      writeFileSync(path.join(directory, ".git"), `gitdir: ${path.join(other, ".git").replaceAll("\\", "/")}\n`)
+      writeFileSync(path.join(checkout, ".git"), `gitdir: ${path.join(other, ".git").replaceAll("\\", "/")}\n`)
       // The original family's claim and checkout path are unchanged. Only a
       // fresh Git common-directory read detects this legitimate worktree move.
       assert.throws(() => adapter.assertSignerCurrent({ ...signer, signerDigest: authoritySignerDigest(keys.publicKey) }))
     } finally {
-      unlinkSync(path.join(directory, ".git"))
-      renameSync(path.join(directory, ".git-original"), path.join(directory, ".git"))
+      unlinkSync(path.join(checkout, ".git"))
+      renameSync(path.join(checkout, ".git-original"), path.join(checkout, ".git"))
     }
     human = false; await assert.rejects(applyNativeStandingDecision(input, protectedParent, new AbortController().signal))
     human = true; live = false; await assert.rejects(applyNativeStandingDecision(input, protectedParent, new AbortController().signal))
@@ -342,7 +351,7 @@ test("one adapter reuses exact root discovery without caching signer, provider o
     for (const changed of [{ ...root, checkout: root.checkout + ".different" }, { ...root, family: otherFamily }]) {
       signer = { ...initial, roots: [changed] }
       writeFileSync(trace, "")
-      await adapter.readSigners()
+      await assert.rejects(adapter.readSigners(), /binding-mismatch/)
       assert(starts() > 0, "changed binding at the same directory requires new acquisition")
       assert.throws(() => adapter.assertSignerCurrent(snapshot()), /binding-mismatch/)
     }
@@ -351,7 +360,7 @@ test("one adapter reuses exact root discovery without caching signer, provider o
     renameSync(entry, saved)
     try {
       writeFileSync(entry, `gitdir: ${otherFamily.replaceAll("\\", "/")}\n`)
-      await adapter.readSigners()
+      await assert.rejects(adapter.readSigners(), /family-identity-unavailable|binding-mismatch/)
       assert.throws(() => adapter.assertSignerCurrent(snapshot()), /family-identity-unavailable|binding-mismatch/)
     } finally { unlinkSync(entry); renameSync(saved, entry) }
     assert.equal(adapter.assertSignerCurrent(snapshot()), true)
@@ -359,12 +368,12 @@ test("one adapter reuses exact root discovery without caching signer, provider o
     mkdirSync(redirected)
     try {
       git(directory, "config", "core.worktree", redirected)
-      await adapter.readSigners()
+      await assert.rejects(adapter.readSigners(), /family-identity-unavailable|binding-mismatch/)
       assert.throws(() => adapter.assertSignerCurrent(snapshot()), /family-identity-unavailable|binding-mismatch/)
     } finally { writeFileSync(config, original) }
     try {
       process.env.GIT_COMMON_DIR = otherFamily
-      await adapter.readSigners()
+      await assert.rejects(adapter.readSigners(), /family-identity-unavailable|binding-mismatch/)
       assert.throws(() => adapter.assertSignerCurrent(snapshot()), /family-identity-unavailable|binding-mismatch/)
     } finally { delete process.env.GIT_COMMON_DIR }
     assert.equal(adapter.assertSignerCurrent(snapshot()), true)

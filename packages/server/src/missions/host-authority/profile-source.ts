@@ -7,7 +7,6 @@ import type { SettingsService } from "../../settings/service"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { resolveWslServiceDirectory } from "../../workspaces/spawn"
 import type { AutonomousProfileSource } from "../../opencode/missions/autonomous-environment"
-import { canonicalScope } from "../../host-lifetime/protocol"
 import { rejectAuthority, type AuthorityBinding } from "../authority-protocol"
 import { physical } from "./private-files"
 import type { HostAuthorityDescriptor } from "./model"
@@ -16,7 +15,7 @@ import type { CanonicalMissionRoots } from "../durable-host/roots"
 /** Call only inside authenticated Play's owned project/family fence. Bind the
  * returned source in that one signed Play, never a browser/RPC path option. */
 export async function resolveStandingProfileSource(input: {
-  settings: Pick<SettingsService, "configYamlPathForAuthority">
+  settings: Pick<SettingsService, "configYamlPathForAuthority" | "getProfileScope">
   descriptor: HostAuthorityDescriptor
   binding: Pick<AuthorityBinding, "profileID" | "executionHost" | "projectID" | "projectCanonical" | "roots">
   manager: Pick<WorkspaceManager, "getServiceWslDistro" | "getServicePathStyle">
@@ -31,15 +30,17 @@ export async function resolveStandingProfileSource(input: {
   await input.roots.assertRoots(binding.roots)
   assertCurrent()
   const hostPath = input.settings.configYamlPathForAuthority()
-  const scope = canonicalScope(descriptor.scope.channel, hostPath, process.cwd(), process.cwd())
+  // Settings retains the desktop's established ASCII-folded Tauri identity;
+  // recomputing a Unicode-folded key here would reject the same paused CREATE.
+  const scope = input.settings.getProfileScope()
   if (!path.isAbsolute(hostPath) || hostPath.includes("\0") || hostPath.length > 4096
-    || scope.configIdentity !== descriptor.scope.configIdentity || scope.key !== descriptor.scope.key
+    || scope.channel !== descriptor.scope.channel || scope.configIdentity !== descriptor.scope.configIdentity || scope.key !== descriptor.scope.key
     || physical(await realpath(path.dirname(hostPath))) !== descriptor.physicalProfile) rejectAuthority("binding-mismatch")
   assertCurrent()
   const style = manager.getServicePathStyle(workspaceID)
   const distro = manager.getServiceWslDistro(workspaceID)
   if (!style || (distro ? style !== "posix" || descriptor.executionHost !== `wsl:${distro}`
-    : style !== (process.platform === "win32" ? "win32" : "posix") || /^wsl:/i.test(descriptor.executionHost))) rejectAuthority("observation-unavailable")
+    : style !== (process.platform === "win32" ? "win32" : "posix") || descriptor.executionHost !== "local")) rejectAuthority("observation-unavailable")
   await verifyReadableFile(hostPath)
   assertCurrent()
   const nativePath = distro ? await translate(hostPath, distro) : hostPath
@@ -48,8 +49,11 @@ export async function resolveStandingProfileSource(input: {
   if (distro) await verifyNative(nativePath, distro)
   await input.roots.assertRoots(binding.roots)
   assertCurrent()
+  const selected = input.settings.getProfileScope()
+  if (selected.channel !== scope.channel || selected.configIdentity !== scope.configIdentity || selected.key !== scope.key
+    || input.settings.configYamlPathForAuthority() !== hostPath) rejectAuthority("binding-mismatch")
   if (manager.getServiceWslDistro(workspaceID) !== distro || manager.getServicePathStyle(workspaceID) !== style
-    || (distro ? descriptor.executionHost !== `wsl:${distro}` : /^wsl:/i.test(descriptor.executionHost))) rejectAuthority("observation-unavailable")
+    || (distro ? descriptor.executionHost !== `wsl:${distro}` : descriptor.executionHost !== "local")) rejectAuthority("observation-unavailable")
   return Object.freeze({ profileID: binding.profileID, executionHost: binding.executionHost, configYamlPath: nativePath })
 }
 

@@ -194,7 +194,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const rootIdentity={mode:"git",directory:observed.location.directory,family,checkout:p.physical(project)}
   const scope={namespace:observed.enrollment.namespace,projectID:observed.location.project.id,projectCanonical:observed.location.project.canonical,
     profileID:storageScope.key,executionHost:"fixture-host",scheduleID:"protected_probe",daemonStorageID:observed.enrollment.daemonStorageID}
-  const execution={agent:"build",model:{providerID:"fixture",id:"fixture"}},config={consigne:"Owned protected checkpoint proof",clock:{time:"07:00",zone:"UTC"},
+  const execution={agent:"build",model:{providerID:"fixture",id:"fixture"}},config={template:"custom",consigne:"Owned protected checkpoint proof",clock:{time:"07:00",zone:"UTC"},
     profileID:scope.profileID,executionHost:scope.executionHost,profiles:{coordinator:execution,roles:{specialist:execution}},taskMode:"native",roots:[rootIdentity],watchedConversationIDs:[],publication:{policy:"disabled",conversationIDs:[]}}
   const keys=generateKeyPairSync("ed25519"),body={...scope,authorityID:"fixture-authority",keyID:"fixture-public-key",roots:[rootIdentity],version:1,policy:p.RECURRENCE_AUTHORITY_POLICY,
      scheduleRevision:0,epoch:1,expectedRevision:null,requestID:p.recurrenceHumanRequestID(scope.scheduleID,1,"authorize"),provisioningGeneration:"human-fixture-generation",signerDigest:p.authoritySignerDigest(keys.publicKey),action:"authorize",configDigest:p.authorityDigest(config),config,profileSource:{profileID:scope.profileID,executionHost:scope.executionHost,configYamlPath:"/fixture/config.yaml"},budgets:{effects:2,nativeCalls:0,inboxMessages:0,publications:0}}

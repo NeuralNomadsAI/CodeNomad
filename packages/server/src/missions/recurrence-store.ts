@@ -16,6 +16,12 @@ export type RecurrenceStorage = MissionStorage & {
   compareAndSet?(key: string, value: MissionJsonValue, expectedRevision: number | null, current: () => true): Promise<void>
 }
 
+/** Only thrown before any native write (including the transactional CAS count).
+ * Transport failures and publication/readback errors are never this receipt. */
+export class RecurrenceCreateCapacityError extends Error {
+  constructor() { super("Recurrence storage capacity") }
+}
+
 /** Native JSON only. All mutators require the owning authorized host/route;
  * this module supplies durability, not grants. Plain native get/set is NOT CAS;
  * production must use a conditional adapter. In-process exclusion only coalesces
@@ -64,7 +70,7 @@ export class NativeMissionRecurrenceStore {
       this.key(id)
       const config = recurrenceConfigSchema.parse(JSON.parse(canonicalAuthority(input)))
       if (await this.read(id)) throw new Error("Recurrence already exists")
-      if ((await this.list()).length >= RECURRENCE_SCHEDULE_LIMIT) throw new Error("Recurrence storage capacity")
+      if ((await this.list()).length >= RECURRENCE_SCHEDULE_LIMIT) throw new RecurrenceCreateCapacityError()
       const doc: RecurrenceDocument = { version: 1, projectID: this.projectID, projectCanonical: this.projectCanonical,
         id, revision: 0, scheduleRevision: 0, createdAt: now, state: "paused", config,
         lastDaily: null, settledCount: 0, cursors: [], pending: null, history: [] }
@@ -76,7 +82,7 @@ export class NativeMissionRecurrenceStore {
     return this.change(id, expectedRevision, current, doc => {
       if (doc.pending || doc.state === "stopped") throw new Error("Recurrence pending or stopped")
       const config = recurrenceConfigSchema.parse(JSON.parse(canonicalAuthority(input)))
-      for (const field of ["profiles", "taskMode", "profileID", "executionHost"] as const) {
+      for (const field of ["template", "profiles", "taskMode", "profileID", "executionHost"] as const) {
         if (canonicalAuthority(doc.config[field]) !== canonicalAuthority(config[field])) throw new Error("Recurrence profile is immutable")
       }
       doc.config = config

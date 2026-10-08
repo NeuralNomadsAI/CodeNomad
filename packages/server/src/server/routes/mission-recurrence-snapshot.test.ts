@@ -21,7 +21,7 @@ test("forged-parent restart stays unavailable through the owned RPC/route withou
   const directory = path.resolve("offline-recurrence-read")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory,
     project: { id: "project", directory, canonical: directory } })
-  const config: RecurrenceConfig = { consigne: "Private instructions", clock: { time: "07:00", zone: "UTC" },
+  const config: RecurrenceConfig = { template: "custom", consigne: "Private instructions", clock: { time: "07:00", zone: "UTC" },
     profileID: "profile", executionHost: "host",
     profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
       roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },

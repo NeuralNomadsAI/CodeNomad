@@ -14,7 +14,7 @@ interface Binding extends MissionCreationOperation {
   connection: ServiceConnection
   locations: readonly { directory: string; identity: string }[]
 }
-interface HeldCreation { binding: Binding; state: "preparing" | "dispatched" | "uncertain" }
+interface HeldCreation { binding: Binding; state: "preparing" | "dispatched" | "uncertain"; releasePermit(): void }
 const CAPACITY = 128
 // Backend/fence-scoped, bounded retention, not an authority store or dispatcher.
 // Unknown writes have NO expiry, negative-GET release, new-generation adoption or
@@ -47,7 +47,7 @@ export function holdMissionCreation(fence: WorktreeDeletionFence, binding: Bindi
   if (registry.size >= CAPACITY) throw new MissionCreationHoldError("creation-capacity")
   const release = enter()
   if (!release) return undefined
-  const record: HeldCreation = { binding: { ...binding, locations: binding.locations.map(item => ({ ...item })) }, state: "preparing" }
+  const record: HeldCreation = { binding: { ...binding, locations: binding.locations.map(item => ({ ...item })) }, state: "preparing", releasePermit: release }
   registry.set(binding.key, record)
   let finished = false, proven = false
   return {
@@ -68,4 +68,16 @@ export function holdMissionCreation(fence: WorktreeDeletionFence, binding: Bindi
     },
     get uncertain() { return record.state !== "preparing" && !proven },
   }
+}
+
+/** Only recurrence's exact durable readback may settle its lost transport ACK;
+ * ordinary one-shot creation retains its existing hold semantics. */
+export function reconcileRecurrenceCreation(fence: WorktreeDeletionFence, key: string, digest: string): void {
+  const registry = held.get(fence), record = registry?.get(key)
+  if (!record) return
+  if (!key.startsWith("recurrence:") || record.binding.requestDigest !== digest || record.state !== "uncertain") {
+    throw new MissionCreationHoldError("creation-conflict")
+  }
+  registry!.delete(key)
+  record.releasePermit()
 }

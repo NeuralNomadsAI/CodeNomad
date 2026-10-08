@@ -6,7 +6,7 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, unlink, writeFile }
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { FamilyAuthorityStore, readFamilyAuthorityIdentity } from "./family-authority-claim"
+import { FamilyAuthorityStore, readFamilyAuthorityIdentity, readFamilyAuthorityPlacementSync } from "./family-authority-claim"
 import type { StoragePolicy } from "../host-lifetime/storage"
 
 // Explicit private filesystem fixture adapter, NOT proof of Windows ACLs. The
@@ -141,5 +141,11 @@ test("registered linked checkouts share the physical Git common directory; non-G
   git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Private fixture"])
   git(["worktree", "add", "--detach", worktree])
   assert.equal(await readFamilyAuthorityIdentity(repo), await readFamilyAuthorityIdentity(worktree))
+  const nested = path.join(worktree, "packages", "server")
+  await mkdir(nested, { recursive: true })
+  const placement = readFamilyAuthorityPlacementSync(nested)
+  assert.equal(placement.family, await readFamilyAuthorityIdentity(repo))
+  const checkout = await realpath(worktree)
+  assert.equal(placement.checkout, process.platform === "win32" ? path.normalize(checkout).toLowerCase() : path.normalize(checkout))
   await assert.rejects(readFamilyAuthorityIdentity(f.root), error => error instanceof Error && error.message === "family-identity-unavailable")
 })

@@ -23,7 +23,7 @@ test("passage journal isolates its exact key and repeats the publication fence",
   const doc = {
     version: 1, projectID: "project", projectCanonical: "/owned/project", id: "daily_review",
     revision: 1, scheduleRevision: 0, createdAt: 1, state: "running",
-    config: { consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+    config: { template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
       profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
         roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },
       taskMode: "native", roots: [{ mode: "directory-only", directory: "/owned/project" }],

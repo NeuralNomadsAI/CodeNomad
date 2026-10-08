@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "קריאות מקוריות",
   "missions.recurrence.inboxMessages": "הודעות נכנסות",
   "missions.recurrence.publications": "פרסומים",
-  "missions.recurrence.profilesRequired": "יש לבחור סוכן ומודל למתאם ולמומחה.",
+  "missions.recurrence.profilesRequired": "יש לבחור סוכן ומודל למתאם ולכל תפקיד בתוכנית העבודה.",
   "missions.recurrence.pausedHint": "שמירה יוצרת לוח זמנים מושהה. אי אפשר להפעילו עד שהבקרה המקורית תהיה זמינה.",
   "missions.recurrence.list": "לוחות זמנים חוזרים",
   "missions.recurrence.empty": "אין עדיין לוחות זמנים חוזרים.",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "דווח לאחר הסרת המשימה או עצירת המשלחת",
   "missions.control.history.before": "לפני",
   "missions.control.history.after": "אחרי",
+  "missions.recurrence.instructionsTooLong": "יש להגביל הוראות התחלה חוזרת ל־{limit} תווים.",
+  "missions.recurrence.capacity": "מכסת לוחות הזמנים הושגה. דבר לא נוצר; ניתן לנסות שוב במפורש לאחר פינוי מקום.",
+  "missions.recurrence.sourceBudgetMinimum": "נדרשים לפחות {effects} פעולות ו־{inbox} הודעות עבור השיחות שנבחרו למעקב.",
+  "missions.recurrence.sourceInputTooLong": "ההוראות והקשר השיחות במעקב חייבים להיכנס ל־{limit} תווים. קצרו את ההוראות או הסירו שיחות ממעקב.",
+  "missions.recurrence.sourceLocationUnavailable": "לא ניתן היה לאמת את מיקום המקורות המקורי. יש לרענן לפני יצירת לוח הזמנים.",
 } as const

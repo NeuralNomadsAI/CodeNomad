@@ -2,6 +2,7 @@ import { z } from "zod"
 import { isDeepStrictEqual } from "node:util"
 import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement } from "./lifecycle-model"
 import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
+import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 
 const id = z.string().min(1).max(240)
 const identity = { missionID: id, operationID: id, sessionID: id }
@@ -13,7 +14,7 @@ const interruptAcknowledgement = z.object({ ...identity, action: z.enum(["pause"
 const startAcknowledgement = z.object({ ...identity, action: z.literal("start"), disposition: z.literal("start-admitted"),
   admission: z.object({ id, sessionID: id, type: z.literal("synthetic"), delivery: z.literal("queue"),
     time: z.object({ created: z.number().finite().nonnegative() }).strict(),
-    payload: z.object({ text: z.string().min(1).max(16_384), description: z.string().max(1_024).optional(),
+    payload: z.object({ text: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), description: z.string().max(1_024).optional(),
       metadata: z.record(z.unknown()).refine(boundedJson).optional() }).strict(),
   }).strict() }).strict()
 const acknowledgement = z.union([startAcknowledgement, interruptAcknowledgement,
@@ -93,7 +94,7 @@ export const nativeAcknowledgementSchema = { oneOf: [
   { type: "object", properties: { ...ackIdentityProperties, action: { const: "start" }, disposition: { const: "start-admitted" },
     admission: { type: "object", properties: { id: ackIdentityProperties.sessionID, sessionID: ackIdentityProperties.sessionID,
       type: { const: "synthetic" }, delivery: { const: "queue" }, time: { type: "object", properties: { created: { type: "number", minimum: 0 } }, required: ["created"], additionalProperties: false },
-      payload: { type: "object", properties: { text: { type: "string", minLength: 1, maxLength: 16_384 },
+      payload: { type: "object", properties: { text: { type: "string", minLength: 1, maxLength: MISSION_LIFECYCLE_TEXT_LIMIT },
         description: { type: "string", maxLength: 1_024 }, metadata: { type: "object" } }, required: ["text", "metadata"], additionalProperties: false },
     }, required: ["id", "sessionID", "type", "delivery", "time", "payload"], additionalProperties: false },
   }, required: [...ackIdentityRequired, "admission"], additionalProperties: false },

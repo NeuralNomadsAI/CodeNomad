@@ -17,7 +17,7 @@ test("fixed passage effects and every source batch are preflighted without enlar
   assert.deepEqual(budgets, { effects: 3, inboxMessages: 32 })
 })
 
-test("whole deterministic source input reserves worst-case native evidence and JSON/Location/cursor envelopes", () => {
+test("whole deterministic source input reserves native evidence and JSON/Location/cursor envelopes", () => {
   const config = { consigne: "Original consigne", roots: [{ directory: "/owned/project" }], watchedConversationIDs: ["ses_watched"] }
   const budget = recurrenceInputBudget(config)
   const messages = [{ id: "msg_source", type: "user", text: "x".repeat(900) }]
@@ -27,6 +27,7 @@ test("whole deterministic source input reserves worst-case native evidence and J
   assert(text.length <= budget.textMaximum)
   assert.equal(recurrenceInputBudget({ ...config, consigne: "x".repeat(budget.instructionsMaximum) }).sufficient, true)
   assert.equal(recurrenceInputBudget({ ...config, consigne: "x".repeat(budget.instructionsMaximum + 1) }).sufficient, false)
+  assert.throws(() => assertRecurrenceDispatchFeasible(config, { effects: 3, inboxMessages: 32 }), /insufficient signed source budget/)
   assert.equal(config.consigne, "Original consigne")
 })
 
@@ -49,7 +50,7 @@ test("oversized watched input is an explicit no-effect runner result, without a 
   const storage: MissionStorage = { get: async key => values.get(key) as never,
     set: async (key, value) => { values.set(key, value) },
     scan: async ({ prefix }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value: value as never })) }) }
-  const config: RecurrenceConfig = { consigne: "x".repeat(16_000), clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+  const config: RecurrenceConfig = { template: "custom", consigne: "x".repeat(16_000), clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
     profiles: { coordinator: { agent: "build", model: { providerID: "fixture", id: "model" } },
       roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "model" } } } }, taskMode: "native",
     roots: [{ mode: "git", directory: "/owned/project", checkout: "/owned/project", family: "/owned/project/.git" }],
@@ -70,7 +71,7 @@ test("signed source-budget feasibility rejects before calendar high-water/reserv
   const storage: MissionStorage = { get: async key => values.get(key) as never,
     set: async (key, value, fence) => { await Promise.resolve(); beforeWrite(); fence?.(); values.set(key, value) },
     scan: async ({ prefix }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value: value as never })) }) }
-  const config: RecurrenceConfig = { consigne: "Review replies", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+  const config: RecurrenceConfig = { template: "custom", consigne: "Review replies", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
     profiles: { coordinator: { agent: "build", model: { providerID: "fixture", id: "model" } },
       roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "model" } } } }, taskMode: "native",
     roots: [{ mode: "git", directory: "/owned/project", checkout: "/owned/project", family: "/owned/project/.git" }],

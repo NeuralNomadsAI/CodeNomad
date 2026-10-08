@@ -8,6 +8,9 @@ import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
+import { canonicalScope } from "../host-lifetime/protocol"
+import { createHash } from "node:crypto"
+import path from "node:path"
 
 export type DocKind = "config" | "state"
 
@@ -82,6 +85,24 @@ export class SettingsService {
       logger.child({ component: "settings-state" }),
       { throwOnPersistError: true },
     )
+  }
+
+  /** Same channel/config identity as host-lifetime Play; never browser input. */
+  getProfileScope() {
+    const channel = process.env.CODENOMAD_UPDATE_CHANNEL?.trim().toLowerCase()
+      || (process.env.CODENOMAD_DEV === "1" ? "dev" : "stable")
+    const scope = canonicalScope(channel, this.location.configYamlPath, process.cwd(), process.cwd())
+    const expected = process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY
+    if (expected !== undefined && scope.configIdentity !== expected) {
+      // Tauri's established Windows identity folds ASCII only. Preserve its
+      // signed/profile key; do not relocate existing Unicode desktop state.
+      const ascii = process.platform === "win32" ? path.resolve(this.location.configYamlPath)
+        .replaceAll("/", "\\").replace(/[A-Z]/g, letter => letter.toLowerCase()) : scope.configIdentity
+      if (expected !== ascii) throw new Error("CodeNomad profile configuration differs from its desktop identity")
+      return { channel, configIdentity: expected,
+        key: createHash("sha256").update(`${channel}\0${expected}`).digest("hex") }
+    }
+    return scope
   }
 
   getDoc(kind: DocKind): SettingsDoc {

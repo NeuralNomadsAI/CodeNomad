@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "Native Aufrufe",
   "missions.recurrence.inboxMessages": "Eingangs-Nachrichten",
   "missions.recurrence.publications": "Veröffentlichungen",
-  "missions.recurrence.profilesRequired": "Agent und Modell für Koordination und Fachkraft auswählen.",
+  "missions.recurrence.profilesRequired": "Agent und Modell für die Koordination und jede Rolle des Playbooks auswählen.",
   "missions.recurrence.pausedHint": "Speichern erstellt einen pausierten Zeitplan. Ohne native Steuerung ist keine Ausführung möglich.",
   "missions.recurrence.list": "Wiederkehrende Zeitpläne",
   "missions.recurrence.empty": "Noch keine wiederkehrenden Zeitpläne.",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "Nach Aufgabenrückzug oder Missionsstopp gemeldet",
   "missions.control.history.before": "Vorher",
   "missions.control.history.after": "Nachher",
+  "missions.recurrence.instructionsTooLong": "Wiederkehrende Startanweisungen auf {limit} Zeichen begrenzen.",
+  "missions.recurrence.capacity": "Kapazität für Wiederholungen erreicht. Nichts wurde erstellt; nach Freigabe eines Platzes ausdrücklich erneut versuchen.",
+  "missions.recurrence.sourceBudgetMinimum": "Mindestens {effects} Effekte und {inbox} Nachrichten sind für die ausgewählten verfolgten Gespräche erforderlich.",
+  "missions.recurrence.sourceInputTooLong": "Anweisungen und Kontext verfolgter Gespräche müssen in {limit} Zeichen passen. Anweisungen kürzen oder Gespräche entfernen.",
+  "missions.recurrence.sourceLocationUnavailable": "Der native Quellenort konnte nicht geprüft werden. Vor dem Erstellen aktualisieren.",
 } as const

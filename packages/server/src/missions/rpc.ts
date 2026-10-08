@@ -171,6 +171,31 @@ export const CODENOMAD_MISSIONS_RPC = {
         }, required: ["id", "revision", "scheduleRevision", "state", "clock", "pendingPassageID", "settledCount"], additionalProperties: false } },
       }, required: ["version", "projectID", "projectCanonical", "location", "schedules"], additionalProperties: false },
     },
+    recurrenceRead: {
+      input: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
+      output: { type: "object", properties: { schedule: { type: ["object", "null"], properties: {
+        id: { type: "string" }, revision: { type: "integer" }, state: { type: "string", enum: ["paused", "running", "stopped"] },
+        digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" },
+      }, required: ["id", "revision", "state", "digest", "projectID", "projectCanonical"], additionalProperties: false } },
+      required: ["schedule"], additionalProperties: false },
+    },
+    recurrenceCreate: {
+      input: { type: "object", properties: {
+        id: { type: "string" }, requestID: { type: "string" }, digest: { type: "string" },
+        config: { type: "object" }, directory: { type: "string" },
+        scope: { type: "object", properties: { channel: { type: "string" }, configIdentity: { type: "string" }, key: { type: "string" } },
+          required: ["channel", "configIdentity", "key"], additionalProperties: false },
+        executionHost: { type: "string" },
+      }, required: ["id", "requestID", "digest", "config", "directory", "scope", "executionHost"], additionalProperties: false },
+      output: { type: "object", properties: { schedule: { type: ["object", "null"], properties: {
+        id: { type: "string" }, revision: { type: "integer" }, state: { type: "string", enum: ["paused", "running", "stopped"] },
+        digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" },
+      }, required: ["id", "revision", "state", "digest", "projectID", "projectCanonical"], additionalProperties: false },
+      noEffect: { type: "object", properties: { code: { type: "string", const: "capacity" }, id: { type: "string" },
+        requestID: { type: "string" }, digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" } },
+        required: ["code", "id", "requestID", "digest", "projectID", "projectCanonical"], additionalProperties: false } },
+      required: ["schedule"], additionalProperties: false },
+    },
     recover: {
       input: {
         type: "object", properties: {

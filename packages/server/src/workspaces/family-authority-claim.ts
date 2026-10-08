@@ -28,12 +28,18 @@ export async function readFamilyAuthorityIdentity(ownedDirectory: string): Promi
 /** Conservative final-fence fallback for discovery/config contracts that cannot
  * be captured completely by createFamilyAuthorityIdentityFence. */
 export function readFamilyAuthorityIdentitySync(ownedDirectory: string): string {
+  return readFamilyAuthorityPlacementSync(ownedDirectory).family
+}
+
+/** One native Git snapshot separates an authorized nested folder from its
+ * enclosing checkout and physical family for final synchronous write fences. */
+export function readFamilyAuthorityPlacementSync(ownedDirectory: string): { family: string; checkout: string } {
   try {
-    const checkout = realpathSync(ownedDirectory)
-    const common = execFileSync("git", ["-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { encoding: "utf8", windowsHide: true, timeout: 3000, maxBuffer: 8192 }).replace(/\r?\n$/, "")
-    if (!path.isAbsolute(common)) throw new Error("Git common directory is not absolute")
-    return physicalIdentity(realpathSync(common))
+    const directory = realpathSync(ownedDirectory)
+    const [checkout, common] = execFileSync("git", ["-C", directory, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir"],
+      { encoding: "utf8", windowsHide: true, timeout: 3000, maxBuffer: 8192 }).trimEnd().split(/\r?\n/)
+    if (!path.isAbsolute(common) || !path.isAbsolute(checkout)) throw new Error("Git placement is not absolute")
+    return { family: physicalIdentity(realpathSync(common)), checkout: physicalIdentity(realpathSync(checkout)) }
   } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
 }
 

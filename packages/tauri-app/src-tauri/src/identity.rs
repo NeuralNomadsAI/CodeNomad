@@ -81,12 +81,8 @@ fn lexical_normalize(path: PathBuf) -> PathBuf {
     normalized
 }
 
-pub(crate) fn normalize_config_identity(raw: Option<&str>, cwd: &Path, home: &Path) -> String {
-    let value = raw
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_CONFIG);
-    let mut path = if value == "~" {
+fn resolve_config_input(value: &str, cwd: &Path, home: &Path) -> PathBuf {
+    let path = if value == "~" {
         home.to_path_buf()
     } else if let Some(rest) = value
         .strip_prefix("~/")
@@ -101,7 +97,23 @@ pub(crate) fn normalize_config_identity(raw: Option<&str>, cwd: &Path, home: &Pa
             cwd.join(path)
         }
     };
-    path = lexical_normalize(path);
+    lexical_normalize(path)
+}
+
+/** Keep the caller's original filename for backend config/legacy migration,
+ * but remove dependence on the backend process's different working directory. */
+pub(crate) fn resolve_selected_config(raw: Option<&str>, cwd: &Path, home: &Path) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| resolve_config_input(value, cwd, home).to_string_lossy().into_owned())
+}
+
+pub(crate) fn normalize_config_identity(raw: Option<&str>, cwd: &Path, home: &Path) -> String {
+    let value = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_CONFIG);
+    let mut path = resolve_config_input(value, cwd, home);
     if path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
@@ -235,6 +247,25 @@ mod tests {
             normalize_config_identity(Some("../work/./config.json"), cwd, home),
             normalize_config_identity(Some("config.yaml"), cwd, home)
         );
+    }
+
+    #[test]
+    fn selected_relative_config_keeps_legacy_filename_with_startup_cwd_and_home() {
+        let cwd = std::env::current_dir().unwrap();
+        let home = cwd.join("profile-home");
+        for extension in ["json", "yaml"] {
+            let raw = format!("alternate/../selected/custom.{extension}");
+            let selected = resolve_selected_config(Some(&raw), &cwd, &home).unwrap();
+            assert_eq!(PathBuf::from(&selected), cwd.join("selected").join(format!("custom.{extension}")));
+            if extension == "json" {
+                assert_ne!(selected, normalize_config_identity(Some(&raw), &cwd, &home));
+            }
+            assert_eq!(
+                resolve_selected_config(Some(&format!("~/selected/custom.{extension}")), &cwd, &home),
+                Some(home.join("selected").join(format!("custom.{extension}")).to_string_lossy().into_owned())
+            );
+        }
+        assert_eq!(resolve_selected_config(None, &cwd, &home), None);
     }
 
     #[test]

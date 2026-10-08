@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "Appels natifs",
   "missions.recurrence.inboxMessages": "Messages reçus",
   "missions.recurrence.publications": "Publications",
-  "missions.recurrence.profilesRequired": "Choisissez un agent et un modèle pour le coordinateur et le spécialiste.",
+  "missions.recurrence.profilesRequired": "Choisissez un agent et un modèle pour le coordinateur et chaque rôle du scénario.",
   "missions.recurrence.pausedHint": "Enregistrer crée un calendrier en pause. Il ne peut démarrer avant la disponibilité des contrôles natifs.",
   "missions.recurrence.list": "Calendriers récurrents",
   "missions.recurrence.empty": "Aucun calendrier récurrent.",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "Rapport reçu après le retrait de la tâche ou l’arrêt de la mission",
   "missions.control.history.before": "Avant",
   "missions.control.history.after": "Après",
+  "missions.recurrence.instructionsTooLong": "Limitez les instructions de démarrage récurrent à {limit} caractères.",
+  "missions.recurrence.capacity": "Capacité des récurrences atteinte. Rien n’a été créé ; réessayez explicitement après avoir libéré une place.",
+  "missions.recurrence.sourceBudgetMinimum": "Au moins {effects} effets et {inbox} messages sont nécessaires pour les conversations suivies sélectionnées.",
+  "missions.recurrence.sourceInputTooLong": "Les instructions et le contexte des conversations suivies doivent tenir dans {limit} caractères. Raccourcissez les instructions ou retirez des conversations.",
+  "missions.recurrence.sourceLocationUnavailable": "L’emplacement natif des sources n’a pas pu être vérifié. Actualisez avant de créer cette récurrence.",
 } as const

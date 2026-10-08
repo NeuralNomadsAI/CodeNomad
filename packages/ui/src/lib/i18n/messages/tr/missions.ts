@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "Yerel çağrılar",
   "missions.recurrence.inboxMessages": "Gelen mesajlar",
   "missions.recurrence.publications": "Yayınlar",
-  "missions.recurrence.profilesRequired": "Koordinatör ve uzman için ajan ve model seçin.",
+  "missions.recurrence.profilesRequired": "Koordinatör ve çalışma planındaki her rol için ajan ve model seçin.",
   "missions.recurrence.pausedHint": "Kaydetmek duraklatılmış bir zamanlama oluşturur. Yerel kontroller kullanıma sunulana kadar çalıştırılamaz.",
   "missions.recurrence.list": "Yinelenen zamanlamalar",
   "missions.recurrence.empty": "Henüz yinelenen zamanlama yok.",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "Görev kaldırıldıktan veya misyon durdurulduktan sonra bildirildi",
   "missions.control.history.before": "Önce",
   "missions.control.history.after": "Sonra",
+  "missions.recurrence.instructionsTooLong": "Yinelenen başlangıç talimatlarını {limit} karakterle sınırlayın.",
+  "missions.recurrence.capacity": "Yinelenen program kapasitesine ulaşıldı. Hiçbir şey oluşturulmadı; yer açtıktan sonra açıkça yeniden deneyin.",
+  "missions.recurrence.sourceBudgetMinimum": "Seçilen takip edilen konuşmalar için en az {effects} işlem ve {inbox} mesaj gerekir.",
+  "missions.recurrence.sourceInputTooLong": "Talimatlar ve takip edilen konuşma bağlamı {limit} karaktere sığmalıdır. Talimatları kısaltın veya konuşmaları kaldırın.",
+  "missions.recurrence.sourceLocationUnavailable": "Yerel kaynak konumu doğrulanamadı. Programı oluşturmadan önce yenileyin.",
 } as const

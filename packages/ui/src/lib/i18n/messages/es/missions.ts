@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "Llamadas nativas",
   "missions.recurrence.inboxMessages": "Mensajes recibidos",
   "missions.recurrence.publications": "Publicaciones",
-  "missions.recurrence.profilesRequired": "Elige agente y modelo para coordinador y especialista.",
+  "missions.recurrence.profilesRequired": "Elige agente y modelo para el coordinador y cada rol del plan.",
   "missions.recurrence.pausedHint": "Guardar crea un programa pausado. No podrá ejecutarse hasta que haya controles nativos.",
   "missions.recurrence.list": "Programas recurrentes",
   "missions.recurrence.empty": "Aún no hay programas recurrentes.",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "Informado tras retirar la tarea o detener la misión",
   "missions.control.history.before": "Antes",
   "missions.control.history.after": "Después",
+  "missions.recurrence.instructionsTooLong": "Limita las instrucciones de inicio recurrente a {limit} caracteres.",
+  "missions.recurrence.capacity": "Capacidad de recurrencias alcanzada. No se creó nada; vuelve a intentarlo explícitamente tras liberar un espacio.",
+  "missions.recurrence.sourceBudgetMinimum": "Se requieren al menos {effects} efectos y {inbox} mensajes para las conversaciones seguidas seleccionadas.",
+  "missions.recurrence.sourceInputTooLong": "Las instrucciones y el contexto seguido deben caber en {limit} caracteres. Acorta las instrucciones o elimina conversaciones seguidas.",
+  "missions.recurrence.sourceLocationUnavailable": "No se pudo verificar la ubicación nativa de las fuentes. Actualiza antes de crear el programa.",
 } as const

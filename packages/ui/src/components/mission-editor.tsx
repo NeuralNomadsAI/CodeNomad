@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
@@ -9,7 +9,7 @@ import { createMissionViewFence } from "../lib/mission-view-fence"
 import { isUncertainCreation, missionMutationErrorKey } from "../lib/mission-mutation"
 import { copyMissionProfiles, missionCreationPayloadIdentity, retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
-import { profilesForTemplate } from "./mission-profile-controls-data"
+import { missionProfileRoles, profilesForTemplate } from "./mission-profile-controls-data"
 import { useConfig } from "../stores/preferences"
 import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
 import type { MissionProfileDefault } from "../lib/mission-defaults"
@@ -19,11 +19,16 @@ import { MissionProfileSummary } from "./mission-profile-summary"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { holdRecurrence, uncertainRecurrence } from "../stores/mission-recurrence-drafts"
 import { HttpResponseError } from "../lib/retryable-file-search"
+import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
+import { recurrenceInputBudget, recurrenceReadBudget } from "../../../server/src/missions/recurrence-read-budget"
+import { getRootClient } from "../stores/opencode-client"
+import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
+import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionMap }
 
 // Native passage admission reserves create, start/environment and coordinator-message.
-const MIN_RECURRING_EFFECTS = 3
+const MIN_RECURRING_EFFECTS = recurrenceReadBudget(0, { effects: 0, inboxMessages: 0 }).effectsMinimum
 
 export function MissionEditor(props: {
   instanceId: string; directory?: string; viewDirectory?: string; projectID?: string; action: MissionEditorAction
@@ -51,8 +56,8 @@ export function MissionEditor(props: {
   const [watched, setWatched] = createSignal(recurrenceHold?.watchedConversationIDs.join("\n") ?? "")
   const [budgets, setBudgets] = createSignal(recurrenceHold?.budgets ?? { effects: MIN_RECURRING_EFFECTS, nativeCalls: 8, inboxMessages: 32, publications: 0 })
   const [objective, setObjective] = createSignal(held?.objective ?? original?.objective ?? "")
-  const [notes, setNotes] = createSignal(held?.notes ?? original?.notes ?? "")
-  const [template, setTemplate] = createSignal<MissionMap["template"]>(held?.template ?? "custom")
+  const [notes, setNotes] = createSignal(recurrenceHold?.notes ?? held?.notes ?? original?.notes ?? "")
+  const [template, setTemplate] = createSignal<MissionMap["template"]>(recurrenceHold?.template ?? held?.template ?? "custom")
   const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles ?? held?.profiles))
   const [recurringProfiles, setRecurringProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles))
   const [customProfiles, setCustomProfiles] = createSignal(Boolean(held))
@@ -66,20 +71,49 @@ export function MissionEditor(props: {
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
   const [profileDetailsOpen, setProfileDetailsOpen] = createSignal(false)
   const [modelDetailsOpen, setModelDetailsOpen] = createSignal(false)
-  const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId) : undefined)
+  const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId)
+    : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : undefined)
   // One creation-time snapshot only, after the owned preference document loads.
   // Refreshes and other windows' preference edits never replace this draft.
   createEffect(() => {
     if (defaultsReady() || !config.isUiConfigLoaded() || !config.missionDefaultsValid()) return
     const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
     setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
-    setRecurringProfiles(missionDefaultsFor(loaded, "custom")); setRecurringTaskMode(missionTaskModeFor(loaded, "custom")); setDefaultsReady(true)
+    setRecurringProfiles(missionDefaultsFor(loaded, template())); setRecurringTaskMode(missionTaskModeFor(loaded, template())); setDefaultsReady(true)
   })
   const [uncertain, setUncertain] = createSignal(Boolean(held || recurrenceHold))
   const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
   const [deleteAttempted, setDeleteAttempted] = createSignal(false)
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal("")
+  const watchedIDs = () => watched().split(/\r?\n/).map(id => id.trim()).filter(Boolean)
+  const sourceBudget = () => recurrenceReadBudget(watchedIDs().length, budgets())
+  const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
+  const sourceIdentity = () => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)])
+  const [sourceLocation, setSourceLocation] = createSignal<{ key: string; directory: string }>()
+  const [sourceLocationFailed, setSourceLocationFailed] = createSignal(false)
+  const [sourceLocationRevision, setSourceLocationRevision] = createSignal(0)
+  createEffect(() => {
+    sourceLocationRevision()
+    if (!needsSourceLocation() || !creationReady() || !(props.active?.() ?? true)) return
+    const key = sourceIdentity(), viewCurrent = captureView(), controller = new AbortController()
+    let alive = true
+    setSourceLocation(undefined); setSourceLocationFailed(false)
+    const location = createRequestLocation(props.directory)
+    const current = () => alive && viewCurrent() && sourceIdentity() === key
+    void getRootClient(props.instanceId).location.get({ location: toRequestLocation(location) }, {
+      ...requestLocationOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    }).then(value => {
+      if (!current()) return
+      if (!value.directory || value.directory.length > 4096 || value.directory.includes("\0")
+        || props.projectID && value.project.id !== props.projectID) throw new Error("Native source Location differs")
+      setSourceLocation({ key, directory: value.directory })
+    }).catch(() => { if (current()) setSourceLocationFailed(true) })
+    onCleanup(() => { alive = false; controller.abort() })
+  })
+  const sourceLocationReady = () => !needsSourceLocation() || sourceLocation()?.key === sourceIdentity()
+  const sourceInputBudget = () => recurrenceInputBudget({ consigne: instructions().trim(), watchedConversationIDs: watchedIDs(),
+    roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
   let requestId = held?.requestId ?? recurrenceHold?.requestID ?? crypto.randomUUID(), lastPayload = ""
 
   async function useSavedDefaults() {
@@ -92,7 +126,7 @@ export function MissionEditor(props: {
       if (!config.missionDefaultsValid()) throw new Error("Invalid mission defaults")
       const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
       setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
-      setRecurringProfiles(missionDefaultsFor(loaded, "custom")); setRecurringTaskMode(missionTaskModeFor(loaded, "custom"))
+      setRecurringProfiles(missionDefaultsFor(loaded, template())); setRecurringTaskMode(missionTaskModeFor(loaded, template()))
       setCustomProfiles(false); setCustomTaskMode(false); setDefaultsReady(true)
     } catch { if (current()) setDefaultsFailed(true) }
     finally { if (current()) setDefaultsRefreshing(false) }
@@ -103,11 +137,14 @@ export function MissionEditor(props: {
     if (!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)) return
     const recurrence = kind === "create" && mode() === "recurring"
     if (recurrence) {
+      try { recurrenceStartText({ consigne: instructions().trim(), template: template(), taskMode: recurringTaskMode() }) }
+      catch { setError(t("missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return }
       const held = uncertainRecurrence(identity())
       if (held || uncertainMissionCreation(identity())) { setUncertain(true); return }
       const selected = copyMissionProfiles(recurringProfiles())
       if (!selected?.coordinator?.agent || !selected.coordinator.model?.providerID || !selected.coordinator.model.id
-        || !selected.roles?.specialist?.agent || !selected.roles.specialist.model?.providerID || !selected.roles.specialist.model.id) {
+        || missionProfileRoles[template()].some(role => !selected.roles?.[role]?.agent
+          || !selected.roles[role].model?.providerID || !selected.roles[role].model?.id)) {
         setError(t("missions.recurrence.profilesRequired")); return
       }
       let validZone = false
@@ -115,19 +152,23 @@ export function MissionEditor(props: {
       if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time()) || !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/.test(zone().trim()) || !validZone) {
         setError(t("missions.recurrence.clockInvalid")); return
       }
-      const ids = watched().split(/\r?\n/).map(id => id.trim()).filter(Boolean)
+      const ids = watchedIDs()
       if (ids.length > 32 || new Set(ids).size !== ids.length || ids.some(id => !/^[A-Za-z0-9_.:-]{1,240}$/.test(id))) {
         setError(t("missions.recurrence.watchedInvalid")); return
       }
-      if (budgets().effects < MIN_RECURRING_EFFECTS) {
-        setError(t("missions.recurrence.effectsMinimum")); return
+      if (!sourceBudget().sufficient) {
+        setError(t("missions.recurrence.sourceBudgetMinimum", { effects: sourceBudget().effectsMinimum, inbox: sourceBudget().inboxMinimum })); return
+      }
+      if (!sourceLocationReady()) { setError(t("missions.recurrence.sourceLocationUnavailable")); return }
+      if (!sourceInputBudget().sufficient) {
+        setError(t("missions.recurrence.sourceInputTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return
       }
       if (!(["effects", "nativeCalls", "inboxMessages", "publications"] as const).every(key =>
         Number.isSafeInteger(budgets()[key]) && budgets()[key] >= (key === "effects" ? MIN_RECURRING_EFFECTS : 0)
         && budgets()[key] <= (key === "effects" ? 64 : key === "inboxMessages" ? 256 : 32))) {
         setError(t("missions.recurrence.invalid")); return
       }
-      const payload = { instructions: instructions().trim(), clock: { time: time(), zone: zone().trim() }, watchedConversationIDs: ids,
+      const payload = { instructions: instructions().trim(), notes: notes(), template: template(), clock: { time: time(), zone: zone().trim() }, watchedConversationIDs: ids,
         budgets: { ...budgets() }, profiles: selected, taskMode: recurringTaskMode(), directory: props.directory }
       const serialized = JSON.stringify(payload)
       if (lastPayload && lastPayload !== serialized) requestId = crypto.randomUUID()
@@ -139,13 +180,21 @@ export function MissionEditor(props: {
         await serverApi.createMissionRecurrence(props.instanceId, { ...payload, requestID: requestId })
         if (current()) props.onRecurrenceSaved?.()
       } catch (error) {
+        if (error instanceof HttpResponseError && error.status === 503 && error.code === "recurrence-capacity") {
+          if (current()) setError(t("missions.recurrence.capacity"))
+          return
+        }
         if (error instanceof HttpResponseError && error.status === 400) {
-          if (current()) setError(t("missions.recurrence.invalid"))
+          if (current()) setError(error.code === "recurrence-source-budget"
+            ? t("missions.recurrence.sourceBudgetMinimum", { effects: sourceBudget().effectsMinimum, inbox: sourceBudget().inboxMinimum })
+            : error.code === "recurrence-input-capacity" ? t("missions.recurrence.sourceInputTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })
+            : t("missions.recurrence.invalid"))
           return
         }
         // Transport/5xx/409 can follow a committed native write. Never retry or
         // turn a list read into permission to issue a new request in this scope.
         holdRecurrence(scope, { ...payload, requestID: requestId });
+        retainSubmittedMissionModel(requestId, selectedModel())
         if (current()) setUncertain(true)
       } finally { if (current()) setPending(false) }
       return
@@ -240,8 +289,20 @@ export function MissionEditor(props: {
           <select value={mode()} disabled={pending() || uncertain()} onChange={event => setMode(event.currentTarget.value as "once" | "recurring")}>
             <option value="once">{t("missions.recurrence.once")}</option><option value="recurring">{t("missions.recurrence.recurring")}</option>
           </select></label></Show>
+        <Show when={kind === "create"}>
+          <label>{t("missions.control.template")}
+            <select aria-label={t("missions.control.template")} value={template()} disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()} onChange={e => {
+              const next = e.currentTarget.value as MissionMap["template"]
+              setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
+              setRecurringProfiles(missionDefaultsFor(defaults(), next)); setRecurringTaskMode(missionTaskModeFor(defaults(), next))
+              if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
+            }}>
+              <For each={["custom", "wayfinder", "pocock-fix-bug"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
+            </select>
+          </label>
+        </Show>
         <Show when={kind === "create" && mode() === "recurring"}>
-          <label>{t("missions.recurrence.instructions")}<textarea required maxLength={20_000} value={instructions()} disabled={pending() || uncertain()} onInput={e => setInstructions(e.currentTarget.value)} /></label>
+          <label>{t("missions.recurrence.instructions")}<textarea required maxLength={MISSION_LIFECYCLE_TEXT_LIMIT} value={instructions()} disabled={pending() || uncertain()} onInput={e => setInstructions(e.currentTarget.value)} /></label>
           <div class="mission-recurrence-clock">
             <label>{t("missions.recurrence.time")}<input type="time" required value={time()} disabled={pending() || uncertain()} onInput={e => setTime(e.currentTarget.value)} /></label>
             <label>{t("missions.recurrence.zone")}<input required maxLength={100} value={zone()} disabled={pending() || uncertain()} onInput={e => setZone(e.currentTarget.value)} /></label>
@@ -250,19 +311,21 @@ export function MissionEditor(props: {
           <details class="mission-profile-optional"><summary>{t("missions.recurrence.budgets")}</summary>
             <div class="mission-recurrence-budgets">
               <For each={(["effects", "nativeCalls", "inboxMessages", "publications"] as const)}>{key =>
-                <label>{t(`missions.recurrence.${key}`)}<input type="number" required min={key === "effects" ? MIN_RECURRING_EFFECTS : 0}
+                <label>{t(`missions.recurrence.${key}`)}<input type="number" required min={key === "effects" ? sourceBudget().effectsMinimum : key === "inboxMessages" ? sourceBudget().inboxMinimum : 0}
                   max={key === "effects" ? 64 : key === "inboxMessages" ? 256 : 32}
                   value={budgets()[key]} disabled={pending() || uncertain()}
                   onInput={e => setBudgets(previous => ({ ...previous, [key]: e.currentTarget.valueAsNumber }))} /></label>
               }</For>
             </div>
           </details>
-          <Show when={budgets().effects < MIN_RECURRING_EFFECTS}><p role="alert">{t("missions.recurrence.effectsMinimum")}</p></Show>
+          <Show when={!sourceBudget().sufficient}><p role="alert">{t("missions.recurrence.sourceBudgetMinimum", { effects: sourceBudget().effectsMinimum, inbox: sourceBudget().inboxMinimum })}</p></Show>
+          <Show when={needsSourceLocation() && !sourceLocationReady()}><p role={sourceLocationFailed() ? "alert" : "status"}>{t(sourceLocationFailed() ? "missions.recurrence.sourceLocationUnavailable" : "missions.control.loading")}</p></Show>
+          <Show when={sourceLocationReady() && !sourceInputBudget().sufficient}><p role="alert">{t(watchedIDs().length ? "missions.recurrence.sourceInputTooLong" : "missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })}</p></Show>
           <MissionTaskModeControls value={recurringTaskMode()} disabled={!creationReady() || pending() || uncertain()}
             onChange={setRecurringTaskMode} />
-          <MissionProfileSummary template="custom" profiles={recurringProfiles()} />
+          <MissionProfileSummary template={template()} profiles={recurringProfiles()} />
           <details class="mission-profile-optional" open><summary>{t("missions.defaults.creation")}</summary>
-            <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template="custom" requireCustomSpecialist profiles={recurringProfiles()}
+            <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} requireRoleProfiles profiles={recurringProfiles()}
               taskMode={recurringTaskMode()} disabled={!creationReady() || pending() || uncertain()} active={() => mode() === "recurring" && (props.active?.() ?? true)} onChange={setRecurringProfiles} />
           </details>
           <p class="mission-editor-start-hint">{t("missions.recurrence.pausedHint")}</p>
@@ -271,33 +334,7 @@ export function MissionEditor(props: {
         <label>{t("missions.control.objective")}
           <textarea required maxLength={20_000} value={objective()} disabled={pending() || uncertain()} onInput={e => setObjective(e.currentTarget.value)} />
         </label>
-        <label>{t(kind === "edit" ? "missions.control.guidance.notes" : "missions.control.notes")}
-          <textarea maxLength={20_000} value={notes()} disabled={pending() || uncertain()} onInput={e => setNotes(e.currentTarget.value)} />
-        </label>
         <Show when={kind === "create"}>
-          <details class="mission-profile-optional" onToggle={event => setModelDetailsOpen(event.currentTarget.open)}>
-          <summary>{t("missions.models.title")}</summary>
-          <div hidden={!modelDetailsOpen()}>
-          <MissionModelLibrary disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)}
-            active={() => modelDetailsOpen() && (props.active?.() ?? true)}
-            draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })}
-            onUse={model => {
-              setObjective(model.objective); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
-              setCustomProfiles(model.profiles !== undefined)
-              setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
-              setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
-            }} />
-          </div></details>
-          <Show when={selectedModel()}>{model => <p>{t("missions.models.current", { name: model().name })}</p>}</Show>
-          <label>{t("missions.control.template")}
-            <select aria-label={t("missions.control.template")} value={template()} disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()} onChange={e => {
-              const next = e.currentTarget.value as MissionMap["template"]
-              setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
-              if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
-            }}>
-              <For each={["custom", "wayfinder", "pocock-fix-bug"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
-            </select>
-          </label>
           <MissionTaskModeControls value={taskMode() ?? "native"} disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain()}
             onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
           <MissionProfileSummary template={template()} profiles={profiles()} />
@@ -314,6 +351,30 @@ export function MissionEditor(props: {
           <p class="mission-editor-start-hint">{t("missions.control.create.detail")}</p>
         </Show>
         </Show>
+        <label>{t(kind === "edit" ? "missions.control.guidance.notes" : "missions.control.notes")}
+          <textarea maxLength={20_000} value={notes()} disabled={pending() || uncertain()} onInput={e => setNotes(e.currentTarget.value)} />
+        </label>
+        <Show when={kind === "create"}>
+          <details class="mission-profile-optional" onToggle={event => setModelDetailsOpen(event.currentTarget.open)}>
+          <summary>{t("missions.models.title")}</summary>
+          <div hidden={!modelDetailsOpen()}>
+          <MissionModelLibrary disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)}
+            active={() => modelDetailsOpen() && (props.active?.() ?? true)}
+            draft={() => mode() === "recurring"
+              ? { objective: instructions(), notes: notes(), template: template(), profiles: copyMissionProfiles(recurringProfiles()), taskMode: recurringTaskMode() }
+              : { objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) }}
+            onUse={model => {
+              requestId = crypto.randomUUID(); lastPayload = ""; setError("")
+              setObjective(model.objective); setInstructions(model.objective); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+              setCustomProfiles(model.profiles !== undefined)
+              setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
+              setRecurringTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
+              setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
+              setRecurringProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
+            }} />
+          </div></details>
+          <Show when={selectedModel()}>{model => <p>{t("missions.models.current", { name: model().name })}</p>}</Show>
+        </Show>
         <Show when={kind === "create" && (!defaultsReady() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid())}>
           <p role={config.uiConfigLoadFailed() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "alert" : "status"}>
             {t(config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "missions.defaults.invalid"
@@ -327,13 +388,15 @@ export function MissionEditor(props: {
     </div>
     <footer class="window-footer">
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
+      <Show when={needsSourceLocation() && sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
+        onClick={() => setSourceLocationRevision(value => value + 1)}>{t("missions.control.refresh")}</button></Show>
       <Show when={uncertain()}><button type="button" class="button-secondary" onClick={() => {
         if (!(props.active?.() ?? true)) return
         if (mode() === "recurring") props.onRecurrenceRefresh?.()
         else void missionStore.refresh(props.instanceId)
       }}>{t("missions.control.refresh")}</button></Show>
       <button type="submit" class="button-primary" disabled={!creationReady() || defaultsRefreshing() || pending() || uncertain() || !(props.active?.() ?? true)
-        || kind === "create" && mode() === "recurring" && budgets().effects < MIN_RECURRING_EFFECTS
+        || kind === "create" && mode() === "recurring" && (!sourceBudget().sufficient || !sourceLocationReady() || !sourceInputBudget().sufficient)
         || (kind !== "delete" && !(mode() === "recurring" ? instructions() : objective()).trim())}>
         {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
       </button>

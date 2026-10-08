@@ -153,9 +153,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
+      const body = await response.clone().json().catch(() => undefined)
+      const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"))
+      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code)
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
@@ -625,6 +627,8 @@ export const serverApi = {
     return request<MissionRecurrenceSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
   },
   createMissionRecurrence(instanceId: string, input: { requestID: string; instructions: string;
+    notes?: string;
+    template: MissionMap["template"];
     clock: { time: string; zone: string }; watchedConversationIDs: string[];
     budgets: { effects: number; nativeCalls: number; inboxMessages: number; publications: number };
     profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string

@@ -15,7 +15,7 @@ export const missionMessages = {
   "missions.recurrence.nativeCalls": "Нативные вызовы",
   "missions.recurrence.inboxMessages": "Входящие сообщения",
   "missions.recurrence.publications": "Публикации",
-  "missions.recurrence.profilesRequired": "Выберите агента и модель для координатора и специалиста.",
+  "missions.recurrence.profilesRequired": "Выберите агента и модель для координатора и каждой роли плана.",
   "missions.recurrence.pausedHint": "Сохранение создаёт приостановленное расписание. Запуск будет возможен только после появления нативных элементов управления.",
   "missions.recurrence.list": "Регулярные расписания",
   "missions.recurrence.empty": "Регулярных расписаний пока нет.",
@@ -359,4 +359,9 @@ export const missionMessages = {
   "missions.control.report.late": "Отчёт получен после снятия задачи или остановки миссии",
   "missions.control.history.before": "До",
   "missions.control.history.after": "После",
+  "missions.recurrence.instructionsTooLong": "Ограничьте инструкции повторного запуска {limit} символами.",
+  "missions.recurrence.capacity": "Достигнут предел расписаний. Ничего не создано; повторите явно после освобождения места.",
+  "missions.recurrence.sourceBudgetMinimum": "Для выбранных отслеживаемых разговоров нужно минимум {effects} действий и {inbox} сообщений.",
+  "missions.recurrence.sourceInputTooLong": "Инструкции и контекст разговоров должны помещаться в {limit} символов. Сократите инструкции или удалите отслеживаемые разговоры.",
+  "missions.recurrence.sourceLocationUnavailable": "Не удалось проверить нативное расположение источников. Обновите перед созданием расписания.",
 } as const

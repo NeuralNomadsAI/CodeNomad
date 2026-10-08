@@ -10,12 +10,13 @@ import type { MissionJsonValue } from "../../missions/model"
 import { createMissionRecurrenceAdmissionPreparation } from "./mission-recurrence-admission"
 import { prepareMissionRootCreationLocation, type MissionCreationManager } from "./mission-creation-admission"
 import type { MissionCreationPipelineManager } from "./mission-creation-pipeline"
+import { missionProfileRoles } from "../../missions/playbook-profiles"
 
 const directory = "C:/isolated-recurrence/project"
 const physical = "C:/isolated-recurrence/physical"
 const projectID = "private-project"
 
-async function fixture() {
+async function fixture(template: RecurrenceConfig["template"] = "custom") {
   const data = new Map<string, MissionJsonValue>()
   const storage: MissionStorage = {
     get: async key => structuredClone(data.get(key)),
@@ -25,8 +26,10 @@ async function fixture() {
   }
   const store = new NativeMissionRecurrenceStore(storage, projectID, directory)
   const execution = { agent: "worker", model: { providerID: "provider", id: "model" } }
-  const config: RecurrenceConfig = { consigne: "Bounded private review", clock: { time: "07:00", zone: "UTC" },
-    profileID: "profile", executionHost: "host", profiles: { coordinator: execution, roles: { specialist: execution } },
+  const config: RecurrenceConfig = { template, consigne: "Bounded private review", clock: { time: "07:00", zone: "UTC" },
+    notes: "  Frozen optional working notes\nverbatim  ",
+    profileID: "profile", executionHost: "host", profiles: { coordinator: execution,
+      roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, execution])) },
     taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
     publication: { policy: "disabled", conversationIDs: [] } }
   const now = Date.parse("2026-10-01T07:00:00Z")
@@ -57,6 +60,7 @@ test("exact recurrence preparation shares ordinary physical admission and detach
   doc.config.profiles!.coordinator!.model!.id = "changed"
   assert.deepEqual(prepared.request.profiles, original.config.profiles)
   assert.equal(prepared.request.taskMode, "independent")
+  assert.equal(prepared.request.notes, original.config.notes)
   assert.equal(prepared.request.requestID, original.pending!.passage.id)
   assert.equal(prepared.messageID, original.pending!.passage.messageID)
   assert.equal("effect" in prepared, false, "preparation must not expose a write capability")
@@ -67,6 +71,19 @@ test("exact recurrence preparation shares ordinary physical admission and detach
   await deletion
   assert.equal(deletionRan, true)
   assert.deepEqual(f.counts(), { reads: 2, effects: 0 })
+})
+
+test("recurring non-custom input recipes preserve the frozen playbook and role profiles", async () => {
+  for (const template of ["pocock-fix-bug", "wayfinder"] as const) {
+    const f = await fixture(template), doc = await f.reserve()
+    const prepared = await f.adapter.prepare(doc)
+    try {
+      assert.equal(prepared.request.template, template)
+      assert.equal(prepared.request.notes, doc.config.notes)
+      assert.deepEqual(prepared.request.profiles, doc.config.profiles)
+      assert.equal(f.counts().effects, 0)
+    } finally { prepared.dispose() }
+  }
 })
 
 test("ordinary and recurrence preparation reject the same foreign ownership/native redirection", async () => {

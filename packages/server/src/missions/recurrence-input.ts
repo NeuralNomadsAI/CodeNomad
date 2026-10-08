@@ -2,6 +2,7 @@ import { authorityDigest, canonicalAuthority, rejectAuthority } from "./authorit
 import type { RecurrenceAuthorityArchive, RecurrenceChildRecord, RecurrenceEffect, RecurrenceEffectReceipt } from "./recurrence-authority-contract"
 import { controlOperationID } from "./receipt-identity"
 import { RECURRENCE_SOURCE_CONTEXT_HEADER } from "./recurrence-read-budget"
+import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
 
 export function recurrenceReadEvidence(effect: RecurrenceEffect, messages: NonNullable<RecurrenceEffectReceipt["sourceMessages"]>) {
   return `rread_${authorityDigest({ effect, messages }).slice(0, 48)}`
@@ -38,8 +39,8 @@ export function recurrenceSources(child: Readonly<RecurrenceChildRecord>) {
  * The signed consigne is unchanged; source prose is quoted as untrusted data. */
 export function recurrenceInput(child: Readonly<RecurrenceChildRecord>) {
   const grant = child.grant, config = child.parent.body.config, sources = recurrenceSources(child)
-  const text = config.consigne + (sources.length ? RECURRENCE_SOURCE_CONTEXT_HEADER + canonicalAuthority(sources, 48 * 1024) : "")
-  if (text.length > 16_384) rejectAuthority("capacity")
+  const text = recurrenceStartText(config) + (sources.length ? RECURRENCE_SOURCE_CONTEXT_HEADER + canonicalAuthority(sources, 48 * 1024) : "")
+  if (text.length > MISSION_LIFECYCLE_TEXT_LIMIT) rejectAuthority("capacity")
   return { sessionID: grant.coordinatorSessionID, id: grant.messageID, text,
     description: "CodeNomad recurring mission start", delivery: "queue" as const, resume: true as const,
     metadata: { "codenomad.mission": { version: 1 as const, missionID: grant.missionID, kind: "lifecycle" as const,

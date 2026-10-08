@@ -12,11 +12,15 @@ import { prepareMissionCreation, MissionCreationPreparationError } from "./missi
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot"
+import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
+import type { SettingsService } from "../../settings/service"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
-    | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath">
+    | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
+    | "getHostPathForServicePath" | "getServiceWslDistro">
   worktreeDeletionFence?: WorktreeDeletionFence
+  settings?: Pick<SettingsService, "getProfileScope">
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })
@@ -29,6 +33,7 @@ const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), r
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
   registerMissionRecurrenceSnapshot(app, deps)
+  registerMissionRecurrenceCreate(app, deps)
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply): Promise<MissionListResponse> => {
     const lifetime = requestAdmission(request, reply)
     const parsed = MissionParamsSchema.safeParse(request.params)

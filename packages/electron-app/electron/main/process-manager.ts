@@ -20,7 +20,7 @@ import {
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./process-exit"
 import { getUserShellEnv, supportsUserShell } from "./user-shell"
-import { resolveShellEnvironment } from "./shell-environment"
+import { resolveShellEnvironment, restoreDesktopProfileEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 import { startNativeService } from "./native-service-start"
 
@@ -139,6 +139,11 @@ export declare interface CliProcessManager {
 }
 
 export class CliProcessManager extends EventEmitter {
+  private readonly desktopProfile = {
+    CODENOMAD_UPDATE_CHANNEL: process.env.CODENOMAD_UPDATE_CHANNEL,
+    CODENOMAD_PROFILE_CONFIG_IDENTITY: process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY,
+    CLI_CONFIG: process.env.CLI_CONFIG,
+  }
   private child?: ChildProcess
   private childStartIdentity?: Promise<string | undefined>
   private status: CliStatus = { state: "stopped" }
@@ -223,6 +228,7 @@ export class CliProcessManager extends EventEmitter {
       }
       if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
     }
+    restoreDesktopProfileEnvironment(env, this.desktopProfile)
     env.ELECTRON_RUN_AS_NODE = "1"
     env.CODENOMAD_NATIVE_PARENT = "1"
     delete env.npm_config_prefix

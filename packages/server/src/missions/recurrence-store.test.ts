@@ -8,11 +8,12 @@ import { RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_STORAGE_PREF
 import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "./recurrence-runner"
 import { NativeMissionRecurrenceStore } from "./recurrence-store"
 import { latestDailyDue } from "./recurrence-clock"
+import { missionProfileRoles } from "./playbook-profiles"
 
 const current = () => true as const
 function config(): RecurrenceConfig {
   const execution = { agent: "worker", model: { providerID: "provider", id: "model", variant: "default" } }
-  return { consigne: "Review the explicitly watched conversations; publish only as authorized.",
+  return { template: "custom", consigne: "Review the explicitly watched conversations; publish only as authorized.",
     clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
     profiles: { coordinator: execution, roles: { specialist: execution } }, taskMode: "native",
     roots: [{ mode: "directory-only", directory: "/owned/project" }], watchedConversationIDs: ["ses_watched"],
@@ -375,7 +376,7 @@ test("async preparation fences revoke authority/Pause; uncertain storage publica
   }
 })
 
-test("manual passage is explicit CAS, stable IDs, single-flight; immutable profile/taskMode cannot be changed", async () => {
+test("manual passage is explicit CAS, stable IDs, single-flight; frozen template/profile/taskMode cannot be changed", async () => {
   const f = await fixture(false), doc = (await f.store.read("daily_review"))!
   assert.equal(await f.runner().trigger(doc.id, doc.revision, "manual_request"), "accepted")
   let pending = (await f.store.read(doc.id))!
@@ -386,6 +387,9 @@ test("manual passage is explicit CAS, stable IDs, single-flight; immutable profi
   await assert.rejects(f.store.configure(doc.id, pending.revision, { ...config(), profileID: "different" }, current), /immutable/)
   const changed = config(); changed.profiles!.coordinator!.model!.variant = "other"
   await assert.rejects(f.store.configure(doc.id, pending.revision, changed, current), /immutable/)
+  const wayfinder = config(); wayfinder.template = "wayfinder"
+  wayfinder.profiles!.roles = Object.fromEntries(missionProfileRoles.wayfinder.map(role => [role, wayfinder.profiles!.coordinator!]))
+  await assert.rejects(f.store.configure(doc.id, pending.revision, wayfinder, current), /immutable/)
 })
 
 test("created after today's clock waits for a new day; Pause at actual admission leaves pending without effect", async () => {

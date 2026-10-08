@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises"
 import path from "node:path"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { readFamilyAuthorityIdentity, type FamilyAuthorityClaim } from "../../workspaces/family-authority-claim"
+import { resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { canonicalAuthority, rejectAuthority, type AuthorityRoot } from "../authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../authority-synchronous"
 import type { MissionLocation } from "../model"
@@ -36,7 +37,7 @@ export class CanonicalMissionRoots {
     const hostPath = await this.manager.getHostPathForServicePath(this.workspaceID, location.directory)
     // No guessed WSL translation or independent Windows claim for Linux roots.
     if (!hostPath || identity(hostPath) !== identity(location.directory)) rejectAuthority("observation-unavailable")
-    const checkout = identity(await realpath(hostPath))
+    const checkout = identity(await realpath((await resolveRepoRoot(hostPath)).repoRoot))
     const family = await readFamilyAuthorityIdentity(hostPath)
     const held = this.claims.find(entry => entry.family === family)
     if (!held) rejectAuthority("authorization-blocked")

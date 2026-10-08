@@ -57,7 +57,7 @@ async function fixture(inboxMessages = 2, effects = 8, streaming = false) {
   }
   const calendar = new NativeMissionRecurrenceStore(storage, scope.projectID, directory)
   const sourceKey = `${RECURRENCE_STORAGE_PREFIX}/project/${calendar.projectToken}/${scope.scheduleID}`
-  const config: RecurrenceDocument["config"] = { consigne: "Review new replies", clock: { time: "07:00", zone: "UTC" },
+  const config: RecurrenceDocument["config"] = { template: "custom", consigne: "Review new replies", clock: { time: "07:00", zone: "UTC" },
     profileID: scope.profileID, executionHost: scope.executionHost, roots: [root], profiles: {
       coordinator: { agent: "build", model: { providerID: "fixture", id: "model" } },
       roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "model" } } } },

@@ -17,7 +17,7 @@ test("succeeded passage requires the exact original input and a frozen native he
   const missionID = `msn_${stableToken(`${projectID}\0${passageID}`, 24)}`
   const coordinatorSessionID = `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
   const messageID = recurrenceMessageID(passageID)
-  const config = { consigne: "Finish", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+  const config = { template: "custom" as const, consigne: "Finish", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
     roots: [{ mode: "git", directory: projectCanonical, checkout: projectCanonical, family: projectCanonical }],
     profiles: { coordinator: { agent: "build", model: { providerID: "fixture", id: "model" } },
       roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "model" } } } },

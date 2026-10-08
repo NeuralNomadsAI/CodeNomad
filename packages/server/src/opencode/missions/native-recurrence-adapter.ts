@@ -9,7 +9,8 @@ import { type RecurrenceChildRecord, type RecurrenceEffectRecord,
 import { RecurrenceAuthority, recurrenceQualificationDigest, type RecurrenceAuthorityAdapter,
   type RecurrenceQualificationRequest } from "../../missions/recurrence-authority-core"
 import type { RecurrenceAuthorityDocument, NativeRecurrenceAuthorityStore } from "../../missions/recurrence-authority-store"
-import { createFamilyAuthorityIdentityFence, readFamilyAuthorityIdentitySync } from "../../workspaces/family-authority-claim"
+import { createFamilyAuthorityIdentityFence, readFamilyAuthorityPlacementSync } from "../../workspaces/family-authority-claim"
+import { resolveRepoRoot } from "../../workspaces/git-worktrees"
 import type { NativeRecurrenceAuthorityProvider } from "./native-authority-provider"
 import type { NativeRecurrenceOwner } from "./native-authority-provider"
 import type { NativeCreateInput, NativeRecurrenceLifecycleCommand } from "./native-service-adapter"
@@ -72,12 +73,25 @@ export function nativeRecurrenceAdapter(input: {
   }
   const rootCurrent = (roots: readonly SignedRecurrenceStandingIntent["body"]["roots"][number][], fences: ReadonlyMap<string, () => string>): true => {
     for (const root of roots) {
-      if (root.mode !== "git" || physical(realpathSync(root.directory)) !== root.checkout
-        || physical(realpathSync(root.family)) !== root.family
-        || (fences.get(canonicalAuthority(root))?.() ?? readFamilyAuthorityIdentitySync(root.directory)) !== root.family)
+      if (root.mode !== "git") rejectAuthority("binding-mismatch")
+      const fence = fences.get(canonicalAuthority(root))
+      const placement = fence ? { family: fence(), checkout: physical(realpathSync(root.checkout)) }
+        : readFamilyAuthorityPlacementSync(root.directory)
+      if (placement.checkout !== root.checkout || placement.family !== root.family
+        || physical(realpathSync(root.family)) !== root.family)
         rejectAuthority("binding-mismatch")
     }
     return true
+  }
+  const acquireRoot = async (root: SignedRecurrenceStandingIntent["body"]["roots"][number]) => {
+    const binding = canonicalAuthority(root)
+    const retained = signerRoots.get(binding)
+    if (retained) { rootCurrent([root], signerRoots); return retained }
+    const fence = await createFamilyAuthorityIdentityFence(root.directory)
+    if (root.mode !== "git" || physical(await realpath((await resolveRepoRoot(root.directory)).repoRoot)) !== root.checkout
+      || physical(await realpath(root.family)) !== root.family || fence() !== root.family) rejectAuthority("binding-mismatch")
+    signerRoots.set(binding, fence)
+    return fence
   }
   const ledger = (target: NativeRecurrenceAuthorityStore, expected: Readonly<RecurrenceAuthorityDocument> | null): true => {
     owner()
@@ -93,8 +107,7 @@ export function nativeRecurrenceAdapter(input: {
     readSigners: async () => {
       owner(); const signers = await signer.readSigners()
       for (const root of signers.flatMap(signer => signer.roots)) {
-        const binding = canonicalAuthority(root)
-        if (!signerRoots.has(binding)) signerRoots.set(binding, await createFamilyAuthorityIdentityFence(root.directory))
+        await acquireRoot(root)
       }
       owner(); return signers
     },
@@ -112,11 +125,7 @@ export function nativeRecurrenceAdapter(input: {
       const roots = new Map<string, () => string>()
       for (const root of request.parent.body.roots) {
         const binding = canonicalAuthority(root)
-        const fence = signerRoots.get(binding) ?? await createFamilyAuthorityIdentityFence(root.directory)
-        if (root.mode !== "git" || physical(await realpath(root.directory)) !== root.checkout
-          || physical(await realpath(root.family)) !== root.family || fence() !== root.family)
-          rejectAuthority("binding-mismatch")
-        signerRoots.set(binding, fence)
+        const fence = await acquireRoot(root)
         roots.set(binding, fence)
       }
       const actualSource = provider.readCurrent(provider.sourceKey)

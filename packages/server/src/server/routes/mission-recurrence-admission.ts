@@ -22,7 +22,8 @@ export function createMissionRecurrenceAdmissionPreparation(input: Pick<Preparat
     }
     const passage = document.pending.passage
     const prepared = await prepareMissionCreation({ ...input, expectedProjectID: document.projectID,
-      request: { requestId: passage.id, objective: document.config.consigne, template: "custom",
+      request: { requestId: passage.id, objective: document.config.consigne, template: document.config.template,
+        notes: document.config.notes,
         profiles: document.config.profiles, taskMode: document.config.taskMode, directory: document.config.roots[0].directory },
     })
     if (prepared.creationMessageID !== passage.messageID || prepared.request.objective !== document.config.consigne) {

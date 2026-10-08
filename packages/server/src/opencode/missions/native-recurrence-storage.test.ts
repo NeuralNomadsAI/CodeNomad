@@ -4,9 +4,10 @@ import test from "node:test"
 import { Context, Effect } from "effect"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { RECURRENCE_STORAGE_PREFIX, type RecurrenceConfig } from "../../missions/recurrence-contract"
+import { RecurrenceCreateCapacityError } from "../../missions/recurrence-store"
 
 const config: RecurrenceConfig = {
-  consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
+  template: "custom", consigne: "Review", clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "host",
   profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
     roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },
   taskMode: "native", roots: [{ mode: "directory-only", directory: "/project" }],
@@ -50,9 +51,10 @@ test("native recurrence metadata is bounded and exact revision CAS across Locati
     }),
   }
   const ctx = { storage, location } as unknown as Parameters<typeof acquireNativeRecurrenceStore>[0]
-  const acquire = () => Effect.runPromise(Effect.provide(acquireNativeRecurrenceStore(ctx), graph))
+  const acquire = (at = ctx) => Effect.runPromise(Effect.provide(acquireNativeRecurrenceStore(at), graph))
   try {
-    const a = await acquire(), b = await acquire(), current = () => true as const
+    const sibling = { storage, location: { ...location, directory: "/project/sibling" } } as unknown as typeof ctx
+    const a = await acquire(), b = await acquire(sibling), current = () => true as const
     let doc = await a.create("schedule_0", config, 100, current)
     assert.deepEqual(await b.read(doc.id), doc)
     const old = doc.revision
@@ -76,7 +78,7 @@ test("native recurrence metadata is bounded and exact revision CAS across Locati
     assert.equal(await a.read("schedule_revoked"), undefined)
     for (let i = 1; i < 64; i++) await (i % 2 ? a : b).create(`schedule_${i}`, config, 100, current)
     assert.equal((await b.list()).length, 64)
-    await assert.rejects(a.create("schedule_64", config, 100, current), /capacity/)
+    await assert.rejects(a.create("schedule_64", config, 100, current), RecurrenceCreateCapacityError)
     assert.equal(await a.read("schedule_64"), undefined)
     assert.equal((db.prepare("SELECT count(*) AS count FROM kv").get() as { count: number }).count, 64)
   } finally { db.close() }

@@ -25,7 +25,8 @@ test("explicit Play pins the selected custom YAML and exact WSL distro, never a 
       assert.equal(items[0]?.directory, "/owned/project")
       if (!rootOwned) throw new Error("physical family claim lost")
     } }
-    const settings = { configYamlPathForAuthority: () => yaml }
+    let selectedScope = descriptor.scope
+    const settings = { configYamlPathForAuthority: () => yaml, getProfileScope: () => selectedScope }
     const input = { settings, descriptor, binding, manager, roots, workspaceID: "owned",
       assertCurrent: (): true => { if (!current) throw new Error("owned project changed"); return true } }
     const translate = async (source: string, selected: string) => {
@@ -61,6 +62,9 @@ test("explicit Play pins the selected custom YAML and exact WSL distro, never a 
     await assert.rejects(resolveStandingProfileSource(input, async () => { rootOwned = false; return "/mnt/selected/config/selected custom.yml" }, verifyNative))
     rootOwned = true
     await assert.rejects(resolveStandingProfileSource(input, translate, async () => { throw new Error("WSL cannot read YAML") }), /WSL cannot read YAML/)
+    await assert.rejects(resolveStandingProfileSource(input, translate, async () => {
+      selectedScope = canonicalScope("dev", yaml, root, root)
+    }), /binding-mismatch/, "a scope change during native file verification fences the returned source")
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -68,10 +72,10 @@ test("host source uses the exact selected YAML without a WSL converter", async (
   const root = await mkdtemp(path.join(os.tmpdir(), "mission-host-profile-"))
   try {
     const yaml = path.join(root, "custom.yaml"), descriptor = {
-      scope: canonicalScope("stable", yaml, root, root), physicalProfile: physical(await realpath(root)), executionHost: "host",
+      scope: canonicalScope("stable", yaml, root, root), physicalProfile: physical(await realpath(root)), executionHost: "local",
     }
-    const input = { settings: { configYamlPathForAuthority: () => yaml }, descriptor,
-      binding: { profileID: descriptor.scope.key, executionHost: "host", projectID: "owned", projectCanonical: root,
+    const input = { settings: { configYamlPathForAuthority: () => yaml, getProfileScope: () => descriptor.scope }, descriptor,
+      binding: { profileID: descriptor.scope.key, executionHost: "local", projectID: "owned", projectCanonical: root,
         roots: [{ mode: "directory-only" as const, directory: root }] },
       roots: { assertRoots: async () => {} },
       manager: { getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix" } as Pick<WorkspaceManager, "getServiceWslDistro" | "getServicePathStyle">,
@@ -101,10 +105,10 @@ test("fresh default without config.yaml cannot enable recurring Play", async t =
   try {
     t.mock.method(os, "homedir", () => root)
     const yaml = resolveConfigLocation("").configYamlPath
-    const descriptor = { scope: canonicalScope("stable", yaml, root, root), physicalProfile: root, executionHost: "host" }
-    const binding = { profileID: descriptor.scope.key, executionHost: "host", projectID: "owned", projectCanonical: root,
+    const descriptor = { scope: canonicalScope("stable", yaml, root, root), physicalProfile: root, executionHost: "local" }
+    const binding = { profileID: descriptor.scope.key, executionHost: "local", projectID: "owned", projectCanonical: root,
       roots: [{ mode: "directory-only" as const, directory: root }] }
-    const input = { settings: { configYamlPathForAuthority: () => yaml }, descriptor, binding, roots: { assertRoots: async () => {} }, workspaceID: "owned",
+    const input = { settings: { configYamlPathForAuthority: () => yaml, getProfileScope: () => descriptor.scope }, descriptor, binding, roots: { assertRoots: async () => {} }, workspaceID: "owned",
       manager: { getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix" } as Pick<WorkspaceManager, "getServiceWslDistro" | "getServicePathStyle">,
       assertCurrent: (): true => true }
     await assert.rejects(resolveStandingProfileSource(input), "missing default is not implicit ENV permission")

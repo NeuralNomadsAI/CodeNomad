@@ -86,14 +86,19 @@ export function startPrimaryInstance(requestLock: () => boolean, losingLaunch: (
   return true
 }
 
-function normalizeConfigIdentity(raw: string | undefined, cwd: string): string {
-  let target = raw?.trim() || "~/.config/codenomad/config.json"
+export function resolveSelectedConfig(raw: string | undefined, cwd: string): string | undefined {
+  let target = raw?.trim()
+  if (!target) return undefined
   if (target === "~" || target.startsWith("~/") || target.startsWith("~\\")) {
     target = join(homedir(), target.slice(2))
   } else if (!isAbsolute(target)) {
     target = resolve(cwd, target)
   }
-  target = normalize(target)
+  return normalize(target)
+}
+
+function normalizeConfigIdentity(raw: string | undefined, cwd: string): string {
+  let target = resolveSelectedConfig(raw?.trim() || "~/.config/codenomad/config.json", cwd)!
   if (/\.json$/i.test(target)) target = join(resolve(target, ".."), "config.yaml")
   if (!/\.ya?ml$/i.test(target)) target = join(target, "config.yaml")
   return process.platform === "win32" ? target.toLowerCase() : target
