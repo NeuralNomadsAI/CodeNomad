@@ -35,7 +35,7 @@ try {
 import { Cause, Context, Effect, Option } from "effect";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { acquireNativeRecurrenceAuthorityProvider, NATIVE_RECURRENCE_STORAGE_ID_KEY, nativeRecurrenceAnchorKey } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-authority-provider.ts"))};
+ import { acquireNativeRecurrenceAuthorityProvider } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-authority-provider.ts"))};
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from ${JSON.stringify(path.resolve("packages/server/src/missions/authority-store.ts"))};
 import { authorityDigest, authoritySignerDigest } from ${JSON.stringify(path.resolve("packages/server/src/missions/authority-protocol.ts"))};
 import { recurrenceHumanRequestID, recurrenceStandingSigningBytes, RECURRENCE_AUTHORITY_POLICY } from ${JSON.stringify(path.resolve("packages/server/src/missions/recurrence-authority-contract.ts"))};
@@ -44,6 +44,9 @@ const rpc = Rpc.define({id:"private.missions.authority-provider",methods:{check:
 const namespace="9f6f590e-271d-477f-8c02-7a6a119d63b9", storageID="private-native-storage";
 export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.gen(function*(){
  const scope={namespace,projectID:ctx.location.project.id,projectCanonical:ctx.location.project.canonical,profileID:"fixture-profile",executionHost:"fixture-host",scheduleID:"fixture_schedule",daemonStorageID:storageID};
+ // Metadata-only fixture: managed service ownership is qualified independently.
+ let currentOwner=true;
+ const owner={namespace,daemonStorageID:storageID,assertCurrent:()=>{if(!currentOwner)throw Error("owner revoked");return true;}};
  const guarded=effect=>effect.pipe(Effect.scoped,Effect.catchCause(cause=>Effect.succeed({fixtureError:Cause.pretty(cause)})));
  yield* ctx.rpc.register(rpc,{check:input=>guarded(Effect.gen(function*(){
   const found=yield* Effect.serviceOption(Context.Service("@opencode/storage/Database"));
@@ -51,14 +54,9 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   const db=found.value.db;
   // Explicit private fixture provisioning, not a production signer/owner issuer.
   yield* ctx.storage.set(MISSION_AUTHORITY_STORAGE_PREFIX+"/namespace",namespace);
-  yield* ctx.storage.set(NATIVE_RECURRENCE_STORAGE_ID_KEY,storageID);
-  const anchor={version:1,scope,sessionID:input.sessionID,location:{directory:ctx.location.directory}};
-  // Only this private fixture's explicit enrollment writes the anchor. The
-  // production acquisition/mutation capability cannot enroll its own session.
-  const noAnchor=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope).pipe(Effect.exit);
-  assert.equal(noAnchor._tag,"Failure");
-  yield* ctx.storage.set(nativeRecurrenceAnchorKey(scope,input.sessionID),anchor);
-  const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope);
+   const mismatched=yield* acquireNativeRecurrenceAuthorityProvider(ctx,scope,{...owner,daemonStorageID:"foreign"}).pipe(Effect.exit);
+   assert.equal(mismatched._tag,"Failure");
+   const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner);
   const keys=generateKeyPairSync("ed25519");
   const root={mode:"git",directory:ctx.location.directory,family:"fixture-family",checkout:ctx.location.directory};
   const execution={agent:"build",model:{providerID:"fixture",id:"fixture"}};
@@ -114,10 +112,9 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   assert.equal(JSON.parse(row[0].value).revision,0);
   return {databaseTag:true,transaction:typeof db.transaction==="function",sqlClient:typeof db.$client==="function",
    transactionService:Boolean(db.$client.transactionService),nativeSqliteTag:Option.isSome(yield* Effect.serviceOption(Context.Service("@opencode/core/database/SqliteNative"))),
-   committedRevision:0,guardNegatives:negatives,retirementRegressions,rollback:true,afterWriteRollback:true,wrongScopeDenied:true,immutableParentDenied:true,unenrolledSessionDenied:true};
- })),bump:input=>guarded(Effect.gen(function*(){
-  if(input.enroll===true)yield* ctx.storage.set(nativeRecurrenceAnchorKey(scope,input.sessionID),{version:1,scope,sessionID:input.sessionID,location:{directory:ctx.location.directory}});
-  const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope);
+    committedRevision:0,guardNegatives:negatives,retirementRegressions,rollback:true,afterWriteRollback:true,wrongScopeDenied:true,immutableParentDenied:true,foreignOwnerDenied:true};
+  })),bump:input=>guarded(Effect.gen(function*(){
+   const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner);
   const before=yield* Effect.promise(()=>provider.read());
   const expected={...before,revision:input.revision};
   const revision=yield* Effect.promise(()=>provider.publish(expected,{...before,revision:input.revision+1},()=>true));
@@ -125,7 +122,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   })),claimed:input=>guarded(Effect.gen(function*(){
    // Metadata-only CAS may observe an event-bearing/busy Session. This does
    // not qualify its native effects, which require separate call-entry proof.
-   const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope);
+    const provider=yield* acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner);
    assert.equal((yield* Effect.promise(()=>provider.read())).revision,1);
    return {nativeMetadataAccepted:true};
  }))});

@@ -53,7 +53,7 @@ try {
 import { Cause, Context, Effect, Option } from "effect";
 import { observeNativeManagedOwner, acquireNativeManagedOwner } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-managed-owner.ts"))};
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from ${JSON.stringify(path.resolve("packages/server/src/missions/authority-store.ts"))};
-import { acquireNativeRecurrenceAuthorityProvider, NATIVE_RECURRENCE_STORAGE_ID_KEY, nativeRecurrenceAnchorKey } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-authority-provider.ts"))};
+ import { acquireNativeRecurrenceAuthorityProvider } from ${JSON.stringify(path.resolve("packages/server/src/opencode/missions/native-authority-provider.ts"))};
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -79,9 +79,7 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
    executionHost:"fixture-host",scheduleID:"fixture_schedule",daemonStorageID:owner.daemonStorageID};
   // Explicit fixture enrollment of a genuine idle anchor; the producer neither
   // creates sessions nor authorizes their enrollment. No signer keys are minted.
-  yield* ctx.storage.set(NATIVE_RECURRENCE_STORAGE_ID_KEY,owner.daemonStorageID);
-  yield* ctx.storage.set(nativeRecurrenceAnchorKey(scope,input.sessionID),{version:1,scope,sessionID:input.sessionID,location:{directory:ctx.location.directory}});
-  const metadata=yield* acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope);
+   const metadata=yield* acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner);
   assert.equal(yield* Effect.promise(()=>metadata.read()),undefined);
   assert.equal(owner.assertCurrent(),true);
   const {db}=yield* Context.Service("@opencode/storage/Database");

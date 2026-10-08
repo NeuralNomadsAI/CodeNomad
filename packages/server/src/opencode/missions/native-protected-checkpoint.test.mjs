@@ -63,7 +63,7 @@ import {MISSION_AUTHORITY_STORAGE_PREFIX} from ${JSON.stringify(src("missions/au
 import {signedRecurrenceStandingIntentSchema,recurrenceStandingSigningBytes,recurrenceEffectID,assertRecurrenceChild} from ${JSON.stringify(src("missions/recurrence-authority-contract.ts"))};
 import {recurrenceAuthorityDocumentSchema} from ${JSON.stringify(src("missions/recurrence-authority-store.ts"))};
 import {observeNativeManagedOwner,acquireNativeManagedOwner} from ${JSON.stringify(src("opencode/missions/native-managed-owner.ts"))};
-import {acquireNativeRecurrenceAuthorityProvider,NATIVE_RECURRENCE_STORAGE_ID_KEY,nativeRecurrenceAnchorKey} from ${JSON.stringify(src("opencode/missions/native-authority-provider.ts"))};
+ import {acquireNativeRecurrenceAuthorityProvider} from ${JSON.stringify(src("opencode/missions/native-authority-provider.ts"))};
 const enrollmentFile=${JSON.stringify(enrollmentFile)},publicFile=${JSON.stringify(publicFile)},snapshot=${JSON.stringify(snapshot)};
 const storageScope=${JSON.stringify(storageScope)},protectedRoot=${JSON.stringify(protectedRoot)},familyRoot=${JSON.stringify(familyRoot)};
 const method={input:{type:"object"},output:{type:"object"}},rpc=Rpc.define({id:"private.missions.protected-proof",methods:{observe:method,seed:method,tear:method,recheck:method},events:{}});
@@ -96,16 +96,15 @@ export default Plugin.define({id:"codenomad.missions",effect(ctx){return Effect.
   stage="get-family";
   const family=yield*Effect.promise(()=>readFamilyAuthorityIdentity(ctx.location.directory));
   assert.equal(family,trust.value.parent.body.roots[0].family);
-  stage="get-metadata";const provider=yield*acquireNativeRecurrenceAuthorityProvider(ctx,sessionID,scope);return{owner,provider,trust};});
+   stage="get-metadata";const provider=yield*acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner);return{owner,provider,trust};});
  let stage="start",familyFinalChecks=0;const safely=e=>e.pipe(Effect.scoped,Effect.catchCause(c=>Effect.succeed({failed:true,stage,assertion:Cause.pretty(c).includes("AssertionError"),
   typeError:Cause.pretty(c).match(/TypeError:[^\\r\\n]*/)?.[0]??null})));
  yield*ctx.rpc.register(rpc,{observe:()=>safely(observeNativeManagedOwner(ctx).pipe(Effect.map(value=>({...value,location:{directory:ctx.location.directory,project:{id:ctx.location.project.id,canonical:ctx.location.project.canonical}}})))),
  seed:input=>safely(Effect.gen(function*(){stage="explicit-human-seed";
   const owner=yield*acquireNativeManagedOwner(ctx,enrollmentFile),trust=readProtected(),scope=trust.value.scope;
   assert.equal(scope.daemonStorageID,owner.daemonStorageID);heldFamily=yield*Effect.promise(()=>families.acquire(trust.value.parent.body.roots[0].family));
-  yield*Effect.promise(()=>heldFamily.assertCurrent());yield*ctx.storage.set(NATIVE_RECURRENCE_STORAGE_ID_KEY,owner.daemonStorageID);
-  yield*ctx.storage.set(nativeRecurrenceAnchorKey(scope,input.sessionID),{version:1,scope,sessionID:input.sessionID,location:{directory:ctx.location.directory}});
-  const provider=yield*acquireNativeRecurrenceAuthorityProvider(ctx,input.sessionID,scope),initial=recurrenceAuthorityDocumentSchema.parse(input.initial),lower=recurrenceAuthorityDocumentSchema.parse(input.lower);
+   yield*Effect.promise(()=>heldFamily.assertCurrent());
+   const provider=yield*acquireNativeRecurrenceAuthorityProvider(ctx,scope,owner),initial=recurrenceAuthorityDocumentSchema.parse(input.initial),lower=recurrenceAuthorityDocumentSchema.parse(input.lower);
   checkpoint(initial,trust.value);assert(same(initial.parent,trust.value.parent));assertRecurrenceChild(lower.child.parent,lower.child.grant);
   const familyReader=yield*Effect.promise(()=>readFamilyAuthorityIdentity(ctx.location.directory)).pipe(Effect.exit);
   const workerProbe=yield*Effect.promise(()=>runWorktreeGit(ctx.location.directory,["rev-parse","--path-format=absolute","--git-common-dir"],10000)).pipe(

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto"
 import type { DatabaseSync } from "node:sqlite"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Location } from "@opencode/schema/location"
-import { Session } from "@opencode/schema/session"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
 import type { SqlClient } from "effect/unstable/sql"
 import { authorityDigest, canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
@@ -14,19 +13,15 @@ import { recurrenceAuthorityScopeSchema, RECURRENCE_AUTHORITY_MAX_BYTES, type Re
 import { NativeRecurrenceAuthorityStore, recurrenceAuthorityDocumentSchema, type RecurrenceAuthorityDocument } from "../../missions/recurrence-authority-store"
 import type { MissionStorage } from "../../missions/journal"
 import { validateRecurrenceMetadataFence } from "./native-recurrence-metadata-fence"
+import type { acquireNativeManagedOwner } from "./native-managed-owner"
 
 const PLUGIN_ID = "codenomad.missions"
 const PREFIX = `${MISSION_AUTHORITY_STORAGE_PREFIX}/recurrence`
-/** Trusted provisioning supplies this native record; acquisition never creates
- * namespaces, signers, storage identities or standing human authorizations. */
-export const NATIVE_RECURRENCE_STORAGE_ID_KEY = `${PREFIX}/native-storage-id`
-export const nativeRecurrenceAnchorKey = (scope: RecurrenceAuthorityScope, sessionID: string) => `${PREFIX}/anchors/${authorityDigest({
-  scope: recurrenceAuthorityScopeSchema.parse(scope), sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
-})}`
+/** The managed service identity, rather than an invented Session, owns each
+ * exact project/schedule Location. Acquisition never signs or authorizes work. */
 const namespaceKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`
 const nativeKey = (key: string) => `plugin:${Array.from(PLUGIN_ID).map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
-const sessionTag = Context.Service<never, unknown>("@opencode/Session")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 type NativeEffect = Effect.Effect<unknown, unknown>
 type NativeDatabase = { db: { $client: SqlClient.SqlClient; transaction<A>(callback: () => Effect.Effect<A, unknown>, config: { behavior: "immediate" }): Effect.Effect<A, unknown> } }
@@ -40,42 +35,37 @@ const SELECT_VALUE = "SELECT value FROM kv WHERE key=?"
 // This private read shim permits only the metadata CAS statements.
 const claimQueries = new Set([
   "PRAGMA database_list", "SELECT 1 FROM sqlite_schema WHERE type='trigger' LIMIT 1", SELECT_VALUE,
-  "SELECT directory,project_id,workspace_id,time_suspended,time_compacting,revert FROM session_v2 WHERE id=?",
 ])
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, RECURRENCE_AUTHORITY_MAX_BYTES) === canonicalAuthority(b, RECURRENCE_AUTHORITY_MAX_BYTES)
 
 /** Native metadata COMMIT capability, not RecurrenceAuthorityAdapter or a
  * permanent writer lease. Uses the CURRENT daemon connection and its real
- * BEGIN IMMEDIATE transaction; enrolled Session maintenance/placement is checked
- * but existing events are not a metadata-CAS exclusion. Managed ownership, signer/profile/family qualification and
- * independently protected cold rollback checkpoints remain producer obligations.
- * Acquire in native HTTP/RPC context; sealed setup cannot fabricate that graph. */
+ * BEGIN IMMEDIATE transaction. The native managed owner and exact Location are
+ * checked without borrowing a Session or creating an anchor. */
 export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acquireNativeAuthorityProvider")(function* (
-  ctx: Pick<Plugin.Context, "storage">, sessionID: string, rawScope: RecurrenceAuthorityScope,
+  ctx: Pick<Plugin.Context, "storage" | "location">, rawScope: RecurrenceAuthorityScope,
+  owner: import("effect").Effect.Success<ReturnType<typeof acquireNativeManagedOwner>>,
 ) {
-  const found = yield* Effect.serviceOption(databaseTag), sessions = yield* Effect.serviceOption(sessionTag), origin = yield* Effect.serviceOption(locationTag)
-  if (Option.isNone(found) || Option.isNone(sessions) || Option.isNone(origin)) return yield* Effect.fail(new Error("Native authority graph unavailable"))
+  const found = yield* Effect.serviceOption(databaseTag), origin = yield* Effect.serviceOption(locationTag)
+  if (Option.isNone(found) || Option.isNone(origin)) return yield* Effect.fail(new Error("Native authority graph unavailable"))
   yield* Schema.decodeUnknownEffect(databaseShape)(found.value)
-  const service = yield* Schema.decodeUnknownEffect(Schema.Struct({ get: method }))(sessions.value)
   const location = yield* Schema.decodeUnknownEffect(Schema.toType(Schema.Struct(Location.Info.fields)))(origin.value)
-  const sessionEffect = service.get(sessionID as never)
-  if (!Effect.isEffect(sessionEffect)) return yield* Effect.fail(new Error("Native session contract unavailable"))
-  const session = yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* sessionEffect)
   const scope = Object.freeze(recurrenceAuthorityScopeSchema.parse(JSON.parse(canonicalAuthority(rawScope))))
-  if (session.id !== sessionID || session.projectID !== scope.projectID || scope.projectID !== location.project.id
-    || scope.projectCanonical !== location.project.canonical || session.location.directory !== location.directory
-    || session.location.workspaceID !== location.workspaceID) rejectAuthority("binding-mismatch")
+  if (scope.projectID !== location.project.id || scope.projectCanonical !== location.project.canonical
+    || ctx.location.directory !== location.directory || ctx.location.workspaceID !== location.workspaceID
+    || ctx.location.project.id !== scope.projectID || ctx.location.project.canonical !== scope.projectCanonical
+    || owner.namespace !== scope.namespace || owner.daemonStorageID !== scope.daemonStorageID) rejectAuthority("binding-mismatch")
+  assertSynchronousAuthorityGuard(owner.assertCurrent, "policy-unqualified")
   const { db } = found.value as NativeDatabase, client = db.$client
-  const anchorKey = nativeRecurrenceAnchorKey(scope, session.id)
   const sourceKey = `${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${scope.projectID}\0${scope.projectCanonical}`, 24)}/${scope.scheduleID}`
-  const anchor = { version: 1, scope, sessionID: session.id, location: { directory: session.location.directory,
-    ...(session.location.workspaceID === undefined ? {} : { workspaceID: session.location.workspaceID }) } }
   const graph = yield* Effect.context<never>()
   let active = true, frame: Context.Context<never> | undefined
   yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
   const assertActive = (): true => {
     if (!active || Context.get(graph, databaseTag) !== found.value || Context.get(graph, locationTag) !== origin.value
-      || Context.get(graph, sessionTag) !== sessions.value) rejectAuthority("authorization-blocked")
+      || ctx.location.directory !== location.directory || ctx.location.workspaceID !== location.workspaceID
+      || ctx.location.project.id !== scope.projectID || ctx.location.project.canonical !== scope.projectCanonical) rejectAuthority("authorization-blocked")
+    assertSynchronousAuthorityGuard(owner.assertCurrent, "policy-unqualified")
     return true
   }
   const readRows = (sql: string, params: readonly unknown[], context = graph) =>
@@ -90,10 +80,11 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > RECURRENCE_AUTHORITY_MAX_BYTES) rejectAuthority("storage-invalid")
     return JSON.parse(value)
   }
-  // Fresh nonce is issued by this native context, not an RPC-supplied identity.
-  // One slot per trusted enrolled anchor; a fresh acquisition fences an older
-  // capability rather than accumulating a durable nonce for every read.
-  const challengeKey = `${anchorKey}/challenge`, nonce = randomUUID()
+  // One native nonce slot per exact schedule. A new acquisition revokes an old
+  // writer even if its evictable Location/plugin Scope has not been disposed.
+  const scheduleKey = `${PREFIX}/owners/${authorityDigest({ scope, location: {
+    directory: location.directory, workspaceID: location.workspaceID ?? null } })}`
+  const challengeKey = `${scheduleKey}/challenge`, nonce = randomUUID()
   yield* ctx.storage.set(challengeKey, nonce)
   const readClaim = {
     get isTransaction() { return frame !== undefined && Option.isSome(Context.getOption(frame, client.transactionService)) },
@@ -104,10 +95,8 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
   } as unknown as DatabaseSync
   const nativeFence = (): true => {
     assertActive()
-    validateRecurrenceMetadataFence(readClaim, { sessionID, challengeKey: nativeKey(challengeKey), nonce,
-      directory: location.directory, projectID: scope.projectID, workspaceID: session.location.workspaceID })
-    if (syncValue(namespaceKey) !== scope.namespace || syncValue(NATIVE_RECURRENCE_STORAGE_ID_KEY) !== scope.daemonStorageID
-      || !same(syncValue(anchorKey) ?? null, anchor)) {
+    validateRecurrenceMetadataFence(readClaim, { challengeKey: nativeKey(challengeKey), nonce })
+    if (syncValue(namespaceKey) !== scope.namespace) {
       rejectAuthority("policy-unqualified")
     }
     return true
@@ -185,8 +174,8 @@ export const acquireNativeRecurrenceAuthorityProvider = Effect.fn("missions.acqu
     return assertSynchronousAuthorityGuard(current, "policy-unqualified")
   }
   return Object.freeze({ daemonStorageID: scope.daemonStorageID, ledgerKey: store.key,
-    location: Object.freeze({ directory: location.directory, projectID: location.project.id,
-      projectCanonical: location.project.canonical, sessionID: session.id }),
+    location: Object.freeze({ directory: location.directory, workspaceID: location.workspaceID,
+      projectID: location.project.id, projectCanonical: location.project.canonical }),
     store,
     /** Keep the same native IMMEDIATE frame around the entire business CAS. */
     transact: <A>(current: () => true, operation: () => Promise<A>): Promise<A> =>

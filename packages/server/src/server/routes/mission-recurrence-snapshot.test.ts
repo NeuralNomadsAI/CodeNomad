@@ -12,7 +12,6 @@ import { NativeRecurrenceAuthorityStore } from "../../missions/recurrence-author
 import { type RecurrenceConfig, RECURRENCE_STORAGE_PREFIX } from "../../missions/recurrence-contract"
 import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
-import { NATIVE_RECURRENCE_STORAGE_ID_KEY } from "../../opencode/missions/native-authority-provider"
 import { withNativeRecurrenceRpc } from "../../opencode/missions/managed-owner-plugin"
 import { readNativeRecurrenceSnapshot } from "../../opencode/missions/native-recurrence-snapshot"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -49,7 +48,7 @@ test("forged-parent restart stays unavailable through the owned RPC/route withou
       ...doc, id: "foreign_worktree", state: "paused", config: { ...config,
         roots: [{ mode: "directory-only", directory: path.resolve("another-worktree") }] },
     }],
-    [`${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`, namespace], [NATIVE_RECURRENCE_STORAGE_ID_KEY, scope.daemonStorageID],
+    [`${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`, namespace],
     [authority.key, { version: 1, scope, revision: 0, parent, settledSequence: 0, lastArchiveDigest: null, child: null }],
     [`${authority.parentKey}/parents/1`, parent],
   ])
