@@ -20,7 +20,7 @@ export async function readAutonomousMissionEnvironment(scope: Pick<AuthorityBind
   canonicalAuthority(raw)
   const source = profileSchema.parse(raw)
   if (source.profileID !== scope.profileID || source.executionHost !== scope.executionHost) rejectAuthority("binding-mismatch")
-  const configured = await readAdmissionEnvironment(source, signal)
+  const configured = await readAdmissionEnvironment(source, signal, true)
   signal.throwIfAborted()
   const variables = await sessionEnvironment(configured, host)
   signal.throwIfAborted()

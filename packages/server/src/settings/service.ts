@@ -101,6 +101,11 @@ export class SettingsService {
     return readAdmissionEnvironment(this.location, signal)
   }
 
+  /** Private authority input; never expose the selected profile path in browser requests. */
+  configYamlPathForAuthority(): string {
+    return this.location.configYamlPath
+  }
+
   mergePatchDoc(kind: DocKind, patch: unknown): SettingsDoc {
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")

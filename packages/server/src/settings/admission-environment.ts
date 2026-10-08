@@ -23,6 +23,7 @@ export class ProfileEnvironmentReadError extends Error {
 export async function readAdmissionEnvironment(
   location: Pick<ConfigLocation, "configYamlPath">,
   signal?: AbortSignal,
+  requireDocument = false,
 ): Promise<Record<string, string>> {
   const controller = new AbortController()
   const abort = () => controller.abort()
@@ -33,7 +34,7 @@ export async function readAdmissionEnvironment(
   signal?.addEventListener("abort", abort, { once: true })
   if (signal?.aborted) abort()
   try {
-    return await Promise.race([readConfigEnvironment(location.configYamlPath, controller.signal), cancelled])
+    return await Promise.race([readConfigEnvironment(location.configYamlPath, controller.signal, requireDocument), cancelled])
   } catch {
     throw new ProfileEnvironmentReadError()
   } finally {
@@ -42,7 +43,7 @@ export async function readAdmissionEnvironment(
   }
 }
 
-async function readConfigEnvironment(filePath: string, signal: AbortSignal): Promise<Record<string, string>> {
+async function readConfigEnvironment(filePath: string, signal: AbortSignal, requireDocument: boolean): Promise<Record<string, string>> {
   signal.throwIfAborted()
   // Nonblocking open lets us reject FIFOs/devices rather than waiting for a writer.
   // O_NONBLOCK is ignored for regular files and on Windows.
@@ -52,7 +53,11 @@ async function readConfigEnvironment(filePath: string, signal: AbortSignal): Pro
     if (error?.code === "ENOENT" && await isAbsentDocument(filePath, signal)) return undefined
     throw error
   })
-  if (!handle) { signal.throwIfAborted(); return {} }
+  if (!handle) {
+    signal.throwIfAborted()
+    if (requireDocument) throw new ProfileEnvironmentReadError()
+    return {}
+  }
   try {
     signal.throwIfAborted()
     const stat = await handle.stat()
