@@ -159,13 +159,25 @@ const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    recurrenceControl: {
+      input: { type: "object", properties: {
+        scheduleID: { type: "string", pattern: "^[A-Za-z0-9_-]{3,100}$" }, expectedRevision: { type: "integer", minimum: 0 },
+        action: { type: "string", enum: ["play", "pause", "stop"] }, issuedAt: { type: "integer", minimum: 0 },
+        profileSource: { type: "object", properties: { profileID: { type: "string" }, executionHost: { type: "string" },
+          configYamlPath: { type: "string" } }, required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
+        proof: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      }, required: ["scheduleID", "expectedRevision", "action", "profileSource", "issuedAt", "proof"], additionalProperties: false },
+      output: { type: "object", properties: { version: { type: "integer", const: 1 }, scheduleID: { type: "string" },
+        revision: { type: "integer" }, state: { type: "string", enum: ["running", "paused", "stopped"] },
+        epoch: { type: "integer" } }, required: ["version", "scheduleID", "revision", "state", "epoch"], additionalProperties: false },
+    },
     recurrenceSnapshot: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: { type: "object", properties: {
         version: { type: "integer", const: 1 }, projectID: { type: "string" }, projectCanonical: { type: "string" },
         location, schedules: { type: "array", maxItems: 64, items: { type: "object", properties: {
           id: { type: "string" }, revision: { type: "integer" }, scheduleRevision: { type: "integer" },
-          state: { type: "string", enum: ["paused", "unavailable", "stopped"] },
+           state: { type: "string", enum: ["paused", "interrupted", "unavailable", "stopped"] },
           clock: { type: "object", properties: { time: { type: "string" }, zone: { type: "string" } }, required: ["time", "zone"], additionalProperties: false },
           pendingPassageID: { type: ["string", "null"] }, settledCount: { type: "integer" },
         }, required: ["id", "revision", "scheduleRevision", "state", "clock", "pendingPassageID", "settledCount"], additionalProperties: false } },

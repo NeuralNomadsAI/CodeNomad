@@ -39,7 +39,7 @@ export interface MissionRecurrenceSnapshot {
     id: string
     revision: number
     scheduleRevision: number
-    state: "paused" | "unavailable" | "stopped"
+    state: "paused" | "interrupted" | "unavailable" | "stopped"
     clock: { time: string; zone: string }
     pendingPassageID: string | null
     settledCount: number

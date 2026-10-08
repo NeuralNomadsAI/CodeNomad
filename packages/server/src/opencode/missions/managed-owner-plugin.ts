@@ -6,6 +6,7 @@ import { desktopPlugin as promisePlugin } from "./desktop-plugin"
 import { enrollmentSchema, observeNativeManagedOwner } from "./native-managed-owner"
 import { CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
+import { controlNativeRecurrence } from "./native-recurrence-control"
 
 export const MANAGED_OWNER_RPC_ID = "codenomad.missions.managed-owner"
 export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods: {
@@ -18,7 +19,8 @@ export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods:
 export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rpc"] {
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
     definition.id === CODENOMAD_MISSIONS_RPC_ID
-      ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx) } as typeof handlers
+      ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
+        recurrenceControl: (input: unknown) => controlNativeRecurrence(ctx, input) } as typeof handlers
       : handlers)
   return new Proxy(ctx.rpc, { get(target, key) {
     return key === "register" ? register : Reflect.get(target, key)

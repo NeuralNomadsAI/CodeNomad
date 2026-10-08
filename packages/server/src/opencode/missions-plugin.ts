@@ -101,6 +101,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
       handlers: {
         snapshot(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
+        recurrenceControl(input: unknown): Promise<unknown>
         lifecycle(input: unknown, context: MutationContext): Promise<unknown>
         recover(input: unknown, context: MutationContext): Promise<unknown>
         cleanupTarget(input: unknown): Promise<unknown>
@@ -183,6 +184,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       // Bundled Effect entry replaces this at registration with the native
       // request-graph read. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceControl: async () => { throw new Error("Native recurrence control unavailable") },
       recover: async (input, context) => {
         assertActive()
         const value = object(input)
@@ -216,6 +218,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: tracked(handlers.snapshot), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
+      recurrenceControl: tracked(handlers.recurrenceControl),
       recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
       cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),
       update: tracked(handlers.update), delete: tracked(handlers.delete),

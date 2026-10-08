@@ -39,6 +39,7 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { registerMissionOwnerEnrollment } from "./routes/mission-owner-enrollment"
+import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import type { PanelExtensionStore } from "../panel-extensions/store"
@@ -365,6 +366,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerMissionRecurrenceControl(app, { manager: deps.workspaceManager, auth: deps.authManager,
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
   if (deps.missionOwnerPrivateRoot) registerMissionOwnerEnrollment(app, { manager: deps.workspaceManager,
     privateRoot: deps.missionOwnerPrivateRoot, fence: worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
