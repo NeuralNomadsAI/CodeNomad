@@ -8,6 +8,7 @@ import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
+import { canonicalScope } from "../host-lifetime/protocol"
 
 export type DocKind = "config" | "state"
 
@@ -82,6 +83,16 @@ export class SettingsService {
       logger.child({ component: "settings-state" }),
       { throwOnPersistError: true },
     )
+  }
+
+  /** Selected desktop profile, including custom JSON-to-YAML identity. */
+  getProfileScope() {
+    const channel = process.env.CODENOMAD_UPDATE_CHANNEL?.trim().toLowerCase()
+      || (process.env.CODENOMAD_DEV === "1" ? "dev" : "stable")
+    const scope = canonicalScope(channel, this.location.configYamlPath, process.cwd(), process.cwd())
+    const expected = process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY
+    if (expected !== undefined && scope.configIdentity !== expected) throw new Error("CodeNomad profile configuration differs from its desktop identity")
+    return scope
   }
 
   getDoc(kind: DocKind): SettingsDoc {

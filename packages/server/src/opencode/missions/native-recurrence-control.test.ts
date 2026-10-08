@@ -34,7 +34,7 @@ test("real Effect SQLite atomically archives human-signed epochs and fences stal
     const get = (key: string) => { const row = db.prepare("SELECT value FROM kv WHERE key=?").get(encode(key)) as { value: string } | undefined; return row && JSON.parse(row.value) }
     const namespace = "9f6f590e-271d-477f-8c02-7a6a119d63b9", profileID = "a".repeat(64)
     put(`${MISSION_AUTHORITY_STORAGE_PREFIX}/namespace`, namespace)
-    const config = { consigne: "Inspect", clock: { time: "07:00", zone: "UTC" }, profileID, executionHost: "win32:local",
+    const config = { consigne: "Inspect", clock: { time: "07:00", zone: "UTC" }, profileID, executionHost: "local",
       profiles: { coordinator: { agent: "worker", model: { providerID: "provider", id: "model" } },
         roles: { specialist: { agent: "worker", model: { providerID: "provider", id: "model" } } } },
       taskMode: "native", roots: [{ mode: "git", directory, checkout, family }],
