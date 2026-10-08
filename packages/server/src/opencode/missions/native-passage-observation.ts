@@ -9,7 +9,9 @@ import { stableToken } from "../../missions/journal"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
-const executionTag = tag("@opencode/SessionExecution"), formTag = tag("@opencode/Form")
+// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (2.0.26); the
+// native Session service re-exports its `active` Effect as the set of running session IDs.
+const sessionTag = tag("@opencode/Session"), formTag = tag("@opencode/Form")
 const permissionTag = tag("@opencode/Permission"), shellTag = tag("@opencode/Shell")
 type NativeEffect = Effect.Effect<unknown, unknown>
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
@@ -41,15 +43,21 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
     return value.value
   }
   const database = get(databaseTag) as { db?: { $client?: SqlClient.SqlClient } }
-  const location = get(locationTag), execution = get(executionTag) as { isActive(id: string): NativeEffect }
+  const location = get(locationTag), sessions = get(sessionTag) as { active?: unknown }
   const forms = get(formTag) as { list(): NativeEffect }, permissions = get(permissionTag) as { list(): NativeEffect }
   const shells = get(shellTag) as { list(): NativeEffect }
-  if (!Predicate.isFunction(database.db?.$client?.unsafe) || !Predicate.isFunction(execution.isActive)
+  if (!Predicate.isFunction(database.db?.$client?.unsafe) || !Effect.isEffect(sessions.active)
     || !Predicate.isFunction(forms.list) || !Predicate.isFunction(permissions.list) || !Predicate.isFunction(shells.list))
     throw new Error("Native passage contracts unavailable")
   const query = (sql: string, params: readonly unknown[]) => Effect.runPromise(database.db!.$client!.unsafe(sql, params)
     .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
   const run = (effect: NativeEffect) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
+  const activeSet = (value: unknown): ReadonlySet<unknown> => {
+    if (!(value instanceof Set) || value.size > 4096) throw new Error("Native execution coverage unavailable")
+    return value
+  }
+  const running = sessions.active as NativeEffect
+  const isActive = (id: string) => activeSet(Effect.runSync(running.pipe(Effect.provide(graph)))).has(id)
   const sync = (sql: string, params: readonly unknown[]) => Effect.runSync(database.db!.$client!.unsafe(sql, params)
     .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
   const assertCurrent = (): true => {
@@ -82,7 +90,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         if (!actual || actual.project_id !== expected.projectID || actual.directory !== expected.directory
           || actual.workspace_id !== (expected.workspaceID ?? null) || actual.parent_id !== (expected.parentID ?? null)
           || actual.time_suspended !== null || queued !== 0 || pending !== 0 || running !== 0
-          || Effect.runSync(execution.isActive(expected.id).pipe(Effect.provide(graph))) !== false
+          || isActive(expected.id)
           || children.some(child => typeof child.id !== "string" || !ids.includes(child.id)))
           throw new Error("Passage became active before settlement")
       }
@@ -114,8 +122,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const inbox = await count("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [id])
       const pending = await count("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [id])
       const runningTools = await count(runningToolsSQL, [id])
-      const active = await run(execution.isActive(id))
-      if (typeof active !== "boolean") throw new Error("Native execution coverage unavailable")
+      const active = activeSet(await run(running)).has(id)
       const terminal = (await query("SELECT type FROM event WHERE aggregate_id=? AND type IN ('session.execution.failed.1','session.execution.succeeded.1','session.execution.interrupted.1') ORDER BY seq DESC LIMIT 1", [id]))[0]
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)

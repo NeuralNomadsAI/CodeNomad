@@ -12,6 +12,8 @@ const jobTag = Context.Service<never, NativeJob>("@opencode/Job")
 const mapTag = Context.Service<never, NativeLocations>("@opencode/example/LocationServiceMap")
 const sessionTag = Context.Service<never, unknown>("@opencode/Session")
 const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
+const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
+const busTag = Context.Service<never, unknown>("@opencode/Bus")
 
 type NativeJob = {
   get(id: string): Effect.Effect<{ status: string; metadata?: Record<string, unknown> } | undefined>
@@ -31,6 +33,18 @@ export type RecurrenceClockPlacement = Readonly<{
   manual?: { requestID: string; expectedRevision: number }
 }>
 
+/** The native map hashes keys with the service's own effect copy, so this bundle's
+ * MutableHashMap.get misses structurally equal refs (observed against 2.0.26).
+ * Scan the native iterator by Location.Ref fields; native lookups keep using `ref`. */
+export function nativeLocationEntry(state: { _tag: string; map?: Iterable<readonly [Location.Ref, unknown]> } | undefined,
+  ref: Location.Ref): Option.Option<unknown> {
+  if (state?._tag !== "Open" || !state.map) return Option.none()
+  for (const [key, value] of state.map) {
+    if (key.directory === ref.directory && key.workspaceID === ref.workspaceID) return Option.some(value)
+  }
+  return Option.none()
+}
+
 const jobID = (input: RecurrenceClockPlacement) => `codenomad.missions.recurrence:${stableToken(
   `${input.projectID}\0${input.projectCanonical}\0${input.directory}\0${input.workspaceID ?? ""}\0${input.scheduleID}\0${input.profileID}\0${input.executionHost}`, 32)}`
 
@@ -46,12 +60,7 @@ export const readNativeRecurrenceClockStatus = Effect.fn("missions.readNativeRec
     || origin.value.project.id !== input.projectID || origin.value.project.canonical !== input.projectCanonical) return undefined
   const ref = Schema.decodeUnknownSync(Location.Ref)({ directory: input.directory,
     ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }) })
-  const currentEntry = () => {
-    const state = map.value.rcMap?.state
-    if (state?._tag !== "Open") return undefined
-    const found = MutableHashMap.get(state.map, ref)
-    return Option.isSome(found) ? found.value : undefined
-  }
+  const currentEntry = () => Option.getOrUndefined(nativeLocationEntry(map.value.rcMap?.state, ref))
   const entry = currentEntry()
   if (entry === undefined) return undefined
   const graph = yield* Effect.scoped(map.value.contextEffectOption(ref))
@@ -91,6 +100,13 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
   const exactCtx = { storage: ctx.storage, location: ctx.location }
   const nativeClock = yield* Clock.Clock
   const job = yield* jobTag, locations = yield* mapTag, session = yield* sessionTag
+  // Process-global native services are absent from a borrowed Location graph (2.0.26 builds
+  // Locations over a shared global layer). Retain exactly these; Location services stay fresh.
+  const database = yield* databaseTag, bus = yield* Effect.serviceOption(busTag)
+  const borrow = (graph: Context.Context<never>) => {
+    const withGlobals = graph.pipe(Context.add(databaseTag, database), Context.add(sessionTag, session), Context.add(jobTag, job))
+    return Option.isSome(bus) ? Context.add(withGlobals, busTag, bus.value) : withGlobals
+  }
   const ref = Schema.decodeUnknownSync(Location.Ref)({ directory: input.directory,
     ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }) })
   const id = jobID(input), metadata = { projectID: input.projectID,
@@ -106,16 +122,17 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
     // Each wake borrows and validates a fresh Location graph. No minute polling.
     while (true) {
       const delay = yield* Effect.scoped(Effect.gen(function* () {
-        const graph = yield* locations.contextEffect(ref)
-        const location = Schema.decodeUnknownSync(Location.Info)(Context.get(graph, locationTag))
+        const graph = borrow(yield* locations.contextEffect(ref))
+        // Native and bundled Location.Info classes differ; validate fields, then rewrap (as the due path does).
+        const location = new Location.Info(Schema.decodeUnknownSync(Schema.toType(Schema.Struct(Location.Info.fields)))(Context.get(graph, locationTag)))
         if (location.directory !== input.directory || location.workspaceID !== input.workspaceID
           || location.project.id !== input.projectID
           || location.project.canonical !== input.projectCanonical) throw new Error("Recurrence Location changed")
-        const entry = MutableHashMap.get(locations.rcMap.state.map, ref)
-        if (locations.rcMap.state._tag !== "Open" || Option.isNone(entry)) throw new Error("Recurrence Location unavailable")
+        const entry = nativeLocationEntry(locations.rcMap.state, ref)
+        if (Option.isNone(entry)) throw new Error("Recurrence Location unavailable")
         const current = (): true => {
-          const actual = MutableHashMap.get(locations.rcMap.state.map, ref)
-          if (locations.rcMap.state._tag !== "Open" || Option.isNone(actual) || actual.value !== entry.value) throw new Error("Recurrence Location replaced")
+          const actual = nativeLocationEntry(locations.rcMap.state, ref)
+          if (Option.isNone(actual) || actual.value !== entry.value) throw new Error("Recurrence Location replaced")
           return true
         }
         const source = yield* acquireNativeRecurrenceStore({ storage: exactCtx.storage, location }).pipe(Effect.provide(graph))
@@ -127,13 +144,13 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         const beforeRevision = document.revision
         const controller = new AbortController()
         const invocation = due(input.scheduleID, () => {
-            const current = MutableHashMap.get(locations.rcMap.state.map, ref)
-            if (locations.rcMap.state._tag !== "Open" || Option.isNone(current) || current.value !== entry.value) {
+            const current = nativeLocationEntry(locations.rcMap.state, ref)
+            if (Option.isNone(current) || current.value !== entry.value) {
               throw new Error("Recurrence Location replaced")
             }
             return true
           }, controller.signal)
-        yield* invocation.pipe(Effect.provide(Context.add(graph, sessionTag, session)),
+        yield* invocation.pipe(Effect.provide(graph),
           Effect.ensuring(Effect.sync(() => controller.abort())))
         document = yield* Effect.promise(() => source.read(input.scheduleID))
         current()
@@ -151,7 +168,7 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
     }
   })).pipe(Effect.catchCause(cause => Effect.scoped(Effect.gen(function* () {
     if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)
-    const graph = yield* locations.contextEffect(ref)
+    const graph = borrow(yield* locations.contextEffect(ref))
     const source = yield* acquireNativeRecurrenceStore(exactCtx).pipe(Effect.provide(graph))
     yield* Effect.promise(() => source.recordClockError(input.scheduleID, () => true)).pipe(Effect.catchCause(() => Effect.void))
     return yield* Effect.failCause(cause)

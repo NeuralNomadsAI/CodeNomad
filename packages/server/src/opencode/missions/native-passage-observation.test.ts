@@ -26,10 +26,12 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     db.prepare("INSERT INTO event VALUES(?,'session.execution.succeeded.1',1)").run(f.passage.coordinatorSessionID)
     const tag = (name: string) => Context.Service<never, unknown>(name)
     let graph = Context.empty() as Context.Context<never>
+    const running = new Set<string>()
     for (const [name, value] of [
       ["@opencode/storage/Database", { db: { $client: { unsafe: (sql: string, params: readonly unknown[]) => ({
         withoutTransform: Effect.sync(() => db.prepare(sql).all(...params as [])) }) } } }],
-      ["@opencode/Location", {}], ["@opencode/SessionExecution", { isActive: () => Effect.succeed(false) }],
+      // Native shape (2.0.26): Session.active is an Effect of running IDs; SessionExecution is not exposed.
+      ["@opencode/Location", {}], ["@opencode/Session", { active: Effect.sync(() => new Set(running)) }],
       ["@opencode/Form", { list: () => Effect.succeed([]) }], ["@opencode/Permission", { list: () => Effect.succeed([]) }],
       ["@opencode/Shell", { list: () => Effect.succeed([]) }],
     ] as const) graph = Context.add(graph, tag(name), value)
@@ -47,6 +49,10 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     const settled = (await observe())!
     assert.equal(settled.result.outcome, "completed")
     settled.current()
+    running.add(f.passage.coordinatorSessionID)
+    assert.equal(await observe(), undefined, "a natively running coordinator blocks settlement")
+    assert.throws(settled.current, /became active/)
+    running.clear()
     content[4].state.status = "running"
     db.prepare("UPDATE session_message SET data=? WHERE id='msg_tools'").run(JSON.stringify({ content }))
     assert.equal(await observe(), undefined)

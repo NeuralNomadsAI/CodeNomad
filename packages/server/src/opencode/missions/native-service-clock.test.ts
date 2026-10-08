@@ -3,12 +3,26 @@ import { DatabaseSync } from "node:sqlite"
 import path from "node:path"
 import test from "node:test"
 import { Location } from "@opencode/schema/location"
-import { Context, Effect, Exit, Fiber, RcMap, Schema, Scope } from "effect"
-import { startNativeRecurrenceClock, cancelNativeRecurrenceClock, readNativeRecurrenceClock } from "./native-service-clock"
+import { Context, Effect, Equal, Exit, Fiber, Hash, MutableHashMap, Option, RcMap, Schema, Scope } from "effect"
+import { startNativeRecurrenceClock, cancelNativeRecurrenceClock, readNativeRecurrenceClock, nativeLocationEntry } from "./native-service-clock"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 import { latestDailyDue } from "../../missions/recurrence-clock"
 import type { RecurrenceConfig } from "../../missions/recurrence-contract"
+
+test("native Location entries are found by Ref fields when the service hashes keys with its own effect copy", () => {
+  const directory = path.resolve("recurrence-native-hash-fixture")
+  // Simulates a key inserted by the native service: equal fields, foreign hash.
+  const nativeKey = { directory, [Hash.symbol]: () => 1, [Equal.symbol]: (that: unknown) =>
+    typeof that === "object" && that !== null && (that as { directory?: unknown }).directory === directory }
+  const map = MutableHashMap.empty<Location.Ref, string>()
+  MutableHashMap.set(map, nativeKey as unknown as Location.Ref, "native-graph")
+  const ref = Schema.decodeUnknownSync(Location.Ref)({ directory })
+  assert.equal(Option.isNone(MutableHashMap.get(map, ref)), true, "bundled hashing misses the native key")
+  assert.deepEqual(nativeLocationEntry({ _tag: "Open", map }, ref), Option.some("native-graph"))
+  assert.equal(Option.isNone(nativeLocationEntry({ _tag: "Open", map }, Schema.decodeUnknownSync(Location.Ref)({ directory, workspaceID: "wrk_other" }))), true)
+  assert.equal(Option.isNone(nativeLocationEntry({ _tag: "Closed", map }, ref)), true)
+})
 
 test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart interrupted, pending resume reconcile-only", async () => {
   const db = new DatabaseSync(":memory:")
@@ -56,11 +70,15 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
       try { const value = await Effect.runPromise(callback().pipe(Effect.provide(graph))); db.exec("COMMIT"); return value }
       catch (error) { db.exec("ROLLBACK"); throw error }
     }) } }
-    const borrowed = Context.make(locationTag, location).pipe(Context.add(databaseTag, dbService))
+    // Native graphs carry a foreign Location class with an explicit `workspaceID: undefined` (2.0.26).
+    const nativeLocation = { ...location, workspaceID: undefined } as unknown as Location.Info
+    // A borrowed native Location graph has Location services only; Database, Session and Job
+    // are process-global and exist only in the Play-time plugin context (observed in 2.0.26).
+    const borrowed = Context.make(locationTag, nativeLocation)
     const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.succeed(borrowed) })
       .pipe(Effect.provideService(Scope.Scope, scope)))
     const locations = { rcMap: map, contextEffect: (ref: Location.Ref) => RcMap.get(map, ref), contextEffectOption: (ref: Location.Ref) => RcMap.getOption(map, ref) }
-    graph = borrowed.pipe(Context.add(jobTag, job), Context.add(mapTag, locations), Context.add(sessionTag, {}))
+    graph = borrowed.pipe(Context.add(databaseTag, dbService), Context.add(jobTag, job), Context.add(mapTag, locations), Context.add(sessionTag, {}))
     const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
     await run(Effect.scoped(RcMap.get(map, Schema.decodeUnknownSync(Location.Ref)({ directory }))))
     const store = await run(acquireNativeRecurrenceStore(ctx)), current = () => true as const
