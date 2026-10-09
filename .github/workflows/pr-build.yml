@@ -364,6 +364,7 @@ jobs:
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/blank-session-cleanup.test.ts
           packages/ui/src/stores/session-status.test.ts
+          packages/ui/src/stores/session-subsession-activity.test.ts
           packages/ui/src/stores/worktree-ready.test.ts
           packages/ui/src/stores/worktrees-delete.test.ts
 

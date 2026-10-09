@@ -21,7 +21,7 @@ import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-t
 import { showFolderSelection } from "../../stores/ui"
 import { instances } from "../../stores/instances"
 import {
-  activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance,
+  activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
   getSessionDraftPromptsForInstance, getSessions,
   hasAuthoritativeSessionSelection,
@@ -79,7 +79,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     const parentId = activeParentSessionId().get(id)
     const sessionId = activeSessionId().get(id)
     const expansionAuthority = getAuthoritativeSessionExpansionIdsForInstance(id)
-    const expanded = [...(expandedSessions().get(id) ?? [])]
+    const expanded = getPersistentExpandedSessionIds(id)
     const prioritySessionIds = [sessionId, "__no_session_draft__"].filter((value): value is string => Boolean(value))
     const result: RestorableWorkspaceTabState = {
       kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0,
