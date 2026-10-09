@@ -150,6 +150,18 @@ test("revealing into an expanded group focuses the first revealed member, not th
   await page.waitForFunction(() => document.activeElement?.matches('.tool-call-message[data-part-id="expanded-read-2"]'))
 }))
 
+test("a partial reveal that merges into the row above focuses the first revealed part, not the remaining placeholder", { timeout: 90_000 }, async () => withFixture("parts-long", async page => {
+  const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
+  const gap = block.locator(".message-hidden-parts")
+  await gap.waitFor()
+  const button = gap.getByRole("button", { name: "Show 1000 more", exact: true })
+  await button.scrollIntoViewIfNeeded()
+  await button.focus()
+  await page.keyboard.press("Enter")
+  await gap.getByRole("button", { name: "Show 237 more", exact: true }).waitFor()
+  await page.waitForFunction(() => document.activeElement?.closest("[data-part-id]")?.textContent?.includes("Paragraph 0500"))
+}))
+
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {
   const body = page.locator(".tool-call-error-content")
   await body.waitFor()

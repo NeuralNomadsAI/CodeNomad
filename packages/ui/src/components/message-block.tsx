@@ -858,8 +858,10 @@ export default function MessageBlock(props: MessageBlockProps) {
     revealHiddenRecordParts(props.instanceId, item.messageId)
     if (!hadFocus) return
     requestAnimationFrame(() => {
-      // A placeholder that stays mounted keeps focus for the next activation.
-      if (document.activeElement && document.activeElement !== document.body) return
+      // Respect focus moved elsewhere meanwhile. The clicked button may stay mounted when
+      // revealed parts merge into the row above it, so it does not mark the reveal point.
+      const active = document.activeElement
+      if (active && active !== document.body && active !== button) return
       const element = blockRef()
       if (!element) return
       // Revealed parts may merge into an earlier row or a collapsed group that renders

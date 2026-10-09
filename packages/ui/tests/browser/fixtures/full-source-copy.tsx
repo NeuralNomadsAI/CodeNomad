@@ -52,6 +52,8 @@ const message = { id: messageId, type: "assistant", agent: "build", model: { pro
     : scenario === "parts-group" ? [...textParts.slice(0, 500), ...groupReads, ...textParts.slice(500)]
     // The head ends with one read; revealed reads merge into its group.
     : scenario === "parts-merge" ? [...textParts.slice(0, 499), ...reads("merge"), ...textParts.slice(499)]
+    // More than one reveal step: revealed text merges into the head row and a placeholder remains.
+    : scenario === "parts-long" ? Array.from({ length: 2237 }, (_, index) => ({ type: "text", text: `Paragraph ${String(index).padStart(4, "0")} 完整.\n\n` }))
     // The head ends with a two-read group the test expands before revealing two more.
     : scenario === "parts-merge-expanded" ? [...textParts.slice(0, 498), ...reads("expanded", 4), ...textParts.slice(498)]
     : [tool] }
