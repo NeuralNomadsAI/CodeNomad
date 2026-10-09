@@ -362,6 +362,21 @@ test("I. Seventy sequential daily passages never exhaust the passage business ca
   assert.equal(f.errors.length, 0)
 })
 
+test("F2. A native terminal failure without a final report archives failed with one start and no retry", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play"); await f.advance(DUE)
+  await f.model({ report: false, failed: true })
+  await f.advance(DUE + 5_000)
+  const settled = await f.snapshot()
+  assert.equal(settled.pending, null)
+  assert.equal(settled.latestResult?.outcome, "failed")
+  assert.equal(f.starts.length, 1)
+  assert.equal(f.coordinators.length, 1)
+  await f.advance(DUE + 3_600_000)
+  assert.equal(f.starts.length, 1, "Missions never retries or replays a failed passage")
+  assert.equal((await f.snapshot()).nextDueAt, DUE + DAY)
+})
+
 test("F. Pending Form prevents settlement; idle without report is not completed", async t => {
   const f = await RecurringDayFixture.open(); t.after(() => f.close())
   await f.create(); await f.control("play"); await f.advance(DUE)

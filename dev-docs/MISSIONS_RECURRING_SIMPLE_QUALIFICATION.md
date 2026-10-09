@@ -1,5 +1,85 @@
 # Simple recurring Missions — real native qualification
 
+## Extended journeys E/F/W/Q (2026-10-09, after `1554d277`)
+
+Same isolated read-copy of OpenCode 2.0.26; nothing installed, no OpenCode change.
+New journeys live in `scripts/recurring-simple-native/journeys.mjs`; the provider
+plays the model through ordinary native tools only (`subagent`, background `shell`,
+`question`, `mission_*`). All four ran in one invocation on the final code, then A
+and BCD were rerun on the same build.
+
+```powershell
+npm run build:missions --workspace packages/server
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> EFWQ
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> A
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> BCD
+```
+
+| Journey | Evidence suffix | Result | Mission starts | Archive latency |
+| --- | --- | --- | --- | --- |
+| **E** background child + background shell | `xezzJA` | pending while child/shell run; `completed` after both end and the final report | **1** (+2 native completion notices) | 3.0 s after quiescence |
+| **F** provider HTTP 400 | `xezzJA` | `failed`, no reason; 1 provider call, none after archive | **1** | 3.0 s |
+| **W** watched conversation ×4 | `xezzJA` | completed, completed, **failed**, completed; cursor advances only on completed | **1 each** | — |
+| **Q** Wayfinder Form, UI vs ordinary answer | `xezzJA` | UI: mark confirmed, gate accepts, `completed`; ordinary: no mark, gate refuses, `ended-without-report` | **1 each** | — |
+| A rerun | `97zH47` | completed, nextDueAt = due + 24 h | **1** | 3.1 s |
+| BCD rerun | `JpicJ1` | B interrupted (20 ms after Resume); C two completed + duplicate 200; D Resume after Stop 503 | 1 / 1+1 / 0 | — |
+
+- **E** `rcs_93764…`, passage `rcp_16401…`, child `ses_ee1447…` (real `subagent`,
+  `background: true`) plus `shell` `background: true`. Timestamps (ms): coordinator
+  idle `…969158`; +10 s snapshot `running` with only the child natively active;
+  child released `…979177`, ended `…979193`; +10 s snapshot still `running` with
+  no active session (running background Shell only); shell released `…989470`,
+  ended `…989511`; final report `…989554`; quiescent `…989731`; archive observed
+  `…992768`. Order child end < shell end < report < archive holds.
+- **F** `rcs_4a96c…` passage `rcp_a7794…`: native projected one `idle` message with
+  `outcome: failed`; the `event` table has **0** rows.
+- **W** source `ses_ee143b…`, `rcs_45d5c…`: start texts carried W-MSG-1, then only
+  W-MSG-2 (`afterMessageID` = first cursor), then W-MSG-3 (failed: cursor unchanged),
+  then W-MSG-3 again with the same `afterMessageID`. Cursors read from the fixture
+  database: `…5186` → `…7831` → `…7831` → `…9688`.
+- **Q** `rcs_63f21…`: decision task via `mission_delegate`, native `subagent` with the
+  exact assignment prompt, child `question` Form. Each passage stayed `running` 10 s
+  with the Form pending. UI run: dock route (cookie + `x-codenomad-human-answer`) 200,
+  mark `confirmed/ui`, decision readout `reported`, final report, `completed`.
+  Ordinary run (same route without the header): native 204, no mark, readout
+  refused, no final report, `ended-without-report`. The refusal reaches the model
+  as a generic "An error occurred in Effect.tryPromise" tool error (fails closed;
+  message is not descriptive).
+
+Production bugs revealed and fixed (each with a failing-then-passing offline regression):
+
+1. `e200e8c4` — native failures archived `ended-without-report`: settlement read
+   `session.execution.failed` from the native `event` table, which 2.0.26 `serve`
+   never writes (Bus persistence off). Classification now reads the durable `idle`
+   message projection (`outcome: failed`). Completed final report still wins.
+2. `85aa0c7e` — every dock answer for a Mission Form returned 409 on Windows: the
+   human-answer binding compared native SQL `/` paths with host `\` paths
+   ("session moved or foreign", run `hF44ln`).
+3. `1554d277` — the Wayfinder gate was unreachable in the shipped bundle: only the
+   unshipped signed derived-call publication records `task.native-bound`, so a
+   decision readout always failed "Exact native decision invocation unavailable"
+   (run `0Ffoet`), and `verify` required `session.tool.*` event rows that are never
+   written. Without a published binding the gate now proves natively that the
+   decision child is a fresh child of the expected parent's exact `subagent` call
+   whose prompt carries the declared assignment; the answered question is read
+   from the durable message projection.
+
+Process hygiene: every recorded PID (`63240`, `41924`, `26464`, `37916` and the
+intermediate runs) stopped through the owned handle; an executable-path and
+command-line scan afterwards found zero fixture services, Node fixtures or
+`e-wait.mjs` shells.
+
+Offline validation on the final code: server `npm run typecheck` pass (UI not
+touched); `src/missions/*.test.ts`, `src/opencode/missions/*.test.ts` (including
+`recurring-day.e2e.test.ts` with new F2) and `src/server/routes/mission-*.test.ts`:
+1239 pass, 1 skipped, 0 fail. The three standalone native `.mjs` scripts in
+`src/opencode/missions` are not offline suites (they resolve paths from the repo
+root and launch their own assigned CLI) and were not run.
+
+Remaining gaps after this section: tomorrow's real passage, managed-service
+restart, post-restart Check passage, native CAS-conflict/lost-reply journeys, and
+one-time (non-recurring) Wayfinder natively. Q covers recurring Wayfinder only.
+
 ## Merged rerun (2026-10-09, integration merge `c3847318`)
 
 The integration review fixes (two-phase UI marks, passage handle eviction, paused
@@ -99,14 +179,15 @@ fixture processes.
 - Restart continuity was exercised only with an owned unmanaged `serve` and a
   hard kill. Upstream sources sweep orphaned claims only in the managed service
   at boot; that path (and a resumed claim after archive) is not qualified.
-- Native does not persist event payloads here (the `event` table stays empty),
+- ~~Native does not persist event payloads here (the `event` table stays empty),
   so the observer's `session.execution.failed` lookup cannot see native failures:
-  a failed passage would archive as `ended-without-report`. Not exercised.
+  a failed passage would archive as `ended-without-report`. Not exercised.~~
+  Fixed in `e200e8c4` (durable `idle` projection); natively qualified as F above.
 - ~~A Run now on a paused schedule has no Job to settle it until Play/Resume.~~
   Fixed by the merged settlement-only observer Job; natively qualified as G above.
   The post-restart Check passage path is offline-only.
-- Descendant/background-family settlement, watched cursors, human Forms and
-  native CAS-conflict/lost-reply journeys remain offline-only.
+- ~~Descendant/background-family settlement, watched cursors, human Forms~~ (now
+  E/W/Q above) and native CAS-conflict/lost-reply journeys remain offline-only.
 
 ### Validation
 

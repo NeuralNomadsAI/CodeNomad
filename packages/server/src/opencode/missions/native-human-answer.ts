@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import path from "node:path"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Form } from "@opencode/schema/form"
 import { Location } from "@opencode/schema/location"
@@ -63,7 +64,9 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
   }
   const session = (id: string) => query("SELECT id,parent_id,project_id,directory,workspace_id FROM session_v2 WHERE id=?", [id]).pipe(Effect.map(result => {
     const value = result[0]
-    if (!value || value.id !== id || value.project_id !== location.project.id || value.directory !== location.directory
+    // Native SQL stores slash-separated Windows paths; the Location graph uses host separators.
+    if (!value || value.id !== id || value.project_id !== location.project.id || typeof value.directory !== "string"
+      || path.normalize(value.directory) !== path.normalize(location.directory)
       || value.workspace_id !== (location.workspaceID ?? null)) throw new Error("Native answer session moved or foreign")
     return value
   }))
@@ -104,22 +107,18 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
           request.nativeCall.toolCallID, request.delegationToolName)
         if (actor.parent_id !== request.nativeCall.parentSessionID || !object(delegation.state.metadata)
           || delegation.state.metadata.sessionID !== request.sessionID) throw new Error("Human decision native delegation mismatch")
+        // Without a published binding, only a fresh child born from this exact declared
+        // assignment qualifies; a continuation reuses a child born for other work.
+        if (request.assignmentPrompt !== undefined && (delegation.input.sessionID !== undefined
+          || typeof delegation.input.prompt !== "string" || !delegation.input.prompt.includes(request.assignmentPrompt)))
+          throw new Error("Human decision delegation is not this assignment")
+        // The durable message projection is the native record of the answered call:
+        // `serve` (2.0.26) does not persist Bus events, so the event table stays empty.
         const observed = yield* question(request.sessionID, request.messageID, request.toolCallID)
         const answers = matchHumanQuestion(form, observed.input, mark.answer)
         if (observed.state.status !== "completed" || !object(observed.state.metadata) || !same(observed.state.metadata.answers, answers)
           || form.fields.find(field => field.key === request.fieldKey)?.description !== request.question
           || !same(mark.answer[request.fieldKey], request.answer)) throw new Error("Human decision answer mismatch")
-        const events = yield* query("SELECT id,seq,type,data FROM event WHERE aggregate_id=? AND type IN ('session.tool.called.1','session.tool.success.2','session.tool.failed.2') ORDER BY seq LIMIT 513", [request.sessionID])
-        if (events.length > 512) throw new Error("Native question event bound")
-        const exact = events.map(row => ({ type: row.type, seq: row.seq, data: parse(row.data) })).filter(event => object(event.data)
-          && event.data.sessionID === request.sessionID && event.data.assistantMessageID === request.messageID && event.data.id === request.toolCallID)
-        const called = exact.filter(event => event.type === "session.tool.called.1"), results = exact.filter(event => event.type !== "session.tool.called.1")
-        const call = called[0], result = results[0]
-        if (called.length !== 1 || results.length !== 1 || result.type !== "session.tool.success.2"
-          || !object(call.data) || !object(result.data) || !isLocalNativeTool(call.data) || !isLocalNativeTool(result.data)
-          || !same(call.data.input, observed.input) || !same(result.data.metadata, observed.state.metadata)
-          || !same(result.data.content, observed.state.content) || !Number.isSafeInteger(call.seq) || !Number.isSafeInteger(result.seq)
-          || Number(result.seq) <= Number(call.seq)) throw new Error("Native answered question unavailable")
         // Only explicit cache absence uses the saved Form snapshot. Other native
         // read failures remain failures; a pending/cancelled Form never qualifies.
         const cached = yield* forms.get(request.formID).pipe(Effect.catchIf(error => object(error) && error._tag === "Form.NotFoundError", () => Effect.succeed(undefined)))

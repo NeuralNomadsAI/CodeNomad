@@ -14,6 +14,8 @@ export type NativeDecisionEvidenceRequest = NativeDecisionProvenance & {
   projectID: string
   directory: string
   delegationToolName: string
+  /** Without a published binding, the exact declared assignment the delegation call must carry. */
+  assignmentPrompt?: string
 }
 export type NativeFormAnswerObservation = NativeDecisionProvenance & {
   kind: "native-form-answer"

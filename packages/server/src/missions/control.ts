@@ -15,10 +15,10 @@ import {
   type MissionRevisedEvent,
   type MissionSnapshot,
 } from "./model"
-import { buildActorContext, getMissionRecipe, missionRecipeCatalog } from "./recipes"
+import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
-import { resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
+import { nativeDecisionProvenance, resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { NativeHumanAnswerGate } from "./human-answer"
 import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
@@ -88,15 +88,38 @@ export class MissionControl {
     return this.journal.snapshot()
   }
 
-  private async verifyHumanDecision(mission: MissionMap, taskKey: string, sessionID: string,
-    call: import("./model").MissionNativeBinding, artifact: import("./model").MissionJsonValue | undefined): Promise<import("./human-answer").HumanDecisionMark> {
+  private async verifyHumanDecision(mission: MissionMap, task: import("./model").MissionTask,
+    artifact: import("./model").MissionJsonValue | undefined,
+    exact?: { call: import("./model").MissionNativeBinding; sessionID: string }): Promise<import("./human-answer").HumanDecisionMark> {
     if (!this.options.humanGate) throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
-    const provenance = validateNativeDecisionArtifact({ contract: { missionID: mission.id, taskKey, generation: call.generation },
-      call, sessionID, artifact })
+    const bound = exact?.call ?? task.nativeExecution?.binding, unavailable = () =>
+      new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
+    let call: import("./model").MissionNativeBinding, sessionID: string, assignmentPrompt: string | undefined
+    if (exact) { call = exact.call; sessionID = exact.sessionID }
+    else if (bound) {
+      if (!task.actorSessionId || bound.generation !== task.contractGeneration) throw unavailable()
+      call = bound; sessionID = task.actorSessionId
+    } else {
+      // No published binding (simple native passages; the shipped bundle has no binding
+      // publisher). The native gate must then prove the decision session was born from
+      // this exact declared assignment by the expected parent's own subagent call.
+      const claimed = nativeDecisionProvenance.safeParse((artifact as { provenance?: unknown } | undefined)?.provenance)
+      const mode = task.executionMode
+      const parent = mode?.kind !== "native" ? undefined : mode.parentTaskKey === null ? mission.coordinatorSessionId
+        : mission.tasks.find(candidate => candidate.key === mode.parentTaskKey)?.actorSessionId
+      if (!claimed.success || !parent || claimed.data.nativeCall.parentSessionID !== parent) throw unavailable()
+      call = claimed.data.nativeCall; sessionID = claimed.data.sessionID
+      assignmentPrompt = buildAssignmentPrompt(mission, task)
+    }
+    const generation = exact ? call.generation : task.contractGeneration
+    if (generation === undefined) throw unavailable()
+    let provenance
+    try { provenance = validateNativeDecisionArtifact({ contract: { missionID: mission.id, taskKey: task.key, generation }, call, sessionID, artifact }) }
+    catch (error) { throw bound ? error : unavailable() }
     const session = await this.ownedSession(sessionID)
     this.assertActive()
     const receipt = await this.options.humanGate({ ...provenance, projectID: mission.projectID,
-      directory: session.location.directory, delegationToolName: "subagent" })
+      directory: session.location.directory, delegationToolName: "subagent", ...(assignmentPrompt === undefined ? {} : { assignmentPrompt }) })
     this.assertActive()
     const tool = receipt.form.metadata?.tool as { messageID?: unknown; id?: unknown } | undefined
     if (receipt.via !== "ui" || receipt.sessionID !== sessionID
@@ -809,11 +832,10 @@ export class MissionControl {
         && mission.tasks.some(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
         for (const task of mission.tasks.filter(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
           const report = task.report
-          const call = report?.nativeCall ?? (report?.delivery === "coordinator-readout" ? task.nativeExecution?.binding : undefined)
-          if (!report || !call) throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
-          const source = report.delivery === "coordinator-readout" ? task.actorSessionId : report.sessionId
-          if (!source) throw new MissionControlError("Exact native decision actor unavailable", "policy-unqualified")
-          await this.verifyHumanDecision(mission, task.key, source, call, report.artifact)
+          if (report?.nativeCall) await this.verifyHumanDecision(mission, task, report.artifact, { call: report.nativeCall, sessionID: report.sessionId })
+          // A readout re-verifies through its published binding or, without one, its exact assignment call.
+          else if (report?.delivery === "coordinator-readout") await this.verifyHumanDecision(mission, task, report.artifact)
+          else throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
         }
       }
       if (mission.tasks.some(hasUnsettledNativeExecution)) {
@@ -849,12 +871,8 @@ export class MissionControl {
     const declared = input.taskKey && mission.tasks.find(task => task.key === input.taskKey)
     if (!native && sessionID === mission.coordinatorSessionId && declared && declared.executionMode?.kind === "native") {
       let humanReceipt: import("./human-answer").HumanDecisionMark | undefined
-      if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed") {
-        const call = declared.nativeExecution?.binding
-        if (!call || !declared.actorSessionId || call.generation !== declared.contractGeneration)
-          throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
-        humanReceipt = await this.verifyHumanDecision(mission, declared.key, declared.actorSessionId, call, input.artifact)
-      }
+      if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed")
+        humanReceipt = await this.verifyHumanDecision(mission, declared, input.artifact)
       const readout = coordinatorReadout(snapshot, mission, declared, input, this.timestamp(snapshot), humanReceipt)
       if (readout.existing) return { disposition: "existing", mission }
       const fresh = await this.ownedRootSession(sessionID)
@@ -896,7 +914,7 @@ export class MissionControl {
             call: native.call, sessionID } }) }
         catch { throw new MissionControlError("Native decision report requires exact Form provenance", "invalid-report-contract") }
         native.current()
-        await this.verifyHumanDecision(mission, task.key, sessionID, native.call, input.artifact)
+        await this.verifyHumanDecision(mission, task, input.artifact, { call: native.call, sessionID })
         native.current()
       }
       const previous = mission.reports.find(report => report.taskKey === task.key && sameNativeCall(report.nativeCall, native.call))

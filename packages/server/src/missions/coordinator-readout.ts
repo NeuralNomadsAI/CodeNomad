@@ -21,7 +21,8 @@ export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMa
   }
   // Preserve the stronger human-consent gate; a coordinator summary is not Form proof.
   if (mission.template === "wayfinder" && task.role === "decision" && input.outcome === "completed") {
-    if (!humanReceipt || humanReceipt.via !== "ui" || humanReceipt.sessionID !== task.actorSessionId)
+    // Without a published binding the native gate proved the session from the exact assignment call.
+    if (!humanReceipt || humanReceipt.via !== "ui" || humanReceipt.sessionID !== (task.actorSessionId ?? humanReceipt.sessionID))
       throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
   }
   let artifact
