@@ -23,20 +23,20 @@
   width: 10px;
   height: 10px;
   flex: 0 0 auto;
-  background: var(--text-subtle);
+  background: var(--text-muted);
 }
 
 .remote-control-status[data-state="connected"] .remote-control-status-dot {
-  background: var(--status-success, #3fb950);
+  background: var(--status-success);
 }
 
 .remote-control-status[data-state="connecting"] .remote-control-status-dot,
 .remote-control-status[data-state="reconnecting"] .remote-control-status-dot {
-  background: var(--status-warning, #d29922);
+  background: var(--status-warning);
 }
 
 .remote-control-status[data-state="error"] .remote-control-status-dot {
-  background: var(--status-danger, #f85149);
+  background: var(--status-error);
 }
 
 .remote-control-actions {
