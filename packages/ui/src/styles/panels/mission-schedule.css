@@ -9,8 +9,19 @@
   overflow-wrap: anywhere;
 }
 .mission-schedule-detail > p { margin: 0; color: var(--text-secondary); }
-.mission-schedule-detail .window-header { min-width: 0; }
+.mission-schedule-detail > p.mission-control-stale { color: var(--status-warning); }
+.mission-schedule-detail .window-header { min-width: 0; gap: var(--space-xs); }
 .mission-schedule-detail .window-title { flex: 1; min-width: 0; }
+/* Titles the selected one-time Mission's controls, matching the schedule detail header. */
+.mission-one-time-header {
+  min-width: 0;
+  gap: var(--space-xs);
+  margin-block-start: var(--space-sm);
+  padding: var(--space-sm) 0 var(--space-xs);
+  border-block-start: 1px solid var(--border-base);
+  font-size: var(--font-size-sm);
+}
+.mission-one-time-header .window-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mission-recurrence-history-item {
   display: flex;
   justify-content: space-between;

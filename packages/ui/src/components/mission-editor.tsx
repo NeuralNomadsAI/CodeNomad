@@ -38,7 +38,10 @@ export function MissionEditor(props: {
   onRecurrenceRefresh?: () => void
 }) {
   const { t } = useI18n()
-  const zoneErrorId = createUniqueId()
+  const zoneErrorId = createUniqueId(), zoneListId = createUniqueId()
+  // The system zone stays the default; the native list only offers suggestions when the runtime has it.
+  const timeZones = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? []
+  const zones = () => timeZones
   const config = useConfig()
   // The revision and draft belong to this editor, not to live snapshot refreshes.
   const action = props.action, original = action.mission, kind = action.kind
@@ -312,7 +315,9 @@ export function MissionEditor(props: {
           <div class="mission-recurrence-clock">
             <label>{t("missions.recurrence.time")}<input type="time" required value={time()} disabled={pending() || uncertain()} onInput={e => setTime(e.currentTarget.value)} /></label>
             <label>{t("missions.recurrence.zone")}<input required maxLength={100} value={zone()} aria-label={t("missions.recurrence.zone")} aria-invalid={!zoneValid()}
-              aria-describedby={!zoneValid() ? zoneErrorId : undefined} disabled={pending() || uncertain()} onInput={e => setZone(e.currentTarget.value)} />
+              aria-describedby={!zoneValid() ? zoneErrorId : undefined} disabled={pending() || uncertain()} onInput={e => setZone(e.currentTarget.value)}
+              list={zones().length ? zoneListId : undefined} />
+              <Show when={zones().length}><datalist id={zoneListId}><For each={zones()}>{value => <option value={value} />}</For></datalist></Show>
               <Show when={!zoneValid()}><span id={zoneErrorId} role="alert">{t("missions.simple.zoneInvalid")}</span></Show></label>
           </div>
           <MissionConversationPicker instanceId={props.instanceId} directory={props.directory} projectID={props.projectID}
@@ -340,11 +345,11 @@ export function MissionEditor(props: {
           </Show>
           <button type="button" class="window-action" disabled={pending() || defaultsRefreshing() || uncertain()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
           </details>
-          <p class="mission-editor-start-hint">{t("missions.control.creationNotice")}</p>
         </Show>
         <label>{t(kind === "edit" ? "missions.control.guidance.notes" : "missions.control.notes")}
           <textarea maxLength={20_000} value={notes()} disabled={pending() || uncertain()} onInput={e => setNotes(e.currentTarget.value)} />
         </label>
+        <Show when={kind === "create"}><p class="mission-editor-start-hint">{t("missions.control.creationNotice")}</p></Show>
         <Show when={kind === "create" && (!defaultsReady() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid())}>
           <p role={config.uiConfigLoadFailed() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "alert" : "status"}>
             {t(config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "missions.defaults.invalid"

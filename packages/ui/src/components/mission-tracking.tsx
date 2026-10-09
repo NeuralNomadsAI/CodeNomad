@@ -1,4 +1,4 @@
-import { Show } from "solid-js"
+import { Show, type JSX } from "solid-js"
 import type { MissionActivityProjection, MissionMap, MissionReport } from "../../../server/src/api-types"
 import type { MissionReaderTarget } from "../stores/mission-view-state"
 import { sessions } from "../stores/sessions"
@@ -21,6 +21,8 @@ export function MissionTracking(props: {
   reading: (target: MissionReaderTarget) => boolean; read: (target: MissionReaderTarget) => void
   onOpenActor: (id: string, request?: { id: string; kind: "form" | "permission" }) => Promise<void>
   refresh: () => Promise<void>
+  /** Appended to the single Technical details disclosure (a passage's schedule identity). */
+  details?: JSX.Element
 }) {
   const { t } = useI18n()
   const observed = () => props.activity?.missions.find(value => value.missionId === props.mission.id)
@@ -57,6 +59,7 @@ export function MissionTracking(props: {
         onOpenActor={props.onOpenActor} t={t} />
       <MissionHistory mission={props.mission} reading={revision => props.reading(target("change", String(revision)))}
         onRead={revision => props.read(target("change", String(revision)))} />
+      {props.details}
     </MissionDisclosure>
   </>
 }

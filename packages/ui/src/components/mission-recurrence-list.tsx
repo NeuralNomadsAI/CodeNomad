@@ -116,7 +116,7 @@ function RecurrenceControls(props: { schedule: RecurrenceSchedule; identity: str
 
 export function MissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
   selectedSchedule?: string; onSelect?: (id: string) => void; onRead?: (restoreChat?: boolean) => void;
-  children?: JSX.Element; tracking?: JSX.Element }) {
+  children?: JSX.Element; tracking?: JSX.Element; technicalDetails?: boolean }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
@@ -124,8 +124,18 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
   const valid = () => !loading() && !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
   const selected = () => snapshot()?.schedules.find(schedule => schedule.id === props.selectedSchedule)
   const hasNext = (schedule: RecurrenceSchedule) => schedule.state === "running" && schedule.nextDueAt !== null
-  const next = (schedule: RecurrenceSchedule) => !hasNext(schedule) ? t("missions.simple.noNext")
-    : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", timeZone: schedule.clock.zone }).format(schedule.nextDueAt!)
+  const when = (schedule: RecurrenceSchedule, at: number) =>
+    new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", timeZone: schedule.clock.zone }).format(at)
+  const next = (schedule: RecurrenceSchedule) => !hasNext(schedule) ? t("missions.simple.noNext") : when(schedule, schedule.nextDueAt!)
+  /** One sentence; its action is the adjacent control (Check passage or Resume). */
+  const notice = (schedule: RecurrenceSchedule) => {
+    if (schedule.pending?.status === "uncertain") return schedule.pending.reason === "admission-failing" ? "missions.recurrence.pending.retrying"
+      : schedule.actions.includes("check") ? "missions.recurrence.pending.checkNeeded"
+      : schedule.interruptionReason === "service-restart" ? "missions.simple.restart" : "missions.simple.resumeExplanation"
+    if (schedule.state !== "interrupted") return undefined
+    return schedule.interruptionReason === "service-restart" ? "missions.simple.restart"
+      : schedule.interruptionReason === "error" ? "missions.recurrence.interruptedError" : "missions.simple.resumeExplanation"
+  }
   const reading = (id: string) => {
     const reader = missionProjectView(props.scope).reader
     return reader?.kind === "recurrence" && reader.missionId === id && reader.instanceId === props.instanceId && reader.projectID === props.projectID
@@ -143,7 +153,8 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
       <For each={snapshot()?.schedules}>{schedule => <MissionListItem text={schedule.title}
         secondary={<span class="neutral-badge badge-shape"><bdi>{t("missions.simple.daily", schedule.clock)}</bdi></span>}
         title={schedule.title} selected={props.selectedSchedule === schedule.id} onSelect={() => props.onSelect?.(schedule.id)}
-        status={<><span>{t(`missions.recurrence.state.${schedule.state}`)}</span><Show when={hasNext(schedule)}> · <bdi>{next(schedule)}</bdi></Show></>} statusKind={schedule.state}
+        status={<Show when={hasNext(schedule)} fallback={<span>{t(`missions.recurrence.state.${schedule.state}`)}</span>}>
+          <bdi>{t("missions.recurrence.nextDue", { date: next(schedule) })}</bdi></Show>} statusKind={schedule.state}
         actions={[{ key: "read", label: t("missions.recurrence.read", { id: schedule.title }), checked: reading(schedule.id),
           icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => read(schedule.id) }]} />}</For>
     </nav>
@@ -155,20 +166,22 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
       <Show when={hasNext(schedule())}><p>{t("missions.simple.next")}: <bdi>{next(schedule())}</bdi></p></Show>
       <RecurrenceControls schedule={schedule()} identity={JSON.stringify([props.instanceId, props.projectID, props.scope])}
         instanceId={props.instanceId} directory={props.scope} active={props.active} enabled={valid} refresh={() => setRevision(value => value + 1)} />
-      <Show when={schedule().state === "interrupted" || schedule().pending?.status === "uncertain"}>
-        <p role="status">{schedule().interruptionReason === "service-restart" ? t("missions.simple.restart")
-          : schedule().interruptionReason === "error" ? t("missions.recurrence.interruptedError")
-          : t("missions.simple.resumeExplanation")}</p></Show>
+      <Show when={notice(schedule())}>{key => <p role="status">{t(key())}</p>}</Show>
+      <Show when={schedule().lastError}>{error => <p class="mission-control-stale" role="status">
+        {t("missions.recurrence.lastError", { time: when(schedule(), error().at) })}</p>}</Show>
       {props.tracking}
       <MissionDisclosure missionId={schedule().id} name="passage-history" defaultOpen={false} title={t("missions.recurrence.history")}>
         <For each={schedule().history}>{item => <div class="mission-recurrence-history-item">
-          <bdi>{new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", timeZone: schedule().clock.zone }).format(item.dueAt)}</bdi>
-          <span>{t(item.reason === "interrupted" ? "missions.recurrence.result.interrupted" : `missions.recurrence.result.${item.outcome}`)}</span>
+          <span><bdi>{when(schedule(), item.dueAt)}</bdi> <span class="neutral-badge badge-shape">{t(`missions.recurrence.trigger.${item.trigger ?? "daily"}`)}</span></span>
+          <span>{t(item.reason ? `missions.recurrence.result.${item.reason}` : `missions.recurrence.result.${item.outcome}`)}</span>
         </div>}</For>
       </MissionDisclosure>
-      <MissionDisclosure missionId={schedule().id} name="schedule-technical" defaultOpen={false} title={t("missions.control.task.details")}>
-        <bdi>{schedule().id}</bdi>
-      </MissionDisclosure>
+      {/* A passage's tracking carries the single Technical details disclosure. */}
+      <Show when={props.technicalDetails !== false}>
+        <MissionDisclosure missionId={schedule().id} name="schedule-technical" defaultOpen={false} title={t("missions.control.task.details")}>
+          <bdi>{schedule().id}</bdi>
+        </MissionDisclosure>
+      </Show>
     </section>}</Show>
   </>
 }

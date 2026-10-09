@@ -275,7 +275,17 @@ test("recurring creation shares the draft, prefills its title and picks named co
     const mode = form.locator("select").filter({ has: page.locator('option[value="recurring"]') })
     await mode.selectOption("recurring")
     const zone = form.getByLabel("Time zone (IANA)", { exact: true })
-    assert.equal(await zone.inputValue(), "America/New_York")
+    assert.equal(await zone.inputValue(), "America/New_York", "the system zone stays the default")
+    // Suggestions come from the runtime's own IANA list, when it has one.
+    const suggestions = await zone.evaluate(input => [...((input as HTMLInputElement).list?.options ?? [])].map(option => option.value))
+    assert.ok(suggestions.includes("Europe/Paris") && suggestions.includes("America/New_York"), "native time-zone suggestions")
+    // Notes come before the creation hint, which closes the form body.
+    const order = await form.evaluate(element => {
+      const notes = [...element.querySelectorAll("label")].find(label => label.textContent?.startsWith("Notes"))
+      const hint = element.querySelector(".mission-editor-start-hint")
+      return Boolean(notes && hint && notes.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING)
+    })
+    assert.equal(order, true)
     await zone.fill("Not/A_Time_Zone")
     assert.equal(await zone.getAttribute("aria-invalid"), "true")
     await form.getByRole("alert").filter({ hasText: "Enter a valid IANA time zone" }).waitFor()

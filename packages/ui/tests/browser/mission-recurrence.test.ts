@@ -135,6 +135,72 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
   } catch (error) { console.error(errors, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
+test("rows say Next, stuck passages explain their one action, history is plain and one-time controls stay scoped", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+  page.setDefaultTimeout(10_000)
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const schedule: RecurrenceSchedule = { ...scheduleFixture(),
+    lastError: { code: "admission-failed", at: Date.UTC(2026, 9, 9, 8, 15) },
+    pending: { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "admission-failing" },
+    history: [
+      { passageID: "pas_manual", dueAt: Date.UTC(2026, 9, 7, 9, 0), settledAt: Date.UTC(2026, 9, 7, 9, 5), outcome: "completed", trigger: "manual" },
+      { passageID: "pas_daily", dueAt: Date.UTC(2026, 9, 8, 8, 15), settledAt: Date.UTC(2026, 9, 8, 8, 16), outcome: "failed", reason: "not-started", trigger: "daily" },
+    ], actions: ["pause", "stop"] }
+  schedule.latestResult = schedule.history.at(-1)!
+  const mission = { version: 1, id: "msn_once", projectID: "project", projectCanonical: "/fixture", objective: "One-time review",
+    template: "custom", status: "active", runState: "prepared", coordinatorSessionId: "ses_fixture", revision: 0,
+    createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] }
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission], generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: snapshotFixture(schedule) })
+    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: null } })
+    return route.fulfill({ json: {} })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    await page.locator(".mission-control-index").getByText(/^Next run: Oct 9, 2026/).waitFor()
+    assert.equal(await page.locator(".mission-control-index").getByText(/^Running/).count(), 0, "a running row shows its next run, not its state")
+    // The selected one-time Mission titles its own controls, after the whole list.
+    const header = page.locator(".mission-one-time-header")
+    assert.match(await header.innerText(), /One-time review[\s\S]*One-time/)
+    await page.getByText("Agents and models", { exact: false }).first().waitFor()
+    const scoped = await page.locator(".mission-control").evaluate(node => {
+      const index = node.querySelector(".mission-control-index")!, title = node.querySelector(".mission-one-time-header")!
+      const start = [...node.querySelectorAll("button")].find(button => /Start mission/.test(button.textContent ?? ""))!
+      const profiles = [...node.querySelectorAll("*")].find(item => item.children.length === 0 && /^Agents and models/.test(item.textContent ?? ""))!
+      const following = Node.DOCUMENT_POSITION_FOLLOWING
+      return !index.contains(title) && Boolean(index.compareDocumentPosition(title) & following)
+        && Boolean(title.compareDocumentPosition(start) & following) && Boolean(title.compareDocumentPosition(profiles) & following)
+    })
+    assert.equal(scoped, true)
+    await captureMissionView(page, "one-time-scoped")
+    await page.getByRole("button", { name: schedule.title, exact: true }).click()
+    assert.equal(await header.count(), 0, "one-time controls never appear under a recurring row")
+    await page.getByText("This passage has not started yet. It is retried automatically under the same identity.", { exact: true }).waitFor()
+    await page.getByText(/^The last scheduled check failed at Oct 9, 2026/).waitFor()
+    await page.getByRole("button", { name: /Passage history/ }).click()
+    const items = page.locator(".mission-recurrence-history-item")
+    assert.match(await items.nth(0).innerText(), /Run now[\s\S]*Completed/)
+    assert.match(await items.nth(1).innerText(), /Scheduled[\s\S]*Not started: its start message could not be sent/)
+    assert.equal(await page.getByRole("button", { name: "Technical details", exact: true }).count(), 1)
+    await captureMissionView(page, "stuck-passage-history")
+    // Without a live observer the sentence names the one action that reconciles it.
+    schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined
+    schedule.pending = { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "not-observed" }
+    schedule.actions = ["resume", "check", "stop"]
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
+    await page.getByText("This passage is not being observed. Check passage reconciles it without sending it again.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true }).count(), 1)
+    assert.equal(await page.getByText(/last scheduled check failed/).count(), 0)
+    await captureMissionView(page, "uncertain-check-passage")
+    assert.deepEqual(errors, [])
+  } catch (error) { console.error(errors, await page.locator("body").innerText()); throw error } finally { await page.close() }
+})
+
 test("paused pending passage exposes a labelled reconcile-only Check passage control sent once", async () => {
   const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], errors: string[] = []
   page.setDefaultTimeout(10_000)

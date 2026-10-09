@@ -207,6 +207,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     instanceId={props.instanceId} mission={selected()} activity={observedActivity()} activeSessionId={props.activeSessionId()}
     active={props.isActive?.() ?? true} disabled={Boolean(editor())} messagingDisabled={messagingDisabled() || Boolean(selectedSchedule())}
     readOnly={Boolean(selectedSchedule())} reading={isReading} read={target => void read(target)}
+    details={selectedSchedule() ? <bdi>{selectedSchedule()}</bdi> : undefined}
     refresh={() => missionStore.refresh(props.instanceId)} onOpenActor={async (id, request) => {
       const origin = navigationOrigin()
       await openActor(id, origin, () => {
@@ -264,7 +265,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <MissionRecurrenceList instanceId={props.instanceId} scope={scope()} projectID={projectID()} active={() => props.isActive?.() ?? true}
         refresh={recurrenceRefresh()} onRead={props.onRevealConversation} selectedSchedule={selectedSchedule()} onSelect={id => {
           intent++; updateMissionProjectView(scope(), { selectedRecurrence: id === selectedSchedule() ? undefined : id })
-        }} tracking={tracking()}>
+        }} tracking={tracking()} technicalDetails={!mission()}>
                 <MissionIndex
                   missions={missions()}
                   selectedId={selectedSchedule() ? "" : selectedMissionId() ?? ""}
@@ -329,7 +330,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                   {props.t("missions.control.error.stale")}
                 </div>
               </Show>
-               {tracking()}
+              {/* Title the one-time controls with their selected Mission so they never read as
+                  belonging to the list row above; siblings keep the shared panel disclosure layout. */}
+              <header class="window-header mission-one-time-header">
+                <strong class="window-title" title={selected().objective}>{selected().objective}</strong>
+                <span class="neutral-badge badge-shape">{props.t("missions.simple.oneTime")}</span></header>
+              {tracking()}
             </>
           )}
         </Match>

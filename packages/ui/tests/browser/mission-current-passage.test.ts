@@ -106,6 +106,8 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       return Boolean(request.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
     assert.equal(order, true, "human requests precede Work and any controls")
+    assert.equal(await page.getByRole("button", { name: "Technical details", exact: true }).count(), 1,
+      "the schedule view merges its technical identity into the passage's single Technical details")
     await captureMissionView(page, "current-tracking-desktop")
     if (process.env.CODENOMAD_MISSION_VIEW_EVIDENCE) {
       await page.setViewportSize({ width: 390, height: 850 })
@@ -153,6 +155,7 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))
     assert.deepEqual(nativeReads, [], "current passage Work reuses only the exact loaded task actor and native parent")
     await page.getByRole("button", { name: "Technical details", exact: true }).first().click()
+    await page.getByText("rec_current", { exact: true }).waitFor()
     await page.getByRole("button", { name: /Conversations/ }).click()
     await page.getByText("ses_child", { exact: true }).first().waitFor()
     fail = true
