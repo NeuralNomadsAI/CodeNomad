@@ -25,8 +25,9 @@ export function MissionWork(props: {
   let list!: HTMLUListElement
   const ordered = createMemo(() => orderMissionTasks(props.mission.tasks))
   const progress = createMemo(() => missionProgress(props.mission, props.activity))
-  return <MissionDisclosure missionId={props.mission.id} name="route" label={t("missions.control.route.title")}
-    title={<><GitBranch class="h-4 w-4" aria-hidden="true" /><span>{t("missions.control.route.title")}</span>
+  // Opt-in dependency view inside More; the card's checklist is the default task list.
+  return <MissionDisclosure missionId={props.mission.id} name="route" defaultOpen={false} label={t("missionsPanel.dependencies")}
+    title={<><GitBranch class="h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.dependencies")}</span>
       <small title={t("missions.control.metrics.tasks")}>{progress().completed}/{progress().tasks.length}</small></>}>
     <Show when={props.mission.tasks.length} fallback={<p class="mission-control-empty-line">{t("missions.control.route.empty")}</p>}>
       <div class="mission-flow">

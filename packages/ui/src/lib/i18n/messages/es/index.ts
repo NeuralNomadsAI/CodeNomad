@@ -11,6 +11,7 @@ import { markdownMessages } from "./markdown"
 import { messagingMessages } from "./messaging"
 import { missionMessages } from "./missions"
 import { missionRecoveryMessages } from "./mission-recovery"
+import { missionsPanelMessages } from "./missions-panel"
 import { missionConversationMessages } from "./mission-conversations"
 import { permissionReceiptMessages } from "./permission-receipts"
 import { remoteAccessMessages } from "./remoteAccess"
@@ -35,6 +36,7 @@ export const esMessages = mergeMessageParts(
   messagingMessages,
   missionMessages,
   missionRecoveryMessages,
+  missionsPanelMessages,
   missionConversationMessages,
   permissionReceiptMessages,
   toolCallMessages,

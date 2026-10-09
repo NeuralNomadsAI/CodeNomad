@@ -1,7 +1,8 @@
-import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, onCleanup, untrack, type Component, type JSX } from "solid-js"
-import { AlertTriangle, ArrowUpRight, Eye, Flag, Loader2, Minus, Pencil, Plus, RefreshCw } from "lucide-solid"
+import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
+import { AlertTriangle, Flag, Loader2, Plus, RefreshCw, Settings } from "lucide-solid"
 
 import type { MissionMap } from "../../../../../../../server/src/api-types"
+import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
@@ -10,12 +11,15 @@ import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
 import { getSessionPreview, showSessionChatFor } from "../../../../../stores/session-previews"
 import { forgetMissionView, missionDisclosureOpen, setMissionDisclosureOpen, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
-import { MissionDisclosure } from "../../../../mission-disclosure"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession } from "../../../../mission-attention-model"
-import { MissionListItem } from "../../../../mission-list-item"
+import { MissionIndexRow } from "../../../../mission-index-row"
+import { createMissionLifecycle } from "../../../../mission-lifecycle-controls"
+import { createMissionBriefingRequest } from "../../../../mission-briefing"
 import { createMissionRecoveryAction } from "../../../../mission-recovery-button"
+import { missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
+import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { MissionPreferences } from "../../../../mission-preferences"
 import { MissionRecurrenceList } from "../../../../mission-recurrence-list"
@@ -58,13 +62,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
   const closeEditor = () => { intent++; setEditor(undefined) }
   const preferencesScope = () => `preferences:${scope()}`
-  const preferencesActive = () => (props.isActive?.() ?? true) && missionDisclosureOpen(preferencesScope(), "preferences", false)
-  let preferencesSection: HTMLDivElement | undefined
+  const preferencesId = createUniqueId()
+  const preferencesOpen = () => missionDisclosureOpen(preferencesScope(), "preferences", false)
+  const preferencesActive = () => (props.isActive?.() ?? true) && preferencesOpen()
+  let preferencesSection: HTMLElement | undefined
   const openPreferences = () => {
     setMissionDisclosureOpen(preferencesScope(), "preferences", true)
     queueMicrotask(() => {
       preferencesSection?.scrollIntoView({ block: "nearest" })
-      preferencesSection?.querySelector<HTMLButtonElement>(".mission-disclosure-trigger")?.focus({ preventScroll: true })
+      preferencesSection?.focus({ preventScroll: true })
     })
   }
 
@@ -197,47 +203,61 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     if (!origin.current()) return
     props.onRevealConversation?.()
   }
-   const tracking = () => <>
-     <Show when={selectedSchedule()}>
-       <Show when={currentPassage.loading() && !currentPassage.snapshot()}><p role="status">{props.t("missions.control.loading")}</p></Show>
-       <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-       <Show when={currentPassage.snapshot() && !mission() && !currentPassage.snapshot()?.passageID}><p>{props.t("missions.recurrence.currentEmpty")}</p></Show>
-     </Show>
-     <Show when={mission()}>{selected => <MissionTracking
-    instanceId={props.instanceId} mission={selected()} activity={observedActivity()} activeSessionId={props.activeSessionId()}
-    active={props.isActive?.() ?? true} disabled={Boolean(editor())} messagingDisabled={messagingDisabled() || Boolean(selectedSchedule())}
-    readOnly={Boolean(selectedSchedule())} reading={isReading} read={target => void read(target)}
-    details={selectedSchedule() ? <bdi>{selectedSchedule()}</bdi> : undefined}
-    refresh={() => missionStore.refresh(props.instanceId)} onOpenActor={async (id, request) => {
-      const origin = navigationOrigin()
-      await openActor(id, origin, () => {
-        if (!origin.current() || !request) return
-        const queue = request.kind === "form" ? getFormQueue(origin.instanceId) : getPermissionQueue(origin.instanceId)
-        if (queue.some(item => item.id === request.id && item.sessionID === id)) focusInterruption(origin.instanceId, id, request.id, request.kind)
-      })
-     }} />}</Show>
-   </>
+  const onOpenActor = async (id: string, request?: { id: string; kind: "form" | "permission" }) => {
+    const origin = navigationOrigin()
+    await openActor(id, origin, () => {
+      if (!origin.current() || !request) return
+      const queue = request.kind === "form" ? getFormQueue(origin.instanceId) : getPermissionQueue(origin.instanceId)
+      if (queue.some(item => item.id === request.id && item.sessionID === id)) focusInterruption(origin.instanceId, id, request.id, request.kind)
+    })
+  }
+  // Pending cleanups need an explicit retry and stay visible; settled history
+  // belongs to the selected card's More.
+  const cleanupPending = () => (state().cleanups ?? []).some(item => item.pending > 0)
+  const cleanupPanel = () => <MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
+    disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
+    refresh={() => missionStore.refresh(props.instanceId)} />
+  const tracking = (more?: () => JSX.Element) => <>
+    <Show when={selectedSchedule()}>
+      <Show when={currentPassage.loading() && !currentPassage.snapshot()}><p role="status">{props.t("missions.control.loading")}</p></Show>
+      <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
+    </Show>
+    <Show when={mission()}>{selected => <MissionTracking
+      instanceId={props.instanceId} mission={selected()} activity={observedActivity()} activeSessionId={props.activeSessionId()}
+      active={props.isActive?.() ?? true} disabled={Boolean(editor())} messagingDisabled={messagingDisabled() || Boolean(selectedSchedule())}
+      readOnly={Boolean(selectedSchedule())} reading={isReading} read={target => void read(target)}
+      details={selectedSchedule() ? <><dt>{props.t("missionsPanel.technical.schedule")}</dt><dd><bdi>{selectedSchedule()}</bdi></dd></> : undefined}
+      more={more?.() ?? <Show when={!cleanupPending()}>{cleanupPanel()}</Show>}
+      refresh={() => missionStore.refresh(props.instanceId)} onOpenActor={onOpenActor} />}</Show>
+  </>
   return (
     <section class="mission-control" aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
-        <div class="mission-control-actions">
         <button type="button" class="mission-control-create" disabled={state().status === "unavailable" || Boolean(editor())}
           aria-label={props.t("missions.control.create")} title={props.t("missions.control.create")}
           onClick={() => openEditor({ kind: "create" })}><Plus class="h-4 w-4" aria-hidden="true" />{props.t("missions.control.create")}</button>
-        <button
-          type="button"
-          class="mission-control-icon-button"
-          aria-label={props.t("missions.control.refresh")}
-          title={props.t("missions.control.refresh")}
-          disabled={state().status === "loading"}
-          onClick={() => { void missionStore.refresh(props.instanceId); setRecurrenceRefresh(value => value + 1) }}
-        >
-          <Show when={state().status === "loading"} fallback={<RefreshCw class="h-4 w-4" />}>
-            <Loader2 class="h-4 w-4 animate-spin" />
-          </Show>
-        </button>
+        <div class="mission-control-actions">
+          <button type="button" class="mission-control-icon-button icon-toggle" aria-label={props.t("missions.preferences.title")}
+            title={props.t("missions.preferences.title")} aria-expanded={preferencesOpen()} aria-controls={preferencesOpen() ? preferencesId : undefined}
+            onClick={() => setMissionDisclosureOpen(preferencesScope(), "preferences", !preferencesOpen())}>
+            <Settings class="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.control.refresh")}
+            title={props.t("missions.control.refresh")} disabled={state().status === "loading"}
+            onClick={() => { void missionStore.refresh(props.instanceId); setRecurrenceRefresh(value => value + 1) }}>
+            <Show when={state().status === "loading"} fallback={<RefreshCw class="h-4 w-4" />}>
+              <Loader2 class="h-4 w-4 animate-spin" />
+            </Show>
+          </button>
         </div>
       </header>
+      <Show when={preferencesOpen()}>
+        <section ref={preferencesSection} id={preferencesId} class="mission-control-preferences" tabIndex={-1}
+          aria-label={props.t("missions.preferences.title")}>
+          <header class="window-header"><h3 class="window-title" title={props.t("missions.defaults.hint")}>{props.t("missions.preferences.title")}</h3></header>
+          <MissionPreferences instanceId={props.instanceId} directory={directory()} active={preferencesActive} />
+        </section>
+      </Show>
       <Show when={navigationError()}><p class="mission-control-stale" role="alert">{props.t("sessionList.reload.error")}</p></Show>
       <Show when={editor()} keyed>{action => {
         let completionCurrent: () => boolean = () => false
@@ -261,35 +281,39 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           })
         }} />
       }}</Show>
+      <Show when={state().status === "error" && missions().length > 0}>
+        <div class="mission-control-stale" role="status">
+          <AlertTriangle class="h-3.5 w-3.5" aria-hidden="true" />
+          {props.t("missions.control.error.stale")}
+        </div>
+      </Show>
 
       <MissionRecurrenceList instanceId={props.instanceId} scope={scope()} projectID={projectID()} active={() => props.isActive?.() ?? true}
         refresh={recurrenceRefresh()} onRead={props.onRevealConversation} selectedSchedule={selectedSchedule()} onSelect={id => {
           intent++; updateMissionProjectView(scope(), { selectedRecurrence: id === selectedSchedule() ? undefined : id })
-        }} tracking={tracking()} technicalDetails={!mission()}>
-                <MissionIndex
-                  missions={missions()}
-                  selectedId={selectedSchedule() ? "" : selectedMissionId() ?? ""}
-                  reading={id => isReading({ missionId: id, kind: "overview" })}
-                  onSelect={selectMission}
-                  disabled={Boolean(editor())}
-                  onEdit={value => openEditor({ kind: "edit", mission: value })}
-                  onDelete={value => openEditor({ kind: "delete", mission: value })}
-                  onRead={value => {
-                    selectMission(value.id)
-                    void read({ missionId: value.id, kind: "overview" })
-                  }}
-                  onOpenCoordinator={value => {
-                    selectMission(value.id)
-                    void openActor(value.coordinatorSessionId)
-                  }}
-                  recovery={value => createMissionRecoveryAction({
-                    get instanceId() { return props.instanceId }, get mission() { return value() }, target: "coordinator",
-                    get activity() { return state().activity?.missions.find(item => item.missionId === value().id)?.actors.find(actor => actor.sessionId === value().coordinatorSessionId)?.state },
-                    get disabled() { return Boolean(editor()) || !(props.isActive?.() ?? true) },
-                    onAdmitted: () => missionStore.refresh(props.instanceId),
-                  })}
-                  t={props.t}
-                />
+        }} tracking={more => tracking(more)} hasTracking={Boolean(mission())}>
+        <MissionIndex
+          missions={missions()}
+          selectedId={selectedSchedule() ? "" : mission()?.id ?? ""}
+          instanceId={props.instanceId}
+          active={props.isActive?.() ?? true}
+          onSelect={selectMission}
+          disabled={Boolean(editor())}
+          messagingDisabled={messagingDisabled()}
+          onEdit={value => openEditor({ kind: "edit", mission: value })}
+          onDelete={value => openEditor({ kind: "delete", mission: value })}
+          onOpenCoordinator={value => {
+            selectMission(value.id)
+            void openActor(value.coordinatorSessionId)
+          }}
+          recovery={value => createMissionRecoveryAction({
+            get instanceId() { return props.instanceId }, get mission() { return value() }, target: "coordinator",
+            get activity() { return state().activity?.missions.find(item => item.missionId === value().id)?.actors.find(actor => actor.sessionId === value().coordinatorSessionId)?.state },
+            get disabled() { return Boolean(editor()) || !(props.isActive?.() ?? true) },
+            onAdmitted: () => missionStore.refresh(props.instanceId),
+          })}
+          card={tracking()}
+        />
       </MissionRecurrenceList>
 
       <Show when={!selectedSchedule()}><Switch>
@@ -321,35 +345,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             detail={props.t("missions.control.empty.detail")}
           />
         </Match>
-        <Match when={mission()}>
-          {(selected) => (
-            <>
-              <Show when={state().status === "error"}>
-                <div class="mission-control-stale" role="status">
-                  <AlertTriangle class="h-3.5 w-3.5" aria-hidden="true" />
-                  {props.t("missions.control.error.stale")}
-                </div>
-              </Show>
-              {/* Title the one-time controls with their selected Mission so they never read as
-                  belonging to the list row above; siblings keep the shared panel disclosure layout. */}
-              <header class="window-header mission-one-time-header">
-                <strong class="window-title" title={selected().objective}>{selected().objective}</strong>
-                <span class="neutral-badge badge-shape">{props.t("missions.simple.oneTime")}</span></header>
-              {tracking()}
-            </>
-          )}
-        </Match>
       </Switch></Show>
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
-      <MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
-        disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
-        refresh={() => missionStore.refresh(props.instanceId)} />
-      <div ref={preferencesSection} class="mission-control-preferences">
-        <MissionDisclosure missionId={preferencesScope()} name="preferences" defaultOpen={false}
-          title={props.t("missions.preferences.title")} description={props.t("missions.defaults.hint")}>
-          <MissionPreferences instanceId={props.instanceId} directory={directory()} active={preferencesActive} />
-        </MissionDisclosure>
-      </div>
+      <Show when={cleanupPending() || (missions().length === 0 && !selectedSchedule())}>{cleanupPanel()}</Show>
     </section>
   )
 }
@@ -374,40 +372,53 @@ const StateMessage: Component<{
 const MissionIndex: Component<{
   missions: MissionMap[]
   selectedId: string
-  reading: (id: string) => boolean
+  instanceId: string
+  active: boolean
   onSelect: (id: string) => void
   disabled: boolean
+  messagingDisabled: boolean
   onEdit: (mission: MissionMap) => void
   onDelete: (mission: MissionMap) => void
-  onRead: (mission: MissionMap) => void
   onOpenCoordinator: (mission: MissionMap) => void
   recovery: (mission: () => MissionMap) => ReturnType<typeof createMissionRecoveryAction>
-  t: MissionControlProps["t"]
-}> = (props) => (
-  <>
-    <For each={props.missions.map(mission => mission.id)}>
-      {id => {
-        const mission = () => props.missions.find(mission => mission.id === id)!
-        const recovery = props.recovery(mission)
-        const recoveryAction = createMemo(() => id === props.selectedId ? recovery.action() : undefined)
-         return <MissionListItem text={mission().objective} secondary={<span class="neutral-badge badge-shape">{props.t("missions.simple.oneTime")}</span>} title={mission().objective}
-          selected={id === props.selectedId} onSelect={() => props.onSelect(id)}
-          statusKind={mission().status === "active" ? mission().runState ?? "active" : mission().status}
-          status={props.t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
-            ? `missions.control.run.${mission().runState}` : mission().status === "active" ? "missions.tracking.open" : statusKey(mission().status))}
-          actions={[
-            { key: "read", label: props.t("missions.control.read"), checked: props.reading(id), icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => props.onRead(mission()) },
-            { key: "coordinator", label: props.t("missions.control.openCoordinator"), icon: <ArrowUpRight class="h-3.5 w-3.5" />, onSelect: () => props.onOpenCoordinator(mission()) },
-            ...(recoveryAction() ? [recoveryAction()!] : []),
-            { key: "edit", label: props.t("missions.control.edit"), icon: <Pencil class="h-3.5 w-3.5" />, disabled: props.disabled || mission().status !== "active", onSelect: () => props.onEdit(mission()) },
-            { key: "delete", label: props.t("missions.control.delete"), icon: <Minus class="h-3.5 w-3.5" />, disabled: props.disabled, onSelect: () => props.onDelete(mission()) },
-          ]}>
-          <Show when={id === props.selectedId}>{recovery.feedback}</Show>
-        </MissionListItem>
-      }}
-    </For>
-  </>
-)
+  card: JSX.Element
+}> = (props) => {
+  const { t, locale } = useI18n()
+  return <For each={props.missions.map(mission => mission.id)}>
+    {id => {
+      // Keep the last known snapshot while For disposes a row that just left the list.
+      const mission = createMemo<MissionMap>(previous => props.missions.find(mission => mission.id === id) ?? previous!)
+      const selected = () => id === props.selectedId
+      const recovery = props.recovery(mission)
+      const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return mission() },
+        get disabled() { return props.disabled } })
+      const briefing = createMissionBriefingRequest({ get instanceId() { return props.instanceId }, get mission() { return mission() },
+        get active() { return props.active }, get disabled() { return props.messagingDisabled } })
+      const state = () => t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
+        ? `missions.control.run.${mission().runState}` : mission().status === "active" ? "missions.tracking.open" : statusKey(mission().status))
+      const menu = (): ActionOverflowMenuItem[] => {
+        const recover = selected() ? recovery.action() : undefined
+        return [
+          ...(briefing.available() && !briefing.waiting() ? [{ key: "briefing", label: t("missionsPanel.action.requestUpdate"),
+            disabled: props.messagingDisabled || !props.active, onSelect: () => briefing.ask() }] : []),
+          { key: "coordinator", label: t("missionsPanel.action.openConversation"), onSelect: () => props.onOpenCoordinator(mission()) },
+          ...(recover ? [recover] : []),
+          ...(mission().status === "active" ? [{ key: "edit", label: t("missionsPanel.action.edit"), disabled: props.disabled, onSelect: () => props.onEdit(mission()) }] : []),
+          ...lifecycle.menu(),
+          { key: "delete", label: t("missionsPanel.action.delete"), disabled: props.disabled, onSelect: () => props.onDelete(mission()) },
+        ]
+      }
+      return <MissionIndexRow title={missionDisplayTitle(mission())} cardId={`mission-card-${id}`} selected={selected()}
+        onSelect={() => props.onSelect(id)} statusKind={mission().status === "active" ? mission().runState ?? "active" : mission().status}
+        meta={<><span>{state()}</span>{" · "}<time dateTime={new Date(mission().updatedAt).toISOString()}
+          title={new Date(mission().updatedAt).toLocaleString(locale())}>{missionRelativeTime(mission().updatedAt, locale())}</time></>}
+        primary={lifecycle.primary()} menu={menu()}
+        feedback={<>{lifecycle.feedback}<Show when={selected()}>{recovery.feedback}</Show></>}>
+        {props.card}
+      </MissionIndexRow>
+    }}
+  </For>
+}
 
 function statusKey(status: MissionMap["status"]): string {
   return `missions.control.status.${status}`

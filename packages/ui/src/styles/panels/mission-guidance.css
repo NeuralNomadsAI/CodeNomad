@@ -1,10 +1,9 @@
-.mission-guidance { --window-control-height: var(--control-height-sm); display: grid; gap: var(--space-sm); }
+/* Compact "Write to the coordinator" field shown while a Mission is active. */
+.mission-guidance { --window-control-height: var(--control-height-sm); display: grid; gap: var(--space-xs); }
+.mission-guidance > label { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-guidance-field { display: flex; align-items: flex-end; gap: var(--space-xs); min-width: 0; }
+.mission-guidance textarea { flex: 1; min-width: 0; min-height: 2.6em; max-height: 240px; resize: vertical;
+  padding: var(--space-xs) var(--space-sm); background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); border-radius: 0; }
+.mission-guidance-field .window-action { flex: 0 0 auto; }
 .mission-guidance p { margin: 0; font-size: var(--font-size-xs); color: var(--text-secondary); }
-.mission-guidance label { display: grid; gap: var(--space-xs); font-size: var(--font-size-sm); }
-.mission-guidance-context { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
-.mission-guidance-context label { flex: 1 1 140px; min-width: 0; }
-.mission-guidance-context select { width: 100%; min-width: 0; text-overflow: ellipsis; }
-.mission-guidance textarea { width: 100%; min-height: 96px; max-height: 240px; resize: vertical;
-  padding: var(--space-sm); background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); }
-.mission-guidance .window-action { white-space: normal; }
 .mission-guidance [hidden] { display: none; }
