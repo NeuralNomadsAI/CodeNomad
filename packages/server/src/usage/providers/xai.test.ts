@@ -5,6 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import { xaiProviders, parseXaiUsage } from "./xai"
+import { readOpenCodeAuth } from "../shared"
 
 function usagePayload(percent: number): Uint8Array {
   const value = Buffer.alloc(4)
@@ -44,7 +45,7 @@ test("skips an API-key xAI alias for valid Grok OAuth", async () => {
   }
 
   try {
-    const usage = await xaiProviders[0].fetchQuota()
+    const usage = await xaiProviders[0].fetchQuota(readOpenCodeAuth())
     assert.equal(usage.ok, true)
     assert.ok(Math.abs((usage.usage?.windows.billing_cycle.usedPercent ?? 0) - 25) < 0.001)
   } finally {
@@ -66,7 +67,7 @@ test("does not refresh or mutate expired xAI credentials", async () => {
   globalThis.fetch = async () => { throw new Error("expired credentials must not make requests") }
 
   try {
-    const usage = await xaiProviders[0].fetchQuota()
+    const usage = await xaiProviders[0].fetchQuota(readOpenCodeAuth())
     assert.equal(usage.ok, false)
     assert.match(usage.error ?? "", /Reconnect it in OpenCode/)
     assert.equal(fs.readFileSync(authFile, "utf8"), before)
