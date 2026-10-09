@@ -88,6 +88,15 @@ test("registers five tools, typed snapshot RPC, and role context", async () => {
   } as never)
 
   assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing"])
+  const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
+  for (const name of ["report", "briefing"]) {
+    assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)
+    assert.match(description(name), /no session\/message IDs, internal tool or fixture names/)
+  }
+  assert.match(description("report"), /put IDs, commands and test output only in evidence/)
+  assert.match(description("report"), /what was delivered, what remains and what needs a decision in at most 6 sentences/)
+  assert.match(description("briefing"), /Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report/)
+  assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
   await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},

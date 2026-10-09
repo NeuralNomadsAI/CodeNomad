@@ -57,6 +57,23 @@ test("exact briefing replay is idempotent but another payload or stale revision 
   assert.equal(f.entries.size, 2)
 })
 
+test("unrequested auto:<revision> briefings advance per revision without disturbing explicit UI requests", async () => {
+  const f = harness(); await start(f)
+  const auto = (revision: number, summary: string) => content(revision, { requestID: `auto:${revision}`, summary })
+  const first = (await f.control.briefing("ses_coordinator", auto(1, "The plan is ready."))).mission
+  assert.equal(first.briefing?.requestID, "auto:1")
+  assert.deepEqual(await f.control.briefing("ses_coordinator", auto(1, "The plan is ready.")), { mission: first })
+  await assert.rejects(f.control.briefing("ses_coordinator", auto(1, "Another claim")), { code: "request-conflict" })
+  await assert.rejects(f.control.briefing("ses_coordinator", auto(first.revision - 1, "Late")), { code: "request-conflict" })
+  const next = (await f.control.briefing("ses_coordinator", auto(first.revision, "Still on track."))).mission
+  assert.equal(next.briefing?.requestID, `auto:${first.revision}`)
+  const requested = (await f.control.briefing("ses_coordinator", content(next.revision, { requestID: "ui-request-7" }))).mission
+  assert.equal(requested.briefing?.requestID, "ui-request-7")
+  await assert.rejects(f.control.briefing("ses_coordinator", auto(next.revision - 1, "Stale")), { code: "request-conflict" })
+  await assert.rejects(f.control.briefing("ses_coordinator", auto(next.revision, "Stale")), { code: "revision-conflict" })
+  assert.equal(f.sends(), 0)
+})
+
 test("briefing publication preserves coordinator, current location, lifecycle, source and damaged-storage gates", async () => {
   const f = harness(), created = (await start(f)).mission
   f.sessions.set("ses_foreign", { id: "ses_foreign", projectID: "project", location: { directory: "/repo" } })

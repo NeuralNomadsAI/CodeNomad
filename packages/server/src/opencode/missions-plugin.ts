@@ -358,7 +358,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "report",
-        description: "Coordinator: settle a declared native task with taskKey and actual returned evidence from ordinary native work, including any child-owned recursive helpers; do not ask descendants for duplicate mission reports. Finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize.",
+        description: "Coordinator: settle a declared native task with taskKey and actual returned evidence from ordinary native work, including any child-owned recursive helpers; do not ask descendants for duplicate mission reports. Finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize. The summary is shown to the human: plain language in the user's language, 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; put IDs, commands and test output only in evidence. A final summary states what was delivered, what remains and what needs a decision in at most 6 sentences.",
         input: reportSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -375,7 +375,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "briefing",
-        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Inspect the current mission first and pass its revision as basedOnRevision. Explain usable achievements, remaining work, obstacles and the next step in the user's language; reference exact live task keys where relevant. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. Use the requestID from an explicit UI request; otherwise a unique initial briefing ID. On a revision conflict reread before publishing, never replay work.",
+        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Inspect the current mission first and pass its revision as basedOnRevision. Explain usable achievements, remaining work, obstacles and the next step in plain language in the user's language: 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; reference exact live task keys only in taskKeys. Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report, with requestID \"auto:<revision>\" matching basedOnRevision; for an explicit UI request use its exact requestID. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. On a revision conflict reread before publishing, never replay work.",
         input: missionBriefingSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
