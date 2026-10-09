@@ -75,26 +75,33 @@ for (const scenario of ["diagnostics-many", "diagnostics-long"]) {
   }))
 }
 
-test("message-parts footer copies all original parts while only 200 parts render", { timeout: 45_000 }, async () => withFixture("parts", async page => {
+test("message parts beyond the display limit reveal in place at the omission", { timeout: 90_000 }, async () => withFixture("parts", async page => {
   const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
-  const footer = block.locator(":scope > .tool-call-diagnostic-message[role=status]")
-  await footer.waitFor()
-  const rendered = (await block.textContent())!.match(/Paragraph \d{3}/g) ?? []
-  assert.equal(rendered.length, 200)
-  assert.ok(rendered.includes("Paragraph 000") && rendered.includes("Paragraph 236"))
-  assert.ok(!rendered.includes("Paragraph 118"), "The omitted middle must not render")
-  const before = await block.locator("*").count()
-  const copied = JSON.parse(await copyWithPointer(page, footer.getByRole("button", { name: "Copy tool output", exact: true })))
-  const original = await page.evaluate(() => {
-    const fixture = (window as any).fixture
-    return fixture.textParts.map((part: any, index: number) => ({ ...part,
-      id: `${fixture.messageId}-text-${index}`, sessionID: fixture.sessionId, messageID: fixture.messageId }))
+  const gap = block.locator(".message-hidden-parts")
+  await gap.waitFor()
+  const paragraphs = async () => (await block.textContent())!.match(/Paragraph \d{4}/g) ?? []
+  const rendered = await paragraphs()
+  assert.equal(rendered.length, 1000)
+  assert.ok(rendered.includes("Paragraph 0000") && rendered.includes("Paragraph 1236"))
+  assert.ok(!rendered.includes("Paragraph 0618"), "The omitted middle must not render before it is revealed")
+  assert.match((await gap.textContent())!, /237 steps hidden/)
+  assert.equal(await block.locator(".tool-call-diagnostic-message").count(), 0, "No copy-only truncation footer remains")
+
+  // The placeholder sits exactly where the omitted parts belong.
+  const order = await block.evaluate((element) => {
+    const text = element.textContent!
+    const marker = element.querySelector(".message-hidden-parts")!.textContent!
+    return { head: text.indexOf("Paragraph 0499"), gap: text.indexOf(marker), tail: text.indexOf("Paragraph 0737") }
   })
-  assert.deepEqual(copied, original)
-  assert.equal(copied.length, 237)
-  assert.ok(await block.locator("*").count() <= before, "Copy must not mount the omitted parts")
-  assert.equal((await block.textContent())!.match(/Paragraph \d{3}/g)?.length, 200)
-  assert.ok(before < 1500)
+  assert.ok(order.head >= 0 && order.head < order.gap && order.gap < order.tail, JSON.stringify(order))
+
+  const button = gap.getByRole("button", { name: "Show 237 more", exact: true })
+  await button.scrollIntoViewIfNeeded()
+  await button.click()
+  await gap.waitFor({ state: "detached" })
+  const revealed = await paragraphs()
+  assert.equal(revealed.length, 1237)
+  assert.deepEqual(revealed, Array.from({ length: 1237 }, (_, index) => `Paragraph ${String(index).padStart(4, "0")}`))
 }))
 
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {

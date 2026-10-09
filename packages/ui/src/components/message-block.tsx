@@ -6,7 +6,12 @@ import type { SessionInboxUser } from "@opencode/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
+import {
+  buildRecordDisplayData,
+  clearRecordDisplayCacheForInstance,
+  MESSAGE_PART_REVEAL_STEP,
+  revealHiddenRecordParts,
+} from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
@@ -471,7 +476,8 @@ type CompactionDisplayItem = {
 }
 
 type SystemDisplayItem = { type: "system"; key: string; part: Extract<ClientPart, { type: "system" }> }
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem
+type HiddenPartsDisplayItem = { type: "hidden-parts"; key: string; messageId: string; count: number }
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem | HiddenPartsDisplayItem
 
 interface MessageDisplayBlock {
   messageId: string
@@ -647,7 +653,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       return item
     }
 
-    const displayParts = orderedParts.filter((part) => {
+    const isDisplayPart = (part: ClientPart) => {
       if (part.type === "step-finish") {
         return isVisibleStepFinish(part, info, props.usageMetricsVisibility() !== "hidden")
       }
@@ -658,13 +664,22 @@ export default function MessageBlock(props: MessageBlockProps) {
         || (part.id && props.store().getPermissionState(current.id, part.id)?.active)
         || (part.id && pendingFormToolTargets().has(technicalPartKey(current.id, part.id)))
       )
-    })
-    const groupedParts = groupTechnicalParts(displayParts, (part) => {
+    }
+    const groupParts = (parts: ClientPart[]) => groupTechnicalParts(parts.filter(isDisplayPart), (part) => {
       const partId = typeof part.id === "string" ? part.id : ""
       return partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined
     })
+    // `null` marks omitted parts; grouping each side separately keeps groups from spanning them.
+    const groupedParts = displayData.hiddenCount > 0
+      ? [...groupParts(orderedParts.slice(0, displayData.gapIndex)), null, ...groupParts(orderedParts.slice(displayData.gapIndex))]
+      : groupParts(orderedParts)
 
     groupedParts.forEach((group, groupIndex) => {
+      if (!group) {
+        flushContent()
+        items.push({ type: "hidden-parts", key: `${current.id}:hidden-parts`, messageId: current.id, count: displayData.hiddenCount })
+        return
+      }
       if (group.kind === "exploration" || group.kind === "shell") {
         flushContent()
         const tools = group.parts.flatMap((part) => {
@@ -773,7 +788,7 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     flushContent()
 
-    const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.truncated }
+    const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
     sessionCache.messageBlocks.set(current.id, {
       signature: cacheSignature,
       displayData,
@@ -995,26 +1010,27 @@ export default function MessageBlock(props: MessageBlockProps) {
                     technicalCleanupPartKeys={technicalCleanupPartKeys}
                   />
                 </Match>
+                <Match when={item().type === "hidden-parts"}>
+                  <div class="message-hidden-parts">
+                    <span class="message-hidden-parts-label">
+                      {t((item() as HiddenPartsDisplayItem).count === 1 ? "messageBlock.hiddenParts.one" : "messageBlock.hiddenParts.other", {
+                        count: (item() as HiddenPartsDisplayItem).count,
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      class="button-secondary message-hidden-parts-button"
+                      onClick={() => revealHiddenRecordParts(props.instanceId, (item() as HiddenPartsDisplayItem).messageId)}
+                    >
+                      {t("messageBlock.hiddenParts.show", {
+                        count: Math.min((item() as HiddenPartsDisplayItem).count, MESSAGE_PART_REVEAL_STEP),
+                      })}
+                    </button>
+                  </div>
+                </Match>
               </Switch>
               )}
             </Index>
-            <Show when={resolvedBlock().truncated}>
-              <div class="tool-call-diagnostic-message" role="status">
-                <span>{t("toolCall.output.truncated")}</span>
-                <button
-                  type="button"
-                  class="tool-call-header-icon-button tool-call-io-copy"
-                  onClick={() => {
-                    const current = props.store().getMessage(resolvedBlock().messageId)
-                    if (current) void copyToClipboard(JSON.stringify(orderedMessageParts(current), null, 2))
-                  }}
-                  aria-label={t("toolCall.io.copyOutputAriaLabel")}
-                  title={t("toolCall.io.copyOutputTitle")}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </div>
-            </Show>
           </div>
         </Show>
       )}
@@ -1217,13 +1233,6 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     </div>
     </Show>
   )
-}
-
-function orderedMessageParts(record: MessageRecord): ClientPart[] {
-  return record.partIds.flatMap((partId) => {
-    const part = record.parts[partId]?.data
-    return part ? [part] : []
-  })
 }
 
 interface StepCardProps {

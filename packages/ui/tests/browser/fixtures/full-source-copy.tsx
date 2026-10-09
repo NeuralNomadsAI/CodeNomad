@@ -24,8 +24,8 @@ const todos = Array.from({ length: 237 }, (_, index) => ({
   id: `todo-${index}`, content: `Task ${String(index).padStart(3, "0")} 完整`, status: "pending", priority: "medium",
 }))
 const error = `Error start: ${"Original error 完整\n".repeat(900)}END-ERROR`
-const textParts = Array.from({ length: 237 }, (_, index) => ({
-  type: "text", text: `Paragraph ${String(index).padStart(3, "0")} 完整.\n\n`,
+const textParts = Array.from({ length: 1237 }, (_, index) => ({
+  type: "text", text: `Paragraph ${String(index).padStart(4, "0")} 完整.\n\n`,
 }))
 const input = { filePath, payload: `INPUT-START ${"Untruncated input 完整 ".repeat(1200)} INPUT-END`, nested: { retained: true } }
 const output = "Distinct output: this is not the tool input"

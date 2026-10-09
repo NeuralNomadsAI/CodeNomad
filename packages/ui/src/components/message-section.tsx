@@ -151,16 +151,19 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
       if (record.role === "user") return [null]
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      return display.orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part, index) => {
+        // Omitted parts may hold boundaries: never select a cleanup run across them.
+        const gap = display.hiddenCount > 0 && index === display.gapIndex ? [null] : []
         const partId = typeof part.id === "string" ? part.id : ""
-        if (!partId) return []
+        if (!partId) return gap
         if (part.type === "tool" || part.type === "reasoning") {
-          return [{ messageId, partId, type: part.type }]
+          return [...gap, { messageId, partId, type: part.type }]
         }
         if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
-          return [{ messageId, partId, type: "boundary" as const }]
+          return [...gap, { messageId, partId, type: "boundary" as const }]
         }
-        return []
+        return gap
       })
     })
   })
@@ -195,7 +198,8 @@ export default function MessageSection(props: MessageSectionProps) {
       const completed = record.status === "complete" || record.status === "error"
       const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
       const messageInfo = resolvedStore.getMessageInfo(messageId)
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map((part) => {
         if (part.type === "step-finish") {
           return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
         }
@@ -218,6 +222,9 @@ export default function MessageSection(props: MessageSectionProps) {
           revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
         }]
       })
+      // Technical groups never span omitted parts; the gap renders between them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)
   })
@@ -226,7 +233,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const displayPartIds = getRecordDisplayPartIds(record)
+    const displayPartIds = getRecordDisplayPartIds(props.instanceId, record)
     const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
