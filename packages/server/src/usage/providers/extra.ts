@@ -1,21 +1,18 @@
-import type { ProviderUsage, UsageProvider } from "../types"
+import type { AuthFile, ProviderUsage, UsageProvider } from "../types"
+import { authClaudeCredential, type ClaudeCredential } from "../claude-credential"
 import {
   asObject,
   fetchJson,
+  formatMoney,
   getCredential,
-  getOAuthEntry,
   getString,
   notConfigured,
-  oauthTokenNeedsRefresh,
   result,
   safeFetch,
   toNumber,
   toTimestamp,
   toUsageWindow,
 } from "../shared"
-
-const formatMoney = (value: number | null): string | null =>
-  value === null || !Number.isFinite(value) ? null : value.toFixed(2)
 
 // --- command-code ---
 type CommandCodeCredits = {
@@ -73,8 +70,8 @@ const commandCode: UsageProvider = {
   id: "command-code",
   name: "Command Code",
   aliases: commandCodeAliases,
-  async fetchQuota() {
-    const key = getCredential(commandCodeAliases, ["key", "access", "token"]) ?? getString(process.env.COMMAND_CODE_API_KEY)
+  async fetchQuota(auth) {
+    const key = getCredential(auth, commandCodeAliases, ["key", "access", "token"]) ?? getString(process.env.COMMAND_CODE_API_KEY)
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const orgId = parseOrgId(await requestJson("/alpha/whoami", key))
@@ -95,8 +92,8 @@ const crof: UsageProvider = {
   id: "crof",
   name: "CrofAI",
   aliases: crofAliases,
-  async fetchQuota() {
-    const key = getCredential(crofAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, crofAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload: any = await fetchJson("https://crof.ai/usage_api/", {
@@ -124,8 +121,8 @@ const deepseek: UsageProvider = {
   id: "deepseek",
   name: "DeepSeek",
   aliases: deepseekAliases,
-  async fetchQuota() {
-    const key = getCredential(deepseekAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, deepseekAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload: any = await fetchJson("https://api.deepseek.com/user/balance", {
@@ -170,8 +167,8 @@ const neuralwatt: UsageProvider = {
   id: "neuralwatt",
   name: "NeuralWatt",
   aliases: neuralwattAliases,
-  async fetchQuota() {
-    const key = getCredential(neuralwattAliases, ["key", "token"])
+  async fetchQuota(auth) {
+    const key = getCredential(auth, neuralwattAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const payload: any = await fetchJson("https://api.neuralwatt.com/v1/quota", {
@@ -238,10 +235,6 @@ const neuralwatt: UsageProvider = {
 // --- claude ---
 const CLAUDE_DEFAULT_COOLDOWN_MS = 5 * 60 * 1000
 const CLAUDE_MAX_COOLDOWN_MS = 60 * 60 * 1000
-const CLAUDE_REAUTH_ERROR = "Claude session expired. Reconnect the Anthropic integration in OpenCode."
-let claudeCredentialFingerprint: string | null = null
-let claudeCachedUsage: ProviderUsage | null = null
-let claudeCooldownUntil = 0
 
 function claudeCooldownFromResponse(response: Response): number {
   const raw = response.headers.get("retry-after")
@@ -252,10 +245,6 @@ function claudeCooldownFromResponse(response: Response): number {
     if (Number.isFinite(retryAt) && retryAt > Date.now()) return Math.min(retryAt - Date.now(), CLAUDE_MAX_COOLDOWN_MS)
   }
   return CLAUDE_DEFAULT_COOLDOWN_MS
-}
-
-function buildClaudeRateLimitResult(): ProviderUsage | null {
-  return claudeCachedUsage
 }
 
 function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
@@ -322,56 +311,73 @@ function buildClaudeUsage(payload: Record<string, unknown>): ProviderUsage {
   return Object.keys(models).length ? { windows, models } : { windows }
 }
 
-const claudeAliases = ["claude", "anthropic"] as const
-const claude: UsageProvider = {
-  id: "claude",
-  name: "Claude",
-  aliases: claudeAliases,
-  async fetchQuota() {
-    const entry = getOAuthEntry(claudeAliases)
-    const accessToken = getString(entry?.access) ?? getString(entry?.token)
-    if (!accessToken) return notConfigured(this.id, this.name)
-    const refreshToken = getString(entry?.refresh) ?? ""
-    const fingerprint = `${accessToken}\0${refreshToken}`
-    if (claudeCredentialFingerprint !== fingerprint) {
-      claudeCredentialFingerprint = fingerprint
-      claudeCachedUsage = null
-      claudeCooldownUntil = 0
-    }
-    if (entry?.type === "oauth" && oauthTokenNeedsRefresh(entry)) {
-      return result(this.id, this.name, { ok: false, configured: true, error: CLAUDE_REAUTH_ERROR })
-    }
-    if (Date.now() < claudeCooldownUntil) {
-      const cached = buildClaudeRateLimitResult()
-      return cached
-        ? result(this.id, this.name, { ok: true, configured: true, usage: cached })
-        : result(this.id, this.name, { ok: false, configured: true, error: "Rate limited. Retrying soon." })
-    }
-    try {
-      const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
-        method: "GET",
-        headers: { Authorization: `Bearer ${accessToken}`, "anthropic-beta": "oauth-2025-04-20" },
-        signal: AbortSignal.timeout(15_000),
-      })
-      if (response.status === 429) {
-        claudeCooldownUntil = Date.now() + claudeCooldownFromResponse(response)
-        const cached = buildClaudeRateLimitResult()
-        return cached
-          ? result(this.id, this.name, { ok: true, configured: true, usage: cached })
-          : result(this.id, this.name, { ok: false, configured: true, error: "Rate limited. Retrying soon." })
+// Each provider keeps its own rate-limit fallback, reset whenever its credential changes.
+function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases"> & {
+  credential: (auth: AuthFile) => ClaudeCredential | null
+  reauthError: string
+}): UsageProvider {
+  let fingerprint: string | null = null
+  let cachedUsage: ProviderUsage | null = null
+  let cooldownUntil = 0
+  const rateLimited = () => cachedUsage
+    ? result(input.id, "Claude", { ok: true, configured: true, usage: cachedUsage })
+    : result(input.id, "Claude", { ok: false, configured: true, error: "Rate limited. Retrying soon." })
+  return {
+    id: input.id,
+    name: "Claude",
+    aliases: input.aliases,
+    async fetchQuota(auth) {
+      const credential = input.credential(auth)
+      if (!credential) return notConfigured(this.id, this.name)
+      const next = `${credential.access}\0${credential.refresh ?? ""}`
+      if (fingerprint !== next) {
+        fingerprint = next
+        cachedUsage = null
+        cooldownUntil = 0
       }
-      if (response.status === 401 || response.status === 403) {
-        return result(this.id, this.name, { ok: false, configured: true, error: CLAUDE_REAUTH_ERROR })
+      if (credential.expires !== null && credential.expires <= Date.now() + 120_000) {
+        return result(this.id, this.name, { ok: false, configured: true, error: input.reauthError })
       }
-      if (!response.ok) return result(this.id, this.name, { ok: false, configured: true, error: `API error: ${response.status}` })
-      const payload = (await response.json()) as Record<string, unknown>
-      const usage = buildClaudeUsage(payload)
-      claudeCachedUsage = usage
-      return result(this.id, this.name, { ok: true, configured: true, usage })
-    } catch (error) {
-      return result(this.id, this.name, { ok: false, configured: true, error: error instanceof Error ? error.message : "Request failed" })
-    }
-  },
+      if (Date.now() < cooldownUntil) return rateLimited()
+      try {
+        const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+          method: "GET",
+          headers: { Authorization: `Bearer ${credential.access}`, "anthropic-beta": "oauth-2025-04-20" },
+          signal: AbortSignal.timeout(15_000),
+        })
+        if (response.status === 429) {
+          cooldownUntil = Date.now() + claudeCooldownFromResponse(response)
+          return rateLimited()
+        }
+        if (response.status === 401 || response.status === 403) {
+          return result(this.id, this.name, { ok: false, configured: true, error: input.reauthError })
+        }
+        if (!response.ok) return result(this.id, this.name, { ok: false, configured: true, error: `API error: ${response.status}` })
+        const usage = buildClaudeUsage((await response.json()) as Record<string, unknown>)
+        cachedUsage = usage
+        return result(this.id, this.name, { ok: true, configured: true, usage })
+      } catch (error) {
+        return result(this.id, this.name, { ok: false, configured: true, error: error instanceof Error ? error.message : "Request failed" })
+      }
+    },
+  }
 }
 
-export const extraProviders: UsageProvider[] = [commandCode, crof, deepseek, neuralwatt, claude]
+// A session's quota must come from the login that session uses: OpenCode's
+// Anthropic OAuth for `anthropic`, and for opencode-claude's `claude-code` the
+// Claude Code login the route resolves on the daemon host.
+const claude = createClaudeProvider({
+  id: "claude",
+  aliases: ["claude", "anthropic"],
+  credential: auth => authClaudeCredential(auth, ["anthropic", "claude"]),
+  reauthError: "Claude session expired. Reconnect the Anthropic integration in OpenCode.",
+})
+
+const claudeCode = createClaudeProvider({
+  id: "claude-code",
+  aliases: ["claude-code"],
+  credential: auth => authClaudeCredential(auth, ["claude-code"]),
+  reauthError: "Claude Code session expired. Use Claude Code to sign in again.",
+})
+
+export const extraProviders: UsageProvider[] = [commandCode, crof, deepseek, neuralwatt, claude, claudeCode]

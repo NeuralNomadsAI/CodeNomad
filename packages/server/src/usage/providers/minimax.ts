@@ -47,8 +47,8 @@ function createMiniMaxProvider(input: {
     id: input.id,
     name: input.name,
     aliases: input.aliases,
-    async fetchQuota() {
-      const key = getCredential(input.aliases, ["key", "token"])
+    async fetchQuota(auth) {
+      const key = getCredential(auth, input.aliases, ["key", "token"])
       if (!key) return notConfigured(this.id, this.name)
       try {
         let tokenPlan = true
