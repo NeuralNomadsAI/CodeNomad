@@ -863,11 +863,13 @@ export default function MessageBlock(props: MessageBlockProps) {
       const element = blockRef()
       if (!element) return
       // Revealed parts may merge into an earlier row or a collapsed group that renders
-      // no member elements; group roots list their members for this lookup.
+      // no member elements; group roots list their members for this lookup. A rendered
+      // member wins over its group so an expanded group does not focus its header.
       const found = revealedIds.reduce<HTMLElement | null>((match, partId) => {
         if (match) return match
         const id = CSS.escape(partId)
-        return element.querySelector<HTMLElement>(`[data-part-id="${id}"], [data-group-part-ids~="${id}"]`)
+        return element.querySelector<HTMLElement>(`[data-part-id="${id}"]`)
+          ?? element.querySelector<HTMLElement>(`[data-group-part-ids~="${id}"]`)
       }, null)
       const groupToggle = found?.matches("[data-group-part-ids]")
         ? found.querySelector<HTMLElement>(".message-technical-group-toggle")

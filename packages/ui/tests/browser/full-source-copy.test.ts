@@ -136,6 +136,20 @@ for (const { scenario, firstRevealed } of [{ scenario: "parts-group", firstRevea
   }))
 }
 
+test("revealing into an expanded group focuses the first revealed member, not the group header", { timeout: 90_000 }, async () => withFixture("parts-merge-expanded", async page => {
+  const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
+  const gap = block.locator(".message-hidden-parts")
+  await gap.waitFor()
+  await block.locator('.message-exploration-group[data-group-part-ids~="expanded-read-0"] .message-technical-group-toggle').click()
+  await block.locator('.tool-call-message[data-part-id="expanded-read-1"]').waitFor({ state: "attached" })
+  const button = gap.getByRole("button", { name: "Show 241 more", exact: true })
+  await button.scrollIntoViewIfNeeded()
+  await button.focus()
+  await page.keyboard.press("Enter")
+  await gap.waitFor({ state: "detached" })
+  await page.waitForFunction(() => document.activeElement?.matches('.tool-call-message[data-part-id="expanded-read-2"]'))
+}))
+
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {
   const body = page.locator(".tool-call-error-content")
   await body.waitFor()
