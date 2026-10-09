@@ -12,6 +12,8 @@ import InstanceTab from "./instance-tab"
 import TabScroll from "./tab-scroll"
 import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
+import ProjectRenameDialog from "./project-rename-dialog"
+import { renameProject } from "../stores/project-names"
 import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
@@ -36,6 +38,7 @@ interface SortableAppTabProps {
   activeTabId: string | null
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
+  onRename: (folder: string, label: string) => void
 }
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
@@ -47,6 +50,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           active={props.tab.id === props.activeTabId}
           onSelect={() => props.onSelect(props.tab.id)}
           onClose={() => props.onClose(props.tab.id)}
+          onRename={(label) => props.tab.kind === "instance" && props.onRename(props.tab.instance.folder, label)}
         />
       ) : (
         <div
@@ -131,6 +135,23 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     })
   })
 
+  // Renaming a tab renames its project folder, like the home page: every tab of
+  // that folder and its recent-folder entry share one name.
+  const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string } | null>(null)
+  const [isRenaming, setIsRenaming] = createSignal(false)
+  const openRename = (folder: string, label: string) => setRenameTarget({ folder, label })
+  const submitRename = async (name: string) => {
+    const target = renameTarget()
+    if (!target) return
+    setIsRenaming(true)
+    try {
+      await renameProject(target.folder, name)
+      setRenameTarget(null)
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
   /** Whether to show toast history panel */
   const [showToastHistory, setShowToastHistory] = createSignal(false)
   let notificationTriggerRef: HTMLButtonElement | undefined
@@ -203,6 +224,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                           activeTabId={props.activeTabId}
                           onSelect={props.onSelect}
                           onClose={props.onClose}
+                          onRename={openRename}
                         />
                       )}
                     </For>
@@ -218,6 +240,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                               activeTabId={props.activeTabId}
                               onSelect={props.onSelect}
                               onClose={props.onClose}
+                              onRename={openRename}
                             />
                           )}
                         </For>
@@ -304,6 +327,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
         </div>
       </div>
 
+      <ProjectRenameDialog
+        open={Boolean(renameTarget())}
+        currentName={renameTarget()?.label ?? ""}
+        projectLabel={renameTarget()?.label}
+        isSubmitting={isRenaming()}
+        onRename={submitRename}
+        onClose={() => setRenameTarget(null)}
+      />
     </>
   )
 }

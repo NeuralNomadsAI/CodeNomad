@@ -47,6 +47,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "מוכן",
   "instanceTab.status.ariaLabel": "סטטוס מופע: {status}",
   "instanceTab.actions.close.ariaLabel": "סגור מופע",
+  "instanceTab.actions.rename": "שנה שם…",
 
   "instanceShell.leftPanel.sessionsTitle": "סשנים",
   "instanceShell.leftPanel.instanceInfo": "מידע על המופע",
