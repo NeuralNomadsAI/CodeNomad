@@ -37,6 +37,7 @@ import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
+import type { TemporaryFolderRegistry } from "./temporary-workspaces"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -74,6 +75,8 @@ export function binaryPathsEqual(left: string, right: string, platform = process
 interface WorkspaceManagerOptions {
   startServiceCommand?: import("./opencode-cli-service").OpenCodeCliServiceDependencies["execFile"]
   rootDir: string
+  /** Folders opened as temporary workspaces until kept or discarded. */
+  temporaryFolders?: TemporaryFolderRegistry
   settings: SettingsService
   binaryResolver: BinaryResolver
   eventBus: EventBus
@@ -223,6 +226,17 @@ export class WorkspaceManager {
     } catch (error) {
       this.options.logger.warn({ err: error }, "Shared OpenCode service is unavailable")
       return undefined
+    }
+  }
+
+  get temporaryFolders(): TemporaryFolderRegistry | undefined {
+    return this.options.temporaryFolders
+  }
+
+  /** A kept temporary folder becomes an ordinary project in every open record. */
+  clearTemporary(folder: string): void {
+    for (const record of this.workspaces.values()) {
+      if (record.path === folder) delete record.temporary
     }
   }
 
@@ -630,6 +644,7 @@ export class WorkspaceManager {
       binaryVersion: binary.version,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(this.options.temporaryFolders?.has(workspacePath) ? { temporary: true } : {}),
     } as WorkspaceRecord
     Object.defineProperties(record, {
       wslDistro: { value: undefined, writable: true },

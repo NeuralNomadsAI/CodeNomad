@@ -2,9 +2,10 @@ import { ContextMenu } from "@kobalte/core/context-menu"
 import { Component, Show, createMemo, createSignal, onCleanup } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceIdleFadeClass, getInstanceSessionIndicatorStatus } from "../stores/session-status"
-import { FolderOpen, Pencil, ShieldAlert, X } from "lucide-solid"
+import { FolderCheck, FolderOpen, Hourglass, Pencil, ShieldAlert, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
+import { keepTemporaryInstance } from "../stores/temporary-instances"
 
 interface InstanceTabProps {
   instance: Instance
@@ -79,11 +80,13 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             event.preventDefault()
             requestRename()
           }}
-          title={props.instance.folder}
+          title={props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder}
           role="tab"
           aria-selected={props.active}
         >
-          <FolderOpen class="w-4 h-4 flex-shrink-0" />
+          <Show when={props.instance.temporary} fallback={<FolderOpen class="w-4 h-4 flex-shrink-0" />}>
+            <Hourglass class="w-4 h-4 flex-shrink-0" aria-label={t("instanceTab.temporary.ariaLabel")} />
+          </Show>
           <span class="tab-label">
             {tabLabel()}
           </span>
@@ -128,6 +131,12 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             <span class="action-overflow-item-icon" aria-hidden="true"><Pencil class="w-3.5 h-3.5" /></span>
             <span class="action-overflow-item-label">{t("instanceTab.actions.rename")}</span>
           </ContextMenu.Item>
+          <Show when={props.instance.temporary}>
+            <ContextMenu.Item class="action-overflow-item" onSelect={() => void keepTemporaryInstance(props.instance.id)}>
+              <span class="action-overflow-item-icon" aria-hidden="true"><FolderCheck class="w-3.5 h-3.5" /></span>
+              <span class="action-overflow-item-label">{t("instanceTab.actions.keepTemporary")}</span>
+            </ContextMenu.Item>
+          </Show>
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu>
