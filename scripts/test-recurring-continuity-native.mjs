@@ -1,4 +1,6 @@
 // Bounded, isolated production first-channel qualification. Never enables desktop.
+// Host-lifetime evidence only; superseded as recurring-Missions acceptance by the simple
+// native contract (dev-docs/MISSIONS_RECURRING_SIMPLE.md, scripts/test-recurring-simple-native.mjs).
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"

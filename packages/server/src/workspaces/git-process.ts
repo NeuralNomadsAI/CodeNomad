@@ -6,10 +6,12 @@ interface GitResponse { id: number; stdout: string; stderr: string; error?: { me
 
 // Even asynchronous execFile spends synchronous time creating a Windows process.
 // Keep that work off the HTTP/SSE thread. The worker is self-contained so the same
-// entry works in compiled desktop resources and TypeScript test runners.
-function workerMain() {
-  const { parentPort } = require("node:worker_threads") as typeof import("node:worker_threads")
-  const { execFile } = require("node:child_process") as typeof import("node:child_process")
+// entry works in compiled desktop resources and TypeScript test runners. The loader
+// is a bound parameter: bundlers rewrite free `require` (esbuild: `__require`), which
+// does not exist in the eval worker and silently made every bundled Git call fail.
+function workerMain(load: NodeJS.Require) {
+  const { parentPort } = load("node:worker_threads") as typeof import("node:worker_threads")
+  const { execFile } = load("node:child_process") as typeof import("node:child_process")
   const queue: GitRequest[] = []
   const foreground: GitRequest[] = []
   let running = 0
@@ -42,7 +44,7 @@ const pending = new Map<number, { resolve: (stdout: string) => void; reject: (er
 
 function getWorker(): Worker {
   if (worker) return worker
-  const created = new Worker(`(${workerMain.toString()})()`, { eval: true, execArgv: [] })
+  const created = new Worker(`(${workerMain.toString()})(require)`, { eval: true, execArgv: [] })
   worker = created
   const failed = (error: Error) => {
     if (worker !== created) return

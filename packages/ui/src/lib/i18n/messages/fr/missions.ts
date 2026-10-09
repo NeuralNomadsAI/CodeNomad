@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "Enregistrement du résultat…",
   "missions.recurrence.pending.uncertain": "État de l’exécution inconnu. La reprise vérifie le passage en cours ; elle ne l’envoie jamais deux fois.",
   "missions.recurrence.result.ended-without-report": "Terminé sans rapport",
+  "missions.recurrence.result.interrupted": "Interrompu par un redémarrage",
   "missions.recurrence.followedConversations": "Conversations suivies (facultatif)",
   "missions.recurrence.selectedConversation": "Conversation sélectionnée",
   "missions.recurrence.chooseConversations": "Choisir des conversations",

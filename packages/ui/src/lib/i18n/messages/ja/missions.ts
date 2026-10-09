@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "結果を記録しています…",
   "missions.recurrence.pending.uncertain": "実行状態は不明です。再開時は実行中の処理を確認します。同じ処理を二度送信することはありません。",
   "missions.recurrence.result.ended-without-report": "報告なしで終了",
+  "missions.recurrence.result.interrupted": "再起動により中断",
   "missions.recurrence.followedConversations": "参照する会話（任意）",
   "missions.recurrence.selectedConversation": "選択した会話",
   "missions.recurrence.chooseConversations": "会話を選択",

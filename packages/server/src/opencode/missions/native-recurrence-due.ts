@@ -100,7 +100,7 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         const result = await observeNativePassageSettlement({ document: fresh, storage, native: observation,
           directory: placement.directory, workspaceID: placement.workspaceID, current, signal })
         if (!result) return "pending"
-        await source.finish(scheduleID, result.result, now(), result.current)
+        await source.finish(scheduleID, result.result, now(), current, result.expectedRevision)
         settleNativePassageBusiness(result.result.conversationID)
         return "settled"
       })).pipe(Effect.catchCause(() => Effect.succeed("pending" as NativePassageWake)))

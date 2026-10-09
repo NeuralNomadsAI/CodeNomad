@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "Recording the result…",
   "missions.recurrence.pending.uncertain": "Run status unknown. Resume checks the running passage; it never sends it twice.",
   "missions.recurrence.result.ended-without-report": "Ended without a report",
+  "missions.recurrence.result.interrupted": "Interrupted by a restart",
   "missions.recurrence.followedConversations": "Followed conversations (optional)",
   "missions.recurrence.selectedConversation": "Selected conversation",
   "missions.recurrence.chooseConversations": "Choose conversations",

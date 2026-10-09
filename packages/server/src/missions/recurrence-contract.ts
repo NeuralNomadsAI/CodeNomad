@@ -66,6 +66,8 @@ const cursorListSchema = z.array(z.object({ conversationID: id, messageID: id,
   .refine(items => new Set(items.map(item => item.conversationID)).size === items.length)
 export const recurrenceResultSchema = z.object({ passageID: recurrenceIDSchema, messageID: recurrenceIDSchema,
   missionID: id, conversationID: id, outcome: z.enum(["completed", "failed", "stopped", "ended-without-report"]),
+  /** A restart cut the turn and nothing resumed it; only with ended-without-report. */
+  reason: z.literal("interrupted").optional(),
   // References only: artifacts/transcripts stay in native conversations.
   artifactMessageIDs: z.array(id).max(8).refine(items => new Set(items).size === items.length),
   cursors: cursorListSchema.refine(items => items.length <= 32),

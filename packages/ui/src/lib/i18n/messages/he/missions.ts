@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "שומר את התוצאה…",
   "missions.recurrence.pending.uncertain": "מצב ההרצה אינו ידוע. החידוש בודק את ההרצה הפעילה; הוא לעולם לא שולח אותה פעמיים.",
   "missions.recurrence.result.ended-without-report": "הסתיים ללא דוח",
+  "missions.recurrence.result.interrupted": "הופסק עקב הפעלה מחדש",
   "missions.recurrence.followedConversations": "שיחות במעקב (לא חובה)",
   "missions.recurrence.selectedConversation": "שיחה נבחרת",
   "missions.recurrence.chooseConversations": "בחירת שיחות",

@@ -80,10 +80,19 @@ The implementation relies on existing native contracts, qualified at their calle
 - Prompt admission with a caller-supplied message ID is first-admission-wins.
 - Plugin tools receive native session, message and call identity.
 - Jobs are process-local and disappear when the service restarts.
-- OpenCode resumes interrupted native sessions after restart.
+- A turn holds a durable execution claim (`session_v2.time_suspended`) until its
+  terminal event. A hard kill leaves the claim with no terminal event. Observed
+  with OpenCode 2.0.26 and an owned unmanaged `serve` (evidence `f60TKB`): after
+  restart the coordinator stayed inactive with no resumed provider turn. Upstream
+  sources sweep orphaned claims only in the managed service at boot; that path is
+  not qualified here. Do not rely on native continuation.
 
 First admission is not proof of model consumption, useful work or completion.
-Native resumption is not permission to send a replacement coordinator prompt.
+Resume never sends a continuation or replacement coordinator prompt. A claim
+written before the current service process started and not live now is a turn
+cut by a restart: once the rest of the family is quiescent, the passage settles
+`ended-without-report` with reason `interrupted` ("Interrupted by a restart").
+If native work later resumes such a claim anyway, its effects remain unknown.
 These guarantees do not make arbitrary shell/tool side effects exactly-once.
 
 Missing primitives are handled honestly:
@@ -99,6 +108,10 @@ Qualify actual capabilities/contracts, not an untested-version allowlist.
 Keep **one native Job per running schedule** in the live OpenCode process.
 It sleeps until `min(nextDueAt, now + 1h)`, then rereads the wall clock and document.
 This hourly ceiling bounds clock-change detection; it is not per-minute polling.
+A native `session.execution.succeeded|failed|interrupted` publication (Bus
+`listen`) also wakes the Job after a 3 s debounce, so settlement follows family
+quiescence in seconds; it is only a wake hint. Without that native contract the
+Job falls back to 30 s → 2 min → 5 min (capped) only while a passage is pending.
 On waking, verify desired running, no conflicting pending passage and a due
 civil day newer than `lastDaily` before attempting the guarded passage start.
 If several days were missed, admit the **latest missed day only**, never a backlog.
@@ -117,7 +130,8 @@ Desired running without a live native Job is displayed as **Interrupted** with
 an interruption reason. Service restart therefore leaves scheduling Interrupted.
 Do not rearm from plugin load, a read, UI reopen or backend reconnect.
 Only explicit Resume may restore scheduling; pending work is reconciled first.
-Scheduler-interrupted is not passage-stopped: native sessions can resume separately.
+Scheduler-interrupted is not passage-stopped; a passage cut by the restart settles
+as interrupted after Resume rather than waiting for a native continuation.
 
 ## Write-ahead passage start and recovery
 
@@ -141,7 +155,8 @@ Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 Manual runs do not masquerade as a different scheduled civil day's completion.
 
 Run now on a paused schedule starts a separate **settlement-only observer Job**
-using the same sleep/wake seam. It is reconcile-only (never a second coordinator
+using the same sleep/wake seam, including the native execution-event wake and the
+pending fallback backoff. It is reconcile-only (never a second coordinator
 message), never starts daily passages, exits once the passage settles or the
 schedule leaves paused, and Pause/Stop cancel it. A running schedule's own Job
 observes its manual passage instead. After a service restart while paused with a
@@ -180,7 +195,8 @@ Supported outcomes are:
   terminal failure in the family without a completed final report. Never guessed
   from prose or an idle flag.
 - `ended-without-report`: settled native work ended without a final report and
-  without native terminal failure.
+  without native terminal failure; reason `interrupted` when a family claim was
+  cut by a service restart.
 
 Atomically archive the result, clear pending and update the scheduled `lastDaily`
 in the guarded schedule document. Keep history at ≤30; do not let a crash between
@@ -225,9 +241,9 @@ Read-only projections and invalidations never start work or settle unknown sends
    settled → atomic archive → next day's passage. Verify no overlapping passage,
    one Job and one coordinator message, frozen profiles and completed-only cursors.
 2. **Restart with pending:** restart the service during a pending passage → reopen
-   shows Interrupted while native sessions may resume → explicit Resume reconciles
-   existing session/message/inbox → no second coordinator message → settled archive
-   → next day. Missing/uncertain evidence stays pending, not silently rearmed.
+   shows Interrupted → explicit Resume reconciles existing session/message/inbox →
+   no second coordinator message → settled archive (`ended-without-report` /
+   `interrupted` when the restart cut the turn) → next day. Missing/uncertain evidence stays pending, not silently rearmed.
 3. **Run now:** explicit authenticated Run now uses the shared write-ahead path;
    duplicate request/status reads produce no second passage. An unresolved pending
    passage blocks overlap. A lost reply is reread, never automatically resent.

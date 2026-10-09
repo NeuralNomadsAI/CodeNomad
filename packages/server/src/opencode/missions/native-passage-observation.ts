@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Predicate, Schema } from "effect"
+import path from "node:path"
 import type { SqlClient } from "effect/unstable/sql"
 import { Form } from "@opencode/schema/form"
 import { Permission } from "@opencode/schema/permission"
@@ -9,7 +10,9 @@ import { stableToken } from "../../missions/journal"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
-const executionTag = tag("@opencode/SessionExecution"), formTag = tag("@opencode/Form")
+// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (2.0.26); the
+// native Session service re-exports its `active` Effect as the set of running session IDs.
+const sessionTag = tag("@opencode/Session"), formTag = tag("@opencode/Form")
 const permissionTag = tag("@opencode/Permission"), shellTag = tag("@opencode/Shell")
 type NativeEffect = Effect.Effect<unknown, unknown>
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
@@ -20,20 +23,25 @@ export type PassageSessionObservation = {
   id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
   active: boolean; inbox: number; pending: number; suspended: boolean; runningTools: number
   failed: boolean; messagePresent: boolean
+  /** Execution claim written before this service process started and not live here:
+   * a restart cut the turn. An owned unmanaged `serve` never sweeps such claims. */
+  orphaned?: boolean
 }
 export interface NativePassageObservation {
   assertCurrent(): true
+  /** Synchronous fence only for native admission, which runs outside a SQL transaction. */
   assertScheduleCurrent(document: RecurrenceDocument, dispatch: boolean): true
-  assertQuiescent(family: readonly PassageSessionObservation[]): true
   exists(sessionID: string): Promise<boolean>
   session(sessionID: string, messageID?: string): Promise<PassageSessionObservation>
   children(sessionID: string): Promise<string[]>
   requests(sessionIDs: readonly string[]): Promise<boolean>
 }
 
+const serviceStartedAt = Date.now() - process.uptime() * 1000
+
 /** Read-only native contracts, not signed authority or event replay. Unknown
  * coverage fails closed. SQL only observes durable inbox/claim and ancestry. */
-export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* () {
+export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* (startedAt = serviceStartedAt) {
   const graph = yield* Effect.context<never>()
   const get = (key: typeof databaseTag) => {
     const value = Context.getOption(graph, key)
@@ -41,15 +49,20 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
     return value.value
   }
   const database = get(databaseTag) as { db?: { $client?: SqlClient.SqlClient } }
-  const location = get(locationTag), execution = get(executionTag) as { isActive(id: string): NativeEffect }
+  const location = get(locationTag), sessions = get(sessionTag) as { active?: unknown }
   const forms = get(formTag) as { list(): NativeEffect }, permissions = get(permissionTag) as { list(): NativeEffect }
   const shells = get(shellTag) as { list(): NativeEffect }
-  if (!Predicate.isFunction(database.db?.$client?.unsafe) || !Predicate.isFunction(execution.isActive)
+  if (!Predicate.isFunction(database.db?.$client?.unsafe) || !Effect.isEffect(sessions.active)
     || !Predicate.isFunction(forms.list) || !Predicate.isFunction(permissions.list) || !Predicate.isFunction(shells.list))
     throw new Error("Native passage contracts unavailable")
   const query = (sql: string, params: readonly unknown[]) => Effect.runPromise(database.db!.$client!.unsafe(sql, params)
     .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
   const run = (effect: NativeEffect) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
+  const activeSet = (value: unknown): ReadonlySet<unknown> => {
+    if (!(value instanceof Set) || value.size > 4096) throw new Error("Native execution coverage unavailable")
+    return value
+  }
+  const running = sessions.active as NativeEffect
   const sync = (sql: string, params: readonly unknown[]) => Effect.runSync(database.db!.$client!.unsafe(sql, params)
     .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
   const assertCurrent = (): true => {
@@ -70,36 +83,6 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         || dispatch && !recurrenceDispatchAllowed(fresh)) throw new Error("Passage schedule changed")
       return true
     },
-    assertQuiescent: (family: readonly PassageSessionObservation[]): true => {
-      assertCurrent()
-      const ids = family.map(session => session.id)
-      for (const expected of family) {
-        const actual = sync("SELECT id,parent_id,project_id,directory,workspace_id,time_suspended FROM session_v2 WHERE id=?", [expected.id])[0]
-        const queued = sync("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [expected.id])[0]?.count
-        const pending = sync("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [expected.id])[0]?.count
-        const running = sync(runningToolsSQL, [expected.id])[0]?.count
-        const children = sync("SELECT id FROM session_v2 WHERE parent_id=? ORDER BY id LIMIT 33", [expected.id])
-        if (!actual || actual.project_id !== expected.projectID || actual.directory !== expected.directory
-          || actual.workspace_id !== (expected.workspaceID ?? null) || actual.parent_id !== (expected.parentID ?? null)
-          || actual.time_suspended !== null || queued !== 0 || pending !== 0 || running !== 0
-          || Effect.runSync(execution.isActive(expected.id).pipe(Effect.provide(graph))) !== false
-          || children.some(child => typeof child.id !== "string" || !ids.includes(child.id)))
-          throw new Error("Passage became active before settlement")
-      }
-      const read = (operation: NativeEffect, codec: Schema.Codec<unknown, unknown>) => {
-        const value = Effect.runSync(operation.pipe(Effect.provide(graph)))
-        Schema.decodeUnknownSync(codec)(value)
-        if (!Array.isArray(value) || value.length > 1024 || value.some(item => !item || typeof item !== "object"))
-          throw new Error("Passage pending coverage changed")
-        return value as Record<string, unknown>[]
-      }
-      if ([...read(forms.list(), Schema.Array(Schema.toType(Form.Info)).check(Schema.isMaxLength(1024))),
-        ...read(permissions.list(), Schema.Array(Schema.toType(Permission.Request)).check(Schema.isMaxLength(1024)))].some(item =>
-        item.sessionID == null || ids.includes(String(item.sessionID)))
-        || read(shells.list(), Schema.Array(Schema.toType(Shell.Info)).check(Schema.isMaxLength(1024))).some(item => item.status === "running"))
-        throw new Error("Passage pending work appeared")
-      return true
-    },
     exists: async (id: string) => { assertCurrent(); return (await query("SELECT id FROM session_v2 WHERE id=?", [id])).length === 1 },
     session: async (id: string, messageID?: string): Promise<PassageSessionObservation> => {
       assertCurrent()
@@ -114,17 +97,20 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const inbox = await count("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [id])
       const pending = await count("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [id])
       const runningTools = await count(runningToolsSQL, [id])
-      const active = await run(execution.isActive(id))
-      if (typeof active !== "boolean") throw new Error("Native execution coverage unavailable")
+      const active = activeSet(await run(running)).has(id)
       const terminal = (await query("SELECT type FROM event WHERE aggregate_id=? AND type IN ('session.execution.failed.1','session.execution.succeeded.1','session.execution.interrupted.1') ORDER BY seq DESC LIMIT 1", [id]))[0]
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
       assertCurrent()
-      return { id, projectID: session.project_id, directory: session.directory,
+      const claimedAt = session.time_suspended
+      if (claimedAt != null && !Number.isSafeInteger(claimedAt)) throw new Error("Native passage claim unavailable")
+      // Native SQL stores slash-separated Windows paths; the Location graph uses host separators.
+      return { id, projectID: session.project_id, directory: path.normalize(session.directory),
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
-        active, inbox, pending, suspended: session.time_suspended != null, runningTools,
-        failed: terminal?.type === "session.execution.failed.1", messagePresent }
+        active, inbox, pending, suspended: claimedAt != null, runningTools,
+        failed: terminal?.type === "session.execution.failed.1", messagePresent,
+        orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },
     children: async (id: string) => {
       assertCurrent()

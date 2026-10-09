@@ -207,11 +207,13 @@ export class NativeMissionRecurrenceStore {
     })
   }
 
-  /** Caller supplies fresh authorized native terminal evidence, not model prose.
+  /** Caller supplies fresh native terminal evidence, not model prose, observed at
+   * `expectedRevision`. Any later document change is a conflict: re-observe.
    * Unknown admissions first need exact recordAdmission reconciliation. */
-  finish(id: string, input: RecurrenceResult, now: number, current: () => true): Promise<RecurrenceDocument> {
+  finish(id: string, input: RecurrenceResult, now: number, current: () => true, expectedRevision?: number): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       const doc = await this.required(id), result = recurrenceResultSchema.parse(JSON.parse(canonicalAuthority(input)))
+      if (expectedRevision !== undefined && doc.revision !== expectedRevision) throw new Error("Recurrence revision conflict")
       const pending = this.exactPending(doc, result), admission = pending.admission
       if (!admission || result.missionID !== admission.missionID || result.conversationID !== admission.conversationID
         || result.cursors.some(cursor => !doc.config.watchedConversationIDs.includes(cursor.conversationID))) throw new Error("Recurrence result conflict")

@@ -69,6 +69,8 @@ export interface MissionRecurrenceReceipt {
   dueAt: number
   settledAt: number
   outcome: "completed" | "failed" | "stopped" | "ended-without-report"
+  /** A service restart cut the passage and nothing resumed it. */
+  reason?: "interrupted"
   missionID?: string
   conversationID?: string
 }

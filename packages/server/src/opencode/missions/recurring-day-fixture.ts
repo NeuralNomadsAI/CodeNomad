@@ -59,6 +59,7 @@ export class RecurringDayFixture {
   private handlers = new Map<string, Record<string, Handler>>()
   private hooks: Array<(event: unknown) => Effect.Effect<unknown, unknown>> = []
   private sleepers = new Set<{ at: number; wake: () => void }>()
+  private busListeners = new Set<(event: unknown) => Effect.Effect<void>>()
   private scope!: Scope.Closeable
   private graph!: Context.Context<never>
   private ctx!: Plugin.Context
@@ -183,7 +184,8 @@ export class RecurringDayFixture {
       messages: (input: { sessionID: string }) => Effect.sync(() => this.messages(input.sessionID)),
       inbox: (id: string) => Effect.sync(() => this.db.prepare("SELECT payload FROM session_inbox WHERE session_id=?").all(id)
         .map(row => Schema.decodeUnknownSync(SessionInbox.Info)(JSON.parse(String(row.payload))))),
-      active: (id: string) => Effect.sync(() => Boolean(this.db.prepare("SELECT active FROM fixture_session WHERE id=?").get(id)?.active)),
+      // Native Session.active is SessionExecution.active: an Effect of the running ID set.
+      active: Effect.sync(() => new Set(this.db.prepare("SELECT id FROM fixture_session WHERE active=1").all().map(row => String(row.id)))),
       list: () => Effect.sync(() => ({ data: this.sessions })),
       interrupt: (id: string) => Effect.sync(() => { this.idle(id); return true }),
       cancelInbox: (input: { sessionID: string }) => Effect.sync(() => { this.db.prepare("DELETE FROM session_inbox WHERE session_id=?").run(input.sessionID) }),
@@ -207,10 +209,9 @@ export class RecurringDayFixture {
         this.jobs.delete(id)
         return record
       }), pendingBackground: Effect.sync(() => this.background) }
-    this.graph = Context.make(tag("@opencode/storage/Database"), database).pipe(Context.add(tag("@opencode/Location"), location),
-      Context.add(tag("@opencode/Session"), native), Context.add(tag("@opencode/Job"), job),
-      Context.add(tag("@opencode/SessionExecution"), { isActive: native.active }),
-      Context.add(tag("@opencode/Bus"), { publish: () => Effect.void }),
+    // Native 2.0.26 shape: a borrowed Location graph holds Location services only; Database,
+    // Session, Job and Bus are process-global and appear only in plugin/RPC contexts.
+    const locationGraph = Context.make(tag("@opencode/Location"), location).pipe(
       Context.add(tag("@opencode/Form"), { list: () => Effect.sync(() => [...this.forms.values()]),
         state: (id: string) => Effect.sync(() => ({ status: this.forms.has(id) ? "pending" : "answered" })),
         reply: (input: { id: string; answer: unknown }) => Effect.sync(() => {
@@ -218,8 +219,12 @@ export class RecurringDayFixture {
           assert(this.forms.delete(input.id), "native Form must still be pending")
         }) }),
       Context.add(tag("@opencode/Permission"), { list: () => Effect.sync(() => this.permissions) }),
-      Context.add(tag("@opencode/Shell"), { list: () => Effect.sync(() => this.shells) }), Context.add(Clock.Clock, this.clock))
-    const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.sync(() => this.graph) })
+      Context.add(tag("@opencode/Shell"), { list: () => Effect.sync(() => this.shells) }))
+    this.graph = Context.merge(locationGraph, Context.make(tag("@opencode/storage/Database"), database).pipe(
+      Context.add(tag("@opencode/Session"), native), Context.add(tag("@opencode/Job"), job),
+      Context.add(tag("@opencode/Bus"), { publish: () => Effect.void, listen: (listener: (event: unknown) => Effect.Effect<void>) =>
+        Effect.sync(() => { this.busListeners.add(listener); return Effect.sync(() => { this.busListeners.delete(listener) }) }) }), Context.add(Clock.Clock, this.clock)))
+    const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.sync(() => locationGraph) })
       .pipe(Effect.provideService(Scope.Scope, this.scope)))
     this.graph = Context.add(this.graph, tag("@opencode/example/LocationServiceMap"), { rcMap: map,
       contextEffect: (ref: Location.Ref) => RcMap.get(map, ref), contextEffectOption: (ref: Location.Ref) => RcMap.getOption(map, ref) })
@@ -361,6 +366,8 @@ export class RecurringDayFixture {
   idle(id: string, failed = false) {
     this.db.prepare("UPDATE fixture_session SET active=0 WHERE id=?").run(id)
     this.event(id, failed ? "session.execution.failed.1" : "session.execution.succeeded.1")
+    // Native Bus listeners run inline during publish (session.execution terminal payloads).
+    for (const listener of this.busListeners) Effect.runSync(listener({ type: failed ? "session.execution.failed" : "session.execution.succeeded" }))
   }
   async model(options: { child?: boolean; report?: boolean; keepActive?: boolean } = {}) {
     const coordinator = this.coordinators.at(-1)!

@@ -30,7 +30,7 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     if (doc.state === "running" && jobStatus === undefined) throw new Error("Recurrence clock observation unavailable")
     const state = doc.state === "running" && jobStatus !== "running" ? "interrupted" : doc.state
     const history = doc.history.map(({ passage, settledAt, result }) => ({ passageID: passage.id, dueAt: passage.due.at,
-      settledAt, outcome: result.outcome, missionID: result.missionID, conversationID: result.conversationID }))
+      settledAt, outcome: result.outcome, ...(result.reason ? { reason: result.reason } : {}), missionID: result.missionID, conversationID: result.conversationID }))
     const actions: MissionRecurrenceSnapshot["schedules"][number]["actions"] = []
     const partial = doc.controls.some(item => !item.controlsComplete && (item.action === "pause" || item.action === "stop"))
     const retry = doc.controls.at(-1)

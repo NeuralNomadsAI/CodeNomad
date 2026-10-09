@@ -45,7 +45,6 @@ export async function passageFixture(business = true) {
   const observation: NativePassageObservation = {
     assertCurrent: () => true,
     assertScheduleCurrent: () => true,
-    assertQuiescent: () => true,
     exists: async id => sessions.has(id),
     session: async (id, messageID) => { const state = states.get(id); if (!state) throw new Error("Missing session")
       return { ...structuredClone(state), messagePresent: messageID === undefined ? state.messagePresent : messages.has(`${id}\0${messageID}`) } },

@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "Sonuç kaydediliyor…",
   "missions.recurrence.pending.uncertain": "Çalıştırma durumu bilinmiyor. Sürdürme, devam eden çalıştırmayı kontrol eder; onu asla iki kez göndermez.",
   "missions.recurrence.result.ended-without-report": "Rapor olmadan sona erdi",
+  "missions.recurrence.result.interrupted": "Yeniden başlatma nedeniyle kesildi",
   "missions.recurrence.followedConversations": "Takip edilen konuşmalar (isteğe bağlı)",
   "missions.recurrence.selectedConversation": "Seçili konuşma",
   "missions.recurrence.chooseConversations": "Konuşmaları seç",
