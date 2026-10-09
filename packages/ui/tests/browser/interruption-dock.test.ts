@@ -89,6 +89,29 @@ test("human answer origin follows the actual dock click/key input, never trusted
   }
 })
 
+test("ordinary question answers settle through the ordinary reply; the human header is only a backend hint", async () => {
+  const { page, errors } = await fixture()
+  try {
+    // The backend alone decides the Mission mark path; an ordinary conversation's
+    // human answer is forwarded as an ordinary native reply and settles the dock.
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Ordinary answer")
+    await answer(page).press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.snapshot().forms.length === 0)
+    const sent = await page.evaluate(() => ({ reply: (window as any).fixture.replies[0], options: (window as any).fixture.replyOptions[0] }))
+    assert.deepEqual(sent.reply, { sessionID: "s", formID: "question", answer: { q0: "Ordinary answer" } })
+    assert.equal(sent.options?.headers?.["x-codenomad-human-answer"], "1")
+    // A non-question Form never carries the hint at all.
+    await page.evaluate(() => (window as any).fixture.other())
+    await page.evaluate(() => (window as any).fixture.focusScoped("other", "other", "form"))
+    await answer(page).fill("Other answer")
+    await answer(page).press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.replies.length === 2)
+    assert.equal(await page.evaluate(() => (window as any).fixture.replyOptions[1]?.headers?.["x-codenomad-human-answer"]), undefined)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
   const { page, errors } = await fixture(393)
   try {

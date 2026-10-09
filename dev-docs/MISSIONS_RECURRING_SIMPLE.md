@@ -219,6 +219,13 @@ The Wayfinder human gate accepts only a native Form with the matching confirmed 
 An ordinary native answer without that mark is not a proven UI human decision.
 Do not infer identity from answer text, tool completion or the agent's assertion.
 
+Only Forms whose session belongs to a Mission family (root `codenomad.mission`
+metadata) take the mark path. Every other Form uses the ordinary native reply
+unchanged and gets no mark. When the mark cannot be prepared before forwarding
+(auth disabled, plugin/binding unavailable), the answer falls back to the
+ordinary reply without a mark; the user is never blocked from answering. Only a
+dispatched mark reply with a lost outcome is reported as uncertain.
+
 There are no signatures or reserved/replied/settled answer receipts.
 OpenCode does not record answerer identity natively. Keep the ordinary answer
 path's ownership and uncertainty checks; missing evidence leaves the gate unmet,

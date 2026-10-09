@@ -15,10 +15,29 @@ const answerSchema = z.object({ answer: z.record(z.union([z.string().max(20000),
 
 /** Called INSIDE the normal proxy's owned native-session/request/deletion and
  * connection admission. It handles only the dock's real human answer path.
- * Auto/Yolo/SDK reply keeps the ordinary native route without human proof. */
+ * Auto/Yolo/SDK reply keeps the ordinary native route without human proof.
+ * `undefined` means "use the ordinary native reply without a mark": every Form
+ * outside a Mission family, and any Mission Form whose mark cannot be prepared
+ * (auth disabled, plugin/binding unavailable) before anything was forwarded.
+ * Only a dispatched mark reply can throw; its outcome is then uncertain. */
 export async function replyMissionHumanAnswer(request: FastifyRequest, workspaceID: string, sessionID: string,
   formID: string, deps: Deps, connection: ServiceConnection, signal: AbortSignal) {
   if (request.headers[HUMAN_ANSWER_HEADER] !== "1") return undefined
+  let prepared: Awaited<ReturnType<typeof prepareMissionHumanAnswer>>
+  try { prepared = await prepareMissionHumanAnswer(request, workspaceID, sessionID, formID, deps, connection, signal) }
+  catch {
+    // Nothing was forwarded; the ordinary path keeps its own ownership checks.
+    // Wayfinder then simply sees no proven UI decision for this Form.
+    signal.throwIfAborted(); connection.assertCurrent()
+    return undefined
+  }
+  if (!prepared) return undefined
+  const { rpc, body, nativeOptions } = prepared
+  return humanAnswerResultSchema.parse(await rpc.reply({ body, proof: humanAnswerProof(body, deps.bridgeToken) }, nativeOptions))
+}
+
+async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: string, sessionID: string,
+  formID: string, deps: Deps, connection: ServiceConnection, signal: AbortSignal) {
   const workspace = deps.manager.get(workspaceID), profile = deps.settings.getProfileScope()
   const distro = deps.manager.getServiceWslDistro(workspaceID), client = connection.client
   let id = sessionID, ownedLocation: { directory: string; workspaceID?: string } | undefined
@@ -39,8 +58,10 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
     missionRoot = !!marker && typeof marker === "object" && !Array.isArray(marker)
     break
   }
+  // Ordinary conversations never take the mark path, nor write a mark.
+  if (!missionRoot) return undefined
   const human = deps.auth.getSessionFromRequest(request)
-  if (!deps.auth.isAuthEnabled() || !human || human.sessionId === "auth-disabled") throw new Error("Human authentication required")
+  if (!deps.auth.isAuthEnabled() || !human || human.sessionId === "auth-disabled") return undefined
   const current = () => {
     signal.throwIfAborted(); connection.assertCurrent()
     const fresh = deps.auth.getSessionFromRequest(request)
@@ -54,15 +75,12 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
   let rawBinding
   try { rawBinding = await rpc.binding({ sessionID, formID, profileID: profile.key,
     executionHost: distro ? `wsl:${distro}` : "local" }, options) }
-  catch (error) {
-    // An absent plugin on a genuinely unmarked ordinary conversation preserves
-    // ordinary Forms. Actual lookup/refusal errors never provide empty coverage.
-    const tag = error && typeof error === "object" && "type" in error ? error.type : undefined
-    if (!missionRoot && ["rpc.unavailable", "rpc.method_not_found"].includes(String(tag))) return undefined
-    throw error
+  catch {
+    // Without a binding there is no mark; the caller falls back to the ordinary reply.
+    return undefined
   }
   current()
-  if (rawBinding === null) throw new Error("Human answer binding unavailable")
+  if (rawBinding === null) return undefined
   const binding = humanAnswerBindingSchema.parse(rawBinding)
   if (binding.sessionID !== sessionID || binding.formID !== formID || !sameLocation(binding.location, ownedLocation!)) throw new Error("Human answer Form changed")
   const body = humanAnswerProofSchema.parse({ ...binding, workspaceID, cookieSessionID: human.sessionId,
@@ -71,7 +89,7 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
   // The plugin commits only the mark before replying; no signed receipt or
   // reconciliation lifecycle. Never cancel a dispatched answer with its observer.
   const { signal: _observer, ...nativeOptions } = options
-  return humanAnswerResultSchema.parse(await rpc.reply({ body, proof: humanAnswerProof(body, deps.bridgeToken) }, nativeOptions))
+  return { rpc, body, nativeOptions }
 }
 
 /** Existing private root bridge callback: actual AuthManager, no alternate auth
