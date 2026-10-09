@@ -240,6 +240,12 @@ test("temporary tabs are marked, offer keeping, and the close choice dialog defa
     await page.evaluate(() => { void (window as any).tabFixture.choice() })
     await dialog.getByRole("button", { name: "Discard" }).click()
     await page.waitForFunction(() => (window as any).tabFixture.chosen === "discard")
+
+    // Destructive confirms keep focus on Cancel: Enter must not confirm.
+    await page.evaluate(() => { void (window as any).tabFixture.confirm() })
+    await page.waitForFunction(() => document.activeElement?.textContent === "Cancel")
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => (window as any).tabFixture.confirmed === false)
   } finally { await page.close() }
 })
 

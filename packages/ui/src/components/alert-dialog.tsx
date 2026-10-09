@@ -129,12 +129,12 @@ const AlertDialog: Component = () => {
                 class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl"
                 tabIndex={-1}
                 onOpenAutoFocus={(event) => {
-                  // Kobalte would otherwise focus the first button (Cancel).
-                  const target = isPrompt ? promptInputRef : primaryButtonRef
-                  if (!target) return
+                  // Confirms keep Kobalte's default focus on Cancel, so Enter never
+                  // confirms a destructive action. Choice dialogs focus their last,
+                  // non-destructive choice instead.
+                  if (payload.type !== "choice" || !primaryButtonRef) return
                   event.preventDefault()
-                  target.focus()
-                  if (isPrompt) promptInputRef?.select()
+                  primaryButtonRef.focus()
                 }}
               >
                    <div class="flex items-start gap-3">

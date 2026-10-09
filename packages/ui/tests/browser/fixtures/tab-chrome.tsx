@@ -8,7 +8,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import type { AppTabRecord } from "../../../src/stores/app-tabs"
 import AlertDialog from "../../../src/components/alert-dialog"
-import { showChoiceDialog } from "../../../src/stores/alerts"
+import { showChoiceDialog, showConfirmDialog } from "../../../src/stores/alerts"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
 
@@ -34,6 +34,8 @@ function Fixture() {
       { value: "discard", label: "Discard", tone: "danger" },
       { value: "keep", label: "Keep", tone: "primary" },
     ], { cancelLabel: "Cancel" }).then((value) => { (window as any).tabFixture.chosen = value }),
+    confirm: () => showConfirmDialog("Delete it?", { confirmLabel: "Delete", cancelLabel: "Cancel" })
+      .then((value) => { (window as any).tabFixture.confirmed = value }),
   }
   applyColorScheme(normalizeColorScheme("classic"))
   return <>

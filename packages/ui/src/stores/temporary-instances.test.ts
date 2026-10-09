@@ -23,7 +23,7 @@ const { tGlobal } = await import("../lib/i18n")
 const { serverEvents } = await import("../lib/server-events")
 const { alertDialogState } = await import("./alerts")
 const { appTabs, attachInstanceTab } = await import("./app-tabs")
-const { addInstance, instances, removeInstance } = await import("./instances")
+const { addInstance, instances, removeInstance, updateInstance } = await import("./instances")
 const { closeTemporaryInstance, leftoverTemporaryFolders, openTemporaryInstance, temporaryFolderLabel } = await import("./temporary-instances")
 
 const folder = "D:\\CodeNomad\\temporary-workspaces\\20261009-120000-abcd"
@@ -109,6 +109,29 @@ test("a keep announced by another window clears the mark, and unopened folders a
     temporaryChanged([leftover])
     assert.equal(instances().get("elsewhere")?.temporary, false)
   } finally { reset("elsewhere"); temporaryChanged([]) }
+})
+
+test("a mark left stale by a missed event no longer traps the tab", async () => {
+  open("stale-keep", "stale-discard")
+  try {
+    serverApi.keepTemporaryWorkspace = async () => { throw new Error("temporary_not_temporary") }
+    const keeping = closeTemporaryInstance("stale-keep")
+    await answer("keep")
+    await keeping
+    assert.equal(tabOpen("stale-keep"), false)
+    assert.equal(instances().get("stale-discard")?.temporary, false)
+
+    updateInstance("stale-discard", { temporary: true })
+    discardError = new Error("temporary_not_temporary")
+    const discarding = closeTemporaryInstance("stale-discard")
+    await answer("discard")
+    await discarding
+    assert.equal(tabOpen("stale-discard"), false)
+    assert.equal(alertDialogState()?.message, tGlobal("temporaryInstance.error.notTemporary"))
+  } finally {
+    serverApi.keepTemporaryWorkspace = async (id) => { calls.push(`keep:${id}`) }
+    reset("stale-keep", "stale-discard")
+  }
 })
 
 test("a failed launch removes the folder it just created", async () => {

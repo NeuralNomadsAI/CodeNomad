@@ -32,7 +32,12 @@ async function harness() {
     getServiceDirectory: (id: string) => workspaces.get(id)?.path,
     getSharedServiceClient: async () => client,
     delete: async (id: string) => { workspaces.delete(id) },
-    reserveWorktreeDeletion: async () => () => {},
+    reserveWorktreeDeletion: async (folder: string) => {
+      if ([...workspaces.values()].some((workspace) => workspace.path.toLowerCase() === folder.toLowerCase())) {
+        throw new Error("Worktree is open as another workspace")
+      }
+      return () => {}
+    },
     clearTemporary: (folder: string) => { cleared.push(folder) },
   } as unknown as WorkspaceManager
   const changes: string[][] = []
@@ -117,6 +122,10 @@ test("registry changes are announced and a never-opened empty folder can be aban
     const code = (expected: string) => (error: unknown) => error instanceof TemporaryWorkspaceError && error.code === expected
     await assert.rejects(h.temporary.abandonFolder(used), code("temporary_not_empty"))
     await assert.rejects(h.temporary.abandonFolder(open), code("temporary_open_elsewhere"))
+    if (process.platform === "win32") {
+      // Windows paths differing only in case name the same open folder.
+      await assert.rejects(h.temporary.abandonFolder(open.toUpperCase()), code("temporary_open_elsewhere"))
+    }
     await assert.rejects(h.temporary.abandonFolder(h.base), code("temporary_not_temporary"))
     await h.temporary.abandonFolder(unused)
     await assert.rejects(stat(unused), { code: "ENOENT" })

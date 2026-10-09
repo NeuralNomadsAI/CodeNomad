@@ -96,6 +96,15 @@ export async function resumeTemporaryInstance(folder: string): Promise<string> {
   return instanceId
 }
 
+// Another window kept the folder and this one missed the event.
+const isNoLongerTemporary = (error: unknown) => error instanceof Error && error.message === "temporary_not_temporary"
+
+function clearTemporaryMark(folder: string) {
+  for (const instance of instances().values()) {
+    if (instance.folder === folder) updateInstance(instance.id, { temporary: false })
+  }
+}
+
 /** Keeps the folder and its conversations as an ordinary, recent project. */
 export async function keepTemporaryInstance(instanceId: string): Promise<boolean> {
   const instance = instances().get(instanceId)
@@ -103,12 +112,12 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
   try {
     await serverApi.keepTemporaryWorkspace(instanceId)
   } catch (error) {
-    showFailure("temporaryInstance.keep.failedTitle", error)
-    return false
+    if (!isNoLongerTemporary(error)) {
+      showFailure("temporaryInstance.keep.failedTitle", error)
+      return false
+    }
   }
-  for (const other of instances().values()) {
-    if (other.folder === instance.folder) updateInstance(other.id, { temporary: false })
-  }
+  clearTemporaryMark(instance.folder)
   await addNamedRecentFolder(instance.folder, instance.projectName ?? "")
     .catch((error) => log.error("Failed to add the kept project to recent folders", error))
   return true
@@ -120,7 +129,10 @@ async function discardTemporaryInstance(instanceId: string): Promise<boolean> {
     await serverApi.discardTemporaryWorkspace(instanceId)
   } catch (error) {
     showFailure("temporaryInstance.discard.failedTitle", error)
-    return false
+    if (!isNoLongerTemporary(error)) return false
+    // Kept elsewhere: nothing was deleted; close it like an ordinary project.
+    const instance = instances().get(instanceId)
+    if (instance) clearTemporaryMark(instance.folder)
   }
   closeInstanceTab(instanceId)
   return true

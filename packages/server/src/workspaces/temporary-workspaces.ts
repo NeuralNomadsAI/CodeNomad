@@ -79,6 +79,10 @@ export class TemporaryFolderRegistry {
     return [...this.folders.values()]
   }
 
+  sameFolder(left: string, right: string): boolean {
+    return hostIdentity(left, this.platform) === hostIdentity(right, this.platform)
+  }
+
   async add(folder: string): Promise<void> {
     this.folders.set(hostIdentity(folder, this.platform), folder)
     await this.save()
@@ -170,17 +174,25 @@ export class TemporaryWorkspaces {
   async abandonFolder(folder: string): Promise<void> {
     const { registry, workspaceManager } = this.options
     if (!registry.has(folder)) throw new TemporaryWorkspaceError("temporary_not_temporary", "This folder is not temporary", 400)
-    if (workspaceManager.list().some((workspace) => workspace.path === folder)) {
-      throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in a tab", 409)
-    }
-    const entries = await readdir(folder).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return []
-      throw error
+    await this.options.deletionFence.run(folder, [folder], async () => {
+      // The reservation compares canonical identities, refuses any open
+      // workspace inside the folder and blocks new workspaces until released.
+      const release = await workspaceManager.reserveWorktreeDeletion(folder).catch(() => {
+        throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in a tab", 409)
+      })
+      try {
+        const entries = await readdir(folder).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return []
+          throw error
+        })
+        if (entries.length) throw new TemporaryWorkspaceError("temporary_not_empty", "This temporary folder is not empty", 409)
+        await rm(folder, { recursive: true, force: true })
+      } finally {
+        release()
+      }
+      await registry.delete(folder)
+      this.changed()
     })
-    if (entries.length) throw new TemporaryWorkspaceError("temporary_not_empty", "This temporary folder is not empty", 409)
-    await rm(folder, { recursive: true, force: true })
-    await registry.delete(folder)
-    this.changed()
   }
 
   private requireTemporary(workspaceId: string) {
@@ -208,7 +220,7 @@ export class TemporaryWorkspaces {
   async discard(workspaceId: string): Promise<void> {
     const manager = this.options.workspaceManager
     const workspace = this.requireTemporary(workspaceId)
-    if (manager.list().some((other) => other.id !== workspaceId && other.path === workspace.path)) {
+    if (manager.list().some((other) => other.id !== workspaceId && this.options.registry.sameFolder(other.path, workspace.path))) {
       throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in another tab", 409)
     }
     const serviceDirectory = manager.getServiceDirectory(workspaceId) ?? workspace.path
