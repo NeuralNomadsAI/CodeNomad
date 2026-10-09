@@ -1,0 +1,32 @@
+/* Trailing collapsible group of Mission roots in the session list. The toggle
+   reuses session row geometry; its members use the shared tree indentation. */
+.session-mission-group {
+  border-top: 1px solid var(--border-base);
+}
+
+.session-mission-group-toggle {
+  cursor: pointer;
+  border-radius: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+.session-mission-group-toggle:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: -1px;
+}
+
+.session-mission-group-icon {
+  color: var(--text-secondary);
+}
+
+@media (pointer: coarse) {
+  .session-mission-group-toggle {
+    min-height: var(--touch-target-size);
+  }
+}
+
+.session-mission-group-count,
+.session-mission-badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
