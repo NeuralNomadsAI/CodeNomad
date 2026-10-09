@@ -988,6 +988,8 @@ function removeRecentFolder(folderPath: string): void {
 async function renameRecentFolderProject(folderPath: string, projectName: string): Promise<void> {
   const name = projectName.trim()
   if (!folderPath || !name) return
+  // Derive from loaded state; an unloaded empty list would erase every recent folder.
+  await ensureLoaded()
   const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
   try {
     await patchStateOwner("ui", { recentFolders: next })
