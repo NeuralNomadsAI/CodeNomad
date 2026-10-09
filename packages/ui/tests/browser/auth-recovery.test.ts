@@ -163,13 +163,16 @@ test("a revoked Remote Control device is asked to pair again, keeping drafts and
     await dialog.getByText("Settings → Remote Access", { exact: false }).waitFor()
     assert.equal(await dialog.getByLabel("Password", { exact: true }).count(), 0)
     assert.equal(await dialog.getByRole("button", { name: "Sign in", exact: true }).count(), 0)
+    // The page, and with it the draft, stays in place while pairing is required.
+    assert.equal(await composer.inputValue(), "REMOTE_DRAFT")
+    const previousUrl = page.url()
     // Pairing again in another tab restores the shared device cookie.
     remoteUnpaired = false
     await page.request.post(`${url}/api/auth/login`, { data: { username: "fixture", password: "fixture-only" } })
     await dialog.getByRole("button", { name: "Check connection" }).click()
     await dialog.waitFor({ state: "hidden" })
+    assert.equal(page.url(), previousUrl)
     assert.equal(loginCount, beforeLogin + 1, "only the out-of-band renewal signs in")
-    assert.equal(await composer.inputValue(), "REMOTE_DRAFT")
     assert.deepEqual(errors, [])
   } finally { remoteUnpaired = false; await page.close() }
 })
