@@ -175,6 +175,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
   const tabletQuery = useMediaQuery("(min-width: 768px)")
+  // Rotation-aware drawers apply to touch-primary devices, not to tall desktop windows.
+  const touchPrimaryQuery = useMediaQuery("(pointer: coarse)")
+  const portraitQuery = useMediaQuery("(orientation: portrait)")
+  const drawerOrientation = () => touchPrimaryQuery() ? (portraitQuery() ? "portrait" as const : "landscape" as const) : null
 
   const layoutMode = createMemo<LayoutMode>(() => {
     if (desktopQuery()) return "desktop"
@@ -200,6 +204,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     leftToggleButtonEl,
     rightToggleButtonEl,
     measureDrawerHost,
+    orientation: drawerOrientation,
   })
 
   const {

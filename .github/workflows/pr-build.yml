@@ -321,6 +321,7 @@ jobs:
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/instance/shell/useSessionCache.test.ts
+          packages/ui/src/components/instance/shell/drawer-orientation.test.ts
           packages/ui/src/components/permission-diff-review.test.ts
           packages/ui/src/components/tool-call/renderers/task-copy.test.ts
           packages/ui/src/components/tool-call/renderer-copy.test.ts
