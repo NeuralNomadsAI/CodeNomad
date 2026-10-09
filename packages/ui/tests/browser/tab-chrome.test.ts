@@ -192,7 +192,8 @@ test("double-click, F2 and the context menu rename the tab's project through the
 
     await tab.dblclick()
     assert.equal(await input.inputValue(), "Project 0 — workspace")
-    assert.equal(await input.evaluate(e => e === document.activeElement), true)
+    // The dialog focuses its input on the next animation frame.
+    await page.waitForFunction(() => document.activeElement?.matches('[role="dialog"] input'))
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "detached" })
 
@@ -214,6 +215,37 @@ test("double-click, F2 and the context menu rename the tab's project through the
     await page.keyboard.press("Enter")
     await dialog.waitFor({ state: "detached" })
     assert.deepEqual(patches.at(-1).recentFolders.map((folder: any) => folder.projectName), ["Client A", undefined])
+  } finally { await page.close() }
+})
+
+test("temporary tabs are marked, offer keeping, and the close choice dialog defaults to keep", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    await prepare(page)
+    const tab = page.locator('[data-fixture="instances"] [role="tab"]').filter({ hasText: "Temporary · 12:00" })
+    assert.equal(await tab.locator(".lucide-hourglass").count(), 1)
+    assert.equal(await page.locator('[data-fixture="instances"] .lucide-hourglass').count(), 1, "ordinary tabs keep the folder icon")
+    await tab.click({ button: "right" })
+    assert.deepEqual(await page.getByRole("menuitem").allInnerTexts(), ["Rename…", "Keep as project"])
+    await page.keyboard.press("Escape")
+
+    await page.evaluate(() => { void (window as any).tabFixture.choice() })
+    const dialog = page.getByRole("dialog")
+    assert.deepEqual(await dialog.getByRole("button").allInnerTexts(), ["Cancel", "Discard", "Keep"])
+    await page.waitForFunction(() => document.activeElement?.textContent === "Keep")
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => (window as any).tabFixture.chosen), null)
+
+    await page.evaluate(() => { void (window as any).tabFixture.choice() })
+    await dialog.getByRole("button", { name: "Discard" }).click()
+    await page.waitForFunction(() => (window as any).tabFixture.chosen === "discard")
+
+    // Destructive confirms keep focus on Cancel: Enter must not confirm.
+    await page.evaluate(() => { void (window as any).tabFixture.confirm() })
+    await page.waitForFunction(() => document.activeElement?.textContent === "Cancel")
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => (window as any).tabFixture.confirmed === false)
   } finally { await page.close() }
 })
 

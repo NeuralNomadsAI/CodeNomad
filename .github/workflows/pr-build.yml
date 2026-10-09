@@ -368,6 +368,7 @@ jobs:
           packages/ui/src/stores/worktree-ready.test.ts
           packages/ui/src/stores/worktrees-delete.test.ts
           packages/ui/src/stores/project-names.test.ts
+          packages/ui/src/stores/temporary-instances.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"

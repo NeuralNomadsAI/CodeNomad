@@ -11,6 +11,7 @@ import { createHttpServer } from "./server/http-server"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
+import { TemporaryFolderRegistry } from "./workspaces/temporary-workspaces"
 import { SettingsService } from "./settings/service"
 import { BinaryResolver } from "./settings/binaries"
 import { FileSystemBrowser } from "./filesystem/browser"
@@ -402,8 +403,16 @@ async function main() {
       return false
     }
   }
+  const temporaryFolders = await TemporaryFolderRegistry.open(
+    path.join(configDir, "temporary-workspaces"),
+    path.join(configDir, "temporary-workspaces.json"),
+  ).catch((error) => {
+    logger.warn({ err: error }, "Temporary workspaces are unavailable")
+    return undefined
+  })
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
+    temporaryFolders,
     settings,
     binaryResolver,
     eventBus,

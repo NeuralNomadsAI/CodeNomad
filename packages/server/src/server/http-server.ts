@@ -16,6 +16,7 @@ import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
+import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
@@ -327,6 +328,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerTemporaryWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, eventBus: deps.eventBus })
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))

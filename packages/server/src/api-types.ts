@@ -46,6 +46,8 @@ export interface WorkspaceDescriptor {
   updatedAt: string
   /** Present when `status` is "error". */
   error?: string
+  /** The folder is a CodeNomad-managed temporary folder that discarding deletes. */
+  temporary?: boolean
 }
 
 export interface WorkspaceCreateRequest {
@@ -650,6 +652,7 @@ export type WorkspaceEventType =
   | "workspace.stopped"
   | "workspace.log"
   | "workspace.worktreesChanged"
+  | "workspace.temporaryChanged"
   | "sidecar.updated"
   | "sidecar.removed"
   | "storage.configChanged"
@@ -686,6 +689,8 @@ export type WorkspaceEventPayload =
   | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "workspace.worktreesChanged"; workspaceId: string }
+  /** Every folder still registered as temporary, after a create, keep or discard. */
+  | { type: "workspace.temporaryChanged"; folders: string[] }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
