@@ -128,6 +128,8 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  /** Optional short label (1–60 characters, trimmed). */
+  title?: string
   prepared?: boolean
   requestID: string
   coordinatorSessionID?: string

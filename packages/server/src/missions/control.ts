@@ -33,6 +33,7 @@ import { parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, typ
 import { hasUnsettledNativeExecution } from "./native-call-observation"
 import { parseMissionTaskMode, sameExecutionMode, type MissionTaskMode } from "./task-execution-mode"
 import { coordinatorReadout } from "./coordinator-readout"
+import { missionCoordinatorTitle, parseMissionTitle } from "./mission-title"
 import { briefingSourcesExist, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 export { MissionControlError } from "./control-error"
@@ -181,6 +182,11 @@ export class MissionControl {
   private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
     input = structuredClone(input)
     input.taskMode = parseMissionTaskMode(input.taskMode)
+    if (input.title !== undefined) {
+      const title = parseMissionTitle(input.title)
+      if (title === undefined) throw new MissionControlError("Mission title must be 1–60 characters", "invalid-input")
+      input.title = title
+    }
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${input.requestID}`, 24)}`
@@ -193,7 +199,7 @@ export class MissionControl {
     }
     if (existingEvent) {
       if (existingEvent.type !== "mission.created" || existingEvent.objective !== input.objective
-        || existingEvent.notes !== input.notes || existingEvent.template !== input.template || Boolean(existingEvent.prepared) !== Boolean(input.prepared)
+        || existingEvent.title !== input.title || existingEvent.notes !== input.notes || existingEvent.template !== input.template || Boolean(existingEvent.prepared) !== Boolean(input.prepared)
         || !sameMissionProfiles(existingEvent.profiles, input.profiles)
         || (existingEvent.taskMode ?? "native") !== input.taskMode
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
@@ -229,7 +235,7 @@ export class MissionControl {
         this.assertActive()
         coordinator = await this.options.sessions.create({
           id: sessionID,
-          title: `Mission coordinator: ${input.objective}`.slice(0, 160),
+          title: missionCoordinatorTitle(input.title, input.objective),
           location: this.options.project.location,
           metadata: this.metadata(missionID, "coordinator", { role: "coordinator" }),
           ...input.profiles?.coordinator,
@@ -260,6 +266,7 @@ export class MissionControl {
       missionID,
       projectID: this.options.project.id,
       projectCanonical: this.options.project.canonical,
+      ...(input.title === undefined ? {} : { title: input.title }),
       objective: input.objective,
       notes: input.notes,
       template: input.template,

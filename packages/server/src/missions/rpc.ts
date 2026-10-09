@@ -5,6 +5,7 @@ import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
 import { missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_MAX_EVENTS } from "./model"
+import { MISSION_TITLE_MAX } from "./mission-title"
 import { missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
@@ -59,6 +60,7 @@ const mission = {
     id: { type: "string" },
     projectID: { type: "string" },
     projectCanonical: { type: "string" },
+    title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
     objective: { type: "string" },
     notes: { type: "string" },
     template: { type: "string", enum: ["custom", "pocock-fix-bug", "wayfinder"] },
@@ -290,6 +292,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       input: {
         type: "object", properties: {
           requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
+          title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
           notes: { type: "string", maxLength: 20_000 },
           template: { type: "string", enum: ["custom", "wayfinder", "pocock-fix-bug"] },
           coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },

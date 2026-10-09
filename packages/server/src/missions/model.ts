@@ -159,6 +159,8 @@ export interface MissionMap {
   id: string
   projectID: string
   projectCanonical: string
+  /** Short creation label; absent for historical missions (UI derives one). */
+  title?: string
   objective: string
   notes?: string
   template: MissionTemplateId
@@ -235,6 +237,7 @@ interface MissionEventBase {
 export interface MissionCreatedEvent extends MissionEventBase {
   type: "mission.created"
   projectCanonical: string
+  title?: string
   objective: string
   notes?: string
   template: MissionTemplateId
@@ -805,6 +808,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     id: created.missionID,
     projectID: created.projectID,
     projectCanonical: created.projectCanonical,
+    ...(created.title === undefined ? {} : { title: created.title }),
     objective,
     notes,
     ...(briefing ? { briefing } : {}),

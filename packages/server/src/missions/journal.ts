@@ -23,6 +23,7 @@ import { parseExecutionMode } from "./task-execution-mode"
 import { hasInvalidReportNotificationHistory, parseNativeBinding, parseNativeCall } from "./native-report-provenance"
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { parseMissionProfiles, validateMissionProfiles } from "./playbook-profiles"
+import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
@@ -240,6 +241,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (!location || !text(input.coordinator.sessionID, MAX_SHORT_TEXT)
         || !text(input.coordinator.title, MAX_SHORT_TEXT)) return undefined
       if (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT)) return undefined
+      if (input.title !== undefined && parseMissionTitle(input.title) !== input.title) return undefined
       if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
       if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
       let profiles
@@ -249,6 +251,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         ...eventBase(input),
         type: "mission.created",
         projectCanonical: input.projectCanonical,
+        ...(input.title === undefined ? {} : { title: input.title as string }),
         objective: input.objective,
         notes: input.notes as string | undefined,
         template: input.template,
