@@ -106,6 +106,23 @@ test("touch tablets remember drawers per orientation; portrait opens closed", as
   } finally { await context.close() }
 })
 
+test("a drawer closed by rotation hands keyboard focus to its toggle", async () => {
+  // 1180×820 stays below the desktop breakpoint in both orientations, so only
+  // the rotation, not a layout-mode remount, closes the focused drawer.
+  const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, true, true)
+    await page.locator(".session-sidebar-container button").first().focus()
+    await page.setViewportSize({ width: 820, height: 1180 })
+    await waitForPinned(page, false, false)
+    await page.waitForFunction(() => document.activeElement?.closest(".session-header-drawer-toggle--left") !== null)
+  } finally { await context.close() }
+})
+
 test("pointer devices keep drawers open in a tall window", async () => {
   const page = await browser.newPage({ viewport: { width: 1366, height: 1024 } })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))

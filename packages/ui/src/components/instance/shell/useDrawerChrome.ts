@@ -71,19 +71,6 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   const startsInPortrait = options.orientation?.() === "portrait"
   const [leftOpen, setLeftOpen] = createSignal(startsInPortrait ? false : initialLayout.left)
   const [rightOpen, setRightOpen] = createSignal(startsInPortrait ? false : initialLayout.right)
-  if (options.orientation) {
-    // Started in portrait: landscape keeps drawers closed until the user opens
-    // them, so a rotated phone never gains overlays it did not ask for.
-    const rotate = createOrientationDrawerMemory(startsInPortrait ? { left: false, right: false } : initialLayout)
-    // Not deferred: a deferred `on` would not record the initial orientation.
-    createEffect(on(options.orientation, (next, previous) => {
-      if (!next || !previous || next === previous) return
-      const target = rotate(previous, next, { left: leftOpen(), right: rightOpen() })
-      setLeftOpen(target.left)
-      setRightOpen(target.right)
-      options.measureDrawerHost?.()
-    }))
-  }
   const embeddedDrawers = createMemo(() =>
     resolveEmbeddedDrawers({
       hostWidth: options.hostWidth(),
@@ -185,6 +172,33 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
       handled = true
     }
     return handled
+  }
+
+  if (options.orientation) {
+    // Started in portrait: landscape keeps drawers closed until the user opens
+    // them, so a rotated phone never gains overlays it did not ask for.
+    const rotate = createOrientationDrawerMemory(startsInPortrait ? { left: false, right: false } : initialLayout)
+    // A drawer closed by rotation hands focus to its toggle only if it held focus.
+    const applyRotation = (open: boolean, isOpen: boolean, setOpen: Setter<boolean>, content: HTMLElement | null, toggle: Accessor<HTMLElement | null>) => {
+      if (open || !isOpen) return void setOpen(open)
+      const focused = typeof document !== "undefined" ? document.activeElement : null
+      blurIfInside(content)
+      setOpen(false)
+      // Closing removed the focused control (the drawer header included): hand
+      // focus to the toggle, which renders only once its drawer is closed.
+      // Effect writes are batched, so resolve the toggle on the next frame.
+      if (focused && focused !== document.body && (!focused.isConnected || content?.contains(focused))) {
+        requestAnimationFrame(() => toggle()?.focus())
+      }
+    }
+    // Not deferred: a deferred `on` would not record the initial orientation.
+    createEffect(on(options.orientation, (next, previous) => {
+      if (!next || !previous || next === previous) return
+      const target = rotate(previous, next, { left: leftOpen(), right: rightOpen() })
+      applyRotation(target.left, leftOpen(), setLeftOpen, options.leftDrawerContentEl(), options.leftToggleButtonEl)
+      applyRotation(target.right, rightOpen(), setRightOpen, options.rightDrawerContentEl(), options.rightToggleButtonEl)
+      measureDrawerHost()
+    }))
   }
 
   onMount(() => {
