@@ -111,6 +111,7 @@ export const sessionMessages = {
   "sessionPreview.backToChat": "च्याटमा फर्कनुहोस्",
   "sessionPreview.close": "पूर्वावलोकन बन्द गर्नुहोस्",
   "sessionPreview.chat.button": "च्याटमा फर्कनुहोस्",
+  "sessionPreview.forward": "अगाडि",
   "sessionPreview.open.button": "वेब पूर्वावलोकन खोल्नुहोस्",
   "sessionPreview.open.title": "वेब पूर्वावलोकन खोल्नुहोस्",
   "sessionPreview.open.prompt": "यस सत्रमा पूर्वावलोकन गर्न विश्वासिलो स्थानीय वा स्टेजिंग URL प्रविष्ट गर्नुहोस्।",

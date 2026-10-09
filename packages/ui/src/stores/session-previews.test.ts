@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { parseStoredSessionPreviews, openSessionPreview, showSessionChat, showSessionPreview, getSessionPreview, closeSessionPreview } from "./session-previews"
+import { parseStoredSessionPreviews, openSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview } from "./session-previews"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
 import { serverApi } from "../lib/api-client"
 
@@ -19,14 +19,14 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async () => undefined as any
     try {
       const reader = { missionId: "mission", kind: "overview" as const }
-      await openSessionPreview("session", "https://example.com", "surface")
-      showSessionChat("surface")
+      const { storageKey } = await openSessionPreview("session", "https://example.com", "surface")
+      showSessionChatFor("session", "surface")
       updateMissionProjectView("surface", { reader })
       assert.equal(getSessionPreview("session", "surface")?.mode, "chat")
-      showSessionPreview("surface")
+      showSessionPreview(storageKey)
       assert.equal(missionProjectView("surface").reader, undefined)
       assert.equal(getSessionPreview("session", "surface")?.targetUrl, "https://example.com")
-      await closeSessionPreview("surface")
+      await closeSessionPreview(storageKey)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("a pending browser open cannot steal a later mission reader gesture", async () => {
@@ -37,7 +37,7 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
     try {
       const pending = openSessionPreview("session", "https://example.com", "race")
-      showSessionChat("race")
+      showSessionChatFor("session", "race")
       const reader = { missionId: "mission", kind: "overview" as const }
       updateMissionProjectView("race", { reader })
       resolve({ token: "stale", targetUrl: "https://example.com" })

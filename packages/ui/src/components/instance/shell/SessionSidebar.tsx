@@ -5,8 +5,7 @@ import type { DrawerViewState } from "./types"
 
 import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
-import ArrowBackIcon from "@suid/icons-material/ArrowBack"
-import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
+import { ArrowLeft, Info } from "lucide-solid"
 
 import SessionList from "../../session-list"
 import KeyboardHint from "../../keyboard-hint"
@@ -76,7 +75,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               aria-pressed={props.activeSessionId() === "info"}
               onClick={() => props.onSelectSession("info")}
             >
-              <InfoOutlinedIcon fontSize="small" />
+              <Info size={20} aria-hidden="true" />
             </IconButton>
             <IconButton
               size="small"
@@ -85,7 +84,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               title={props.t("instanceShell.leftDrawer.toggle.close")}
               onClick={props.onCloseLeftDrawer}
             >
-              <ArrowBackIcon fontSize="small" />
+              <ArrowLeft size={20} aria-hidden="true" />
             </IconButton>
           </div>
         </div>

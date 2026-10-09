@@ -1,24 +1,15 @@
 import type { PermissionRequest } from "../../types/permission"
 import { getPermissionCallId, getPermissionMessageId, getPermissionSessionId } from "../../types/permission"
-import type { Message, MessageInfo, ClientPart } from "../../types/message"
+import type { Message, MessageInfo } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
 import { canHydrateMessages } from "./message-hydration-authority"
-import type { MessageStatus, ReplaceMessageIdOptions, SessionRevertState } from "./types"
+import type { MessageStatus, SessionRevertState } from "./types"
 
 interface SessionMetadata {
   id: string
   title?: string
   parentId?: string | null
-}
-
-function resolveSessionMetadata(session?: Session | null): SessionMetadata | undefined {
-  if (!session) return undefined
-  return {
-    id: session.id,
-    title: session.title,
-    parentId: session.parentId ?? null,
-  }
 }
 
 function normalizeStatus(status: Message["status"]): MessageStatus {
@@ -77,66 +68,6 @@ export function seedSessionMessagesV2(
 
   store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values(), { preserveOmitted, confirmPending })
   return true
-}
-
-interface MessageInfoOptions {
-  status?: MessageStatus
-  bumpRevision?: boolean
-}
-
-export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null | undefined, options?: MessageInfoOptions): void {
-  if (!info || typeof info.id !== "string" || typeof info.sessionID !== "string") {
-    return
-  }
-  const store = messageStoreBus.getOrCreate(instanceId)
-  const timeInfo = (info.time ?? {}) as { created?: number; completed?: number }
-  const createdAt = typeof timeInfo.created === "number" ? timeInfo.created : Date.now()
-  const completedAt = typeof timeInfo.completed === "number" ? timeInfo.completed : undefined
-
-  store.upsertMessage({
-    id: info.id,
-    sessionId: info.sessionID,
-    role: info.role === "user" ? "user" : "assistant",
-    status: options?.status ?? "complete",
-    createdAt,
-    updatedAt: completedAt ?? createdAt,
-    bumpRevision: Boolean(options?.bumpRevision),
-  })
-  store.setMessageInfo(info.id, info)
-}
-
-export function applyPartUpdateV2(instanceId: string, part: ClientPart | null | undefined): void {
-  if (!part || typeof part.messageID !== "string") {
-    return
-  }
-  const store = messageStoreBus.getOrCreate(instanceId)
-  store.applyPartUpdate({
-    messageId: part.messageID,
-    part,
-  })
-}
-
-export function applyPartDeltaV2(
-  instanceId: string,
-  input: { messageId: string; partId: string; field: string; delta: string },
-): void {
-  if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
-    return
-  }
-  const store = messageStoreBus.getOrCreate(instanceId)
-  store.applyPartDelta({
-    messageId: input.messageId,
-    partId: input.partId,
-    field: input.field,
-    delta: input.delta,
-    bumpSessionRevision: true,
-  })
-}
-
-export function replaceMessageIdV2(instanceId: string, oldId: string, newId: string, options?: Omit<ReplaceMessageIdOptions, "oldId" | "newId">): void {
-  if (!oldId || !newId || oldId === newId) return
-  const store = messageStoreBus.getOrCreate(instanceId)
-  store.replaceMessageId({ oldId, newId, ...(options ?? {}) })
 }
 
 function extractPermissionMessageId(permission: PermissionRequest): string | undefined {
@@ -239,28 +170,6 @@ export function removeMessageV2(instanceId: string, messageId: string, sessionId
   if (!messageId) return
   const store = messageStoreBus.getOrCreate(instanceId)
   store.removeMessage(messageId, sessionId)
-}
-
-export function removeMessagePartV2(instanceId: string, messageId: string, partId: string, sessionId?: string): void {
-  if (!messageId || !partId) return
-  const store = messageStoreBus.getOrCreate(instanceId)
-  store.removeMessagePart(messageId, partId, sessionId)
-}
-
-export function ensureSessionMetadataV2(instanceId: string, session: Session | null | undefined): void {
-  if (!session) return
-  const store = messageStoreBus.getOrCreate(instanceId)
-  const existingMessageIds = store.getSessionMessageIds(session.id)
-  store.addOrUpdateSession({
-    id: session.id,
-    title: session.title,
-    parentId: session.parentId ?? null,
-    messageIds: existingMessageIds,
-  })
-}
-
-export function getSessionMetadataFromStore(session?: Session | null): SessionMetadata | undefined {
-  return resolveSessionMetadata(session ?? undefined)
 }
 
 export function setSessionRevertV2(instanceId: string, sessionId: string, revert?: SessionRevertState | null): void {

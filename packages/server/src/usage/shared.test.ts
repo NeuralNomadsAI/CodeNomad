@@ -15,7 +15,7 @@ test("reads the explicit OpenCode auth file without exposing credentials through
 
   try {
     assert.equal((readOpenCodeAuth().openai as Record<string, unknown>).access, "secret-token")
-    assert.equal(getCredential(["openai"], ["access"]), "secret-token")
+    assert.equal(getCredential(readOpenCodeAuth(), ["openai"], ["access"]), "secret-token")
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_AUTH_FILE
     else process.env.OPENCODE_AUTH_FILE = previous
@@ -33,7 +33,7 @@ test("does not fall through when the explicit OpenCode auth file is missing", ()
 
   try {
     assert.deepEqual(readOpenCodeAuth(), {})
-    assert.equal(getCredential(["openai"], ["access"]), null)
+    assert.equal(getCredential(readOpenCodeAuth(), ["openai"], ["access"]), null)
   } finally {
     if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
     else process.env.OPENCODE_AUTH_FILE = previousAuthFile
@@ -55,8 +55,8 @@ test("skips malformed aliases when reading credentials", () => {
   process.env.OPENCODE_AUTH_FILE = authFile
 
   try {
-    assert.equal(getOAuthEntry(["first", "second", "third"])?.access, "oauth-access")
-    assert.equal(getCredential(["missing", "first"], ["key"]), "api-key")
+    assert.equal(getOAuthEntry(readOpenCodeAuth(), ["first", "second", "third"])?.access, "oauth-access")
+    assert.equal(getCredential(readOpenCodeAuth(), ["missing", "first"], ["key"]), "api-key")
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_AUTH_FILE
     else process.env.OPENCODE_AUTH_FILE = previous

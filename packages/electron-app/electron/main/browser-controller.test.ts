@@ -58,6 +58,24 @@ function createHarness(requestOpen: (sessionID: string, url: string, requestID: 
 }
 
 describe("BrowserController", () => {
+  it("reads only bounded public history and refuses foreign or unsafe traversal", async () => {
+    const harness = createHarness()
+    const commands: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const { guest } = createGuest({ id: 98, owner: harness.owner, sendCommand: async (method, params) => {
+      commands.push({ method, params })
+      return { currentIndex: 1, entries: [{ id: 1, url: "about:blank", pageState: "secret" },
+        { id: 2, url: "https://example.com/", pageState: "secret" }, { id: 3, url: "https://user:secret@example.com/" }] }
+    } })
+    harness.add(guest, "history")
+    harness.controller.unregister(harness.owner, "history")
+    assert.throws(() => harness.controller.probe("session"), /No visible local browser target/)
+    assert.deepEqual(await harness.controller.history(harness.owner, 98), { entries: [{ id: 2, url: "https://example.com/" }], index: 0 })
+    await assert.rejects(harness.controller.history({ id: 2, isDestroyed: () => false } as WebContents, 98), /does not belong/)
+    await assert.rejects(harness.controller.history(harness.owner, 98, 3), /Invalid browser history entry/)
+    await assert.rejects(harness.controller.history(harness.owner, 98, 7), /Invalid browser history entry/)
+    await harness.controller.history(harness.owner, 98, 2)
+    assert.deepEqual(commands.at(-1), { method: "Page.navigateToHistoryEntry", params: { entryId: 2 } })
+  })
   it("preserves mobile overrides when automation times out and fences late protocol work", async () => {
     const harness = createHarness()
     let release!: () => void

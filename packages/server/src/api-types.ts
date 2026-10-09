@@ -579,6 +579,7 @@ export interface BinaryUpdateRequest {
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
 export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
 export const PENDING_RECONCILIATION_HEADER = "x-codenomad-pending-reconciliation" as const
+export const PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS = 30_000
 
 export interface BinaryValidationResult {
   valid: boolean

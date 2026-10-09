@@ -1,5 +1,5 @@
-import { ClientError } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
+import { isCredentialApiMissing } from "./native-credentials"
 import type { ProviderUsageResponse } from "../api-types"
 import type { ProviderUsage } from "./types"
 import { codexCredential } from "./codex-credential"
@@ -53,11 +53,7 @@ export function createNativeCodexUsage() {
       // Available in 2.0.20+. A missing endpoint is feature-local unavailability,
       // not a reason to raise the global minimum, read SQLite or try auth.json.
       const entries = await connection.client.credential.list({ signal }).catch(error => {
-        if (error instanceof ClientError && error.reason === "UnexpectedStatus"
-          && "cause" in error && typeof error.cause === "object" && error.cause !== null
-          && "status" in error.cause && error.cause.status === 404) {
-          unavailableReason = "native-credential-api-unavailable"
-        }
+        if (isCredentialApiMissing(error)) unavailableReason = "native-credential-api-unavailable"
         throw error
       })
       const entry = entries.find(entry => entry.id === selected.id && entry.integrationID === integrationID && entry.active)

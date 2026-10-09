@@ -19,7 +19,8 @@ export interface UsageProvider {
   id: string
   name: string
   aliases: readonly string[]
-  fetchQuota: () => Promise<ProviderResult>
+  /** `auth` holds each integration's selected credential in the legacy auth.json entry shape. */
+  fetchQuota: (auth: AuthFile) => Promise<ProviderResult>
 }
 
 export type AuthEntry = Record<string, unknown>

@@ -1,13 +1,14 @@
 import { createSignal, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
+import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
+  active?: boolean
   onInsertComment: (markdown: string) => void
 }
 
@@ -56,16 +57,20 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   }
 
   return (
-    <div class="window-shell flex h-full min-h-0 flex-col bg-surface">
+    <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
       <BrowserFrame
+        active={props.active}
         onClose={() => showSessionChat(props.preview.storageKey)}
         sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
         initialAddress={props.preview.targetUrl}
+        initialHistory={props.preview.history}
+        onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
+        onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.storageKey))}
+        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)
@@ -75,6 +80,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         commentBridge
         labels={{
           back: t("sidecars.back"),
+          forward: t("sessionPreview.forward"),
           refresh: t("sidecars.refresh"),
           path: t("sessionPreview.open.label"),
           invalidUrl: t("sessionPreview.open.invalidUrl"),

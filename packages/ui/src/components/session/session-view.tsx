@@ -31,7 +31,7 @@ import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
-import { messagesLoaded } from "../../stores/session-state"
+import { messagesLoaded, sessions } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
@@ -81,7 +81,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   })
   const { t } = useI18n()
   const { preferences } = useConfig()
-  const session = () => props.activeSessions.get(props.sessionId)
+  const session = () => props.activeSessions.get(props.sessionId) ?? sessions().get(props.instanceId)?.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
   const messagesLoadError = createMemo(() => getSessionMessagesLoadError(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -112,6 +112,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return target?.sessionId === props.sessionId ? target : null
   })
   createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
+  const centralPreview = () => props.isActive !== false && preview()?.mode === "preview" && !filePreview() && !readingMission()
   // The latest explicit reader selection owns the central surface. Opening one
   // must not leave the other mounted invisibly above it; editor drafts live in
   // their own store and the composer stays outside both readers.
@@ -634,13 +635,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     >
       <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
-        <div class="mission-transcript-surface">
+        <Show when={preview()}>
+          <SessionPreviewView
+            preview={preview()!}
+            active={centralPreview()}
+            onInsertComment={handleInsertPreviewComment}
+          />
+        </Show>
+        <Show when={props.isActive !== false}>
+        {/* The active web preview owns the central flex space; the transcript surface yields it. */}
+        <div class="mission-transcript-surface" style={{ display: centralPreview() ? "none" : undefined }}>
         <div class="mission-transcript-content" inert={readingMission()}
           style={{ visibility: readingMission() ? "hidden" : undefined }}>
         <Show when={filePreview()} fallback={
         <Show
-          when={preview()?.mode === "preview" && !readingMission()}
-          fallback={
+          when={preview()?.mode !== "preview" || readingMission()}
+        >
             <MessageSection
               timelineMount={timelineMount()}
               instanceId={props.instanceId}
@@ -674,12 +684,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onPendingPromptRemove={(item) => void manageQueuedPrompt(item, "remove")}
               onQuoteSelection={handleQuoteSelection}
             />
-          }
-        >
-          <SessionPreviewView
-            preview={preview()!}
-            onInsertComment={handleInsertPreviewComment}
-          />
         </Show>
         }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
 
@@ -731,6 +735,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           registerPromptInputApi={registerPromptInputApi}
         />
         <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
+        </Show>
       </div>
     </Show>
   )

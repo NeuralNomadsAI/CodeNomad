@@ -1,9 +1,11 @@
 # OpenCode V2 stable-runtime transition
 
-**Implementation:** PR #696, based on #695 and the client/plugin 2.0.11 alignment
-in #728. The first implementation was re-reviewed after the user challenged its
-arbitrary version floor and incomplete cleanup. Earlier test/review results below
-describe that earlier diff, not approval of its scope or the current correction.
+**Implementation provenance:** PR #696, based on #695 and the client/plugin 2.0.11
+alignment in #728. The corrected technical floor supersedes the initial version-only
+policy. Current recommendation and dependency pins are defined by
+[runtime support](../packages/server/src/opencode/runtime-support.ts), the
+[server](../packages/server/package.json), [UI](../packages/ui/package.json) and
+[pruning](../packages/server/src/opencode/session-pruning/package.json) manifests.
 
 ## Release contract
 
@@ -11,14 +13,14 @@ describe that earlier diff, not approval of its scope or the current correction.
   `session.step.started.data.started`; 2.0.7 introduces it. The pinned Solid
   reducer consumes that field directly for assistant-message creation times.
   Retiring the timestamp fallback therefore requires this native event contract.
-- **2.0.11 is recommended and release-tested**, independently of that minimum.
-  Being the latest publication or matching the client/plugin pin is not a
-  technical reason to reject 2.0.7–2.0.10.
+- **2.0.11 was the transition's recommended, release-tested target**, independently
+  of that minimum. The current recommendation is source-defined above; neither
+  the latest publication nor the client/plugin pin justifies rejecting 2.0.7–2.0.10.
 - Stable versions below 2.0.7 and historical `0.0.0-beta-*` publications are
   refused with a timestamp-contract explanation and HTTP 426. Unlisted versions,
   future majors and custom/prerelease labels are unverified rather than rejected
   by their label; they undergo authenticated bounded API recognition.
-- Client and plugin dependencies remain separately pinned at 2.0.11.
+- Client/plugin dependency pins are separate from runtime admission.
 - Authenticated daemon metadata, not an older selected discovery CLI, controls
   connection admission. Admission precedes functional requests and plugin
   provisioning. Replacement daemons are checked again, even at the same URL.
@@ -225,40 +227,32 @@ and pruning acceptance. CI adds first installation and old-seed migration at
 the fixed minimum and resolved latest stable on Windows, Linux and macOS ARM64.
 The existing cross-platform native pruning gate remains in place.
 
-### Earlier implementation evidence (through `4a77d162`)
+### Retained acceptance evidence
 
-These results predate the technical-floor correction and are retained as history:
+The earlier implementation through `4a77d162` and corrected acceptance at
+`781c3a42` establish these specific behaviors, not universal compatibility:
 
-| Check | Result |
-| --- | --- |
-| Complete final server suite | 621 passed, 2 skipped; no failures/cancellations. |
-| Final managed-setup/API regressions | 22 covered in the final server suite, including real manager reconnect/reload, cross-selection serialization and concurrent receipt publication. |
-| Setup browser regressions | 7 passed, including optional activation, explicit required restart, informed configuration reload and activation failure after successful installation. |
-| Server/UI TypeScript | Passed. |
-| Native old-seed migration | Both beta-19271 and 2.0.3 passed against 2.0.11 on Windows and Linux. |
-| No-system-Node install | Passed Windows with packaged Node 24.20.0 and Linux with isolated Node/npm; POSIX lifecycle shell stays available without a system Node on PATH. |
-| Feature gatekeeper | Three passes; five actionable findings corrected and regression-tested; final feature pass reports none. |
-| Acceptance/CI gatekeeper | Added whole-run/request deadlines, bounded child termination and cursor-cycle rejection; three failure-guard tests pass and re-review reports none. |
-| WSL path gatekeeper | Fixed stale overlapping-claim ownership and POSIX URL escaping; 19 path/install/lifecycle tests pass and re-review reports none. |
-| Explicit reload gatekeeper | Fixed cross-binary serialization at shared-service authority scope; 16 focused service/route/manager tests pass and re-review reports none. |
-| Real Windows→WSL | Native Linux/UNC, Windows mount and symlink-to-mount modes passed authenticated provisioning, heartbeat stability, explicit reload, restart and reconnect; all fixture daemons stopped. |
-| Native reload effects | Active synthetic-provider stream completed with one request/no replay and unchanged daemon PID; pending Form was cancelled and original Shell/PTY became unavailable. |
-| WSL fixture gatekeeper | Whole-run/request/cleanup bounds and immediate detached-consumer error handling are covered by seven guard regressions; final re-review reports none. |
-| Windows release hosts | Rebuilt Electron and Tauri passed actual missing installation, bundled-Node setup, 2.0.3 daemon preservation until explicit restart, 2.0.11 activation, pending-folder continuation, and explicit configuration reload. Captures inspected and artifact/resource hashes retained. |
-| Final discovery/desktop gatekeeper | Fresh WSL absence, alternate loopback, metadata translation and old-daemon detection are covered; 35 focused lifecycle tests pass. Independent final review reports no actionable findings and verifies the final artifact hashes/evidence. |
-| Remote CI at `419fe6a6` | All test jobs passed: full tests, runtime contracts, cross-platform installation/migration and native pruning, Windows/macOS Tauri. Distribution builds were still running at the single follow-up check; later changes require their own CI result. |
+- Native 2.0.7–2.0.10 and the 2.0.11 control passed authenticated schema/config discovery, plugin/RPC loading, Shell/environment replacement, two-session isolation, synthetic provider prompt/wait/context and stable PID.
+  Production environment, locations/worktrees/relay, pruning/proxy/rendered UI and automation passed at 2.0.7; environment/pruning also passed at 2.0.10, including real compaction and pre-compaction pruning.
+  Differing provider/model settings are not emitted by CodeNomad; the raw editor saves runtime-specific user text.
+- Windows and Linux/WSL beta-19271/2.0.3 migrations passed to 2.0.7 and 2.0.11 with the coverage above. Exact CLI archives/hashes and unchanged seed hashes were checked; no shared service or user storage was used.
+- Bundled-Node installation passed without system Node on Windows/Linux, retaining the POSIX lifecycle shell.
+  Both release hosts passed missing installation, optional activation, explicit incompatible-daemon restart, informed reload and activation failure after installation.
+  At `781c3a42`, installing 2.0.11 retained a 2.0.10 daemon's PID/version and resumed the folder without restart; 2.0.3 required explicit restart. Captures/hashes were inspected and isolated windows/services cleaned up.
+- Windows→WSL Linux/UNC, mounted and symlink-to-mount paths passed authenticated provisioning, heartbeats and reload/restart/reconnect.
+  Reload kept the PID and completed the synthetic stream once without replay, while cancelling the pending Form and making the original Shell/PTY unavailable.
+- Discovery covers absent WSL registration, forwarding failures, mounted/aliased metadata and `127.0.0.2`; configuration alone never proves a running process.
+  Regression fixes retain stale-selection/cross-backend downgrade fences, same-version Windows and concurrent receipt publication, non-disruptive reconnect, cross-binary service serialization, overlapping WSL claim ownership and POSIX URL escaping.
+  Fixtures enforce whole-run/request/cleanup bounds, child termination, cursor-cycle rejection and detached-consumer errors.
+- CLI parsing preserves custom labels/`+build`; unorderable versions never auto-update/downgrade. Clean builds and desktop fixtures exclude stale generated adapters/installers.
+  Body-portal recovery plus real-style pointer tests prevent the pending-folder overlay blocking setup reentry after dismissal.
+- `306c2ba4` brought #723 history/navigation and #732/#734 README changes. Native 2.0.7 passed 241-message
+  search/counts/batch cleanup, 1,501-message indexes, distant windows, exact payload/restoration, pruning,
+  compaction, concurrency, discovery and leases. The pack-outside-checkout regression verifies `navigation-scope.ts`, `outline-index.ts` and `outline-preview.ts` distribution. Existing APIs/storage justify no higher floor.
 
-Earlier remaining release result:
-
-- Green remote CI for the final pushed diff. Earlier test jobs at `419fe6a6`
-  passed across all configured platforms; that is not a substitute for the final
-  head's CI. No continuous CI monitoring is performed.
-
-The final discovery cross-check also covers a configured but absent WSL service,
-registered-service forwarding failures, mounted/aliased metadata access and valid
-non-default loopback addresses such as `127.0.0.2`. Registration absence and an
-existing registered daemon remain distinct; configuration alone is not evidence
-of a running process.
+Earlier CI test jobs at `419fe6a6` passed across configured platforms, but distribution
+builds were still running at the recorded check. Final-head remote CI was unconfirmed;
+historical local/native/packaged acceptance is not a substitute for the current head's CI.
 
 ### Reproduce desktop and WSL acceptance
 
@@ -275,109 +269,14 @@ node scripts/test-opencode-setup-wsl.mjs DISTRO ABSOLUTE_LINUX_CLI mounted
 node scripts/test-opencode-setup-wsl.mjs DISTRO ABSOLUTE_LINUX_CLI aliased reload-safety
 ```
 
-Final Windows desktop evidence directories (under the approved local temporary
-`opencode/` directory) are `codenomad-setup-desktop-O0ScgO` (old daemon/restart/folder),
-`codenomad-setup-desktop-FiVAai` (installation/reload), and
-`codenomad-setup-desktop-Vk2RV8` (installation/folder). Each contains `results.json`,
-artifact/resource hashes, per-host logs/API responses and screenshots. Final WSL
-discovery runs are `codenomad-wsl-setup-6RvOIs`, `codenomad-wsl-setup-CqxLn8` and
-`codenomad-wsl-setup-KSOQ1V`; the detailed reload characterization with final
-consumer-error handling is `codenomad-wsl-setup-9tivGc`.
-
-Autonomous gatekeeper review led to regression fixes for optional
-activation, stale-selection restart, cross-backend downgrade, same-version
-Windows publication, non-disruptive workspace reconnect, fixture timeout/error
-cleanup, WSL canonical path/ownership/URL handling, cross-selection service-action
-serialization and old-daemon/fresh-WSL discovery. Every reported actionable finding
-was corrected, revalidated and independently re-reviewed; the final pass is clear.
+Each desktop fixture emits `results.json`, artifact/resource hashes, per-host
+logs/API responses and screenshots in its isolated output directory. Retain those
+artifacts with the qualification PR/CI rather than documenting machine-local paths.
 
 Do not remove the remaining historical authority checks based solely on this
 synthetic seed. Keep the compatibility audit in
 [OPENCODE_V2_COMPATIBILITY.md](OPENCODE_V2_COMPATIBILITY.md) as historical evidence.
 
-## Decision history
+## Policy correction provenance
 
-- 2026-09-16: #695 established connection-scoped compatibility; #696 began as a
-  documentation-only retirement plan without selecting a floor.
-- 2026-09-20: stable V2 publication is established. The user requested the actual
-  implementation in #696. The plan-only status is superseded by the code above.
-- 2026-09-20 initial implementation: minimum/client/plugin baseline 2.0.11.
-  **The user rejected the minimum rationale and the assistant's attribution of
-  implementation choices to an agreed scope.** That version-only policy is superseded.
-- 2026-09-20 correction: the user accepts retiring older runtimes if a technical
-  reason is demonstrated. Minimum 2.0.7 follows the native step timestamp;
-  recommendation 2.0.11 remains separate. Complete the obsolete serializers'
-  retirement, keep current authority checks, and make optional updates non-blocking.
-
-## Correction evidence
-
-- Direct native checks on 2.0.7, 2.0.8, 2.0.9, 2.0.10 and 2.0.11 control:
-  13 scenarios each passed, covering authenticated schema, config discovery,
-  current plugin/RPC loading, real local shell/environment snapshot replacement,
-  two-session isolation, synthetic provider prompt/wait/context and stable PID.
-  Evidence: approved temporary `opencode/pr696-native-207-210/REPORT.md` and
-  `results-2.0.7_2.0.8_2.0.9_2.0.10_2.0.11.json`.
-- Corrected final server suite: 622 passed, 2 skipped; server/UI typechecks passed.
-- Production-boundary native suites passed on 2.0.7: session environment,
-  locations/worktrees/relay, full pruning/proxy with rendered UI, and automation.
-  Environment and full pruning/proxy also passed on 2.0.10. Both versions passed
-  real compaction and pruning of pre-compaction history. CodeNomad does not emit
-  the differing provider/model compaction-settings shapes; its raw config editor
-  saves user-authored runtime-specific text. Evidence: `pr696-native-207-210/ACCEPTANCE.md`.
-- Native 2.0.3→2.0.7 migration passed with 215-message histories, distinct old
-  identities, forks, provider configuration/connections and same-version Form
-  durability controls. Evidence: `codenomad-history-migration-IoFhtY`.
-- Native beta-19271→2.0.7 migration also passed on Windows; both beta-19271 and
-  2.0.3→2.0.7 passed under native Linux/WSL. Exact CLI archives were verified,
-  original seed hashes stayed unchanged, and isolated processes were cleaned up.
-  Evidence: `pr696-native-207-210/MIGRATION-MINIMUM207.md`.
-- Seven browser setup scenarios passed. Rendered captures distinguish minimum
-  2.0.7 from recommendation 2.0.11 and keep 2.0.10 usable with optional update.
-  Evidence: approved temporary `opencode/696-rigorous-browser/`.
-- CI now runs runtime qualification at the source-defined technical minimum and
-  latest, and migration targets read the same minimum rather than duplicating it.
-- The independent review found a real CLI-parser mismatch: custom labels were
-  lost and `+build` suffixes truncated. Production parsing and HTTP/updater tests
-  now preserve those labels, with no automatic update/downgrade for unorderable
-  versions. Re-review closed all source/docs/CI findings; a separate final review
-  also approved the compatible-daemon fixture and generated-output clean step.
-- Server builds clean generated `dist` before compilation; desktop acceptance
-  checks that deleted adapters/installers do not survive incremental packaging.
-- Rebuilt Tauri acceptance found a recovery-layer regression when opening a
-  folder: the loading overlay intercepted the persistent setup button after
-  dismissal. The recovery entry now mounts through a body portal. The real-style
-  browser regression uses normal pointer clicks with the folder overlay present;
-  all seven setup scenarios and UI typecheck passed after correction.
-- Final packaged acceptance passed on Electron and Tauri at `781c3a42`:
-  installing 2.0.11 retained the compatible 2.0.10 daemon with identical PID and
-  version, optional restart wording, and a ready resumed workspace. The retired
-  2.0.3 scenario passed with explicit restart. Both hosts passed recovery reentry
-  over the pending-folder overlay and absence of retired generated modules.
-  Final captures were inspected; all fixture windows/services were cleaned up.
-  Evidence: `pr696-native-207-210/DESKTOP-FINAL.md`,
-  `codenomad-setup-desktop-Z6gPDT` (compatible) and
-  `codenomad-setup-desktop-kr69SG` (retired).
-- Corrected local/native/packaged acceptance is complete. Final-head remote CI
-  remains a separate, unconfirmed result; it was not continuously polled.
-
-## Pre-merge refresh (2026-09-21)
-
-- Integrated `origin/dev` at `306c2ba4`: full-history search/global navigation
-  (#723) and README updates (#732/#734). The merge was conflict-free. The new
-  history/navigation RPC methods and routes coexist with setup/restart/reload;
-  current ownership and transactional pruning checks remain intact.
-- The incoming plugin manifest omitted `navigation-scope.ts`, `outline-index.ts`
-  and `outline-preview.ts`. Full server tests and independent review both found
-  the broken standalone package. Added all three to its distribution allowlist;
-  the pack-outside-checkout entrypoint regression now passes.
-- Refreshed server suite: **643 passed, 2 skipped**. Server/UI typechecks and
-  **29 browser tests** for setup, full-history search and global navigation pass.
-- **154 UI store/reducer tests** pass, including history, outline persistence,
-  session request authority, pruning pagination and restored client state.
-- The merged bundled plugin passes the native 2.0.7 suite with rendered UI:
-  241-message search/counts/batch cleanup and 1,501-message structural indexes,
-  distant windows, exact native payloads and restoration all pass. Existing
-  pruning, compaction, concurrency, discovery and lease checks pass as well.
-  Evidence: `696-merge-native207.log` and `codenomad-pruning-native-VD53eb`.
-- The new history features use existing runtime/plugin APIs and storage columns;
-  source review found no reason to raise the technical minimum above 2.0.7.
+#695 established connection-scoped compatibility on 2026-09-16. On 2026-09-20, #696's version-only 2.0.11 floor was rejected in favor of demonstrated dependencies, retained authority checks and non-blocking optional updates. The native timestamp establishes 2.0.7, not the publication/pin. CI qualification and migration read the source-defined minimum and resolved latest stable rather than duplicating a floor.

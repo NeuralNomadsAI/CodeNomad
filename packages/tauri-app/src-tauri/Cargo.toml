@@ -38,6 +38,7 @@ tauri = { version = "2.5.2", features = ["test"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "=0.38.2"
+windows-core = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

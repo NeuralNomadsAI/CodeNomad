@@ -10,7 +10,7 @@ import type { Session } from "../../../src/types/session"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/stores/session-api"
-import { openSessionPreview, showSessionChat, sessionPreviews } from "../../../src/stores/session-previews"
+import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -33,10 +33,12 @@ seedRestoredSessionSelection(id, "ses_initial", "ses_initial")
 setMessagesLoaded(previous => new Map(previous).set(id, new Set(initial.map(session => session.id))))
 await ensureWorktreesLoaded(id)
 await openSessionPreview("ses_initial", "https://example.invalid/", scope)
-showSessionChat(scope)
+showSessionChatFor("ses_initial", scope)
 
-const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: sessionPreviews().get(scope)?.mode ?? null,
-  previewSession: sessionPreviews().get(scope)?.sessionId, previewUrl: sessionPreviews().get(scope)?.targetUrl,
+// Previews are per conversation; follow the one opened for the initial conversation.
+const initialPreview = () => getSessionPreview("ses_initial", scope)
+const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: initialPreview()?.mode ?? null,
+  previewSession: initialPreview()?.sessionId, previewUrl: initialPreview()?.targetUrl,
   reader: missionProjectView(scope).reader ?? null })
 const history: ReturnType<typeof snapshot>[] = []
 function Fixture() {

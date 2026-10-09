@@ -296,6 +296,8 @@ pub fn setup_local_window(
     window_id: &str,
     persisted: bool,
 ) -> Result<(), String> {
+    #[cfg(windows)]
+    crate::windows_browser_accelerators::bind(window.as_ref());
     let client_state = app.state::<ClientState>();
     if !persisted {
         client_state.register_ephemeral_window(window_id.to_string());

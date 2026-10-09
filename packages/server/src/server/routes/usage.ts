@@ -3,6 +3,8 @@ import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { readLocationRef } from "../../opencode/compatibility/location"
 import { createNativeCodexUsage } from "../../usage/native-codex"
+import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
+import { readUsageCredentials } from "../../usage/native-credentials"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 
 const UsageParamsSchema = z.object({ providerId: z.string().trim().min(1) })
@@ -12,7 +14,21 @@ const UsageQuerySchema = z.object({
 }).strict()
 
 export interface UsageRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation"
+    | "getSessionEnvironment" | "getServiceWslDistro" | "getHostPathForServicePath">
+}
+
+// opencode-claude runs Claude Code inside the daemon, so its login lives on the
+// daemon host (possibly a WSL distro) under that host's environment.
+async function claudeCodeHost(manager: UsageRouteDeps["workspaceManager"], instanceId: string, signal: AbortSignal): Promise<ClaudeCodeHost> {
+  const environment = await manager.getSessionEnvironment(instanceId, signal)
+  const wsl = Boolean(manager.getServiceWslDistro(instanceId))
+  return {
+    environment,
+    pathStyle: wsl || process.platform !== "win32" ? "posix" : "win32",
+    keychain: !wsl && process.platform === "darwin",
+    toHostPath: servicePath => manager.getHostPathForServicePath(instanceId, servicePath),
+  }
 }
 
 export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) {
@@ -52,7 +68,13 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId })
+          const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
+          signal.throwIfAborted()
+          if (provider?.id === "claude-code") {
+            auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
+            signal.throwIfAborted()
+          }
+          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth })
           // Session movement, workspace eviction and reconnect fence publication too.
           const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
           const currentLocation = readLocationRef(current.location)

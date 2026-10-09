@@ -7,7 +7,8 @@ import { MissionDisclosure } from "./mission-disclosure"
 import { MissionListItem } from "./mission-list-item"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
-import { showSessionChat } from "../stores/session-previews"
+import { showSessionChatFor } from "../stores/session-previews"
+import { activeSessionId } from "../stores/sessions"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRecurrenceControlIntent, completedRecurrenceControl, completedRecurrenceManual, partialRecurrenceControl,
@@ -142,7 +143,7 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
   }
   const read = (id: string) => {
     const wasReading = reading(id)
-    showSessionChat(props.scope)
+    showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.scope)
     updateMissionProjectView(props.scope, { reader: wasReading ? undefined : { kind: "recurrence", missionId: id,
       instanceId: props.instanceId, projectID: props.projectID } })
     if (!wasReading) props.onRead?.()

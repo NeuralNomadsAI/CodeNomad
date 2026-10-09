@@ -40,12 +40,12 @@ function readAuthCandidate(): { auth: AuthFile; file: string } | null {
   return null
 }
 
+// Legacy V1 store, read only when the daemon lacks the native credential API.
 export function readOpenCodeAuth(): AuthFile {
   return readAuthCandidate()?.auth ?? {}
 }
 
-export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
-  const auth = readOpenCodeAuth()
+export function getAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
   for (const alias of aliases) {
     const value = auth[alias]
     if (typeof value === "string" && value.trim()) return { token: value.trim() }
@@ -54,8 +54,7 @@ export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
   return null
 }
 
-export function getOAuthEntry(aliases: readonly string[]): AuthEntry | null {
-  const auth = readOpenCodeAuth()
+export function getOAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
   for (const alias of aliases) {
     const value = auth[alias]
     if (value && typeof value === "object" && !Array.isArray(value) && (value as AuthEntry).type === "oauth") {
@@ -70,8 +69,7 @@ export function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-export function getCredential(aliases: readonly string[], fields: readonly string[]): string | null {
-  const auth = readOpenCodeAuth()
+export function getCredential(auth: AuthFile, aliases: readonly string[], fields: readonly string[]): string | null {
   for (const alias of aliases) {
     const raw = auth[alias]
     const entry = typeof raw === "string" && raw.trim()
@@ -126,6 +124,9 @@ export function toTimestamp(value: unknown): number | null {
   }
   return null
 }
+
+export const formatMoney = (value: number | null): string | null =>
+  value === null || !Number.isFinite(value) ? null : value.toFixed(2)
 
 export function toUsageWindow(input: {
   usedPercent: number | null

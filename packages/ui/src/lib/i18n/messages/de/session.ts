@@ -111,6 +111,7 @@ export const sessionMessages = {
   "sessionPreview.backToChat": "Zurück zum Chat",
   "sessionPreview.close": "Vorschau schließen",
   "sessionPreview.chat.button": "Zurück zum Chat",
+  "sessionPreview.forward": "Vorwärts",
   "sessionPreview.open.button": "Web-Vorschau öffnen",
   "sessionPreview.open.title": "Web-Vorschau öffnen",
   "sessionPreview.open.prompt": "Geben Sie eine vertrauenswürdige lokale oder Staging-URL für die Vorschau ein.",

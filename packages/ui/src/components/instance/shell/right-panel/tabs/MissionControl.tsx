@@ -8,7 +8,7 @@ import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-da
 import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
-import { sessionPreviews, showSessionChat } from "../../../../../stores/session-previews"
+import { getSessionPreview, showSessionChatFor } from "../../../../../stores/session-previews"
 import { forgetMissionView, missionDisclosureOpen, setMissionDisclosureOpen, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { MissionDisclosure } from "../../../../mission-disclosure"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
@@ -69,7 +69,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
 
   const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
-    preview: sessionPreviews().get(scope()), reader: missionProjectView(scope()).reader })
+    preview: getSessionPreview(props.activeSessionId() ?? "", scope()), reader: missionProjectView(scope()).reader })
   let conversationEpoch = 0, previousConversation = conversation()
   createComputed(() => {
     const next = conversation()
@@ -154,7 +154,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
     batch(() => {
       setActiveSessionFromList(origin.instanceId, sessionId)
-      showSessionChat(origin.scope)
+      showSessionChatFor(sessionId, origin.scope)
       updateMissionProjectView(origin.scope, { reader: undefined })
     })
      origin.adoptConversation()
@@ -175,7 +175,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const read = async (target: MissionReaderTarget) => {
     if (isReading(target)) {
       intent++
-      batch(() => { showSessionChat(scope()); updateMissionProjectView(scope(), { reader: undefined }) })
+      batch(() => { showSessionChatFor(props.activeSessionId() ?? "", scope()); updateMissionProjectView(scope(), { reader: undefined }) })
       return
     }
     const origin = navigationOrigin()
@@ -190,7 +190,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
     if (!origin.current()) return
     batch(() => {
-      showSessionChat(origin.scope)
+      showSessionChatFor(props.activeSessionId() ?? "", origin.scope)
       updateMissionProjectView(origin.scope, { reader: readerTarget(target) })
     })
     origin.adoptConversation()

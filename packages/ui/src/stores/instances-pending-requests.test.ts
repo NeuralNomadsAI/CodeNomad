@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { OpenCodeClient, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
+import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
 import {
@@ -100,6 +101,50 @@ test("partial and cold coverage only prune matching known locations; unknown que
     assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["failed", "unknown"])
     assert.deepEqual(h.calls, [])
   } finally { h.cleanup() }
+})
+
+test("loaded-only recovery outlives the old ten-second deadline but still times out and retains queues", async (t) => {
+  const h = harness()
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    addPermissionToQueue(h.id, permission("known"), h.directory)
+    addPendingForm(h.id, form("known"), h.directory)
+    const started = deferred<AbortSignal>()
+    serverApi.getPendingRequests = async (_id, _directories, signal) => new Promise((resolve, reject) => {
+      assert.ok(signal)
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+      started.resolve(signal)
+      setTimeout(() => resolve(snapshot(h.directory, [permission("known"), permission("recovered")], [form("known"), form("recovered")])), 19_000)
+    })
+    const syncing = syncPendingRequests(h.id)
+    const signal = await started.promise
+    t.mock.timers.tick(10_001)
+    assert.equal(signal.aborted, false, "a valid broker read must not be aborted at the old client deadline")
+    t.mock.timers.tick(8_999)
+    await syncing
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known", "recovered"])
+    assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["known", "recovered"])
+
+    const stalled = deferred<AbortSignal>()
+    serverApi.getPendingRequests = async (_id, _directories, nextSignal) => new Promise((_resolve, reject) => {
+      assert.ok(nextSignal)
+      nextSignal.addEventListener("abort", () => reject(nextSignal.reason), { once: true })
+      stalled.resolve(nextSignal)
+    })
+    const stalledSync = syncPendingRequests(h.id)
+    const rejected = assert.rejects(stalledSync)
+    const stalledSignal = await stalled.promise
+    t.mock.timers.tick(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
+    assert.equal(stalledSignal.aborted, false)
+    t.mock.timers.tick(5_000)
+    await rejected
+    assert.equal(stalledSignal.aborted, true)
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known", "recovered"])
+    assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["known", "recovered"])
+    assert.deepEqual(h.calls, [], "a slow or unavailable broker never falls back to ordinary pending lists")
+  } finally { h.cleanup(); t.mock.timers.reset() }
 })
 
 test("obsolete history can be excluded while valid idle subdirectories still recover questions and permissions", async () => {

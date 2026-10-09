@@ -17,10 +17,6 @@ it("releases transcript payloads and owned indexes, preserving siblings and the 
       time: { created: 1, completed: 2 },
       tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
     } as any)
-    store.bufferPendingPart({
-      messageId: `pending-${sessionId}`, sessionId,
-      part: { id: "part", type: "text", text: "pending" } as any, receivedAt: Date.now(),
-    })
     store.setScrollSnapshot(sessionId, "message-stream", {
       scrollTop: 42, atBottom: false, windowIsLatest: false, windowCursor: "older", newerCursors: [null],
     })
@@ -47,14 +43,12 @@ it("releases transcript payloads and owned indexes, preserving siblings and the 
     assert.equal(store.state.usage.target, undefined)
     assert.equal(store.state.sessionRevisions.target, undefined)
     assert.equal(store.state.lastAssistantMessageIds.target, undefined)
-    assert.equal(store.state.pendingParts["pending-target"], undefined)
     assert.equal(store.state.permissions.byMessage.target, undefined)
     assert.equal(store.state.permissions.byMessage.__global__, undefined)
     assert.deepEqual(store.state.permissions.queue.map(entry => entry.permission.id), ["permission-sibling"])
     assert.equal(store.state.permissions.active?.permission.id, "permission-sibling")
     assert.equal(store.getScrollSnapshot("target", "message-stream"), snapshot)
     assert.equal(await store.estimateSessionRetainedBytes("target"), 0)
-    assert.ok(store.state.pendingParts["pending-sibling"])
     assert.ok(await store.estimateSessionRetainedBytes("sibling") > 1024 * 1024)
     assert.deepEqual(cleared, ["target"])
 

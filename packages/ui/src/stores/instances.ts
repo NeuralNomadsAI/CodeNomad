@@ -8,7 +8,7 @@ import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry, WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
-import { PENDING_RECONCILIATION_HEADER } from "../../../server/src/api-types"
+import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
@@ -347,7 +347,7 @@ function observePendingCompaction(instanceId: string, event: Parameters<NonNulla
   } else resumePendingDiscovery()
 }
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000): Promise<T> {
   const controller = new AbortController()
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
@@ -356,7 +356,7 @@ async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: Ab
     const timed = async () => {
       // Check after background queue admission, immediately before dispatch.
       if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
-      const timeout = setTimeout(() => controller.abort(), 10_000)
+      const timeout = setTimeout(() => controller.abort(), timeoutMs)
       try { return await run(controller.signal) }
       finally { clearTimeout(timeout) }
     }
@@ -758,7 +758,9 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     const optional = batch.filter((directory) => !required.has(normalizeWorkspacePath(directory)))
     offset = end
     try {
-      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional))
+      // Directory/Git authorization has a longer broker budget than native queue
+      // reads. Let it finish, with a small transport margin, before aborting.
+      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
       const currentRequired = requiredDirectories()

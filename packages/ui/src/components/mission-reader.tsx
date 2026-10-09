@@ -3,7 +3,7 @@ import { X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
-import { showSessionChat } from "../stores/session-previews"
+import { getSessionPreview, showSessionChatFor } from "../stores/session-previews"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
 import { MissionTaskReader } from "./mission-task-reader"
@@ -12,7 +12,6 @@ import { createMissionViewFence } from "../lib/mission-view-fence"
 import { instances } from "../stores/instances"
 import { activeSessionId, activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
-import { sessionPreviews } from "../stores/session-previews"
 import { missionIncludesSession } from "./mission-attention-model"
 import { missionTaskConversation } from "./mission-task-navigation"
 import { missionReports, missionReportIsPrevious, missionTaskReport, missionProgress } from "./mission-progress-model"
@@ -129,7 +128,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
     instances().get(props.instanceId)?.metadata?.project?.id, missionStore.state(props.instanceId).projectID,
-    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), sessionPreviews().get(props.scope),
+    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), getSessionPreview(activeSessionId().get(props.instanceId) ?? "", props.scope),
   ]), () => Boolean(target()))
   let navigationIntent = 0
   const openActor = async (sessionId: string) => {
@@ -157,7 +156,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
     batch(() => {
       setActiveSessionFromList(instanceId, sessionId)
-      showSessionChat(scope)
+      showSessionChatFor(sessionId, scope)
       updateMissionProjectView(scope, { reader: undefined })
     })
   }
@@ -232,7 +231,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     closeButton?.focus()
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
-  const close = () => { showSessionChat(props.scope); updateMissionProjectView(props.scope, { reader: undefined }) }
+  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.scope); updateMissionProjectView(props.scope, { reader: undefined }) }
    return <section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">

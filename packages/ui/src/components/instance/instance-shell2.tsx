@@ -56,9 +56,9 @@ import { showAlertDialog } from "../../stores/alerts"
 import {
   DEFAULT_PREVIEW_URL,
   getSessionPreview,
+  getPreviewSessionIds,
   openSessionPreview,
   restoreSessionPreview,
-  sessionPreviews,
   showSessionChat,
   showSessionPreview,
 } from "../../stores/session-previews"
@@ -434,12 +434,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
   })
 
-  createEffect(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info" || sessionPreviews().has(props.instance.folder)) return
-    void restoreSessionPreview(sessionId, props.instance.folder).catch((error) => log.warn("Failed to restore web preview", { sessionId, error }))
-  })
-
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
     setSessionPromptApis((current) => ({
       ...current,
@@ -457,7 +451,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!sessionId || sessionId === "info") return
     try {
       const restored = await restoreSessionPreview(sessionId, props.instance.folder)
-      if (restored) showSessionPreview(props.instance.folder)
+      if (restored) showSessionPreview(restored.storageKey)
       else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
     } catch (error) {
       showAlertDialog(t("sessionPreview.open.title"), {
@@ -474,12 +468,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const preview = activeSessionPreview()
     if (preview?.mode === "preview") {
-      showSessionChat(props.instance.folder)
+      showSessionChat(preview.storageKey)
       return
     }
 
     if (preview) {
-      showSessionPreview(props.instance.folder)
+      showSessionPreview(preview.storageKey)
       return
     }
     void handleOpenPreview()
@@ -703,6 +697,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessionId: activeSessionIdForInstance,
     isActiveInstance: () => Boolean(props.isActiveInstance),
   })
+
+  // Keep only explicitly opened browser shells; inactive transcripts/composers
+  // still unmount and remain subject to the existing transcript memory budget.
+  const mountedSessionIds = createMemo<string[]>((previous) => {
+    const wanted = new Set([
+      ...getPreviewSessionIds(props.instance.folder).filter((id) => allInstanceSessions().has(id)),
+      ...cachedSessionIds(),
+    ])
+    // Reordering an Electron webview in the DOM can recreate its guest.
+    return [...previous.filter((id) => wanted.delete(id)), ...wanted]
+  }, [])
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
 
@@ -1181,9 +1186,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           <Show
             when={showingInfoView()}
             fallback={
-              <Show
-                when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
-                fallback={
+              <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
                       <MessageSection
@@ -1252,47 +1255,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     />
                   </div>
                   </Show>
-                }
-              >
-                <For each={cachedSessionIds()}>
-                  {(sessionId) => {
-                    const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
-                    return (
-                      <div
-                        class="session-cache-pane flex flex-col flex-1 min-h-0"
-                        style={{ display: isActive() ? "flex" : "none" }}
-                        data-session-id={sessionId}
-                        data-instance-id={props.instance.id}
-                        data-session-active={isActive() ? "true" : "false"}
-                        aria-hidden={!isActive()}
-                      >
-                        <Show when={isActive()}>
-                          <SessionView
-                            interruptionPanel={interruptionPanel}
-                            interruptionExpanded={interruptionExpanded()}
-                            sessionId={sessionId}
-                            activeSessions={activeSessions()}
-                            instanceId={props.instance.id}
-                            instanceFolder={props.instance.folder}
-                            escapeInDebounce={props.escapeInDebounce}
-                            isPhoneLayout={isPhoneLayout()}
-                            focusConversationOnActivate={focusConversationSessionId() === sessionId}
-                            onConversationFocusHandled={() => {
-                              if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
-                            }}
-                            registerSessionPromptApi={registerSessionPromptApi}
-                            showSidebarToggle={showEmbeddedSidebarToggle()}
-                            onSidebarToggle={() => setLeftOpen(true)}
-                            forceCompactStatusLayout={showEmbeddedSidebarToggle()}
-                            isActive={isActive()}
-                            onAgentChange={(agent) => props.handleSidebarAgentChange(sessionId, agent)}
-                            onModelChange={(model) => props.handleSidebarModelChange(sessionId, model)}
-                          />
-                        </Show>
-                      </div>
-                    )
-                  }}
-                </For>
               </Show>
             }
           >
@@ -1305,6 +1267,43 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
             </div>
           </Show>
+          <For each={mountedSessionIds()}>
+            {(sessionId) => {
+              const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
+              return (
+                <div
+                  class="session-cache-pane flex flex-col flex-1 min-h-0"
+                  style={{ display: isActive() ? "flex" : "none" }}
+                  data-session-id={sessionId}
+                  data-instance-id={props.instance.id}
+                  data-session-active={isActive() ? "true" : "false"}
+                  aria-hidden={!isActive()}
+                >
+                  <SessionView
+                    interruptionPanel={interruptionPanel}
+                    interruptionExpanded={interruptionExpanded()}
+                    sessionId={sessionId}
+                    activeSessions={activeSessions()}
+                    instanceId={props.instance.id}
+                    instanceFolder={props.instance.folder}
+                    escapeInDebounce={props.escapeInDebounce}
+                    isPhoneLayout={isPhoneLayout()}
+                    focusConversationOnActivate={focusConversationSessionId() === sessionId}
+                    onConversationFocusHandled={() => {
+                      if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
+                    }}
+                    registerSessionPromptApi={registerSessionPromptApi}
+                    showSidebarToggle={showEmbeddedSidebarToggle()}
+                    onSidebarToggle={() => setLeftOpen(true)}
+                    forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                    isActive={isActive()}
+                    onAgentChange={(agent) => props.handleSidebarAgentChange(sessionId, agent)}
+                    onModelChange={(model) => props.handleSidebarModelChange(sessionId, model)}
+                  />
+                </div>
+              )
+            }}
+          </For>
         </Box>
       </Box>
 
