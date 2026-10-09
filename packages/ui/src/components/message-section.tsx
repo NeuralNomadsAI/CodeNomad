@@ -21,7 +21,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryMessagePreview from "./history-message-preview"
@@ -151,7 +151,8 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
       if (record.role === "user") return [null]
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map<TechnicalCleanupTranscriptItem[]>((part) => {
         const partId = typeof part.id === "string" ? part.id : ""
         if (!partId) return []
         if (part.type === "tool" || part.type === "reasoning") {
@@ -162,6 +163,9 @@ export default function MessageSection(props: MessageSectionProps) {
         }
         return []
       })
+      // Omitted parts may hold boundaries: never select a cleanup run across them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
@@ -195,7 +199,8 @@ export default function MessageSection(props: MessageSectionProps) {
       const completed = record.status === "complete" || record.status === "error"
       const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
       const messageInfo = resolvedStore.getMessageInfo(messageId)
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map((part) => {
         if (part.type === "step-finish") {
           return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
         }
@@ -218,6 +223,9 @@ export default function MessageSection(props: MessageSectionProps) {
           revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
         }]
       })
+      // Technical groups never span omitted parts; the gap renders between them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)
   })
@@ -226,7 +234,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const displayPartIds = getRecordDisplayPartIds(record)
+    const displayPartIds = getRecordDisplayPartIds(props.instanceId, record)
     const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
@@ -322,12 +330,14 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; revealed: number; signature: string; segments: TimelineSegment[] }>()
   const residentTimelineSegments = createMemo(() => {
     sessionRevision()
     const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
+    // Revealing omitted parts changes the rendered window without a record revision.
+    const revealedByMessage = new Map(ids.map((messageId) => [messageId, getRevealedRecordParts(props.instanceId, messageId)]))
 
     return untrack(() => {
       const activeIds = new Set(ids)
@@ -335,16 +345,17 @@ export default function MessageSection(props: MessageSectionProps) {
       for (const messageId of ids) {
         const record = resolvedStore.getMessage(messageId)
         if (!record) continue
+        const revealed = revealedByMessage.get(messageId) ?? 0
         const cached = timelineSegmentCache.get(messageId)
-        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale && cached.revealed === revealed) {
           segments.push(...cached.segments)
           continue
         }
         const signature = getTimelineRecordSignature(record)
-        const current = cached?.signature === signature && cached.locale === activeLocale
+        const current = cached?.signature === signature && cached.locale === activeLocale && cached.revealed === revealed
           ? cached.segments
           : buildTimelineSegments(props.instanceId, record, t)
-        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, revealed, signature, segments: current })
         segments.push(...current)
       }
       for (const messageId of timelineSegmentCache.keys()) {
@@ -1394,6 +1405,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
+              alignRevealedParts={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
             <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
             </>
