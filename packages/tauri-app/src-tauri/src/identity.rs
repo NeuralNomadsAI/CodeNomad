@@ -149,7 +149,7 @@ pub(crate) fn normalize_config_identity(raw: Option<&str>, cwd: &Path, home: &Pa
     }
 }
 
-fn electron_user_data_base(home: &Path) -> PathBuf {
+pub(crate) fn electron_user_data_base(home: &Path) -> PathBuf {
     if cfg!(windows) {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)

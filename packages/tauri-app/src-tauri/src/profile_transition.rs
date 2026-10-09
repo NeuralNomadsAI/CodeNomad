@@ -214,6 +214,13 @@ fn try_write_choice(directory: &Path, config_identity: &str, key: &str) -> Resul
         return Ok(false);
     }
     choices.insert(id, Value::String(profile_display_name(key).to_string()));
+    write_choices_file(directory, choices)
+        .map(|_| true)
+        .map_err(|error| format!("failed to remember the profile choice: {error}"))
+}
+
+/// Atomic replacement: exclusive temporary file, fsync, rename.
+fn write_choices_file(directory: &Path, choices: Map<String, Value>) -> Result<(), String> {
     let content =
         serde_json::to_vec_pretty(&json!({ "version": CHOICES_VERSION, "choices": choices }))
             .map_err(|error| error.to_string())?;
@@ -234,9 +241,57 @@ fn try_write_choice(directory: &Path, config_identity: &str, key: &str) -> Resul
         fs::rename(&temporary, directory.join(CHOICES_FILENAME))
     })();
     let _ = fs::remove_file(&temporary);
-    result
-        .map(|_| true)
-        .map_err(|error| format!("failed to remember the profile choice: {error}"))
+    result.map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ForgetOutcome {
+    Updated,
+    Unchanged,
+    Busy,
+    Failed,
+}
+
+/// Drops remembered choices that name deleted profiles, under the selection lock. A held lock
+/// (a launch is choosing right now) leaves the file untouched; a newer or corrupt file is never
+/// rewritten. The next launch for an affected config then runs the transition again. Mirrors
+/// Electron's `forgetChoices`.
+pub(crate) fn forget_choices(directory: &Path, names: &[String], now: SystemTime) -> ForgetOutcome {
+    if names.is_empty() || !directory.join(CHOICES_FILENAME).exists() {
+        return ForgetOutcome::Unchanged;
+    }
+    let lock = match SelectionLock::try_acquire(directory, now) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return ForgetOutcome::Busy,
+        Err(_) => return ForgetOutcome::Failed,
+    };
+    let ChoicesFile::Valid(choices) = read_choices(directory) else {
+        lock.release();
+        return ForgetOutcome::Unchanged;
+    };
+    let kept: Map<String, Value> = choices
+        .iter()
+        .filter(|(_, name)| {
+            !names
+                .iter()
+                .any(|forgotten| name.as_str() == Some(forgotten))
+        })
+        .map(|(key, name)| (key.clone(), name.clone()))
+        .collect();
+    let outcome = if kept.len() == choices.len() {
+        ForgetOutcome::Unchanged
+    } else {
+        match write_choices_file(directory, kept) {
+            Ok(()) => ForgetOutcome::Updated,
+            Err(error) => {
+                eprintln!("[profile-transition] failed to forget deleted profile choices: {error}");
+                ForgetOutcome::Failed
+            }
+        }
+    };
+    lock.release();
+    outcome
 }
 
 /// Cross-process selection lock: exclusive create, kept alive by heartbeats, stolen only when stale.

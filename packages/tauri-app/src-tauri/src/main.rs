@@ -6,6 +6,7 @@ mod cert_manager;
 mod cli_manager;
 mod client_state;
 mod data_profile;
+mod data_profile_cleanup;
 mod developer_mode;
 mod identity;
 mod launch;
@@ -1833,6 +1834,20 @@ fn main() {
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
+        .manage(data_profile_cleanup::CleanupContext::new(
+            data_profile_cleanup::ProfileRoots {
+                electron_base: identity::electron_user_data_base(&home),
+                webview_root: local_data.join(format!("{}-v2", identity::STABLE_IDENTIFIER)),
+                tauri_data_parent: dirs::data_dir().unwrap_or_else(|| home.clone()),
+                home_client_state: client_state::home_client_state_directory()
+                    .unwrap_or_else(|| home.join(".codenomad").join("client-state")),
+            },
+            data_profile_cleanup::CurrentProfile {
+                key: scope.profile.clone(),
+                config_identity: scope.config_identity.clone(),
+                default_identity: identity::normalize_config_identity(None, &cwd, &home),
+            },
+        ))
         .manage(AppState {
             manager: CliProcessManager::new(),
             developer_mode,
@@ -1961,6 +1976,8 @@ fn main() {
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
             client_state::client_state_startup_command_result,
+            data_profile_cleanup::data_profiles_list_others,
+            data_profile_cleanup::data_profiles_delete_others,
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,

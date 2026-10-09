@@ -30,6 +30,16 @@ pub(crate) use startup_command::{
     StartupStateSnapshot,
 };
 pub(crate) use restorable::{default_state_files, restorable_state_modified};
+pub(crate) use cross_host::pid_is_alive;
+
+/// `~/.codenomad/client-state`: the default profile's shared state (`v2/`) and its legacy file.
+pub(crate) fn home_client_state_directory() -> Option<PathBuf> {
+    cross_host::state_path()
+        .ok()?
+        .parent()?
+        .parent()
+        .map(Path::to_path_buf)
+}
 pub(crate) use navigation::{
     before_window_navigation, before_window_navigation_if, NavigationKind,
 };

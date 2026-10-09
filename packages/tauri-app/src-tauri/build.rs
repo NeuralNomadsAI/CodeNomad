@@ -74,6 +74,8 @@ fn main() {
             "client_state_renderer_flushed",
             "client_state_navigation_flushed",
             "client_state_startup_command_result",
+            "data_profiles_list_others",
+            "data_profiles_delete_others",
             "desktop_launch_ready",
             "desktop_launch_next_folder",
             "desktop_launch_acknowledge_folder",

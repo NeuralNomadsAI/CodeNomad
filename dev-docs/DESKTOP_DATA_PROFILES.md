@@ -47,7 +47,7 @@ Before this change, packaged builds picked `dev` or `dev-v2` from their version 
 
 Remembering is best effort. If the selection folder, the lock or `choices.json` cannot be written (antivirus EPERM/EBUSY, full disk, read-only `%APPDATA%`), the launch still starts with the detected profile and the transition simply runs again next time; an answered question still applies to that launch. Without a usable lock, concurrent first launches are not serialized and may each ask.
 
-Nothing is moved, copied, merged, renamed or deleted. Other profiles stay on disk.
+The transition never moves, copies, merges, renames or deletes anything. Other profiles stay on disk until the user deletes them (see below).
 
 Concurrent first launches serialize on `profile-selection/choices.lock` (exclusive create, 2 s heartbeat, taken over after 15 s without one): only the holder detects and asks, others wait and reuse its answer. Known, accepted race: taking over a stale lock moves it aside and restores it if it turns out to be fresh; if a third launcher creates a new lock in between, the restore fails and two launches may both ask. The first remembered answer wins; the other applies only to its own launch.
 
@@ -55,10 +55,34 @@ Electron fixes Chromium storage and the singleton before `ready`, so when it mus
 
 Dismissing the question: with one or two candidates the dialog has a Quit button. With three candidates (default, `dev`, `dev-v2` all with state) there are three profile buttons and no Quit button, because rfd offers at most three custom buttons. On Windows and Linux (GTK), closing the dialog quits without remembering. On macOS the Tauri dialog (an `NSAlert`) has no close button or Escape action in that case, so the user must pick a profile; picking is harmless because nothing is moved and the others stay reachable with `CODENOMAD_PROFILE`. Electron passes an out-of-range `cancelId` so Escape quits; its macOS behaviour is unverified.
 
+## Deleting other saved profiles
+
+A profile is only saved desktop state, so Settings → General → Startup offers to delete the others. The row "Other saved profiles: N profiles, X — Delete…" appears below the restore settings only when at least one other profile exists on this machine; a normal user with only the default profile never sees it. It works in main windows and in the desktop Preferences window, and is hidden in a plain browser and in remote windows. "Clear saved state" is unchanged and only affects the current window.
+
+**Which profiles.** Every data profile on this machine except the open one: each `scopes/<key>-<hash>` folder under Electron's userData base or the Tauri WebView root (any config identity, including legacy-alias keys; profiles of another config are labelled "other configuration"), the default profile when the open one is scoped (named, or the default profile of a non-default config), and Tauri lock folders `ai.neuralnomads.codenomad.client.scope.s<hash>` whose hash matches no scope folder (shown as unused lock folders). The listing is computed when the card mounts or on explicit refresh, never polled, read-only, reading at most 10 000 names and keeping at most 512 profiles per root, with a size walk of at most 20 000 entries and depth 32 per profile (the size is then shown as "at least X").
+
+**What is deleted.**
+
+| Profile | Removed | Never touched |
+|---|---|---|
+| Named scope | `<appData>/CodeNomad/scopes/<scope>` (Electron data and both hosts' client state), `<localData>/ai.neuralnomads.codenomad.client-v2/scopes/<scope>` (WebView), `<dataDir>/ai.neuralnomads.codenomad.client.scope.s<hash>` (Tauri locks) | other scopes, `scopes/` itself, `profile-selection/` |
+| Default | Electron `developer-mode-browser-v2/` and legacy `client-state.json` in `<appData>/CodeNomad`; `~/.codenomad/client-state/v2/client-state.json` and `v2/partitions/`; legacy `~/.codenomad/client-state/client-state.json`; WebView `developer-mode/`, `local/`, `remote/`, `browser/` in `client-v2`; legacy Tauri `client-state.json` | `scopes/`, `profile-selection/`, the election folders, lock/marker files; any other entry is kept and reported as not recognized |
+| Unused lock folder | the folder | — |
+
+The default profile's folders are parents of other roots, so they are never removed recursively: only the children above, which the host code creates, are deleted. Every target must be a plain direct child of a link-free root with the planned name; symlinks and junctions are neither listed nor followed, and removal never traverses them.
+
+**In use.** A profile can be open in either host, so both hosts check the same evidence: Electron running markers and primary/registration locks, Chromium's singleton (`lockfile`, or `SingletonLock` with a live PID), the cross-host client-state election (owner and participants), Tauri running markers and WebView2 `EBWebView/lockfile`. A live PID counts as in use even if it was reused; an unreadable marker or lock means "state unknown". In-use and unknown profiles are listed but skipped. The host rechecks immediately before removing each folder and stops at the first sign of activity; locked files make removal fail rather than succeed partially in silence. The result lists, per profile, deleted / in use / unknown / no longer found / incomplete with the exact paths that remain, and the row refreshes.
+
+**Remembered choices.** After deleting a named profile, entries in `profile-selection/choices.json` naming it are removed only when no folder of that profile remains for any configuration (the choices key cannot be mapped back to a scope). The update takes the selection lock; if a launch currently holds it, or the file is corrupt or newer, nothing is rewritten. Choices naming `default` are never removed.
+
+**Contract.** Two host operations (Electron IPC `data-profiles:listOthers` / `data-profiles:deleteOthers`, Tauri commands `data_profiles_list_others` / `data_profiles_delete_others`, granted to local windows and Preferences only). The renderer sends only IDs from a listing (`default`, `scope:<scope>`, `orphan:<hash>`); the host re-enumerates, re-validates and rechecks activity before deleting and never accepts paths. Operations are serialized per host process. Implementation: Electron `data-profile-cleanup.ts`, Tauri `data_profile_cleanup.rs`, UI `components/settings/other-profiles-settings-row.tsx` over `lib/native/data-profiles.ts`.
+
+Known limits: the Tauri singleton itself is not file-based; a Tauri instance is detected through the running marker it creates while starting, and its WebView2 locks. A profile opened between the last check and a removal is caught only by the operating system's file locks.
+
 ## Validation
 
-- Electron: `data-profile.test.ts`, `profile-transition.test.ts` (including unwritable choices/lock and question-folder sweep), `startup.test.ts`.
-- Tauri: `data_profile`, `profile_transition`, `profile_selection_dialog`, `client_state::restorable`, `identity` tests.
-- UI: `tests/browser/server-info.test.ts` (Data profile row).
+- Electron: `data-profile.test.ts`, `profile-transition.test.ts` (including unwritable choices/lock and question-folder sweep), `startup.test.ts`, `data-profile-cleanup.test.ts`, `data-profile-cleanup-ipc.test.ts`.
+- Tauri: `data_profile`, `profile_transition`, `profile_selection_dialog`, `client_state::restorable`, `identity`, `data_profile_cleanup` tests.
+- UI: `tests/browser/server-info.test.ts` (Data profile row), `tests/browser/other-profiles.test.ts` (other profiles row in Preferences and inline).
 
-The real native dialogs (Electron relaunch flow, rfd on Windows/macOS/Linux) are not covered by automated tests.
+The real native dialogs (Electron relaunch flow, rfd on Windows/macOS/Linux) are not covered by automated tests. Profile deletion is tested against temporary roots, not against a running second host.

@@ -27,7 +27,7 @@ import { CliProcessManager } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, PROFILE_ENVIRONMENT, profileDisplayName } from "./data-profile"
 import { LOCK_HEARTBEAT_MS } from "./profile-transition"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
@@ -35,6 +35,8 @@ import { SELECTION_CLEANUP_ENVIRONMENT, SELECTION_TEMP_PREFIX, sweepSelectionFol
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import { forwardOpenerStartupState, runStartupStateCommandInWindow } from "./opener-startup-state"
+import { resolveProfileRoots } from "./data-profile-cleanup"
+import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -418,6 +420,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
     browserController,
+  })
+  const profileRoots = resolveProfileRoots(baseUserDataPath)
+  setupDataProfileCleanupIPC(ipcMain, {
+    resolveWindow: (sender) => registry.resolve(sender)?.window ?? preferencesWindows.resolve(sender),
+    getAllowedOrigins,
+    roots: () => profileRoots,
+    current: () => ({ key: storageScope.profile, configIdentity: storageScope.configIdentity, defaultIdentity: normalizeConfigIdentity(undefined, process.cwd()) }),
   })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),

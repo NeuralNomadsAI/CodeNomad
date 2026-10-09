@@ -70,6 +70,8 @@ declare global {
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
     clearClientState?: (accessToken: string) => Promise<boolean>
+    listOtherDataProfiles?: () => Promise<unknown>
+    deleteOtherDataProfiles?: (ids: string[]) => Promise<unknown>
     registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>

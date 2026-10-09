@@ -154,7 +154,17 @@ function writeChoice(directory: string, configIdentity: string, key: string): bo
   const id = choiceKey(configIdentity)
   if (file.choices[id] !== undefined) return false
   if (Object.keys(file.choices).length >= MAX_CHOICES) return false
-  const choices = { ...file.choices, [id]: profileDisplayName(key) }
+  try {
+    writeChoicesFile(directory, { ...file.choices, [id]: profileDisplayName(key) })
+    return true
+  } catch (error) {
+    console.warn("[profile-transition] failed to remember the profile choice", error)
+    return false
+  }
+}
+
+/** Atomic replacement: exclusive temporary file, fsync, rename. */
+function writeChoicesFile(directory: string, choices: Record<string, string>): void {
   const temporary = join(directory, `.${CHOICES_FILENAME}.${process.pid}.${randomUUID()}.tmp`)
   try {
     const descriptor = openSync(temporary, "wx", 0o600)
@@ -165,12 +175,40 @@ function writeChoice(directory: string, configIdentity: string, key: string): bo
       closeSync(descriptor)
     }
     renameSync(temporary, join(directory, CHOICES_FILENAME))
-    return true
-  } catch (error) {
-    console.warn("[profile-transition] failed to remember the profile choice", error)
-    return false
   } finally {
     try { rmSync(temporary, { force: true }) } catch {}
+  }
+}
+
+export type ForgetChoicesOutcome = "updated" | "unchanged" | "busy" | "failed"
+
+/**
+ * Drops remembered choices that name deleted profiles, under the selection lock. A held lock
+ * (a launch is choosing right now) leaves the file untouched; a newer or corrupt file is never
+ * rewritten. The next launch for an affected config then runs the transition again.
+ */
+export function forgetChoices(directory: string, names: readonly string[], now: () => number = Date.now): ForgetChoicesOutcome {
+  if (!names.length || !existsSync(join(directory, CHOICES_FILENAME))) return "unchanged"
+  let lock: SelectionLock | undefined
+  try {
+    lock = SelectionLock.tryAcquire(directory, now)
+  } catch {
+    return "failed"
+  }
+  if (!lock) return "busy"
+  try {
+    const file = readChoices(directory)
+    if (file.status !== "valid") return "unchanged"
+    const forgotten = new Set(names)
+    const kept = Object.fromEntries(Object.entries(file.choices).filter(([, name]) => !forgotten.has(name)))
+    if (Object.keys(kept).length === Object.keys(file.choices).length) return "unchanged"
+    writeChoicesFile(directory, kept)
+    return "updated"
+  } catch (error) {
+    console.warn("[profile-transition] failed to forget deleted profile choices", error)
+    return "failed"
+  } finally {
+    lock.release()
   }
 }
 

@@ -42,6 +42,8 @@
     "allow-client-state-renderer-flushed",
     "allow-client-state-navigation-flushed",
     "allow-client-state-startup-command-result",
+    "allow-data-profiles-list-others",
+    "allow-data-profiles-delete-others",
     "allow-desktop-launch-ready",
     "allow-desktop-launch-next-folder",
     "allow-desktop-launch-acknowledge-folder",

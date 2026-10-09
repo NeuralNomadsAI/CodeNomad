@@ -16,6 +16,7 @@ Iframe SideCar/browser fallbacks are sandboxed without `allow-same-origin`; DOM 
 | Backend process | `packages/electron-app/electron/main/process-manager.ts` | `packages/tauri-app/src-tauri/src/cli_manager.rs` |
 | Launch and singleton behavior | `packages/electron-app/electron/main/startup.ts` | `packages/tauri-app/src-tauri/src/launch.rs`, `identity.rs`, `local_windows.rs` |
 | Data profile and transition | `packages/electron-app/electron/main/data-profile.ts`, `profile-transition.ts` | `packages/tauri-app/src-tauri/src/data_profile.rs`, `profile_transition.rs` |
+| Deleting other data profiles | `packages/electron-app/electron/main/data-profile-cleanup.ts`, `data-profile-cleanup-ipc.ts` | `packages/tauri-app/src-tauri/src/data_profile_cleanup.rs` |
 | Native commands | `packages/electron-app/electron/main/ipc.ts` | command handlers registered in `packages/tauri-app/src-tauri/src/main.rs` |
 | Renderer bridge | `packages/electron-app/electron/preload/index.cjs` | Tauri invoke/plugins through `packages/ui/src/lib/native/tauri/functions.ts` |
 | Client state | `packages/electron-app/electron/main/client-state.ts` and `client-state-*.ts` | `packages/tauri-app/src-tauri/src/client_state.rs` and `client_state/` |

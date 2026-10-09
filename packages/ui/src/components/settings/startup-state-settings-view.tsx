@@ -1,5 +1,6 @@
 import { Show, type Component, type JSX } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { OtherProfilesSettingsRow } from "./other-profiles-settings-row"
 
 interface StartupStateSettingsViewProps {
   restoreEnabled: boolean
@@ -54,6 +55,8 @@ export const StartupStateSettingsView: Component<StartupStateSettingsViewProps> 
             {t("settings.appearance.startup.clear.action")}
           </button>
         </div>
+
+        <OtherProfilesSettingsRow />
       </div>
     </div>
   )
