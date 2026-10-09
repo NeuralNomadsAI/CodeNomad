@@ -25,6 +25,13 @@ before(async () => {
         res.setHeader("Content-Type", "text/html")
         res.end('<html><body><a href="/page/b">Next page</a><input id="draft"></body></html>')
       })
+      s.middlewares.use("/shared-site", (req, res) => {
+        if (req.url === "/login") res.setHeader("Set-Cookie", "shared_login=fixture; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600")
+        if (req.url === "/logout") res.setHeader("Set-Cookie", "shared_login=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+        const signedIn = req.headers.cookie?.includes("shared_login=fixture") ?? false
+        res.setHeader("Content-Type", "text/html")
+        res.end(`<html><body><p id="signed-in">${signedIn}</p></body></html>`)
+      })
       s.middlewares.use("/interrupted-history", (req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.setHeader("Cache-Control", "no-store")
@@ -53,10 +60,10 @@ async function prepare(page: Page, host: string, query = "") {
 }
 const preview = (page: Page, sessionId: string) => page.evaluate(id => (window as any).fixture.preview(id), sessionId)
 
-async function launchHistoryElectron() {
+async function launchHistoryElectron(existingProfile?: string) {
   const temp = process.env.CODENOMAD_TEST_TEMP || (process.platform === "win32" ? join(process.env.LOCALAPPDATA!, "Temp", "opencode") : tmpdir())
   await mkdir(temp, { recursive: true })
-  const profile = await mkdtemp(join(temp, "session-browser-history-"))
+  const profile = existingProfile ?? await mkdtemp(join(temp, "session-browser-history-"))
   const controllerPath = join(profile, "browser-controller.cjs")
   await build({ entryPoints: [fileURLToPath(new URL("../../../electron-app/electron/main/browser-controller.ts", import.meta.url))],
     outfile: controllerPath, bundle: true, platform: "node", format: "cjs", external: ["electron"],
@@ -69,6 +76,59 @@ async function launchHistoryElectron() {
   await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.show(); window.focus() })
   return { app, page, profile }
 }
+
+test("session tabs share native cookies and site storage, but keep documents and histories separate", { timeout: 90_000 }, async () => {
+  let { app, page, profile } = await launchHistoryElectron()
+  try {
+    await prepare(page, "electron")
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/shared-site/login`)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+    const first = page.locator('[data-session-id="session"] webview')
+    const firstId = await first.evaluate((guest: any) => guest.getWebContentsId())
+    await first.evaluate((guest: any) => guest.executeJavaScript('localStorage.setItem("shared_marker", "kept"); sessionStorage.setItem("tab_marker", "first"); window.tab_only = "first"'))
+    await page.evaluate(() => (window as any).fixture.selectSession("second"))
+    await page.evaluate(url => (window as any).fixture.openPreview("second", url), `${base}/shared-site/status`)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register").length >= 2)
+    const second = page.locator('[data-session-id="second"] webview')
+    const secondId = await second.evaluate((guest: any) => guest.getWebContentsId())
+    assert.notEqual(firstId, secondId)
+    assert.equal(await second.evaluate((guest: any) => guest.executeJavaScript('document.querySelector("#signed-in").textContent')), "true", "the HttpOnly login is sent by the other tab")
+    assert.equal(await second.evaluate((guest: any) => guest.executeJavaScript('localStorage.getItem("shared_marker")')), "kept")
+    assert.equal(await second.evaluate((guest: any) => guest.executeJavaScript('sessionStorage.getItem("tab_marker")')), null)
+    assert.equal(await second.evaluate((guest: any) => guest.executeJavaScript('typeof window.tab_only')), "undefined", "sharing a profile is not sharing a document")
+    assert.equal(await second.evaluate((guest: any) => guest.executeJavaScript('document.cookie.includes("shared_login")')), false, "HttpOnly remains hidden from page scripts")
+    const native = await app.evaluate(({ webContents, BrowserWindow }, { firstId, secondId }) => {
+      const a = webContents.fromId(firstId)!, b = webContents.fromId(secondId)!
+      return { shared: a.session === b.session, appIsolated: a.session !== BrowserWindow.getAllWindows()[0].webContents.session,
+        first: a.navigationHistory.getAllEntries().map(entry => entry.url), second: b.navigationHistory.getAllEntries().map(entry => entry.url) }
+    }, { firstId, secondId })
+    assert.equal(native.shared, true)
+    assert.equal(native.appIsolated, true)
+    assert.ok(native.first.every(url => !url.includes("/status")))
+    assert.ok(native.second.every(url => !url.includes("/login")))
+    await page.evaluate(() => (window as any).fixture.selectSession("session"))
+    await first.evaluate((guest: any) => guest.loadURL(`${location.origin}/shared-site/logout`))
+    await page.evaluate(() => (window as any).fixture.selectSession("second"))
+    await second.evaluate((guest: any) => guest.loadURL(`${location.origin}/shared-site/status`))
+    assert.equal(await second.evaluate((guest: any) => guest.executeJavaScript('document.querySelector("#signed-in").textContent')), "false", "logging out is shared like ordinary browser tabs")
+    await page.evaluate(() => (window as any).fixture.selectSession("session"))
+    await first.evaluate((guest: any) => guest.loadURL(`${location.origin}/shared-site/login`))
+    await first.evaluate((guest: any) => guest.loadURL(`${location.origin}/shared-site/status`))
+    await page.waitForFunction(url => {
+      const preview = (window as any).fixture.preview("session")
+      return preview.history.urls[preview.history.index] === url
+    }, `${base}/shared-site/status`)
+    await app.close()
+    ;({ app, page } = await launchHistoryElectron(profile))
+    await prepare(page, "electron")
+    assert.equal(await page.locator("webview").count(), 0)
+    await page.getByRole("button", { name: "Open web preview", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+    const restored = page.locator('[data-session-id="session"] webview')
+    assert.equal(await restored.evaluate((guest: any) => guest.executeJavaScript('document.querySelector("#signed-in").textContent')), "true", "persistent sign-in survives a full native process restart")
+    assert.equal(await restored.evaluate((guest: any) => guest.executeJavaScript('localStorage.getItem("shared_marker")')), "kept")
+  } finally { await app.close(); await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+})
 
 test("real shell retains separate Electron histories across chat, sessions, project visibility and Info", { timeout: 90_000 }, async () => {
   const { app, page, profile } = await launchHistoryElectron()
