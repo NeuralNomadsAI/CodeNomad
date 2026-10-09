@@ -198,8 +198,9 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
       if (delay === null) return "inactive"
       if (delay <= 0) continue
       const sleep = (ms: number) => clock.sleep(Math.max(1, ms)).pipe(Effect.provideService(Clock.Clock, nativeClock))
-      if (!pendingWakes) yield* sleep(delay)
-      else if (settled.supported) yield* Effect.raceFirst(sleep(delay), settled.wait.pipe(Effect.andThen(sleep(SETTLED_EVENT_DEBOUNCE_MS))))
+      // Also listen when nothing is pending: a Run now admitted outside this Job must still settle promptly.
+      if (settled.supported) yield* Effect.raceFirst(sleep(delay), settled.wait.pipe(Effect.andThen(sleep(SETTLED_EVENT_DEBOUNCE_MS))))
+      else if (!pendingWakes) yield* sleep(delay)
       else yield* sleep(Math.min(delay, PENDING_FALLBACK_BACKOFF_MS[Math.min(pendingWakes, PENDING_FALLBACK_BACKOFF_MS.length) - 1]!))
     }
   })).pipe(Effect.catchCause(cause => Effect.scoped(Effect.gen(function* () {

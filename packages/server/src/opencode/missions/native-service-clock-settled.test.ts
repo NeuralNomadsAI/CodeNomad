@@ -12,7 +12,7 @@ const tag = (name: string) => Context.Service<never, unknown>(name)
 
 /** Pending passage whose family becomes quiescent after the first wake. Returns the
  * sleeps the Job actually completed before archiving, with or without a native Bus. */
-async function pendingSettlement(withBus: boolean) {
+async function pendingSettlement(withBus: boolean, reserveLater = false) {
   const db = new DatabaseSync(":memory:")
   db.exec("CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT NOT NULL,time_created INTEGER NOT NULL,time_updated INTEGER NOT NULL)")
   const scope = await Effect.runPromise(Scope.make())
@@ -67,10 +67,15 @@ async function pendingSettlement(withBus: boolean) {
     const now = Date.parse("2026-10-08T10:00:00Z")
     let doc = await store.create("schedule_one", config, now, current)
     doc = await store.setState(doc.id, doc.revision, "running", current)
-    doc = await store.reserve(doc.id, doc.revision, { kind: "manual", requestID: "manual_one", expectedRevision: doc.revision, at: now }, now, current)
-    const passage = doc.pending!.passage
-    await store.recordAdmission(doc.id, { kind: "accepted", passageID: passage.id, messageID: passage.messageID,
-      missionID: "mission_one", conversationID: "session_one" }, now, current)
+    // Run now admits outside the Job (manual route); the sleeping Job must still settle it.
+    const reserve = async () => {
+      doc = await store.reserve(doc.id, doc.revision, { kind: "manual", requestID: "manual_one", expectedRevision: doc.revision, at: now }, now, current)
+      const pending = doc.pending!.passage
+      await store.recordAdmission(doc.id, { kind: "accepted", passageID: pending.id, messageID: pending.messageID,
+        missionID: "mission_one", conversationID: "session_one" }, now, current)
+      return pending
+    }
+    let passage = reserveLater ? undefined! as Awaited<ReturnType<typeof reserve>> : await reserve()
     let wakes = 0, quiescent = false
     const due = () => Effect.tryPromise(async () => {
       wakes++
@@ -94,9 +99,10 @@ async function pendingSettlement(withBus: boolean) {
     const placement = { projectID: "project", projectCanonical: directory, directory, scheduleID: doc.id, profileID: "profile", executionHost: "local" }
     await run(startNativeRecurrenceClock(placement, due, ctx, clock))
     const fiber = Effect.runFork(started!.run)
-    for (let i = 0; i < 50 && wakes < 1; i++) await new Promise(resolve => setTimeout(resolve, 5))
+    for (let i = 0; i < 50 && (reserveLater ? listeners.length < 1 || sleeps.length > 0 : wakes < 1); i++) await new Promise(resolve => setTimeout(resolve, 5))
+    if (reserveLater) { await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(wakes, 0); passage = await reserve() }
     if (withBus) {
-      assert.equal(wakes, 1)
+      assert.equal(wakes, reserveLater ? 0 : 1)
       assert.equal(listeners.length, 1)
       quiescent = true
       // Unrelated events never wake; a native execution terminal does.
@@ -115,6 +121,12 @@ test("pending passage settlement wakes on a native execution terminal, not the h
   assert.deepEqual(observed.sleeps, [3_000], "only the post-event debounce elapsed")
   assert.equal(observed.wakes, 2)
   assert.equal(observed.listeners, 0, "the Bus listener is released with the Job")
+})
+
+test("a Run now admitted while the Job sleeps until tomorrow still settles on the execution event", async () => {
+  const observed = await pendingSettlement(true, true)
+  assert.deepEqual(observed.sleeps, [3_000])
+  assert.equal(observed.wakes, 1)
 })
 
 test("without a native Bus listener, pending settlement uses a bounded backoff, never minute polling", async () => {
