@@ -19,7 +19,8 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
       CREATE TABLE session_pending(session_id TEXT);
       CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
       CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
-    db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,NULL)").run(f.passage.coordinatorSessionID, f.root)
+    // Real Windows native SQL uses `/` while Location/schedule paths use `\`.
+    db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,NULL)").run(f.passage.coordinatorSessionID, f.root.replaceAll("\\", "/"))
     db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, f.passage.coordinatorSessionID)
     const content = ["read", "grep", "edit", "webfetch", "shell"].map(name => ({ type: "tool", name, state: { status: "completed" } }))
     db.prepare("INSERT INTO session_message VALUES('msg_tools',?,'assistant',?)").run(f.passage.coordinatorSessionID, JSON.stringify({ content }))

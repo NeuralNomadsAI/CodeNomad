@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Predicate, Schema } from "effect"
+import path from "node:path"
 import type { SqlClient } from "effect/unstable/sql"
 import { Form } from "@opencode/schema/form"
 import { Permission } from "@opencode/schema/permission"
@@ -87,7 +88,8 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         const pending = sync("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [expected.id])[0]?.count
         const running = sync(runningToolsSQL, [expected.id])[0]?.count
         const children = sync("SELECT id FROM session_v2 WHERE parent_id=? ORDER BY id LIMIT 33", [expected.id])
-        if (!actual || actual.project_id !== expected.projectID || actual.directory !== expected.directory
+        if (!actual || actual.project_id !== expected.projectID || typeof actual.directory !== "string"
+          || path.normalize(actual.directory) !== expected.directory
           || actual.workspace_id !== (expected.workspaceID ?? null) || actual.parent_id !== (expected.parentID ?? null)
           || actual.time_suspended !== null || queued !== 0 || pending !== 0 || running !== 0
           || isActive(expected.id)
@@ -127,7 +129,8 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
       assertCurrent()
-      return { id, projectID: session.project_id, directory: session.directory,
+      // Native SQL stores slash-separated Windows paths; the Location graph uses host separators.
+      return { id, projectID: session.project_id, directory: path.normalize(session.directory),
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
         active, inbox, pending, suspended: session.time_suspended != null, runningTools,
