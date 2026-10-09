@@ -58,12 +58,19 @@ export function createPreferencesUrl(baseUrl: string, section: PreferencesSectio
   return target
 }
 
-export class PreferencesWindowRegistry {
-  private record: { window: BrowserWindow; request: PreferencesRequest; loaded: boolean; guarded: boolean; navigationPending: boolean; closeApproved: boolean } | undefined
+/** Host-observed local window that opened Preferences; never renderer-supplied. */
+export interface PreferencesOpener {
+  id?: string
+  epoch: number
+}
 
-  register(window: BrowserWindow, request: PreferencesRequest): void {
+export class PreferencesWindowRegistry {
+  private record: { window: BrowserWindow; request: PreferencesRequest; opener: PreferencesOpener; loaded: boolean; guarded: boolean; navigationPending: boolean; closeApproved: boolean } | undefined
+  private openerEpoch = 0
+
+  register(window: BrowserWindow, request: PreferencesRequest, openerId?: string): void {
     if (this.current()) throw new Error("Preferences window is already registered")
-    const record = { window, request, loaded: false, guarded: false, navigationPending: false, closeApproved: false }
+    const record = { window, request, opener: { id: openerId, epoch: ++this.openerEpoch }, loaded: false, guarded: false, navigationPending: false, closeApproved: false }
     this.record = record
     window.webContents.on("did-finish-load", () => {
       if (this.record !== record) return
@@ -87,10 +94,12 @@ export class PreferencesWindowRegistry {
     })
   }
 
-  reuse(request: PreferencesRequest): BrowserWindow | undefined {
+  reuse(request: PreferencesRequest, openerId?: string): BrowserWindow | undefined {
     const window = this.current()
     if (!window) return undefined
     if (!this.record!.guarded || this.record!.navigationPending) this.record!.request = request
+    // Startup state follows the newest opener even while other drafts are guarded.
+    if (openerId && openerId !== this.record!.opener.id) this.record!.opener = { id: openerId, epoch: ++this.openerEpoch }
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
@@ -115,6 +124,10 @@ export class PreferencesWindowRegistry {
 
   request(window: BrowserWindow): PreferencesRequest | undefined {
     return this.current() === window ? this.record?.request : undefined
+  }
+
+  opener(window: BrowserWindow): PreferencesOpener | undefined {
+    return this.current() === window ? { ...this.record!.opener } : undefined
   }
 
   markReady(window: BrowserWindow): void {

@@ -72,6 +72,8 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
+  listOtherDataProfiles: () => ipcRenderer.invoke("data-profiles:listOthers"),
+  deleteOtherDataProfiles: (ids) => ipcRenderer.invoke("data-profiles:deleteOthers", ids),
   registerBrowserTarget: (payload) => ipcRenderer.invoke("browser-target:register", payload),
   emulateBrowserTarget: (registrationId, preset) => ipcRenderer.invoke("browser-target:emulate", registrationId, preset),
   browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
@@ -105,6 +107,9 @@ const preferencesElectronAPI = {
   preferencesReady: () => ipcRenderer.invoke("preferences:ready"),
   acceptPreferencesRequest: (request) => ipcRenderer.invoke("preferences:acceptRequest", request),
   resolvePreferencesTransition: (id, approved) => ipcRenderer.invoke("preferences:resolveTransition", id, approved),
+  openerStartupState: (command, epoch) => ipcRenderer.invoke("preferences:openerStartupState", command, epoch),
+  listOtherDataProfiles: localElectronAPI.listOtherDataProfiles,
+  deleteOtherDataProfiles: localElectronAPI.deleteOtherDataProfiles,
   onPreferencesSection: (callback) => {
     const handler = (_event, section) => callback(section)
     ipcRenderer.on("preferences:section", handler)

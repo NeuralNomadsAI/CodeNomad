@@ -46,8 +46,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI を更新しました",
   "releases.uiUpdated.message": "UI が {version} に更新されました。",
 
-  "releases.devUpdateAvailable.title": "開発版が利用可能",
-  "releases.devUpdateAvailable.message": "新しい開発版が利用可能です: {version}。",
+  "releases.devUpdateAvailable.title": "アップデートがあります",
+  "releases.devUpdateAvailable.message": "新しいリリースが利用可能です: {version}。",
   "releases.devUpdateAvailable.action": "リリースを見る",
 
   "theme.mode.system": "システム",

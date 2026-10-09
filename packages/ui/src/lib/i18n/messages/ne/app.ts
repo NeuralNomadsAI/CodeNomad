@@ -46,8 +46,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI अपडेट गरियो",
   "releases.uiUpdated.message": "UI अब {version} मा अपडेट गरिएको छ।",
 
-  "releases.devUpdateAvailable.title": "देव निर्माण (Dev build) उपलब्ध छ",
-  "releases.devUpdateAvailable.message": "नयाँ देव निर्माण उपलब्ध छ: {version}।",
+  "releases.devUpdateAvailable.title": "अपडेट उपलब्ध छ",
+  "releases.devUpdateAvailable.message": "नयाँ रिलिज उपलब्ध छ: {version}।",
   "releases.devUpdateAvailable.action": "रिलिज हेर्नुहोस्",
 
   "theme.mode.system": "प्रणाली (System)",

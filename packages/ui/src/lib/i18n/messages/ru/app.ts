@@ -46,8 +46,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI обновлён",
   "releases.uiUpdated.message": "UI теперь обновлён до {version}.",
 
-  "releases.devUpdateAvailable.title": "Доступна dev-сборка",
-  "releases.devUpdateAvailable.message": "Доступна новая dev-сборка: {version}.",
+  "releases.devUpdateAvailable.title": "Доступно обновление",
+  "releases.devUpdateAvailable.message": "Доступен более новый релиз: {version}.",
   "releases.devUpdateAvailable.action": "Открыть релиз",
 
   "theme.mode.system": "Системная",

@@ -46,8 +46,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "הממשק עודכן",
   "releases.uiUpdated.message": "הממשק עודכן לגרסה {version}.",
 
-  "releases.devUpdateAvailable.title": "גרסת פיתוח זמינה",
-  "releases.devUpdateAvailable.message": "גרסת פיתוח חדשה זמינה: {version}.",
+  "releases.devUpdateAvailable.title": "עדכון זמין",
+  "releases.devUpdateAvailable.message": "גרסה חדשה יותר זמינה: {version}.",
   "releases.devUpdateAvailable.action": "צפה בגרסה",
 
   "theme.mode.system": "מערכת",

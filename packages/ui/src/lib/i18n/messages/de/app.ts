@@ -46,8 +46,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI aktualisiert",
   "releases.uiUpdated.message": "Die Benutzeroberfläche wurde auf Version {version} aktualisiert.",
 
-  "releases.devUpdateAvailable.title": "Dev-Build verfügbar",
-  "releases.devUpdateAvailable.message": "Ein neuer Dev-Build ist verfügbar: {version}.",
+  "releases.devUpdateAvailable.title": "Update verfügbar",
+  "releases.devUpdateAvailable.message": "Ein neueres Release ist verfügbar: {version}.",
   "releases.devUpdateAvailable.action": "Release ansehen",
 
   "theme.mode.system": "System",

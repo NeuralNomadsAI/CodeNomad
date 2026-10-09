@@ -1,6 +1,6 @@
 import { createEffect, createSignal } from "solid-js"
 import { invoke } from "@tauri-apps/api/core"
-import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
+import type { ServerMeta, SupportMeta, UpdateFeed } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
@@ -12,6 +12,12 @@ const log = getLogger("actions")
 
 const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
 const [availableUpdate, setAvailableUpdate] = createSignal<ServerMeta["update"] | null | undefined>(undefined)
+const [updateFeed, setUpdateFeed] = createSignal<UpdateFeed | undefined>(undefined)
+
+/** Only an explicit stable feed may use the native stable installer. */
+export function usesStableInstaller(feed: UpdateFeed | undefined): boolean {
+  return feed === "stable"
+}
 
 const UI_VERSION_STORAGE_KEY = "codenomad:lastSeenUiVersion"
 const DEV_RELEASE_STORAGE_KEY = "codenomad:lastSeenDevRelease"
@@ -63,7 +69,10 @@ function ensureVisibilityEffect() {
           ? {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
-              onClick: isTauriHost() && isLocalWindow() && navigator.userAgent.includes("Windows") ? () => invoke("install_stable_update") : undefined,
+              // WinGet only installs the stable package; the preview feed opens the release page.
+              onClick: usesStableInstaller(updateFeed()) && isTauriHost() && isLocalWindow() && navigator.userAgent.includes("Windows")
+                ? () => invoke("install_stable_update")
+                : undefined,
             }
           : undefined,
       })
@@ -86,6 +95,7 @@ async function refreshFromMeta() {
   try {
     const meta = await getServerMeta(true)
     setSupportInfo(meta.support ?? null)
+    setUpdateFeed(meta.updateFeed)
     setAvailableUpdate(meta.update ?? null)
     maybeNotifyUiUpdated(meta)
     maybeNotifyDevReleaseAvailable(meta)
@@ -156,11 +166,8 @@ function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
 function ensureMetaRefresh(meta: ServerMeta) {
   if (metaRefreshInterval) return
 
-  const version = meta.serverVersion?.trim() ?? ""
-  const looksLikeDev = version.includes("-dev.") || version.includes("-dev-")
-  const hasDevUpdateChannel = Boolean(meta.update)
-
-  if (!looksLikeDev && !hasDevUpdateChannel) {
+  // Keep refreshing even on the stable feed so a later switch to preview is noticed.
+  if (!meta.updateFeed && !meta.update) {
     return
   }
 

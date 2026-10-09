@@ -1193,6 +1193,11 @@ impl CliProcessManager {
                 .stderr(Stdio::piped());
             #[cfg(windows)]
             c.env("CODENOMAD_NATIVE_PARENT", "1");
+            // The host's resolved profile wins over any value captured from the user's shell.
+            match crate::data_profile::backend_profile() {
+                Some(profile) => c.env(crate::data_profile::BACKEND_PROFILE_ENVIRONMENT, profile),
+                None => c.env_remove(crate::data_profile::BACKEND_PROFILE_ENVIRONMENT),
+            };
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
                 c.current_dir(cwd);

@@ -709,10 +709,13 @@ export interface LatestReleaseInfo {
   version: string
   tag: string
   url: string
-  channel: "stable" | "dev"
+  channel: "stable" | "preview"
   publishedAt?: string
   notes?: string
 }
+
+/** Which releases are offered; never selects desktop data or OpenCode state. */
+export type UpdateFeed = "stable" | "preview"
 
 export interface UiMeta {
   version?: string
@@ -753,8 +756,12 @@ export interface ServerMeta {
   system?: { platform: string; arch: string }
   ui?: UiMeta
   support?: SupportMeta
-  /** Optional update info (dev channel only). */
+  /** Effective update feed (saved `server.updateFeed`, else derived from the installed build label). */
+  updateFeed?: UpdateFeed
+  /** Newest release offered by the preview feed; stable updates use `support`. */
   update?: LatestReleaseInfo | null
+  /** Explicit desktop data profile of the launching host; omitted for the default profile. */
+  desktopProfile?: string
 }
 
 export type {

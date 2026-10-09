@@ -60,7 +60,7 @@ test("Preferences preload exposes only section and frame controls", () => {
   assert.deepEqual(Object.keys(api), [
     "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
-    "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
+    "openerStartupState", "listOtherDataProfiles", "deleteOtherDataProfiles", "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
   assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), "preferences")
@@ -70,10 +70,15 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.preferencesReady()
   api.acceptPreferencesRequest({ section: "providers" })
   api.resolvePreferencesTransition(4, true)
+  api.openerStartupState("read")
+  api.listOtherDataProfiles()
+  api.deleteOtherDataProfiles(["default"])
   api.minimizeWindow()
   api.toggleMaximizeWindow()
   api.closeWindow()
-  assert.deepEqual(invoked, ["preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close"])
+  assert.deepEqual(invoked, ["preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState", "data-profiles:listOthers", "data-profiles:deleteOthers", "preferences:minimize", "preferences:toggleMaximize", "preferences:close"])
+  // Preferences never receives direct client-state authority.
+  assert.ok(!Object.keys(api).some((key) => /ClientState/.test(key)))
 
   const sections: string[] = []
   const dispose = api.onPreferencesSection((section: string) => sections.push(section))
@@ -117,6 +122,11 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   assert.equal(expose(["--codenomad-window-context=remote"]).showTitlebarMenu, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).getDeveloperMode, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).showTitlebarMenu, undefined)
+  // Data-profile cleanup belongs to local and Preferences windows, never remote content.
+  assert.equal(typeof expose([]).listOtherDataProfiles, "function")
+  assert.equal(typeof expose([]).deleteOtherDataProfiles, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).listOtherDataProfiles, undefined)
+  assert.equal(expose(["--codenomad-window-context=remote"]).deleteOtherDataProfiles, undefined)
 })
 
 test("count-only badge bridge is exposed to local and remote main renderers, never Preferences", () => {
