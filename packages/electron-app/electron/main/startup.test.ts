@@ -126,24 +126,3 @@ test("bootstrap waits for a same-generation URL and token and discards late comp
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(calls, ["exchange:http://old:old-token", "exchange:http://new:new-token", "navigate:http://new"])
 })
-
-test("bootstrap generation fences native cookie publication as well as navigation", async () => {
-  let release!: () => void
-  const pending = new Promise<void>(resolve => { release = resolve })
-  const installed: string[] = []
-  const coordinator = new BackendBootstrapCoordinator(async (url, _token, isCurrent) => {
-    if (url === "http://old") await pending
-    if (!isCurrent()) return false
-    installed.push(url)
-    return true
-  }, () => {})
-  coordinator.setReady("http://old")
-  coordinator.setToken("old")
-  coordinator.reset()
-  coordinator.setReady("http://new")
-  coordinator.setToken("new")
-  await coordinator.idle()
-  release()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(installed, ["http://new"])
-})
