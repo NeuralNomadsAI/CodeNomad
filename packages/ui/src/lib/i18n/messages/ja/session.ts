@@ -42,6 +42,7 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "セッションを展開",
   "sessionList.expand.collapseTitle": "折りたたむ",
   "sessionList.expand.expandTitle": "展開",
+  "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "新しいセッション",
   "sessionList.actions.newSession.title": "新しいセッション",
   "sessionList.actions.copyId.ariaLabel": "セッション ID をコピー",
