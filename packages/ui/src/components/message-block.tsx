@@ -850,9 +850,12 @@ export default function MessageBlock(props: MessageBlockProps) {
     return true
   }
 
-  // The placeholder unmounts on reveal; move keyboard focus to the first revealed part.
+  // The placeholder unmounts on reveal; move keyboard focus to where the revealed parts begin.
   const revealInPlace = (button: HTMLButtonElement, item: HiddenPartsDisplayItem) => {
-    const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + MESSAGE_PART_REVEAL_STEP) ?? []
+    const revealCount = Math.min(item.count, MESSAGE_PART_REVEAL_STEP)
+    const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + revealCount) ?? []
+    // Rows before the gap keep their DOM nodes; the first new row follows this anchor.
+    const anchor = button.closest(".message-hidden-parts")?.previousElementSibling ?? null
     const hadFocus = document.activeElement === button
     revealHiddenRecordParts(props.instanceId, item.messageId)
     if (!hadFocus) return
@@ -861,17 +864,22 @@ export default function MessageBlock(props: MessageBlockProps) {
       if (document.activeElement && document.activeElement !== document.body) return
       const element = blockRef()
       if (!element) return
-      let target: HTMLElement = element
-      for (const partId of revealedIds) {
-        const found = element.querySelector<HTMLElement>(`[data-part-id="${CSS.escape(partId)}"]`)
-        if (found) {
-          target = found
-          break
-        }
-      }
+      // Revealed text can merge into the anchor row; collapsed groups render no part elements.
+      // The earliest of the first rendered revealed part and the first new row is the reveal point.
+      const firstPart = revealedIds.reduce<HTMLElement | null>((found, partId) =>
+        found ?? element.querySelector<HTMLElement>(`[data-part-id="${CSS.escape(partId)}"]`), null)
+      const firstRow = anchor ? (anchor.isConnected ? anchor.nextElementSibling : null) : element.firstElementChild
+      const candidates = [firstPart, firstRow].filter((node): node is HTMLElement => node instanceof HTMLElement)
+      const target = candidates.sort((a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)[0] ?? element
       if (!target.hasAttribute("tabindex")) {
         target.setAttribute("tabindex", "-1")
-        target.addEventListener("blur", () => target.removeAttribute("tabindex"), { once: true })
+        const release = () => {
+          // Switching windows also blurs; keep the target so focus can return to it.
+          if (!document.hasFocus()) return
+          target.removeAttribute("tabindex")
+          target.removeEventListener("blur", release)
+        }
+        target.addEventListener("blur", release)
       }
       target.focus({ preventScroll: true })
     })
