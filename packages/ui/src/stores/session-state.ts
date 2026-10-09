@@ -1014,12 +1014,17 @@ function clearInstanceSessionExpansionState(instanceId: string): void {
 }
 
 function hydrateSessionExpansion(instanceId: string, sessionIds: readonly string[]): void {
+  const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
+  const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+  const restored = sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id))
+  // A reveal can race restore: restored rows are the user's own again, while
+  // reveals still pending stay open like other local changes.
+  const auto = autoExpandedSessions.get(instanceId)
+  for (const id of restored) auto?.delete(id)
   setExpandedSessions((prev) => {
     const current = prev.get(instanceId)
-    const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
-    const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
-    const expanded = new Set(sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id)))
-    for (const id of current ?? []) if (authoritative.has(id) && !deleted.has(id)) expanded.add(id)
+    const expanded = new Set(restored)
+    for (const id of current ?? []) if ((authoritative.has(id) || auto?.has(id)) && !deleted.has(id)) expanded.add(id)
     if (current?.size === expanded.size && [...expanded].every((id) => current.has(id))) return prev
     const next = new Map(prev)
     if (expanded.size) next.set(instanceId, expanded)

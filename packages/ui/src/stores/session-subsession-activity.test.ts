@@ -7,6 +7,7 @@ import {
   clearInstanceSessionExpansionState,
   expandedSessions,
   getPersistentExpandedSessionIds,
+  hydrateSessionExpansion,
   setActiveSession,
   setSessionExpanded,
   setSessionStatus,
@@ -57,6 +58,24 @@ describe("subsession activity", () => {
     assert.deepEqual(getPersistentExpandedSessionIds("tab-a"), ["other"])
     setSessionExpanded("tab-a", "parent", true)
     assert.deepEqual(getPersistentExpandedSessionIds("tab-a").sort(), ["other", "parent"])
+  })
+
+  it("keeps restored and revealed rows when a reveal races restore hydration", () => {
+    // The restored selection is seeded before the expansion snapshot is hydrated.
+    setActiveSession("tab-a", "root")
+    setSessionStatus("tab-a", "child", "working")
+    // The snapshot already held the user's `root`: it becomes theirs again.
+    hydrateSessionExpansion("tab-a", ["root"])
+    assert.deepEqual(expanded("tab-a"), ["parent", "root"])
+    assert.deepEqual(getPersistentExpandedSessionIds("tab-a"), ["root"])
+
+    seed("tab-c")
+    setActiveSession("tab-c", "root")
+    setSessionStatus("tab-c", "child", "working")
+    // An empty snapshot must not collapse a reveal for a still-running subsession.
+    hydrateSessionExpansion("tab-c", [])
+    assert.deepEqual(expanded("tab-c"), ["parent", "root"])
+    assert.deepEqual(getPersistentExpandedSessionIds("tab-c"), [])
   })
 
   it("does not reopen a branch the user collapsed for the same running subsession", () => {
