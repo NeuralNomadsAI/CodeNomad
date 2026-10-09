@@ -320,6 +320,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "Diğer kayıtlı profiller silinsin mi?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "Bu profiller bu bilgisayardan silinecek:",
   "settings.appearance.startup.otherProfiles.confirmNote": "OpenCode'daki konuşmalar etkilenmez. Bu profillerin sekmeleri, taslakları, pencere düzeni ile web depolaması, oturum açma bilgileri ve önbelleği silinir.",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "OpenCode'daki konuşmalar etkilenmez. Bu profillerin sekmeleri, taslakları, pencere düzeni ile CodeNomad klasörlerindeki web depolaması, oturum açma bilgileri ve önbellek silinir. macOS'ta Tauri uygulamasının sistem WebKit deposunda tuttuğu web depolaması, oturum açma bilgileri ve önbellek tüm profillerce paylaşılır ve silinmez.",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "CodeNomad'da açık veya durumu bilinmiyor, bu yüzden atlanacak:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "{count} profili sil",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "{count} profili sil",

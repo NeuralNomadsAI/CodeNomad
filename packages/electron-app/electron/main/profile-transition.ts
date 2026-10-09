@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs"
+import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs"
 import { join } from "node:path"
 import { parseClientState, type ClientWindowStateRecord } from "./client-state-envelope"
 import { DEFAULT_PROFILE_KEY, parseProfileName, profileDisplayName, profileScope, TRANSITION_PROFILE_KEYS } from "./data-profile"
@@ -137,22 +137,45 @@ export function readChoices(directory: string): ChoicesFile {
   }
 }
 
-function rememberedKey(directory: string, configIdentity: string): string | undefined {
+/**
+ * A remembered named profile must still exist for this configuration: both hosts create
+ * `scopes/<scope>` under the userData base when they open a scoped profile (Electron's userData,
+ * Tauri's client-state). A deleted one is ignored so detection runs again instead of silently
+ * opening an empty profile. The default profile always exists.
+ */
+export function rememberedProfileExists(key: string, context: Pick<TransitionContext, "configIdentity" | "defaultIdentity" | "userDataBase">): boolean {
+  if (key === DEFAULT_PROFILE_KEY) return true
+  const scope = profileScope(key, context.configIdentity, context.defaultIdentity)
+  if (!scope.scoped) return true
+  try {
+    const stats = lstatSync(join(context.userDataBase, "scopes", scope.scopeName))
+    return stats.isDirectory() && !stats.isSymbolicLink()
+  } catch (error) {
+    // Only a definite absence counts as deleted; an unreadable folder keeps the choice.
+    return !hasCode(error, "ENOENT") && !hasCode(error, "ENOTDIR")
+  }
+}
+
+function rememberedKey(directory: string, context: TransitionContext): string | undefined {
   const file = readChoices(directory)
-  const name = file.status === "future" ? undefined : file.choices[choiceKey(configIdentity)]
-  return name === undefined ? undefined : parseProfileName(name)
+  const name = file.status === "future" ? undefined : file.choices[choiceKey(context.configIdentity)]
+  if (name === undefined) return undefined
+  const key = parseProfileName(name)
+  return rememberedProfileExists(key, context) ? key : undefined
 }
 
 /**
- * Stores the profile name (never a path); a valid existing choice for this config is never replaced.
- * Remembering is best effort: an I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile)
- * only means the transition runs again next launch, so it never prevents startup.
+ * Stores the profile name (never a path); a valid existing choice for this config is never replaced,
+ * unless it names a profile that no longer exists for this config. Remembering is best effort: an
+ * I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile) only means the transition runs
+ * again next launch, so it never prevents startup.
  */
-function writeChoice(directory: string, configIdentity: string, key: string): boolean {
+function writeChoice(directory: string, context: TransitionContext, key: string): boolean {
   const file = readChoices(directory)
   if (file.status === "future") return false
-  const id = choiceKey(configIdentity)
-  if (file.choices[id] !== undefined) return false
+  const id = choiceKey(context.configIdentity)
+  const existing = file.choices[id]
+  if (existing !== undefined && rememberedProfileExists(parseProfileName(existing), context)) return false
   if (Object.keys(file.choices).length >= MAX_CHOICES) return false
   try {
     writeChoicesFile(directory, { ...file.choices, [id]: profileDisplayName(key) })
@@ -182,13 +205,20 @@ function writeChoicesFile(directory: string, choices: Record<string, string>): v
 
 export type ForgetChoicesOutcome = "updated" | "unchanged" | "busy" | "failed"
 
+export interface ForgottenChoices {
+  /** Forgotten for every configuration. */
+  names: readonly string[]
+  /** Forgotten only for one configuration: `key` is its choice key, `name` the deleted profile. */
+  entries: ReadonlyArray<{ key: string; name: string }>
+}
+
 /**
  * Drops remembered choices that name deleted profiles, under the selection lock. A held lock
  * (a launch is choosing right now) leaves the file untouched; a newer or corrupt file is never
  * rewritten. The next launch for an affected config then runs the transition again.
  */
-export function forgetChoices(directory: string, names: readonly string[], now: () => number = Date.now): ForgetChoicesOutcome {
-  if (!names.length || !existsSync(join(directory, CHOICES_FILENAME))) return "unchanged"
+export function forgetChoices(directory: string, forgotten: ForgottenChoices, now: () => number = Date.now): ForgetChoicesOutcome {
+  if ((!forgotten.names.length && !forgotten.entries.length) || !existsSync(join(directory, CHOICES_FILENAME))) return "unchanged"
   let lock: SelectionLock | undefined
   try {
     lock = SelectionLock.tryAcquire(directory, now)
@@ -199,8 +229,10 @@ export function forgetChoices(directory: string, names: readonly string[], now: 
   try {
     const file = readChoices(directory)
     if (file.status !== "valid") return "unchanged"
-    const forgotten = new Set(names)
-    const kept = Object.fromEntries(Object.entries(file.choices).filter(([, name]) => !forgotten.has(name)))
+    const names = new Set(forgotten.names)
+    const drop = (key: string, name: string) =>
+      names.has(name) || forgotten.entries.some((entry) => entry.key === key && entry.name === name)
+    const kept = Object.fromEntries(Object.entries(file.choices).filter(([key, name]) => !drop(key, name)))
     if (Object.keys(kept).length === Object.keys(file.choices).length) return "unchanged"
     writeChoicesFile(directory, kept)
     return "updated"
@@ -277,7 +309,7 @@ export class SelectionLock {
 
   /** Records the user's answer while still holding the lock; false when it could not be remembered. */
   commit(context: TransitionContext, key: string): boolean {
-    return writeChoice(this.directory, context.configIdentity, key)
+    return writeChoice(this.directory, context, key)
   }
 }
 
@@ -290,7 +322,7 @@ export function resolveTransitionProfile(
   dependencies: TransitionDependencies = defaultDependencies,
 ): TransitionResult {
   const directory = selectionDirectory(context.userDataBase)
-  const remembered = rememberedKey(directory, context.configIdentity)
+  const remembered = rememberedKey(directory, context)
   if (remembered !== undefined) return { kind: "resolved", key: remembered, reason: "remembered" }
   let lockUsable = true
   try {
@@ -310,12 +342,12 @@ export function resolveTransitionProfile(
     }
     if (!lock) {
       dependencies.sleep(LOCK_POLL_MS)
-      const decided = rememberedKey(directory, context.configIdentity)
+      const decided = rememberedKey(directory, context)
       if (decided !== undefined) return { kind: "resolved", key: decided, reason: "remembered" }
       continue
     }
     try {
-      const decided = rememberedKey(directory, context.configIdentity)
+      const decided = rememberedKey(directory, context)
       if (decided !== undefined) {
         lock.release()
         return { kind: "resolved", key: decided, reason: "remembered" }
@@ -323,7 +355,7 @@ export function resolveTransitionProfile(
       const candidates = detectCandidates(context)
       if (candidates.length > 1) return { kind: "ask", candidates, lock }
       const key = candidates[0]?.key ?? DEFAULT_PROFILE_KEY
-      const stored = writeChoice(directory, context.configIdentity, key)
+      const stored = writeChoice(directory, context, key)
       lock.release()
       return { kind: "resolved", key, reason: !stored ? "unremembered" : candidates.length ? "single" : "none" }
     } catch (error) {

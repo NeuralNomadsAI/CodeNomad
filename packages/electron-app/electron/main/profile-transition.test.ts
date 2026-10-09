@@ -97,12 +97,28 @@ test("a valid remembered choice is never overridden; corrupt choices rerun detec
   const { write, scopedFile, resolve, context, directory } = sandbox(t)
   write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "dev" } }))
   write(context.defaultStateFiles[0]!, WITH_TABS)
+  mkdirSync(dirname(dirname(scopedFile("dev"))), { recursive: true })
   assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
   write(join(directory, "choices.json"), "{ not json")
   write(scopedFile("dev"), EMPTY)
   assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "single" })
   write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "../escape" } }))
   assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "single" })
+})
+
+test("a remembered named profile that no longer exists for this config reruns detection and is replaced", (t) => {
+  const { write, scopedFile, resolve, context, directory } = sandbox(t)
+  const other = choiceKey("/other/config.yaml")
+  write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "dev", [other]: "dev" } }))
+  // `dev` exists only for another configuration: this one's folder was deleted.
+  mkdirSync(join(context.userDataBase, "scopes", profileScope("dev", "/other/config.yaml", context.defaultIdentity).scopeName), { recursive: true })
+  write(context.defaultStateFiles[0]!, WITH_TABS)
+  assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "single" })
+  assert.deepEqual(readChoices(directory), { status: "valid", choices: { [choiceKey(context.configIdentity)]: "default", [other]: "dev" } })
+  // A remembered profile whose folder exists is kept; `default` never needs a folder.
+  write(scopedFile("dev"), EMPTY)
+  write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "dev" } }))
+  assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
 })
 
 test("an unknown future choices file is never overwritten", (t) => {

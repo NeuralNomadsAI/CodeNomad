@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "अन्य सुरक्षित प्रोफाइलहरू मेटाउने?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "यी प्रोफाइलहरू यो कम्प्युटरबाट मेटाइनेछन्:",
   "settings.appearance.startup.otherProfiles.confirmNote": "OpenCode मा भएका कुराकानीहरूमा असर पर्दैन। यी प्रोफाइलहरूका ट्याबहरू, ड्राफ्टहरू, विन्डो लेआउट र वेब भण्डारण, साइन-इन तथा क्यास मेटाइन्छन्।",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "OpenCode मा भएका कुराकानीहरूमा असर पर्दैन। यी प्रोफाइलहरूका ट्याबहरू, ड्राफ्टहरू, विन्डो लेआउट र तिनका CodeNomad फोल्डरहरूमा भएको वेब भण्डारण, साइन-इन तथा क्यास मेटाइन्छन्। macOS मा, Tauri एपले प्रणालीको WebKit भण्डारमा राख्ने वेब भण्डारण, साइन-इन र क्यास सबै प्रोफाइलहरूले साझा गर्छन् र मेटाइँदैनन्।",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "CodeNomad मा खुला वा अज्ञात अवस्थामा छन्, त्यसैले छोडिनेछन्:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "{count} प्रोफाइल मेटाउनुहोस्",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "{count} प्रोफाइलहरू मेटाउनुहोस्",

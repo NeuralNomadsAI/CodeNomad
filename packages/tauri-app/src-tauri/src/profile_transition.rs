@@ -185,16 +185,43 @@ pub(crate) fn read_choices(directory: &Path) -> ChoicesFile {
     ChoicesFile::Valid(choices)
 }
 
-fn remembered_key(directory: &Path, config_identity: &str) -> Option<String> {
-    let choices = read_choices(directory).choices();
-    parse_profile_name(choices.get(&choice_key(config_identity))?.as_str()?).ok()
+/// A remembered named profile must still exist for this configuration: both hosts create
+/// `scopes/<scope>` under the userData base when they open a scoped profile (Electron's userData,
+/// Tauri's client-state). A deleted one is ignored so detection runs again instead of silently
+/// opening an empty profile. The default profile always exists. Mirrors Electron's
+/// `rememberedProfileExists`.
+pub(crate) fn remembered_profile_exists(key: &str, context: &TransitionContext) -> bool {
+    if key == DEFAULT_PROFILE_KEY {
+        return true;
+    }
+    let scope = profile_scope(key, &context.config_identity, &context.default_identity);
+    if !scope.scoped {
+        return true;
+    }
+    match fs::symlink_metadata(context.user_data_base.join("scopes").join(scope.scope_name)) {
+        Ok(metadata) => metadata.is_dir() && !metadata.file_type().is_symlink(),
+        // Only a definite absence counts as deleted; an unreadable folder keeps the choice.
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
-/// Stores the profile name (never a path); a valid existing choice for this config is never replaced.
-/// Remembering is best effort: an I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile)
-/// only means the transition runs again next launch, so it never prevents startup.
-fn write_choice(directory: &Path, config_identity: &str, key: &str) -> bool {
-    match try_write_choice(directory, config_identity, key) {
+fn remembered_key(directory: &Path, context: &TransitionContext) -> Option<String> {
+    let choices = read_choices(directory).choices();
+    let key = parse_profile_name(
+        choices
+            .get(&choice_key(&context.config_identity))?
+            .as_str()?,
+    )
+    .ok()?;
+    remembered_profile_exists(&key, context).then_some(key)
+}
+
+/// Stores the profile name (never a path); a valid existing choice for this config is never replaced,
+/// unless it names a profile that no longer exists for this config. Remembering is best effort: an
+/// I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile) only means the transition runs
+/// again next launch, so it never prevents startup.
+fn write_choice(directory: &Path, context: &TransitionContext, key: &str) -> bool {
+    match try_write_choice(directory, context, key) {
         Ok(stored) => stored,
         Err(error) => {
             eprintln!("[profile-transition] {error}");
@@ -203,14 +230,23 @@ fn write_choice(directory: &Path, config_identity: &str, key: &str) -> bool {
     }
 }
 
-fn try_write_choice(directory: &Path, config_identity: &str, key: &str) -> Result<bool, String> {
+fn try_write_choice(
+    directory: &Path,
+    context: &TransitionContext,
+    key: &str,
+) -> Result<bool, String> {
     let file = read_choices(directory);
     if file == ChoicesFile::Future {
         return Ok(false);
     }
     let mut choices = file.choices();
-    let id = choice_key(config_identity);
-    if choices.contains_key(&id) || choices.len() >= MAX_CHOICES {
+    let id = choice_key(&context.config_identity);
+    let existing_is_current = choices
+        .get(&id)
+        .and_then(Value::as_str)
+        .and_then(|name| parse_profile_name(name).ok())
+        .is_some_and(|existing| remembered_profile_exists(&existing, context));
+    if existing_is_current || (!choices.contains_key(&id) && choices.len() >= MAX_CHOICES) {
         return Ok(false);
     }
     choices.insert(id, Value::String(profile_display_name(key).to_string()));
@@ -253,12 +289,25 @@ pub(crate) enum ForgetOutcome {
     Failed,
 }
 
+pub(crate) struct ForgottenChoices<'a> {
+    /// Forgotten for every configuration.
+    pub(crate) names: &'a [String],
+    /// Forgotten only for one configuration: `(choice key, deleted profile name)`.
+    pub(crate) entries: &'a [(String, String)],
+}
+
 /// Drops remembered choices that name deleted profiles, under the selection lock. A held lock
 /// (a launch is choosing right now) leaves the file untouched; a newer or corrupt file is never
 /// rewritten. The next launch for an affected config then runs the transition again. Mirrors
 /// Electron's `forgetChoices`.
-pub(crate) fn forget_choices(directory: &Path, names: &[String], now: SystemTime) -> ForgetOutcome {
-    if names.is_empty() || !directory.join(CHOICES_FILENAME).exists() {
+pub(crate) fn forget_choices(
+    directory: &Path,
+    forgotten: &ForgottenChoices,
+    now: SystemTime,
+) -> ForgetOutcome {
+    if (forgotten.names.is_empty() && forgotten.entries.is_empty())
+        || !directory.join(CHOICES_FILENAME).exists()
+    {
         return ForgetOutcome::Unchanged;
     }
     let lock = match SelectionLock::try_acquire(directory, now) {
@@ -272,10 +321,15 @@ pub(crate) fn forget_choices(directory: &Path, names: &[String], now: SystemTime
     };
     let kept: Map<String, Value> = choices
         .iter()
-        .filter(|(_, name)| {
-            !names
-                .iter()
-                .any(|forgotten| name.as_str() == Some(forgotten))
+        .filter(|(key, name)| {
+            let Some(name) = name.as_str() else {
+                return true;
+            };
+            !forgotten.names.iter().any(|forgotten| forgotten == name)
+                && !forgotten
+                    .entries
+                    .iter()
+                    .any(|(entry_key, entry_name)| entry_key == *key && entry_name == name)
         })
         .map(|(key, name)| (key.clone(), name.clone()))
         .collect();
@@ -393,7 +447,7 @@ impl SelectionLock {
 
     /// Records the user's answer while still holding the lock; false when it could not be remembered.
     pub(crate) fn commit(&self, context: &TransitionContext, key: &str) -> bool {
-        write_choice(&self.directory, &context.config_identity, key)
+        write_choice(&self.directory, context, key)
     }
 
     pub(crate) fn release(mut self) {
@@ -445,7 +499,7 @@ pub(crate) fn resolve_transition_profile(
     mut sleep: impl FnMut(Duration),
 ) -> Result<TransitionResult, String> {
     let directory = selection_directory(&context.user_data_base);
-    if let Some(key) = remembered_key(&directory, &context.config_identity) {
+    if let Some(key) = remembered_key(&directory, context) {
         return Ok(TransitionResult::Resolved {
             key,
             reason: Reason::Remembered,
@@ -472,7 +526,7 @@ pub(crate) fn resolve_transition_profile(
         };
         let Some(lock) = acquired else {
             sleep(LOCK_POLL);
-            if let Some(key) = remembered_key(&directory, &context.config_identity) {
+            if let Some(key) = remembered_key(&directory, context) {
                 return Ok(TransitionResult::Resolved {
                     key,
                     reason: Reason::Remembered,
@@ -480,7 +534,7 @@ pub(crate) fn resolve_transition_profile(
             }
             continue;
         };
-        if let Some(key) = remembered_key(&directory, &context.config_identity) {
+        if let Some(key) = remembered_key(&directory, context) {
             return Ok(TransitionResult::Resolved {
                 key,
                 reason: Reason::Remembered,
@@ -494,7 +548,7 @@ pub(crate) fn resolve_transition_profile(
             .first()
             .map(|candidate| candidate.key.clone())
             .unwrap_or_else(|| DEFAULT_PROFILE_KEY.to_string());
-        let stored = write_choice(&directory, &context.config_identity, &key);
+        let stored = write_choice(&directory, context, &key);
         let reason = match (stored, candidates.is_empty()) {
             (false, _) => Reason::Unremembered,
             (true, true) => Reason::None,

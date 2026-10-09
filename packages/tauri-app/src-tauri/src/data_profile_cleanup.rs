@@ -6,7 +6,9 @@
 //! removed, never through a symlink or junction, and never a root.
 use crate::data_profile::{profile_display_name, profile_scope, DEFAULT_PROFILE_KEY};
 use crate::identity::STABLE_IDENTIFIER;
-use crate::profile_transition::{forget_choices, selection_directory, ForgetOutcome};
+use crate::profile_transition::{
+    choice_key, forget_choices, selection_directory, ForgetOutcome, ForgottenChoices,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -25,11 +27,15 @@ const MAX_KEY_LENGTH: usize = 200;
 const DEFAULT_ELECTRON_DIRECTORIES: [&str; 1] = ["developer-mode-browser-v2"];
 const DEFAULT_ELECTRON_FILES: [&str; 1] = ["client-state.json"];
 const DEFAULT_WEBVIEW_CHILDREN: [&str; 4] = ["developer-mode", "local", "remote", "browser"];
-const ELECTRON_BOOKKEEPING: [&str; 4] = [
+const ELECTRON_BOOKKEEPING: [&str; 8] = [
     "scopes",
     "profile-selection",
     "client-state.primary.lock",
     "client-state.registration.lock",
+    "lockfile",
+    "SingletonLock",
+    "SingletonSocket",
+    "SingletonCookie",
 ];
 const TAURI_BOOKKEEPING: [&str; 4] = [
     "client-state.primary.lock",
@@ -108,8 +114,13 @@ pub(crate) struct OtherProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct OtherProfilesListing {
     pub(crate) profiles: Vec<OtherProfile>,
+    /// macOS only: Tauri keeps web storage in WebKit's store, shared by every scoped profile (one
+    /// fixed data-store identifier) or WebKit's default store for the default profile. No profile
+    /// owns it, so it is never deleted and the confirmation must say so.
+    pub(crate) shared_web_kit_storage: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -145,6 +156,28 @@ pub(crate) struct Dependencies<'a> {
     /// Entries visited per profile when measuring its size.
     pub(crate) size_entries: usize,
     pub(crate) remove: &'a dyn Fn(&Path, bool) -> std::io::Result<()>,
+    /// Host name compared with Chromium's POSIX `SingletonLock` target.
+    pub(crate) hostname: &'a dyn Fn() -> Option<String>,
+    pub(crate) macos: bool,
+}
+
+#[cfg(unix)]
+fn system_hostname() -> Option<String> {
+    let mut buffer = [0_u8; 256];
+    // SAFETY: the buffer outlives the call and its length is passed; the result is NUL-terminated
+    // or truncated, and only the bytes before the first NUL are read.
+    let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+    if result != 0 {
+        return None;
+    }
+    let end = buffer.iter().position(|byte| *byte == 0)?;
+    String::from_utf8(buffer[..end].to_vec()).ok()
+}
+
+/// Chromium creates no `SingletonLock` on Windows; any such link there is unknown.
+#[cfg(not(unix))]
+fn system_hostname() -> Option<String> {
+    None
 }
 
 fn remove_path(path: &Path, directory: bool) -> std::io::Result<()> {
@@ -165,6 +198,8 @@ pub(crate) const SYSTEM: Dependencies<'static> = Dependencies {
     now: &system_time,
     size_entries: MAX_SIZE_ENTRIES,
     remove: &remove_path,
+    hostname: &system_hostname,
+    macos: cfg!(target_os = "macos"),
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -524,23 +559,32 @@ fn marker_activity(directory: &Path, suffix: &str, dependencies: &Dependencies) 
         .fold(Activity::Idle, combine)
 }
 
-/// Chromium's singleton: `lockfile` exists only while open on Windows; `SingletonLock` links to `<host>-<pid>` elsewhere.
-fn chromium_activity(directory: &Path, dependencies: &Dependencies) -> Activity {
+/// Electron's `requestSingleInstanceLock()` runs while userData is still the profile folder
+/// (Chromium storage moves to `developer-mode-browser-v2` only afterwards), so Chromium's process
+/// singleton lives directly in the profile folder. Windows: `lockfile`, opened delete-on-close, so
+/// it exists only while held. POSIX: `SingletonLock` is a (dangling) symlink to `<hostname>-<pid>`;
+/// `SingletonSocket`/`SingletonCookie` carry no ownership. A lock of this host with a live PID is
+/// in use, with a dead PID is stale; another host's lock or an unreadable one is unknown.
+fn chromium_singleton_activity(directory: &Path, dependencies: &Dependencies) -> Activity {
     if exists(&directory.join("lockfile")) {
         return Activity::InUse;
     }
-    match fs::read_link(directory.join("SingletonLock")) {
-        Ok(link) => {
-            let link = link.to_string_lossy().into_owned();
-            let pid = link
-                .rsplit_once('-')
-                .map(|(_, pid)| pid)
-                .filter(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
-                .and_then(|pid| pid.parse::<u32>().ok());
-            pid_activity(pid, dependencies)
+    let link = match fs::read_link(directory.join("SingletonLock")) {
+        Ok(link) => link.to_string_lossy().into_owned(),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Activity::Idle,
+        Err(_) => return Activity::Unknown,
+    };
+    let Some((host, pid)) = link.rsplit_once('-') else {
+        return Activity::Unknown;
+    };
+    let pid = (!pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| pid.parse::<u32>().ok())
+        .flatten();
+    match pid {
+        Some(pid) if !host.is_empty() && (dependencies.hostname)().as_deref() == Some(host) => {
+            pid_activity(Some(pid), dependencies)
         }
-        Err(error) if error.kind() == ErrorKind::NotFound => Activity::Idle,
-        Err(_) => Activity::Unknown,
+        _ => Activity::Unknown,
     }
 }
 
@@ -574,10 +618,7 @@ fn probe_activity(probe: &Probe, dependencies: &Dependencies) -> Activity {
                 owner_file_activity(&data.join(lock), dependencies),
             );
         }
-        activity = combine(
-            activity,
-            chromium_activity(&data.join("developer-mode-browser-v2"), dependencies),
-        );
+        activity = combine(activity, chromium_singleton_activity(data, dependencies));
     }
     if let Some(election) = &probe.election {
         activity = combine(activity, election_activity(election, dependencies));
@@ -663,7 +704,10 @@ pub(crate) fn list_other_profiles(
             }
         })
         .collect();
-    OtherProfilesListing { profiles }
+    OtherProfilesListing {
+        profiles,
+        shared_web_kit_storage: dependencies.macos,
+    }
 }
 
 /// A target is removable only as a plain, link-free direct child of a link-free root with the planned name.
@@ -767,6 +811,8 @@ pub(crate) fn delete_other_profiles(
         .collect();
     let mut results = Vec::new();
     let mut deleted_keys = BTreeSet::new();
+    let current_choice = choice_key(&current.config_identity);
+    let mut current_entries: Vec<(String, String)> = Vec::new();
     for id in ids {
         let Some(candidate) = fresh.remove(id) else {
             results.push(ProfileDeletion {
@@ -781,12 +827,21 @@ pub(crate) fn delete_other_profiles(
         let result = delete_candidate(&candidate, dependencies);
         if result.outcome == DeletionOutcome::Deleted && candidate.kind == ProfileKind::Scope {
             if let Some(key) = candidate.key.filter(|key| key != DEFAULT_PROFILE_KEY) {
+                // The open configuration's choice key is known: a choice naming the profile just
+                // deleted for it goes.
+                if !candidate.other_configuration {
+                    current_entries.push((
+                        current_choice.clone(),
+                        profile_display_name(&key).to_string(),
+                    ));
+                }
                 deleted_keys.insert(key);
             }
         }
         results.push(result);
     }
-    // A remembered name is forgotten only when no folder of that profile remains for any configuration.
+    // Other configurations' keys cannot be mapped back to a scope: their choice of a name is
+    // forgotten only when no folder of that profile remains for any configuration.
     let present = if deleted_keys.is_empty() {
         HashSet::new()
     } else {
@@ -799,7 +854,10 @@ pub(crate) fn delete_other_profiles(
         .collect();
     let choices = forget_choices(
         &selection_directory(&roots.electron_base),
-        &forgotten,
+        &ForgottenChoices {
+            names: &forgotten,
+            entries: &current_entries,
+        },
         (dependencies.now)(),
     );
     DeleteOtherProfilesResult { results, choices }

@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "Удалить другие сохранённые профили?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "Эти профили будут удалены с этого компьютера:",
   "settings.appearance.startup.otherProfiles.confirmNote": "Беседы в OpenCode не затрагиваются. Удаляются вкладки, черновики, расположение окон, а также веб-хранилище, входы в аккаунты и кэш этих профилей.",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "Беседы в OpenCode не затрагиваются. Удаляются вкладки, черновики, расположение окон, а также веб-хранилище, входы в аккаунты и кэш в папках CodeNomad этих профилей. В macOS веб-хранилище, входы и кэш, которые приложение Tauri хранит в системном хранилище WebKit, общие для всех профилей и не удаляются.",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "Открыты в CodeNomad или в неизвестном состоянии, поэтому будут пропущены:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "Удалить {count} профиль",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "Удалить профили: {count}",

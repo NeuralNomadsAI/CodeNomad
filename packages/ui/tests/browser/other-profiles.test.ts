@@ -37,11 +37,11 @@ const SEVERAL = [
 ]
 
 // Simulates the host: it owns the listing, re-validates IDs and reports per-profile outcomes.
-const HOST_SCRIPT = (profiles: FixtureProfile[], outcomes: Record<string, unknown>) => `
+const HOST_SCRIPT = (profiles: FixtureProfile[], outcomes: Record<string, unknown>, shared = false) => `
   const w = window
   w.profileHost = {
-    profiles: ${JSON.stringify(profiles)}, outcomes: ${JSON.stringify(outcomes)}, lists: 0, deletes: [], clientStateCalls: [],
-    async list() { w.profileHost.lists += 1; return { profiles: JSON.parse(JSON.stringify(w.profileHost.profiles)) } },
+    profiles: ${JSON.stringify(profiles)}, outcomes: ${JSON.stringify(outcomes)}, shared: ${shared}, lists: 0, deletes: [], clientStateCalls: [],
+    async list() { w.profileHost.lists += 1; return { profiles: JSON.parse(JSON.stringify(w.profileHost.profiles)), sharedWebKitStorage: w.profileHost.shared } },
     async remove(ids) {
       const host = w.profileHost
       host.deletes.push(ids)
@@ -56,12 +56,12 @@ const HOST_SCRIPT = (profiles: FixtureProfile[], outcomes: Record<string, unknow
   }
 `
 
-async function open(kind: "preferences" | "inline", host: "electron" | "tauri" | "web", profiles: FixtureProfile[], outcomes: Record<string, unknown> = {}) {
+async function open(kind: "preferences" | "inline", host: "electron" | "tauri" | "web", profiles: FixtureProfile[], outcomes: Record<string, unknown> = {}, shared = false) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: `{
-    ${HOST_SCRIPT(profiles, outcomes)}
+    ${HOST_SCRIPT(profiles, outcomes, shared)}
     if (${JSON.stringify(host)} !== "web") {
       w.__CODENOMAD_RUNTIME_HOST__ = ${JSON.stringify(host)}
       w.__CODENOMAD_WINDOW_CONTEXT__ = ${JSON.stringify(kind === "preferences" ? "preferences" : "local")}
@@ -160,6 +160,20 @@ for (const host of ["electron", "tauri"] as const) {
     } finally { await page.close() }
   })
 }
+
+test("on macOS the confirmation says Tauri's shared WebKit storage is kept", async () => {
+  const { page, errors } = await open("preferences", "tauri", SEVERAL, {}, true)
+  try {
+    await row(page).waitFor()
+    await page.getByRole("button", { name: "Delete…" }).click()
+    const text = await dialogText(page)
+    assert.match(text, /On macOS, web storage, sign-ins and cache that the Tauri app keeps in the system WebKit store are shared by all profiles and are not deleted\./)
+    assert.doesNotMatch(text, /tabs, drafts, window layout and web storage, sign-ins and cache are deleted/)
+    await page.getByRole("button", { name: "Cancel" }).click()
+    assert.deepEqual((await hostState(page)).deletes, [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 test("profiles that are all in use are reported, not offered for deletion", async () => {
   const { page, errors } = await open("preferences", "electron", [

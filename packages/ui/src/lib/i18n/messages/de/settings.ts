@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "Andere gespeicherte Profile löschen?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "Diese Profile werden von diesem Computer gelöscht:",
   "settings.appearance.startup.otherProfiles.confirmNote": "Unterhaltungen in OpenCode sind nicht betroffen. Tabs, Entwürfe, Fensterlayout sowie Webspeicher, Anmeldungen und Cache dieser Profile werden gelöscht.",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "Unterhaltungen in OpenCode sind nicht betroffen. Tabs, Entwürfe, Fensterlayout sowie Webspeicher, Anmeldungen und Cache in den CodeNomad-Ordnern dieser Profile werden gelöscht. Unter macOS werden Webspeicher, Anmeldungen und Cache, die die Tauri-App im WebKit-Speicher des Systems ablegt, von allen Profilen gemeinsam genutzt und nicht gelöscht.",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "In CodeNomad geöffnet oder in unbekanntem Zustand, daher übersprungen:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "{count} Profil löschen",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "{count} Profile löschen",

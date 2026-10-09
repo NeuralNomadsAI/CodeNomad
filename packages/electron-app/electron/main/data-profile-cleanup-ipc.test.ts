@@ -17,13 +17,13 @@ test("data-profile IPC accepts local and Preferences windows only and forwards v
     roots: () => roots,
     current: () => current,
     operations: {
-      listOtherProfiles: async (...args) => { calls.push(["list", ...args]); return { profiles: [] } },
+      listOtherProfiles: async (...args) => { calls.push(["list", ...args]); return { profiles: [], sharedWebKitStorage: false } },
       deleteOtherProfiles: async (...args) => { calls.push(["delete", ...args]); return { results: [], choices: "unchanged" } },
     },
   })
   const event = (sender: object, senderFrame: object = frame) => ({ sender, senderFrame }) as IpcMainInvokeEvent
 
-  assert.deepEqual(await handlers.get("data-profiles:listOthers")!(event(contents)), { profiles: [] })
+  assert.deepEqual(await handlers.get("data-profiles:listOthers")!(event(contents)), { profiles: [], sharedWebKitStorage: false })
   await handlers.get("data-profiles:deleteOthers")!(event(contents), ["default", "default"])
   assert.deepEqual(calls, [["list", roots, current], ["delete", roots, current, ["default"]]])
 

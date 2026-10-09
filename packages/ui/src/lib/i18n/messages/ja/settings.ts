@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "その他の保存済みプロファイルを削除しますか？",
   "settings.appearance.startup.otherProfiles.confirmMessage": "次のプロファイルがこのコンピューターから削除されます:",
   "settings.appearance.startup.otherProfiles.confirmNote": "OpenCode の会話には影響しません。これらのプロファイルのタブ、下書き、ウィンドウレイアウト、Web ストレージ、サインイン、キャッシュが削除されます。",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "OpenCode の会話には影響しません。これらのプロファイルのタブ、下書き、ウィンドウレイアウト、および CodeNomad フォルダー内の Web ストレージ、サインイン、キャッシュが削除されます。macOS では、Tauri アプリがシステムの WebKit ストアに保持する Web ストレージ、サインイン、キャッシュはすべてのプロファイルで共有されるため削除されません。",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "CodeNomad で開かれているか状態が不明なため、スキップされます:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "{count} 個のプロファイルを削除",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "{count} 個のプロファイルを削除",

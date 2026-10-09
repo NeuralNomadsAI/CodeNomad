@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
@@ -122,7 +122,8 @@ test("profiles open in Electron or Tauri, or in an unknown state, are reported a
   const cases: Array<[string, (context: ReturnType<typeof fixture>, scopeName: string) => void, string]> = [
     ["electron marker", (c, s) => c.file(join(c.roots.electronBase, "scopes", s, `client-state.running.${LIVE}.token.json`)), "in-use"],
     ["electron primary lock", (c, s) => writeFileSync(join(c.roots.electronBase, "scopes", s, "client-state.primary.lock"), JSON.stringify({ pid: LIVE, runToken: "t" })), "in-use"],
-    ["chromium singleton", (c, s) => c.file(join(c.roots.electronBase, "scopes", s, "developer-mode-browser-v2", "lockfile")), "in-use"],
+    // requestSingleInstanceLock runs while userData is the profile folder itself.
+    ["chromium singleton", (c, s) => c.file(join(c.roots.electronBase, "scopes", s, "lockfile")), "in-use"],
     ["cross-host election", (c, s) => {
       const participant = join(c.roots.electronBase, "scopes", s, "client-state", "election", `participant.${LIVE}.t.json`)
       c.file(participant)
@@ -147,6 +148,69 @@ test("profiles open in Electron or Tauri, or in an unknown state, are reported a
     } finally {
       context.cleanup()
     }
+  }
+})
+
+test("Chromium's singleton is read in the profile folder: POSIX SingletonLock targets are matched by host and PID", async (t) => {
+  const context = populated()
+  try {
+    const scope = join(context.roots.electronBase, "scopes", context.scope("dev-v2").scopeName)
+    const id = `scope:${context.scope("dev-v2").scopeName}`
+    const status = async () => (await listOtherProfiles(context.roots, current("dev"), dependencies({ hostname: () => "box" })))
+      .profiles.find((profile) => profile.id === id)!.status
+    // Nothing creates a process singleton in Chromium's storage folder; it is not evidence.
+    context.file(join(scope, "developer-mode-browser-v2", "lockfile"))
+    assert.equal(await status(), "available")
+    const lock = join(scope, "SingletonLock")
+    try { symlinkSync(`box-${LIVE}`, lock) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("symlinks unavailable")
+      throw error
+    }
+    symlinkSync("/tmp/scoped_dir/SingletonSocket", join(scope, "SingletonSocket"))
+    assert.equal(await status(), "in-use", "a live PID of this host")
+    for (const [target, expected] of [["box-9999", "available"], [`other-${LIVE}`, "unknown"], ["box", "unknown"], ["box-12x", "unknown"]] as const) {
+      unlinkSync(lock)
+      symlinkSync(target, lock)
+      assert.equal(await status(), expected, target)
+    }
+    // A dangling stale lock of this host does not block deletion; the folder and its links go.
+    unlinkSync(lock)
+    symlinkSync("box-9999", lock)
+    const result = await deleteOtherProfiles(context.roots, current("dev"), [id], dependencies({ hostname: () => "box" }))
+    assert.equal(result.results[0]!.outcome, "deleted")
+  } finally {
+    context.cleanup()
+  }
+})
+
+test("a link nested inside a deleted profile is removed without touching its target", async () => {
+  const context = populated()
+  const outside = mkdtempSync(join(tmpdir(), "codenomad-profile-nested-"))
+  try {
+    writeFileSync(join(outside, "precious"), "keep")
+    const scopeName = context.scope("dev-v2").scopeName
+    const nestedElectron = join(context.roots.electronBase, "scopes", scopeName, "client-state", "linked")
+    const nestedWebview = join(context.roots.webviewRoot, "scopes", scopeName, "EBWebView", "linked")
+    symlinkSync(outside, nestedElectron, "junction")
+    symlinkSync(outside, nestedWebview, "junction")
+    const result = await deleteOtherProfiles(context.roots, current("dev"), [`scope:${scopeName}`], dependencies())
+    assert.equal(result.results[0]!.outcome, "deleted")
+    assert.ok(!existsSync(join(context.roots.electronBase, "scopes", scopeName)))
+    assert.equal(readFileSync(join(outside, "precious"), "utf8"), "keep")
+  } finally {
+    context.cleanup()
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test("macOS listings disclose that Tauri's WebKit storage is shared and kept", async () => {
+  const context = populated()
+  try {
+    assert.equal((await listOtherProfiles(context.roots, current("dev"), dependencies({ platform: "darwin" }))).sharedWebKitStorage, true)
+    assert.equal((await listOtherProfiles(context.roots, current("dev"), dependencies({ platform: "win32" }))).sharedWebKitStorage, false)
+    assert.equal((await listOtherProfiles(context.roots, current("dev"), dependencies({ platform: "linux" }))).sharedWebKitStorage, false)
+  } finally {
+    context.cleanup()
   }
 })
 
@@ -272,6 +336,27 @@ test("remembered choices naming a deleted profile are forgotten only when no fol
     const blocked = await deleteOtherProfiles(context.roots, current("dev"), [`scope:${context.scope("team").scopeName}`], dependencies())
     assert.equal(blocked.choices, "busy")
     assert.match(readFileSync(join(selection, "choices.json"), "utf8"), /team/)
+  } finally {
+    context.cleanup()
+  }
+})
+
+test("the open configuration forgets its choice of a profile deleted for it, even if other configurations keep that name", async () => {
+  const context = populated()
+  try {
+    const selection = join(context.roots.electronBase, "profile-selection")
+    context.file(join(context.roots.electronBase, "scopes", context.scope("team").scopeName, "x"), 1)
+    const choices = { [choiceKey(CONFIG)]: "team", [choiceKey(OTHER_CONFIG)]: "team" }
+    writeFileSync(join(selection, "choices.json"), JSON.stringify({ version: 1, choices }))
+    const result = await deleteOtherProfiles(context.roots, current("dev"), [`scope:${context.scope("team").scopeName}`], dependencies())
+    assert.equal(result.choices, "updated")
+    assert.deepEqual(JSON.parse(readFileSync(join(selection, "choices.json"), "utf8")).choices, { [choiceKey(OTHER_CONFIG)]: "team" })
+    // Deleting another configuration's profile never touches the open configuration's choice.
+    writeFileSync(join(selection, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(CONFIG)]: "team" } }))
+    context.file(join(context.roots.electronBase, "scopes", context.scope("team").scopeName, "x"), 1)
+    context.file(join(context.roots.electronBase, "scopes", context.scope("team", "/third/config.yaml").scopeName, "x"), 1)
+    const other = await deleteOtherProfiles(context.roots, current("dev"), [`scope:${context.scope("team", OTHER_CONFIG).scopeName}`], dependencies())
+    assert.equal(other.choices, "unchanged")
   } finally {
     context.cleanup()
   }

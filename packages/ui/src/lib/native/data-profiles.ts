@@ -49,10 +49,16 @@ function normalizeProfile(value: unknown): OtherDataProfile | null {
   return { id, kind: kind as OtherDataProfileKind, name, otherConfiguration, sizeBytes, sizeComplete, status: status as OtherDataProfileStatus }
 }
 
-export function normalizeOtherDataProfiles(value: unknown): OtherDataProfile[] | null {
-  if (!isRecord(value) || !Array.isArray(value.profiles)) return null
+export interface OtherDataProfilesListing {
+  profiles: OtherDataProfile[]
+  /** macOS: Tauri's WebKit web storage is shared by profiles and is never deleted. */
+  sharedWebKitStorage: boolean
+}
+
+export function normalizeOtherDataProfiles(value: unknown): OtherDataProfilesListing | null {
+  if (!isRecord(value) || !Array.isArray(value.profiles) || typeof value.sharedWebKitStorage !== "boolean") return null
   const profiles = value.profiles.map(normalizeProfile)
-  return profiles.every(Boolean) ? profiles as OtherDataProfile[] : null
+  return profiles.every(Boolean) ? { profiles: profiles as OtherDataProfile[], sharedWebKitStorage: value.sharedWebKitStorage } : null
 }
 
 export function normalizeDeleteOtherDataProfilesResult(value: unknown): DeleteOtherDataProfilesResult | null {
@@ -75,7 +81,7 @@ export function canManageOtherDataProfiles(): boolean {
   return isTauriHost()
 }
 
-export async function listOtherDataProfiles(): Promise<OtherDataProfile[]> {
+export async function listOtherDataProfiles(): Promise<OtherDataProfilesListing> {
   let value: unknown
   if (isElectronHost()) {
     const list = window.electronAPI?.listOtherDataProfiles
@@ -86,9 +92,9 @@ export async function listOtherDataProfiles(): Promise<OtherDataProfile[]> {
   } else {
     throw new Error("Data profiles are unavailable")
   }
-  const profiles = normalizeOtherDataProfiles(value)
-  if (!profiles) throw new Error("Invalid data profile listing")
-  return profiles
+  const listing = normalizeOtherDataProfiles(value)
+  if (!listing) throw new Error("Invalid data profile listing")
+  return listing
 }
 
 export async function deleteOtherDataProfiles(ids: string[]): Promise<DeleteOtherDataProfilesResult> {

@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "¿Eliminar otros perfiles guardados?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "Estos perfiles se eliminarán de este equipo:",
   "settings.appearance.startup.otherProfiles.confirmNote": "Las conversaciones en OpenCode no se ven afectadas. Se eliminan las pestañas, borradores, disposición de ventanas, almacenamiento web, inicios de sesión y caché de estos perfiles.",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "Las conversaciones en OpenCode no se ven afectadas. Se eliminan las pestañas, borradores, disposición de ventanas y el almacenamiento web, inicios de sesión y caché de las carpetas de CodeNomad de estos perfiles. En macOS, el almacenamiento web, los inicios de sesión y la caché que la aplicación Tauri guarda en el almacén WebKit del sistema se comparten entre todos los perfiles y no se eliminan.",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "Abiertos en CodeNomad o en un estado desconocido, se omitirán:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "Eliminar {count} perfil",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "Eliminar {count} perfiles",

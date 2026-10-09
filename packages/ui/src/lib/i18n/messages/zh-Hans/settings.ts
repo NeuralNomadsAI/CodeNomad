@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "删除其他已保存的配置文件？",
   "settings.appearance.startup.otherProfiles.confirmMessage": "以下配置文件将从此计算机中删除：",
   "settings.appearance.startup.otherProfiles.confirmNote": "OpenCode 中的对话不受影响。这些配置文件的标签页、草稿、窗口布局以及网页存储、登录信息和缓存将被删除。",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "OpenCode 中的对话不受影响。这些配置文件的标签页、草稿、窗口布局以及其 CodeNomad 文件夹中的网页存储、登录信息和缓存将被删除。在 macOS 上，Tauri 应用保存在系统 WebKit 存储中的网页存储、登录信息和缓存由所有配置文件共享，不会被删除。",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "在 CodeNomad 中打开或状态未知，因此将跳过：",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "删除 {count} 个配置文件",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "删除 {count} 个配置文件",

@@ -328,6 +328,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "למחוק פרופילים שמורים אחרים?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "הפרופילים האלה יימחקו מהמחשב הזה:",
   "settings.appearance.startup.otherProfiles.confirmNote": "השיחות ב-OpenCode לא יושפעו. הכרטיסיות, הטיוטות, פריסת החלונות ואחסון האינטרנט, ההתחברויות והמטמון של פרופילים אלה יימחקו.",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "השיחות ב-OpenCode לא יושפעו. הכרטיסיות, הטיוטות, פריסת החלונות ואחסון האינטרנט, ההתחברויות והמטמון שבתיקיות CodeNomad של פרופילים אלה יימחקו. ב-macOS, אחסון האינטרנט, ההתחברויות והמטמון שאפליקציית Tauri שומרת במאגר WebKit של המערכת משותפים לכל הפרופילים ואינם נמחקים.",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "פתוחים ב-CodeNomad או במצב לא ידוע, ולכן ידולגו:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "מחיקת פרופיל {count}",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "מחיקת {count} פרופילים",

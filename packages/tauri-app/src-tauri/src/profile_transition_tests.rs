@@ -189,6 +189,15 @@ fn a_valid_remembered_choice_is_never_overridden_and_corrupt_choices_rerun_detec
         &with_tabs(),
         SystemTime::now(),
     );
+    fs::create_dir_all(
+        sandbox
+            .scoped_file("dev")
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Remembered));
     write(
         &sandbox.directory.join(CHOICES_FILENAME),
@@ -203,6 +212,54 @@ fn a_valid_remembered_choice_is_never_overridden_and_corrupt_choices_rerun_detec
         SystemTime::now(),
     );
     assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Single));
+}
+
+#[test]
+fn a_remembered_named_profile_missing_for_this_config_reruns_detection_and_is_replaced() {
+    let sandbox = sandbox();
+    let id = choice_key(&sandbox.context.config_identity);
+    let other = choice_key("/other/config.yaml");
+    write(
+        &sandbox.directory.join(CHOICES_FILENAME),
+        &json!({ "version": 1, "choices": { id.clone(): "dev", other.clone(): "dev" } })
+            .to_string(),
+        SystemTime::now(),
+    );
+    // `dev` exists only for another configuration: this one's folder was deleted.
+    let other_scope = profile_scope(
+        "dev",
+        "/other/config.yaml",
+        &sandbox.context.default_identity,
+    );
+    fs::create_dir_all(
+        sandbox
+            .context
+            .user_data_base
+            .join("scopes")
+            .join(other_scope.scope_name),
+    )
+    .unwrap();
+    write(
+        &sandbox.context.default_state_files[0],
+        &with_tabs(),
+        SystemTime::now(),
+    );
+    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Single));
+    let mut expected = Map::new();
+    expected.insert(id.clone(), Value::String("default".into()));
+    expected.insert(other, Value::String("dev".into()));
+    assert_eq!(
+        read_choices(&sandbox.directory),
+        ChoicesFile::Valid(expected)
+    );
+    // A remembered profile whose folder exists is kept; `default` never needs a folder.
+    write(&sandbox.scoped_file("dev"), &empty(), SystemTime::now());
+    write(
+        &sandbox.directory.join(CHOICES_FILENAME),
+        &json!({ "version": 1, "choices": { id: "dev" } }).to_string(),
+        SystemTime::now(),
+    );
+    assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Remembered));
 }
 
 #[test]

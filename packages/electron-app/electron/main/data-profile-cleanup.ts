@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto"
 import { lstat, readdir, readFile, readlink, rm, unlink } from "node:fs/promises"
-import { homedir } from "node:os"
+import { homedir, hostname } from "node:os"
 import { basename, dirname, join, posix, resolve, win32 } from "node:path"
 import { isPidAlive } from "./client-state-process"
 import { DEFAULT_PROFILE_KEY, profileDisplayName, profileScope } from "./data-profile"
-import { forgetChoices, selectionDirectory, type ForgetChoicesOutcome } from "./profile-transition"
+import { choiceKey, forgetChoices, selectionDirectory, type ForgetChoicesOutcome } from "./profile-transition"
 
 /**
  * Lists and deletes the desktop data profiles other than the open one (see
@@ -29,7 +29,10 @@ const MAX_KEPT_REPORTED = 32
 /** Default-profile children each host creates; anything else is kept and reported. */
 const DEFAULT_ELECTRON_CHILDREN = { directories: ["developer-mode-browser-v2"], files: ["client-state.json"] }
 const DEFAULT_WEBVIEW_CHILDREN = ["developer-mode", "local", "remote", "browser"]
-const ELECTRON_BOOKKEEPING = new Set(["scopes", "profile-selection", "client-state.primary.lock", "client-state.registration.lock"])
+const ELECTRON_BOOKKEEPING = new Set([
+  "scopes", "profile-selection", "client-state.primary.lock", "client-state.registration.lock",
+  "lockfile", "SingletonLock", "SingletonSocket", "SingletonCookie",
+])
 const TAURI_BOOKKEEPING = new Set(["client-state.primary.lock", "client-state.registration.lock", "client-state.registration.owner", ".cross-host-election"])
 
 export interface ProfileRoots {
@@ -67,6 +70,12 @@ export interface OtherProfile {
 
 export interface OtherProfilesListing {
   profiles: OtherProfile[]
+  /**
+   * macOS only: Tauri keeps web storage in WebKit's store, shared by every scoped profile (one fixed
+   * data-store identifier) or WebKit's default store for the default profile. No profile owns it,
+   * so it is never deleted and the confirmation must say so.
+   */
+  sharedWebKitStorage: boolean
 }
 
 export type DeletionOutcome = "deleted" | "incomplete" | "in-use" | "unknown" | "missing"
@@ -108,6 +117,9 @@ export interface CleanupDependencies {
   /** Entries visited per profile when measuring its size. */
   sizeEntries?: number
   remove?(path: string, directory: boolean): Promise<void>
+  /** Host name compared with Chromium's POSIX `SingletonLock` target. */
+  hostname?(): string
+  platform?: NodeJS.Platform
 }
 
 const removePath = (path: string, directory: boolean) =>
@@ -252,7 +264,7 @@ async function keptEntries(candidate: Candidate): Promise<string[]> {
   return kept
 }
 
-type Activity = "idle" | "in-use" | "unknown"
+export type Activity = "idle" | "in-use" | "unknown"
 
 function combine(left: Activity, right: Activity): Activity {
   return left === "in-use" || right === "in-use" ? "in-use" : left === "unknown" || right === "unknown" ? "unknown" : "idle"
@@ -287,15 +299,25 @@ async function markerActivity(directory: string, pattern: RegExp, dependencies: 
   return activity
 }
 
-/** Chromium's singleton: `lockfile` exists only while open on Windows; `SingletonLock` links to `<host>-<pid>` elsewhere. */
-async function chromiumActivity(directory: string, dependencies: CleanupDependencies): Promise<Activity> {
+/**
+ * Electron's `requestSingleInstanceLock()` runs while userData is still the profile folder (main.ts
+ * switches Chromium storage to `developer-mode-browser-v2` only afterwards), so Chromium's process
+ * singleton lives directly in the profile folder. Windows: `lockfile`, opened delete-on-close, so it
+ * exists only while held. POSIX: `SingletonLock` is a (dangling) symlink to `<hostname>-<pid>`;
+ * `SingletonSocket`/`SingletonCookie` accompany it and carry no ownership. A lock of this host with a
+ * live PID is in use, with a dead PID is stale; another host's lock or an unreadable one is unknown.
+ */
+export async function chromiumSingletonActivity(directory: string, dependencies: CleanupDependencies): Promise<Activity> {
   if (await exists(join(directory, "lockfile"))) return "in-use"
   let link: string
   try { link = await readlink(join(directory, "SingletonLock")) } catch (error) {
     return hasCode(error, "ENOENT", "ENOTDIR") ? "idle" : "unknown"
   }
-  const pid = /-(\d+)$/.exec(link)?.[1]
-  return pid ? dependencies.pidAlive(Number(pid)) ? "in-use" : "idle" : "unknown"
+  const separator = link.lastIndexOf("-")
+  const host = link.slice(0, separator)
+  const pid = link.slice(separator + 1)
+  if (separator <= 0 || !/^\d+$/.test(pid) || host !== (dependencies.hostname ?? hostname)()) return "unknown"
+  return dependencies.pidAlive(Number(pid)) ? "in-use" : "idle"
 }
 
 async function electionActivity(directory: string, dependencies: CleanupDependencies): Promise<Activity> {
@@ -317,7 +339,7 @@ async function probeActivity(probe: ActivityProbe, dependencies: CleanupDependen
     checks.push(markerActivity(probe.electronData, ELECTRON_MARKER, dependencies))
     checks.push(ownerFileActivity(join(probe.electronData, "client-state.primary.lock"), dependencies))
     checks.push(ownerFileActivity(join(probe.electronData, "client-state.registration.lock"), dependencies))
-    checks.push(chromiumActivity(join(probe.electronData, "developer-mode-browser-v2"), dependencies))
+    checks.push(chromiumSingletonActivity(probe.electronData, dependencies))
   }
   if (probe.election) checks.push(electionActivity(probe.election, dependencies))
   if (probe.tauriData) checks.push(markerActivity(probe.tauriData, TAURI_MARKER, dependencies))
@@ -369,7 +391,7 @@ export async function listOtherProfiles(
       status: activity === "idle" ? "available" : activity,
     })
   }
-  return { profiles }
+  return { profiles, sharedWebKitStorage: (dependencies.platform ?? process.platform) === "darwin" }
 }
 
 /** A target is removable only as a plain, link-free direct child of a link-free root with the planned name. */
@@ -429,6 +451,8 @@ export async function deleteOtherProfiles(
   const fresh = new Map((await candidates(roots, current)).map((candidate) => [candidate.id, candidate]))
   const results: ProfileDeletion[] = []
   const deletedKeys = new Set<string>()
+  const currentChoice = choiceKey(current.configIdentity)
+  const currentEntries: Array<{ key: string; name: string }> = []
   for (const id of requested) {
     const candidate = fresh.get(id)
     if (!candidate) {
@@ -437,12 +461,16 @@ export async function deleteOtherProfiles(
     }
     const result = await deleteCandidate(candidate, dependencies)
     results.push(result)
-    if (result.outcome === "deleted" && candidate.kind === "scope" && candidate.key && candidate.key !== DEFAULT_PROFILE_KEY) deletedKeys.add(candidate.key)
+    if (result.outcome !== "deleted" || candidate.kind !== "scope" || !candidate.key || candidate.key === DEFAULT_PROFILE_KEY) continue
+    deletedKeys.add(candidate.key)
+    // The open configuration's choice key is known: a choice naming the profile just deleted for it goes.
+    if (!candidate.otherConfiguration) currentEntries.push({ key: currentChoice, name: profileDisplayName(candidate.key) })
   }
-  // A remembered name is forgotten only when no folder of that profile remains for any configuration.
+  // Other configurations' keys cannot be mapped back to a scope: their choice of a name is forgotten
+  // only when no folder of that profile remains for any configuration.
   const present = deletedKeys.size ? await keysStillPresent(roots) : new Set<string>()
-  const forgotten = [...deletedKeys].filter((key) => !present.has(key)).map(profileDisplayName)
-  const choices = forgetChoices(selectionDirectory(roots.electronBase), forgotten, dependencies.now)
+  const names = [...deletedKeys].filter((key) => !present.has(key)).map(profileDisplayName)
+  const choices = forgetChoices(selectionDirectory(roots.electronBase), { names, entries: currentEntries }, dependencies.now)
   return { results, choices }
 }
 

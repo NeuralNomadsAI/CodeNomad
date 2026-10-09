@@ -36,6 +36,7 @@ export function formatProfileSize(bytes: number, locale: string): string {
 export const OtherProfilesSettingsRow: Component = () => {
   const { t, locale } = useI18n()
   const [profiles, setProfiles] = createSignal<OtherDataProfile[]>([])
+  const [sharedWebKitStorage, setSharedWebKitStorage] = createSignal(false)
   const [loading, setLoading] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
   const available = canManageOtherDataProfiles()
@@ -48,7 +49,10 @@ export const OtherProfilesSettingsRow: Component = () => {
     setLoading(true)
     try {
       const listed = await listOtherDataProfiles()
-      if (request === sequence) setProfiles(listed)
+      if (request === sequence) {
+        setProfiles(listed.profiles)
+        setSharedWebKitStorage(listed.sharedWebKitStorage)
+      }
     } catch {
       if (request === sequence) showToastNotification({ message: t(`${key}.loadError`), variant: "error" })
     } finally {
@@ -114,7 +118,8 @@ export const OtherProfilesSettingsRow: Component = () => {
     const message = [t(`${key}.confirmMessage`), lines, ...(skipped.length ? [t(`${key}.confirmSkipped`), skippedLines] : [])].join("\n")
     const confirmed = await showConfirmDialog(message, {
       title: t(`${key}.confirmTitle`),
-      detail: t(`${key}.confirmNote`),
+      // macOS: the Tauri app's WebKit storage is shared by profiles and kept, so the note says so.
+      detail: t(`${key}.${sharedWebKitStorage() ? "confirmNoteMacOS" : "confirmNote"}`),
       variant: "warning",
       confirmLabel: t(`${key}.confirmAction.${deletable.length === 1 ? "one" : "other"}`, { count: deletable.length }),
     })

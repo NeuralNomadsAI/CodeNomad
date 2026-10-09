@@ -203,6 +203,31 @@ fn dependencies<'a>(
         now: &system_time,
         size_entries: MAX_SIZE_ENTRIES,
         remove,
+        hostname: &test_host,
+        macos: false,
+    }
+}
+
+fn test_host() -> Option<String> {
+    Some("box".to_string())
+}
+
+/// Creates a (possibly dangling) symlink to `target`; `false` when the platform refuses (Windows
+/// without symlink privilege), so the caller can skip.
+fn symlink_to(target: &str, link: &Path) -> bool {
+    #[cfg(windows)]
+    let result = std::os::windows::fs::symlink_file(target, link);
+    #[cfg(unix)]
+    let result = std::os::unix::fs::symlink(target, link);
+    match result {
+        Ok(()) => true,
+        Err(error)
+            if error.kind() == ErrorKind::PermissionDenied
+                || error.raw_os_error() == Some(1314) =>
+        {
+            false
+        }
+        Err(error) => panic!("symlink: {error}"),
     }
 }
 
@@ -335,7 +360,8 @@ fn profiles_open_in_either_host_or_in_an_unknown_state_are_never_deleted() {
         ),
         (
             "chromium singleton",
-            |f, s| f.file(&s.join("developer-mode-browser-v2").join("lockfile"), 1),
+            // requestSingleInstanceLock runs while userData is the profile folder itself.
+            |f, s| f.file(&s.join("lockfile"), 1),
             ProfileStatus::InUse,
         ),
         (
@@ -411,6 +437,143 @@ fn profiles_open_in_either_host_or_in_an_unknown_state_are_never_deleted() {
             "{label}"
         );
     }
+}
+
+#[test]
+fn chromium_singleton_is_read_in_the_profile_folder_and_matched_by_host_and_pid() {
+    let fixture = Fixture::populated();
+    let scope = fixture.electron_scope("dev-v2", CONFIG);
+    let id = format!("scope:{}", fixture.scope_name("dev-v2", CONFIG));
+    let status = || {
+        list_other_profiles(&fixture.roots, &current("dev", CONFIG), &standard())
+            .profiles
+            .into_iter()
+            .find(|profile| profile.id == id)
+            .unwrap()
+            .status
+    };
+    // Nothing creates a process singleton in Chromium's storage folder; it is not evidence.
+    fixture.file(&scope.join("developer-mode-browser-v2").join("lockfile"), 1);
+    assert_eq!(status(), ProfileStatus::Available);
+    let lock = scope.join("SingletonLock");
+    if !symlink_to(&format!("box-{LIVE}"), &lock) {
+        eprintln!("symlinks unavailable; skipping POSIX SingletonLock cases");
+        return;
+    }
+    assert!(symlink_to(
+        "/tmp/scoped_dir/SingletonSocket",
+        &scope.join("SingletonSocket")
+    ));
+    assert_eq!(status(), ProfileStatus::InUse, "a live PID of this host");
+    for (target, expected) in [
+        ("box-9999", ProfileStatus::Available),
+        ("other-4242", ProfileStatus::Unknown),
+        ("box", ProfileStatus::Unknown),
+        ("box-12x", ProfileStatus::Unknown),
+    ] {
+        fs::remove_file(&lock).unwrap();
+        assert!(symlink_to(target, &lock));
+        assert_eq!(status(), expected, "{target}");
+    }
+    // A dangling stale lock of this host does not block deletion; the folder and its links go.
+    fs::remove_file(&lock).unwrap();
+    assert!(symlink_to("box-9999", &lock));
+    let result = delete_other_profiles(
+        &fixture.roots,
+        &current("dev", CONFIG),
+        &[id.clone()],
+        &standard(),
+    );
+    assert_eq!(result.results[0].outcome, DeletionOutcome::Deleted);
+    assert!(!scope.exists());
+}
+
+#[test]
+fn a_link_nested_inside_a_deleted_profile_is_removed_without_touching_its_target() {
+    let fixture = Fixture::populated();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("precious"), "keep").unwrap();
+    link_directory(
+        outside.path(),
+        &fixture
+            .electron_scope("dev-v2", CONFIG)
+            .join("client-state")
+            .join("linked"),
+    );
+    link_directory(
+        outside.path(),
+        &fixture
+            .webview_scope("dev-v2", CONFIG)
+            .join("EBWebView")
+            .join("linked"),
+    );
+    let id = format!("scope:{}", fixture.scope_name("dev-v2", CONFIG));
+    let result = delete_other_profiles(&fixture.roots, &current("dev", CONFIG), &[id], &standard());
+    assert_eq!(result.results[0].outcome, DeletionOutcome::Deleted);
+    assert!(!fixture.electron_scope("dev-v2", CONFIG).exists());
+    assert_eq!(
+        fs::read_to_string(outside.path().join("precious")).unwrap(),
+        "keep"
+    );
+}
+
+#[test]
+fn macos_listings_disclose_that_webkit_storage_is_shared_and_kept() {
+    let fixture = Fixture::populated();
+    let mut macos = standard();
+    macos.macos = true;
+    assert!(
+        list_other_profiles(&fixture.roots, &current("dev", CONFIG), &macos).shared_web_kit_storage
+    );
+    assert!(
+        !list_other_profiles(&fixture.roots, &current("dev", CONFIG), &standard())
+            .shared_web_kit_storage
+    );
+    assert_eq!(SYSTEM.macos, cfg!(target_os = "macos"));
+}
+
+#[test]
+fn the_open_configuration_forgets_its_choice_of_a_profile_deleted_for_it() {
+    let fixture = Fixture::populated();
+    let selection = fixture.roots.electron_base.join("profile-selection");
+    fixture.file(&fixture.electron_scope("team", CONFIG).join("x"), 1);
+    let choices =
+        serde_json::json!({ choice_key(CONFIG): "team", choice_key(OTHER_CONFIG): "team" });
+    fs::write(
+        selection.join("choices.json"),
+        serde_json::json!({ "version": 1, "choices": choices }).to_string(),
+    )
+    .unwrap();
+    let id = format!("scope:{}", fixture.scope_name("team", CONFIG));
+    let result = delete_other_profiles(&fixture.roots, &current("dev", CONFIG), &[id], &standard());
+    assert_eq!(result.choices, ForgetOutcome::Updated);
+    let stored: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(selection.join("choices.json")).unwrap()).unwrap();
+    assert_eq!(
+        stored["choices"],
+        serde_json::json!({ choice_key(OTHER_CONFIG): "team" })
+    );
+    // Deleting another configuration's profile never touches the open configuration's choice.
+    fs::write(
+        selection.join("choices.json"),
+        serde_json::json!({ "version": 1, "choices": { choice_key(CONFIG): "team" } }).to_string(),
+    )
+    .unwrap();
+    fixture.file(&fixture.electron_scope("team", CONFIG).join("x"), 1);
+    fixture.file(
+        &fixture
+            .electron_scope("team", "/third/config.yaml")
+            .join("x"),
+        1,
+    );
+    let other = format!("scope:{}", fixture.scope_name("team", OTHER_CONFIG));
+    let result = delete_other_profiles(
+        &fixture.roots,
+        &current("dev", CONFIG),
+        &[other],
+        &standard(),
+    );
+    assert_eq!(result.choices, ForgetOutcome::Unchanged);
 }
 
 #[test]
@@ -677,6 +840,7 @@ fn serialized_listing_matches_the_shared_renderer_contract() {
     let fixture = Fixture::populated();
     let listing = list_other_profiles(&fixture.roots, &current("dev", CONFIG), &standard());
     let value = serde_json::to_value(&listing).unwrap();
+    assert_eq!(value["sharedWebKitStorage"], false);
     let first = &value["profiles"][0];
     assert_eq!(first["id"], "default");
     assert_eq!(first["kind"], "default");

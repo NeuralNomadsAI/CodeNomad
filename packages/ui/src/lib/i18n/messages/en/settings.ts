@@ -329,6 +329,7 @@ export const settingsMessages = {
   "settings.appearance.startup.otherProfiles.confirmTitle": "Delete other saved profiles?",
   "settings.appearance.startup.otherProfiles.confirmMessage": "These profiles will be deleted from this computer:",
   "settings.appearance.startup.otherProfiles.confirmNote": "Conversations in OpenCode are not affected. These profiles' tabs, drafts, window layout and web storage, sign-ins and cache are deleted.",
+  "settings.appearance.startup.otherProfiles.confirmNoteMacOS": "Conversations in OpenCode are not affected. These profiles' tabs, drafts, window layout and the web storage, sign-ins and cache in their CodeNomad folders are deleted. On macOS, web storage, sign-ins and cache that the Tauri app keeps in the system WebKit store are shared by all profiles and are not deleted.",
   "settings.appearance.startup.otherProfiles.confirmSkipped": "Open in CodeNomad or in an unknown state, so they will be skipped:",
   "settings.appearance.startup.otherProfiles.confirmAction.one": "Delete {count} profile",
   "settings.appearance.startup.otherProfiles.confirmAction.other": "Delete {count} profiles",
