@@ -57,6 +57,8 @@ export async function observeNativePassageSettlement(input: {
   const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
     conversationID: passage.coordinatorSessionID, outcome, artifactMessageIDs: [],
     cursors: outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
-  return { result, current: (): true => { signal.throwIfAborted(); input.current(); return native.assertQuiescent(family) } }
+  // The archive must be published with `finish(..., expectedRevision)`: any document
+  // change since this awaited observation is a CAS conflict, re-observed next wake.
+  return { result, expectedRevision: doc.revision }
 }
 

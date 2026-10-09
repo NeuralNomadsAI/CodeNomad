@@ -26,8 +26,8 @@ export type PassageSessionObservation = {
 }
 export interface NativePassageObservation {
   assertCurrent(): true
+  /** Synchronous fence only for native admission, which runs outside a SQL transaction. */
   assertScheduleCurrent(document: RecurrenceDocument, dispatch: boolean): true
-  assertQuiescent(family: readonly PassageSessionObservation[]): true
   exists(sessionID: string): Promise<boolean>
   session(sessionID: string, messageID?: string): Promise<PassageSessionObservation>
   children(sessionID: string): Promise<string[]>
@@ -58,7 +58,6 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
     return value
   }
   const running = sessions.active as NativeEffect
-  const isActive = (id: string) => activeSet(Effect.runSync(running.pipe(Effect.provide(graph)))).has(id)
   const sync = (sql: string, params: readonly unknown[]) => Effect.runSync(database.db!.$client!.unsafe(sql, params)
     .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
   const assertCurrent = (): true => {
@@ -77,37 +76,6 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const fresh = parseRecurrenceDocument(JSON.parse(raw), document.projectID, document.projectCanonical, document.id)
       if (fresh.pending?.passage.id !== document.pending?.passage.id || !samePassageObservation(fresh.config, document.config)
         || dispatch && !recurrenceDispatchAllowed(fresh)) throw new Error("Passage schedule changed")
-      return true
-    },
-    assertQuiescent: (family: readonly PassageSessionObservation[]): true => {
-      assertCurrent()
-      const ids = family.map(session => session.id)
-      for (const expected of family) {
-        const actual = sync("SELECT id,parent_id,project_id,directory,workspace_id,time_suspended FROM session_v2 WHERE id=?", [expected.id])[0]
-        const queued = sync("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [expected.id])[0]?.count
-        const pending = sync("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [expected.id])[0]?.count
-        const running = sync(runningToolsSQL, [expected.id])[0]?.count
-        const children = sync("SELECT id FROM session_v2 WHERE parent_id=? ORDER BY id LIMIT 33", [expected.id])
-        if (!actual || actual.project_id !== expected.projectID || typeof actual.directory !== "string"
-          || path.normalize(actual.directory) !== expected.directory
-          || actual.workspace_id !== (expected.workspaceID ?? null) || actual.parent_id !== (expected.parentID ?? null)
-          || actual.time_suspended !== null || queued !== 0 || pending !== 0 || running !== 0
-          || isActive(expected.id)
-          || children.some(child => typeof child.id !== "string" || !ids.includes(child.id)))
-          throw new Error("Passage became active before settlement")
-      }
-      const read = (operation: NativeEffect, codec: Schema.Codec<unknown, unknown>) => {
-        const value = Effect.runSync(operation.pipe(Effect.provide(graph)))
-        Schema.decodeUnknownSync(codec)(value)
-        if (!Array.isArray(value) || value.length > 1024 || value.some(item => !item || typeof item !== "object"))
-          throw new Error("Passage pending coverage changed")
-        return value as Record<string, unknown>[]
-      }
-      if ([...read(forms.list(), Schema.Array(Schema.toType(Form.Info)).check(Schema.isMaxLength(1024))),
-        ...read(permissions.list(), Schema.Array(Schema.toType(Permission.Request)).check(Schema.isMaxLength(1024)))].some(item =>
-        item.sessionID == null || ids.includes(String(item.sessionID)))
-        || read(shells.list(), Schema.Array(Schema.toType(Shell.Info)).check(Schema.isMaxLength(1024))).some(item => item.status === "running"))
-        throw new Error("Passage pending work appeared")
       return true
     },
     exists: async (id: string) => { assertCurrent(); return (await query("SELECT id FROM session_v2 WHERE id=?", [id])).length === 1 },

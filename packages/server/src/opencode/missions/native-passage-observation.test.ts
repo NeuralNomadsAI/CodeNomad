@@ -28,9 +28,13 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     const tag = (name: string) => Context.Service<never, unknown>(name)
     let graph = Context.empty() as Context.Context<never>
     const running = new Set<string>()
+    // Natively the SQL client is asynchronous while a transaction holds the connection;
+    // Effect.runSync then fails with AsyncFiberError. Settlement must only await it.
+    let asyncSQL = false
     for (const [name, value] of [
       ["@opencode/storage/Database", { db: { $client: { unsafe: (sql: string, params: readonly unknown[]) => ({
-        withoutTransform: Effect.sync(() => db.prepare(sql).all(...params as [])) }) } } }],
+        withoutTransform: asyncSQL ? Effect.promise(async () => db.prepare(sql).all(...params as []))
+          : Effect.sync(() => db.prepare(sql).all(...params as [])) }) } } }],
       // Native shape (2.0.26): Session.active is an Effect of running IDs; SessionExecution is not exposed.
       ["@opencode/Location", {}], ["@opencode/Session", { active: Effect.sync(() => new Set(running)) }],
       ["@opencode/Form", { list: () => Effect.succeed([]) }], ["@opencode/Permission", { list: () => Effect.succeed([]) }],
@@ -45,14 +49,13 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify({ ...doc, state: "paused" }), key)
     assert.throws(() => native.assertScheduleCurrent(doc, true), /schedule changed/)
     native.assertScheduleCurrent(doc, false)
+    asyncSQL = true
     const observe = async () => observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
       native, directory: f.root, current: () => true, signal: new AbortController().signal })
     const settled = (await observe())!
     assert.equal(settled.result.outcome, "completed")
-    settled.current()
     running.add(f.passage.coordinatorSessionID)
     assert.equal(await observe(), undefined, "a natively running coordinator blocks settlement")
-    assert.throws(settled.current, /became active/)
     running.clear()
     content[4].state.status = "running"
     db.prepare("UPDATE session_message SET data=? WHERE id='msg_tools'").run(JSON.stringify({ content }))
@@ -62,6 +65,16 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     assert.equal((await observe())?.result.outcome, "completed")
     db.prepare("INSERT INTO session_inbox VALUES('msg_pending',?)").run(f.passage.coordinatorSessionID)
     assert.equal(await observe(), undefined, "an inbox item blocks quiescence")
-    assert.throws(settled.current, /became active/)
+    db.prepare("DELETE FROM session_inbox").run()
+    // A control committed after the observation is a revision CAS conflict, never a lost archive.
+    const stale = (await observe())!
+    const current = (await f.calendar.read("schedule"))!
+    await f.calendar.setState("schedule", current.revision, "paused", () => true)
+    await assert.rejects(f.calendar.finish("schedule", stale.result, 30, () => true, stale.expectedRevision), /revision conflict/)
+    assert.ok((await f.calendar.read("schedule"))!.pending, "conflict leaves the exact passage pending")
+    const fresh = (await observe())!
+    const archived = await f.calendar.finish("schedule", fresh.result, 30, () => true, fresh.expectedRevision)
+    assert.equal(archived.pending, null)
+    assert.equal(archived.history.at(-1)?.result.outcome, "completed")
   } finally { db.close(); await f.dispose() }
 })

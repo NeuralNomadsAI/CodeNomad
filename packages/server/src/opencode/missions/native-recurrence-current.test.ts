@@ -44,7 +44,7 @@ test("current reader uses pending identity and real passage journal, with no sig
     await assert.rejects(read(), /passage changed/)
     const settled = await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
       native: f.observation, directory: f.root, current: () => true, signal: new AbortController().signal })
-    await f.calendar.finish("schedule", settled!.result, 30, settled!.current)
+    await f.calendar.finish("schedule", settled!.result, 30, () => true, settled!.expectedRevision)
     assert.equal((await read()).passageID, null)
     await assert.rejects(content(), /content unavailable/)
     assert.equal(writes, 0)
