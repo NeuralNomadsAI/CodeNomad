@@ -88,6 +88,34 @@ export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenc
   return status === undefined ? undefined : status === "running"
 })
 
+/** Native publishes an execution terminal from its `settled` hook BEFORE the session
+ * leaves `Session.active`; wait briefly so the woken observation sees it inactive. */
+const SETTLED_EVENT_DEBOUNCE_MS = 3_000
+/** Only when the native Bus listener contract is absent, and only while pending. */
+const PENDING_FALLBACK_BACKOFF_MS = [30_000, 120_000, 300_000] as const
+const executionTerminal = /^session\.execution\.(succeeded|failed|interrupted)(\.\d+)?$/
+
+/** Volatile wake hint, never settlement evidence: the woken Job re-observes the whole
+ * family. Uses the native Bus `listen(listener) => Effect<Unsubscribe>` contract
+ * (callback, no cross-bundle Stream interop); the listener runs inline during publish. */
+export const nativeExecutionSettledSignal = (bus: unknown) => Effect.gen(function* () {
+  let signalled = false, notify: (() => void) | undefined
+  const listen = Predicate.hasProperty(bus, "listen") && Predicate.isFunction(bus.listen) ? bus.listen as
+    (listener: (event: unknown) => Effect.Effect<void>) => Effect.Effect<unknown> : undefined
+  const listener = (event: unknown) => Effect.sync(() => {
+    if (!Predicate.hasProperty(event, "type") || typeof event.type !== "string" || !executionTerminal.test(event.type)) return
+    signalled = true; notify?.()
+  })
+  const unsubscribe = listen ? yield* Effect.acquireRelease(listen(listener), stop =>
+    Effect.isEffect(stop) ? (stop as Effect.Effect<unknown>).pipe(Effect.ignore) : Effect.void) : undefined
+  return { supported: Effect.isEffect(unsubscribe), reset: () => { signalled = false },
+    wait: Effect.callback<void>(resume => {
+      if (signalled) return resume(Effect.void)
+      notify = () => { notify = undefined; resume(Effect.void) }
+      return Effect.sync(() => { notify = undefined })
+    }) }
+})
+
 /** The caller has already committed an authenticated Play. Job owns this clock, not the
  * evictable Location/plugin Scope. A due callback must obtain its fresh authority,
  * passage store and environment from the borrowed graph; the clock grants none. */
@@ -119,8 +147,12 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
     return existing
   }
   const run = Effect.scoped(Effect.gen(function* () {
+    // While a passage is pending, a native execution terminal event wakes settlement promptly.
+    const settled = yield* nativeExecutionSettledSignal(Option.getOrUndefined(bus))
+    let pendingWakes = 0
     // Each wake borrows and validates a fresh Location graph. No minute polling.
     while (true) {
+      settled.reset()
       const delay = yield* Effect.scoped(Effect.gen(function* () {
         const graph = borrow(yield* locations.contextEffect(ref))
         // Native and bundled Location.Info classes differ; validate fields, then rewrap (as the due path does).
@@ -158,13 +190,17 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         const after = clock.now()
         const next = document.pending ? nextDailyDue(document.config.clock, after).at : recurrenceNextDueAt(document, after)
         if (!document.pending && next <= after && document.revision === beforeRevision) throw new Error("recurrence-passage-state-unknown")
+        pendingWakes = document.pending ? pendingWakes + 1 : 0
         return Math.min(next - after, 3_600_000)
       }))
       // A healthy accepted passage stays pending until its terminal archive;
       // polling it never admits another effect, but must not retire tomorrow's Job.
       if (delay === null) return "inactive"
       if (delay <= 0) continue
-      yield* clock.sleep(Math.max(1, delay)).pipe(Effect.provideService(Clock.Clock, nativeClock))
+      const sleep = (ms: number) => clock.sleep(Math.max(1, ms)).pipe(Effect.provideService(Clock.Clock, nativeClock))
+      if (!pendingWakes) yield* sleep(delay)
+      else if (settled.supported) yield* Effect.raceFirst(sleep(delay), settled.wait.pipe(Effect.andThen(sleep(SETTLED_EVENT_DEBOUNCE_MS))))
+      else yield* sleep(Math.min(delay, PENDING_FALLBACK_BACKOFF_MS[Math.min(pendingWakes, PENDING_FALLBACK_BACKOFF_MS.length) - 1]!))
     }
   })).pipe(Effect.catchCause(cause => Effect.scoped(Effect.gen(function* () {
     if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)

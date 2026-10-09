@@ -59,6 +59,7 @@ export class RecurringDayFixture {
   private handlers = new Map<string, Record<string, Handler>>()
   private hooks: Array<(event: unknown) => Effect.Effect<unknown, unknown>> = []
   private sleepers = new Set<{ at: number; wake: () => void }>()
+  private busListeners = new Set<(event: unknown) => Effect.Effect<void>>()
   private scope!: Scope.Closeable
   private graph!: Context.Context<never>
   private ctx!: Plugin.Context
@@ -221,7 +222,8 @@ export class RecurringDayFixture {
       Context.add(tag("@opencode/Shell"), { list: () => Effect.sync(() => this.shells) }))
     this.graph = Context.merge(locationGraph, Context.make(tag("@opencode/storage/Database"), database).pipe(
       Context.add(tag("@opencode/Session"), native), Context.add(tag("@opencode/Job"), job),
-      Context.add(tag("@opencode/Bus"), { publish: () => Effect.void }), Context.add(Clock.Clock, this.clock)))
+      Context.add(tag("@opencode/Bus"), { publish: () => Effect.void, listen: (listener: (event: unknown) => Effect.Effect<void>) =>
+        Effect.sync(() => { this.busListeners.add(listener); return Effect.sync(() => { this.busListeners.delete(listener) }) }) }), Context.add(Clock.Clock, this.clock)))
     const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.sync(() => locationGraph) })
       .pipe(Effect.provideService(Scope.Scope, this.scope)))
     this.graph = Context.add(this.graph, tag("@opencode/example/LocationServiceMap"), { rcMap: map,
@@ -364,6 +366,8 @@ export class RecurringDayFixture {
   idle(id: string, failed = false) {
     this.db.prepare("UPDATE fixture_session SET active=0 WHERE id=?").run(id)
     this.event(id, failed ? "session.execution.failed.1" : "session.execution.succeeded.1")
+    // Native Bus listeners run inline during publish (session.execution terminal payloads).
+    for (const listener of this.busListeners) Effect.runSync(listener({ type: failed ? "session.execution.failed" : "session.execution.succeeded" }))
   }
   async model(options: { child?: boolean; report?: boolean; keepActive?: boolean } = {}) {
     const coordinator = this.coordinators.at(-1)!

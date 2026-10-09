@@ -23,7 +23,8 @@ test("A. Full day: paused create, due work, real tools, archive and a distinct n
   const pending = await f.document()
   assert(pending?.pending, "real native CAS persisted pending")
   await f.model({ child: true })
-  await f.advance(DUE + 3_600_000)
+  // The native execution terminal wakes settlement after a short debounce, not the hourly wake.
+  await f.advance(DUE + 5_000)
   const settled = await f.snapshot()
   assert.equal(settled.pending, null)
   assert.equal(settled.latestResult?.outcome, "completed")
@@ -37,7 +38,8 @@ test("A. Full day: paused create, due work, real tools, archive and a distinct n
   assert.equal(f.starts.length, 2)
   assert.notEqual(f.coordinators[1].id, firstSession)
   assert.notEqual(f.starts[1].id, firstMessage)
-  assert(f.wakeups <= 25, `no per-minute polling: ${f.wakeups} wakes in ~one day`)
+  // Hourly ceiling (24) + the due wake + one post-event settlement debounce.
+  assert(f.wakeups <= 26, `no per-minute polling: ${f.wakeups} wakes in ~one day`)
   await f.model()
   await f.advance(DUE + DAY + 3_600_000)
   assert.equal((await f.snapshot()).history.length, 2)
