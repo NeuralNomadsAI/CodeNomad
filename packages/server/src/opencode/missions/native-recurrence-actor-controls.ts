@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Predicate } from "effect"
-import { readFamilyAuthorityPlacementSync } from "../../workspaces/family-authority-claim"
+import { readFamilyAuthorityPlacement } from "../../workspaces/family-authority-claim"
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { matchesExecution } from "../../missions/execution"
 import type { MissionStorage } from "../../missions/journal"
@@ -47,7 +47,7 @@ export const interruptRecurrenceActors = Effect.fn("missions.interruptRecurrence
         || fresh.pending?.passage.id !== source.pending!.passage.id) throw new Error("Recurrence control changed")
       const actor = mission.actors.find(actor => actor.sessionId === target.sessionID)
       const root = actor && source.config.roots.find(root => root.directory === actor.location.directory)
-      const placement = root?.mode === "git" ? readFamilyAuthorityPlacementSync(root.directory) : undefined
+      const placement = root?.mode === "git" ? await readFamilyAuthorityPlacement(root.directory) : undefined
       if (!actor || !root || root.mode !== "git" || placement?.checkout !== root.checkout || placement.family !== root.family) throw new Error("Recurrence root changed")
       const session = await native.get({ sessionID: target.sessionID })
       const assigned = mission.tasks.filter(task => task.actorSessionId === target.sessionID)

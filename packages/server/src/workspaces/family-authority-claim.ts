@@ -43,6 +43,17 @@ export function readFamilyAuthorityPlacementSync(ownedDirectory: string): { fami
   } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
 }
 
+/** Asynchronous preparation read of the same placement. Keeps the Git spawn off
+ * synchronous fences, where a loaded host can exceed the sync spawn timeout. */
+export async function readFamilyAuthorityPlacement(ownedDirectory: string): Promise<{ family: string; checkout: string }> {
+  try {
+    const directory = await realpath(ownedDirectory)
+    const [checkout, common] = (await git(directory, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir"], 30_000)).split(/\r?\n/)
+    if (!path.isAbsolute(common) || !path.isAbsolute(checkout)) throw new Error("Git placement is not absolute")
+    return { family: physicalIdentity(await realpath(common)), checkout: physicalIdentity(await realpath(checkout)) }
+  } catch { throw new FamilyAuthorityError("family-identity-unavailable") }
+}
+
 /** Resolve with Git before acquisition, then re-read the exact physical discovery,
  * administrative and config inputs at every final fence. Includes (including
  * missing/conditional includes) retain Git's resolver: do not emulate Git config. */

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import childProcess from "node:child_process"
+import { syncBuiltinESMExports } from "node:module"
 import test from "node:test"
 import { DAY, DUE, RecurringDayFixture } from "./recurring-day-fixture"
 
@@ -176,6 +178,36 @@ test("H. Restart while paused with a pending manual passage exposes Check passag
   await f.advance(DUE + DAY)
   assert.equal(f.starts.length, 1)
   assert.equal(f.coordinators.length, 1)
+})
+
+/** A loaded Windows host can exceed the 3 s spawnSync timeout of a synchronous
+ * Git placement read; make that deterministic for every synchronous git spawn. */
+function timeOutSynchronousGit() {
+  const original = childProcess.execFileSync
+  let attempts = 0
+  childProcess.execFileSync = ((file: string, ...rest: unknown[]) => {
+    if (file === "git") { attempts++; throw Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" }) }
+    return (original as (...args: unknown[]) => unknown)(file, ...rest)
+  }) as typeof original
+  syncBuiltinESMExports()
+  return { attempts: () => attempts, restore: () => { childProcess.execFileSync = original; syncBuiltinESMExports() } }
+}
+
+test("H2. Check after restart, Play and Pause stay admitted when synchronous Git spawns time out", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("run-now")
+  await f.model({ report: false, keepActive: true })
+  await f.restart()
+  const git = timeOutSynchronousGit(); t.after(git.restore)
+  const checked = await f.control("check")
+  assert.equal(checked.state, "paused")
+  assert.equal(checked.actions.includes("check"), false, "observer restarted")
+  await f.model(); await f.advance(f.now + 3_600_000)
+  assert.equal((await f.snapshot()).latestResult?.outcome, "completed")
+  assert.equal((await f.control("play")).state, "running")
+  assert.equal((await f.control("pause")).state, "paused")
+  assert.equal(git.attempts(), 0, "control fences reread captured routing inputs instead of spawning Git synchronously")
+  assert.equal(f.starts.length, 1)
 })
 
 test("I. Seventy sequential daily passages never exhaust the passage business cache", async t => {

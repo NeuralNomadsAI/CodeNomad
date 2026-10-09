@@ -10,7 +10,7 @@ import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
 import { interruptRecurrenceActors } from "./native-recurrence-actor-controls"
-import { readFamilyAuthorityPlacementSync } from "../../workspaces/family-authority-claim"
+import { createFamilyAuthorityIdentityFence, readFamilyAuthorityPlacement } from "../../workspaces/family-authority-claim"
 import { physical } from "../../missions/host-authority/private-files"
 import { realpathSync } from "node:fs"
 
@@ -52,10 +52,15 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
   const before = yield* Effect.promise(() => store.read(input.scheduleID))
   if (!before || before.config.roots.length !== 1 || before.config.roots[0].directory !== location.directory) throw new Error("Recurrence scope changed")
   const root = before.config.roots[0]
+  if (root.mode !== "git") throw new Error("Recurrence physical root changed")
+  // Resolve with Git once, asynchronously; every synchronous CAS guard then rereads
+  // the captured routing inputs and falls back to Git only when they changed.
+  // A per-guard spawnSync timed out on loaded hosts as policy-unqualified.
+  const family = yield* Effect.promise(() => createFamilyAuthorityIdentityFence(root.directory))
+  const actual = yield* Effect.tryPromise({ try: () => readFamilyAuthorityPlacement(root.directory), catch: error => error })
+  if (actual.checkout !== root.checkout || actual.family !== root.family) throw new Error("Recurrence physical root changed")
   const physicalCurrent = (): true => {
-    const actual = root.mode === "git" ? readFamilyAuthorityPlacementSync(root.directory) : undefined
-    if (root.mode !== "git" || actual?.checkout !== root.checkout || actual.family !== root.family
-      || physical(realpathSync(root.family)) !== root.family) throw new Error("Recurrence physical root changed")
+    if (family() !== root.family || physical(realpathSync(root.family)) !== root.family) throw new Error("Recurrence physical root changed")
     return true
   }
   physicalCurrent()
