@@ -51,8 +51,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.settled": "समाप्त",
   "missionsPanel.task.unblocks": "खुला गर्छ: {tasks}",
   "missionsPanel.task.readout": "समन्वयकको टिप्पणी",
-  "missionsPanel.overview": "सिंहावलोकन",
+  "missionsPanel.overview": "सारांश",
   "missionsPanel.dailyBadge": "दैनिक",
   "missionsPanel.task.input": "तपाईंको जवाफ पर्खँदै",
   "missionsPanel.task.retired": "हटाइयो",
+  "missionsPanel.task.openConversation": "कार्यको कुराकानी खोल्नुहोस्",
 } as const

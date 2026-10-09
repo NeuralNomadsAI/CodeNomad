@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { AlertTriangle, Check, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
+import { AlertTriangle, ArrowUpRight, Check, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
 import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
@@ -31,6 +31,8 @@ const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, as
 export function MissionTaskTree(props: {
   mission: MissionMap; instanceId: string; activity?: MissionActorActivity[]
   reading: (task: MissionTask) => boolean; onRead: (task: MissionTask) => void
+  /** The task's exact owned conversation, once one is known. */
+  conversation: (task: MissionTask) => string | undefined; onOpenConversation: (sessionId: string) => void
   disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
 }) {
   const { t } = useI18n()
@@ -63,6 +65,9 @@ export function MissionTaskTree(props: {
               <span class="mission-tree-title">{task().title}</span>
               <span class="sr-only">{word()}</span>
             </button>
+            <Show when={props.conversation(task())}>{id => <button type="button" class="mission-tree-open"
+              aria-label={t("missionsPanel.task.openConversation")} title={t("missionsPanel.task.openConversation")}
+              onClick={() => props.onOpenConversation(id())}><ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" /></button>}</Show>
             <Show when={recover()}>{action => <div class="mission-tree-recovery">
               <button type="button" class="window-text-button" disabled={action().disabled} aria-description={action().description}
                 onClick={() => void action().onSelect()}>{action().label}</button>{recovery.feedback}</div>}</Show>

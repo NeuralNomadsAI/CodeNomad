@@ -51,8 +51,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.settled": "Finished",
   "missionsPanel.task.unblocks": "Unblocks: {tasks}",
   "missionsPanel.task.readout": "Coordinator note",
-  "missionsPanel.overview": "Overview",
+  "missionsPanel.overview": "Summary",
   "missionsPanel.dailyBadge": "Daily",
   "missionsPanel.task.input": "Awaiting your input",
   "missionsPanel.task.retired": "Retired",
+  "missionsPanel.task.openConversation": "Open the task's conversation",
 } as const

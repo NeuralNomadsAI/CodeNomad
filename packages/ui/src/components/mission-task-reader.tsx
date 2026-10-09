@@ -1,5 +1,4 @@
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { ArrowUpRight } from "lucide-solid"
 import type { MissionActorActivity, MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
@@ -7,8 +6,6 @@ import { MissionExecution } from "./mission-execution"
 import { MissionNativeExecution, MissionReportNotification } from "./mission-native-execution"
 import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { MissionReaderSection } from "./mission-reader"
-import { missionTaskConversation } from "./mission-task-navigation"
-import type { MissionObservedFamily } from "./mission-attention-model"
 import { missionExcerpt, missionReports, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
 import type { MissionPassageSection } from "./mission-passage-section"
 
@@ -16,12 +13,9 @@ import type { MissionPassageSection } from "./mission-passage-section"
 export function MissionTaskReader(props: {
   instanceId: string; scope: string; mission: MissionMap; task: MissionTask
   identity: string; activity?: MissionActorActivity["state"]
-  family?: MissionObservedFamily
   recurrence?: MissionReaderTarget["recurrence"]
-  onOpenActor: (sessionId: string) => Promise<void>
 }) {
   const { t } = useI18n()
-  const conversation = () => missionTaskConversation(props.mission, props.task, props.family)
   const byKey = (key: string) => props.mission.tasks.find(task => task.key === key)
   const navigate = (key: string) => {
     const task = byKey(key)
@@ -102,10 +96,6 @@ export function MissionTaskReader(props: {
         }}</For>
       </section>
     </Show>
-    <Show when={conversation()}>{id => <button type="button" class="mission-inline-session" onClick={() => void props.onOpenActor(id())}>
-      <span>{t("missions.control.attention.openActor", { actor: props.mission.actors.find(actor => actor.sessionId === id())?.title ?? id() })}</span>
-      <ArrowUpRight class="h-3 w-3" aria-hidden="true" />
-    </button>}</Show>
     <details><summary>{t("missions.control.brief")}</summary>
     <MissionReaderSection label="missions.control.brief" text={props.task.brief} identity={props.identity} instanceId={props.instanceId} source={source("brief")} />
     </details>

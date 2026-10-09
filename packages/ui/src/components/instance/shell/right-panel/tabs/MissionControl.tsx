@@ -56,9 +56,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), state().projectID]), () => props.isActive?.() ?? true)
   let intent = 0
   const selectMission = (id: string) => { intent++; updateMissionProjectView(scope(), { selected: id, selectedRecurrence: undefined }) }
-  // A second click on the selected row clears the selection and its detail.
+  // A second click on the selected row toggles its summary reader.
   const toggleMission = (id: string) => {
-    if (!selectedSchedule() && selectedMissionId() === id) { intent++; updateMissionProjectView(scope(), { selected: undefined }) }
+    if (!selectedSchedule() && selectedMissionId() === id) void read({ missionId: id, kind: "overview" })
     else selectMission(id)
   }
   const openEditor = (action: MissionEditorAction) => {

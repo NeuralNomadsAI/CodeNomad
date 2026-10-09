@@ -1,5 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { X } from "lucide-solid"
+import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
@@ -132,6 +132,11 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), getSessionPreview(activeSessionId().get(props.instanceId) ?? "", props.scope),
   ]), () => Boolean(target()))
   let navigationIntent = 0
+  const taskConversation = () => {
+    const value = mission(), currentTask = task()
+    return value && currentTask && target()?.kind === "task"
+      ? missionTaskConversation(value, currentTask, activity()?.missions.find(item => item.missionId === value.id)?.family) : undefined
+  }
   const openActor = async (sessionId: string) => {
     const current = captureNavigation(), intent = ++navigationIntent
     const instanceId = props.instanceId, scope = props.scope
@@ -237,6 +242,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">
       <h2 class="window-title">{title()}</h2>
+      <Show when={taskConversation()}>{id => <button type="button" class="window-action mission-reader-open"
+        onClick={() => void openActor(id())}><ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" />{t("missionsPanel.action.openConversation")}</button>}</Show>
       <button ref={closeButton} type="button" class="window-icon-button" onClick={close}
         aria-label={t("missions.control.reader.close")} title={t("missions.control.reader.close")}>
         <X class="h-4 w-4" aria-hidden="true" />
@@ -284,8 +291,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         </Show>
       }>
         <MissionTaskReader instanceId={props.instanceId} scope={props.scope} mission={mission()!} task={task()!}
-          identity={JSON.stringify([props.instanceId, props.scope, target()])} onOpenActor={openActor}
-          family={activity()?.missions.find(item => item.missionId === mission()?.id)?.family}
+          identity={JSON.stringify([props.instanceId, props.scope, target()])}
           activity={activity()?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state}
           recurrence={target()?.recurrence} />
       </Show>

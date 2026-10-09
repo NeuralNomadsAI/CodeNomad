@@ -55,4 +55,5 @@ export const missionsPanelMessages = {
   "missionsPanel.dailyBadge": "Diaria",
   "missionsPanel.task.input": "Espera tu respuesta",
   "missionsPanel.task.retired": "Retirada",
+  "missionsPanel.task.openConversation": "Abrir la conversación de la tarea",
 } as const

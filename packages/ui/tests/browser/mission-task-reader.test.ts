@@ -217,7 +217,7 @@ test(`task reader never falls back to the coordinator for ${actor ?? "missing"} 
   try {
     await show(f.page)
     const reader = f.page.locator(".mission-reader")
-    assert.equal(await reader.locator(".mission-inline-session").count(), 0)
+    assert.equal(await reader.locator(".mission-reader-open").count(), 0)
     await expand(f.page, "Technical details")
     assert.equal(await reader.getByRole("button", { name: /^Open / }).count(), 0)
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "coordinator")

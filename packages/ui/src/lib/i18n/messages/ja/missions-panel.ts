@@ -55,4 +55,5 @@ export const missionsPanelMessages = {
   "missionsPanel.dailyBadge": "毎日",
   "missionsPanel.task.input": "入力待ち",
   "missionsPanel.task.retired": "取り下げ済み",
+  "missionsPanel.task.openConversation": "タスクの会話を開く",
 } as const

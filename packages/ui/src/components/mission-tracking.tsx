@@ -4,8 +4,9 @@ import type { MissionReaderTarget } from "../stores/mission-view-state"
 import { useI18n } from "../lib/i18n"
 import { MissionAttention } from "./mission-attention"
 import { MissionTaskTree } from "./mission-task-tree"
+import { missionTaskConversation } from "./mission-task-navigation"
 
-/** "Overview" eye: the result/briefing/objective opens in the central reader. */
+/** "Summary" toggle: the result/briefing/objective opens in the central reader. */
 export function MissionOverviewToggle(props: { reading: boolean; onToggle: () => void }) {
   const { t } = useI18n()
   return <div class="mission-detail-header">
@@ -30,6 +31,8 @@ export function MissionTracking(props: {
     <MissionOverviewToggle reading={props.reading(target("overview"))} onToggle={() => props.read(target("overview"))} />
     <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors}
       reading={task => props.reading(target("task", task.id))} onRead={task => props.read(target("task", task.id))}
+      conversation={task => missionTaskConversation(props.mission, task, observed()?.family)}
+      onOpenConversation={id => void props.onOpenActor(id)}
       disabled={props.disabled || !props.active || props.readOnly} onRecoveryAdmitted={props.readOnly ? undefined : props.refresh} />
   </>
 }

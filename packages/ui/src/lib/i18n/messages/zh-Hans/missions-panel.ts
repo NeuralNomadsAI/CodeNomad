@@ -51,8 +51,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.settled": "完成时间",
   "missionsPanel.task.unblocks": "解除阻塞：{tasks}",
   "missionsPanel.task.readout": "协调者备注",
-  "missionsPanel.overview": "概览",
+  "missionsPanel.overview": "摘要",
   "missionsPanel.dailyBadge": "每日",
   "missionsPanel.task.input": "等待你的输入",
   "missionsPanel.task.retired": "已撤回",
+  "missionsPanel.task.openConversation": "打开任务对话",
 } as const

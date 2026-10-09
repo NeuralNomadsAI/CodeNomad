@@ -148,7 +148,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(await page.locator(".mission-task-dependencies").getByRole("button", { name: /^Unblocks/ }).count(), 0)
     await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.").waitFor()
-    assert.equal(await page.locator(".mission-reader .mission-inline-session").count(), 0, "unbound task never navigates to coordinator")
+    assert.equal(await page.locator(".mission-reader .mission-reader-open").count(), 0, "unbound task never navigates to coordinator")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
     const savedBriefing = mission.briefing
     mission.briefing = undefined

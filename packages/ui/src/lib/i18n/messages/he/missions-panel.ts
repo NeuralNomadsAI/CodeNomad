@@ -51,8 +51,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.settled": "הסתיימה",
   "missionsPanel.task.unblocks": "משחררת: {tasks}",
   "missionsPanel.task.readout": "הערת המתאם",
-  "missionsPanel.overview": "סקירה",
+  "missionsPanel.overview": "סיכום",
   "missionsPanel.dailyBadge": "יומית",
   "missionsPanel.task.input": "ממתינה לתשובתך",
   "missionsPanel.task.retired": "הוסרה",
+  "missionsPanel.task.openConversation": "פתיחת השיחה של המשימה",
 } as const

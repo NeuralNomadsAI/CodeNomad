@@ -51,8 +51,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.settled": "Terminée à",
   "missionsPanel.task.unblocks": "Débloque : {tasks}",
   "missionsPanel.task.readout": "Note du coordinateur",
-  "missionsPanel.overview": "Vue d’ensemble",
+  "missionsPanel.overview": "Résumé",
   "missionsPanel.dailyBadge": "Quotidienne",
   "missionsPanel.task.input": "Attend votre réponse",
   "missionsPanel.task.retired": "Retirée",
+  "missionsPanel.task.openConversation": "Ouvrir la conversation de la tâche",
 } as const

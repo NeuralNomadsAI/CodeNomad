@@ -51,8 +51,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.settled": "Bitiş",
   "missionsPanel.task.unblocks": "Engelini kaldırır: {tasks}",
   "missionsPanel.task.readout": "Koordinatör notu",
-  "missionsPanel.overview": "Genel bakış",
+  "missionsPanel.overview": "Özet",
   "missionsPanel.dailyBadge": "Günlük",
   "missionsPanel.task.input": "Yanıtınızı bekliyor",
   "missionsPanel.task.retired": "Geri çekildi",
+  "missionsPanel.task.openConversation": "Görevin konuşmasını aç",
 } as const
