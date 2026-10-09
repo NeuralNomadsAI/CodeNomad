@@ -19,6 +19,11 @@ const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
 const runningToolsSQL = `SELECT count(*) AS count FROM session_message, json_each(session_message.data,'$.content') AS part
   WHERE session_id=? AND session_message.type='assistant' AND json_extract(part.value,'$.type')='tool'
   AND json_extract(part.value,'$.state.status') IN ('running','streaming')`
+// Native always projects each execution terminal into a durable `idle` message
+// (`outcome: succeeded | failed | interrupted`); the `event` log is only written
+// when Bus persistence is configured, which 2.0.26 `serve` leaves off.
+const failedTurnsSQL = `SELECT count(*) AS count FROM session_message
+  WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`
 export type PassageSessionObservation = {
   id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
   active: boolean; inbox: number; pending: number; suspended: boolean; runningTools: number
@@ -98,7 +103,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const pending = await count("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [id])
       const runningTools = await count(runningToolsSQL, [id])
       const active = activeSet(await run(running)).has(id)
-      const terminal = (await query("SELECT type FROM event WHERE aggregate_id=? AND type IN ('session.execution.failed.1','session.execution.succeeded.1','session.execution.interrupted.1') ORDER BY seq DESC LIMIT 1", [id]))[0]
+      const failedTurns = await count(failedTurnsSQL, [id])
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
       assertCurrent()
@@ -109,7 +114,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
         active, inbox, pending, suspended: claimedAt != null, runningTools,
-        failed: terminal?.type === "session.execution.failed.1", messagePresent,
+        failed: failedTurns > 0, messagePresent,
         orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },
     children: async (id: string) => {

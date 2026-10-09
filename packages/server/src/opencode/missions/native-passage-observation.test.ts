@@ -46,6 +46,61 @@ test("a claim cut by a service restart settles ended-without-report/interrupted;
   } finally { db.close(); await f.dispose() }
 })
 
+// Native 2.0.26 `serve` leaves the `event` table empty; each execution terminal is
+// projected into a durable `idle` message whose `outcome` carries the failure.
+async function idleFamily(finish?: "completed") {
+  const f = await passageFixture(), db = new DatabaseSync(":memory:")
+  await f.start()
+  if (finish) await f.finish(finish)
+  db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
+    CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
+    CREATE TABLE session_inbox(id TEXT,session_id TEXT);
+    CREATE TABLE session_pending(session_id TEXT);
+    CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);`)
+  const coordinator = f.passage.coordinatorSessionID, child = "ses_failed_child"
+  db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,NULL)").run(coordinator, f.root)
+  db.prepare("INSERT INTO session_v2 VALUES(?,?,'project',?,NULL,NULL)").run(child, coordinator, f.root)
+  db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, coordinator)
+  const idle = (id: string, session: string, outcome: string) => db.prepare("INSERT INTO session_message VALUES(?,?,'idle',?)")
+    .run(id, session, JSON.stringify({ time: { created: 1 }, outcome }))
+  const tag = (name: string) => Context.Service<never, unknown>(name)
+  let graph = Context.empty() as Context.Context<never>
+  for (const [name, value] of [
+    ["@opencode/storage/Database", { db: { $client: { unsafe: (sql: string, params: readonly unknown[]) => ({
+      withoutTransform: Effect.promise(async () => db.prepare(sql).all(...params as [])) }) } } }],
+    ["@opencode/Location", {}], ["@opencode/Session", { active: Effect.sync(() => new Set<string>()) }],
+    ["@opencode/Form", { list: () => Effect.succeed([]) }], ["@opencode/Permission", { list: () => Effect.succeed([]) }],
+    ["@opencode/Shell", { list: () => Effect.succeed([]) }],
+  ] as const) graph = Context.add(graph, tag(name), value)
+  const native = await Effect.runPromise(acquireNativePassageObservation().pipe(Effect.provide(graph)))
+  const observe = async () => (await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
+    native, directory: f.root, current: () => true, signal: new AbortController().signal }))?.result
+  return { f, db, idle, coordinator, child, observe, dispose: async () => { db.close(); await f.dispose() } }
+}
+
+test("a native failed turn without a final report archives failed, read from the idle projection", async () => {
+  const t = await idleFamily()
+  try {
+    t.idle("msg_idle_ok", t.coordinator, "succeeded")
+    assert.equal((await t.observe())?.outcome, "ended-without-report", "succeeded/interrupted idles are not failures")
+    t.idle("msg_idle_child", t.child, "failed")
+    const failed = (await t.observe())!
+    assert.equal(failed.outcome, "failed", "a descendant's native failure counts for the family")
+    assert.equal(failed.reason, undefined)
+    assert.deepEqual(failed.cursors, [], "failed passages never advance watched cursors")
+    assert.equal(t.db.prepare("SELECT count(*) AS count FROM event").get()!.count, 0)
+    assert.equal(t.f.counts().sends, 1, "classification never retries or replays")
+  } finally { await t.dispose() }
+})
+
+test("a completed final report wins over a later native failure during wrap-up", async () => {
+  const t = await idleFamily("completed")
+  try {
+    t.idle("msg_idle_fail", t.coordinator, "failed")
+    assert.equal((await t.observe())?.outcome, "completed")
+  } finally { await t.dispose() }
+})
+
 test("read/grep/edit/webfetch/shell completed calls do not block real passage settlement", async () => {
   const f = await passageFixture(), db = new DatabaseSync(":memory:")
   try {

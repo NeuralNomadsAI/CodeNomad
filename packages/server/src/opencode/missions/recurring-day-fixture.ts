@@ -365,11 +365,15 @@ export class RecurringDayFixture {
   }
   idle(id: string, failed = false) {
     this.db.prepare("UPDATE fixture_session SET active=0 WHERE id=?").run(id)
-    this.event(id, failed ? "session.execution.failed.1" : "session.execution.succeeded.1")
+    // Native 2.0.26 shape: no persisted terminal event, only the durable idle projection.
+    const info = Schema.decodeUnknownSync(SessionMessage.Info)({ id: `msg_idle_${++this.serial}`, type: "idle",
+      outcome: failed ? "failed" : "succeeded", time: { created: this.now } })
+    this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(info.id, id, "idle",
+      JSON.stringify(Schema.encodeSync(SessionMessage.Info)(info)), this.messages(id).length)
     // Native Bus listeners run inline during publish (session.execution terminal payloads).
     for (const listener of this.busListeners) Effect.runSync(listener({ type: failed ? "session.execution.failed" : "session.execution.succeeded" }))
   }
-  async model(options: { child?: boolean; report?: boolean; keepActive?: boolean } = {}) {
+  async model(options: { child?: boolean; report?: boolean; keepActive?: boolean; failed?: boolean } = {}) {
     const coordinator = this.coordinators.at(-1)!
     assert(coordinator, "coordinator prompt must arrive before scripted model work")
     const available: Record<string, unknown> = { read: {}, shell: {}, ...Object.fromEntries(this.tools) }
@@ -384,7 +388,7 @@ export class RecurringDayFixture {
       await this.tool("mission_inspect", {}, coordinator.id)
       await this.tool("mission_report", { outcome: "completed", summary: "Read and shell work completed", final: true }, coordinator.id)
     }
-    if (!options.keepActive) this.idle(coordinator.id)
+    if (!options.keepActive) this.idle(coordinator.id, options.failed)
     await this.flush()
   }
   private async tool(name: string, input: unknown, sessionID: string) {
