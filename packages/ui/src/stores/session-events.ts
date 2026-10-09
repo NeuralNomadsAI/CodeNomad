@@ -43,7 +43,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
@@ -383,7 +383,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     const published = updatedInstanceSessions?.get(sessionId)
     if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
 
-    if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
+    if (shouldExpandAncestors) revealWorkingSubsession(instanceId, sessionId)
 
     return fetched
   } catch (error) {
