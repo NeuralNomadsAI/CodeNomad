@@ -693,7 +693,7 @@ export const serverApi = {
   }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
   },
-  createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+  createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
     return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
   },

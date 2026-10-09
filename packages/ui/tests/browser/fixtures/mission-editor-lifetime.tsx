@@ -1,5 +1,6 @@
 import { Show, createComputed, createSignal } from "solid-js"
 import { render } from "solid-js/web"
+import { Toaster } from "solid-toast"
 import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
 import MissionControl from "../../../src/components/instance/shell/right-panel/tabs/MissionControl"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -42,6 +43,7 @@ function Fixture() {
   }
   return <aside style={{ width: "370px", height: "100vh", overflow: "auto" }}>
     <Show when={mounted()}><MissionControl instanceId={instanceId()} isActive={active} activeSessionId={() => "ses_fixture"} t={t} /></Show>
+    <Toaster position="top-right" />
   </aside>
 }
 

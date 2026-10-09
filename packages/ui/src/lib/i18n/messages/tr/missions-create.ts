@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "Görev ne yapmalı?",
+  "missions.create.objectivePlaceholder": "İstediğiniz sonucu açıklayın. Günlük bir görevde bu talimatlar her çalıştırmaya uygulanır.",
+  "missions.create.title": "Başlık",
+  "missions.create.when": "Ne zaman",
+  "missions.create.once": "Bir kez",
+  "missions.create.daily": "Her gün saat",
+  "missions.create.zone": "Saat dilimi: {zone}",
+  "missions.create.zoneChange": "Değiştir",
+  "missions.create.options": "Seçenekler",
+  "missions.create.agents": "Ajanlar ve modeller",
+  "missions.create.zoneOverride": "Saat dilimi (IANA)",
+  "missions.create.submitStart": "Oluştur ve başlat",
+  "missions.create.submitOnly": "Başlatmadan oluştur",
+  "missions.create.starting": "Başlatılıyor…",
+  "missions.create.startUncertain": "“{title}” oluşturuldu, ancak başlatılması onaylanmadı. Durumunu kontrol edin, hâlâ bekliyorsa Başlat'ı kullanın.",
+  "missions.create.playUncertain": "“{title}” oluşturuldu, ancak Oynat onaylanmadı. Zamanlamayı kontrol edin, hâlâ duraklatılmışsa Oynat'ı kullanın.",
+} as const

@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "任务要做什么？",
+  "missions.create.objectivePlaceholder": "描述你想要的结果。对于每日任务，这些指令适用于每次运行。",
+  "missions.create.title": "标题",
+  "missions.create.when": "时间",
+  "missions.create.once": "一次",
+  "missions.create.daily": "每天",
+  "missions.create.zone": "时区：{zone}",
+  "missions.create.zoneChange": "更改",
+  "missions.create.options": "选项",
+  "missions.create.agents": "代理和模型",
+  "missions.create.zoneOverride": "时区（IANA）",
+  "missions.create.submitStart": "创建并启动",
+  "missions.create.submitOnly": "创建但不启动",
+  "missions.create.starting": "正在启动…",
+  "missions.create.startUncertain": "“{title}”已创建，但启动未得到确认。请检查其状态，如仍在等待，请使用“启动”。",
+  "missions.create.playUncertain": "“{title}”已创建，但播放未得到确认。请检查计划，如仍处于暂停状态，请使用“播放”。",
+} as const

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -12,6 +12,14 @@ import type {} from "./fixtures/mission-editor-lifetime"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 
 let server: ViteDevServer, browser: Browser, url: string
+const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create without starting"
+const openOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
+const openAgents = async (page: Page) => {
+  const agents = page.locator("form.mission-editor summary").filter({ hasText: /^Agents and models$/ })
+  const options = page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ })
+  if (!await options.evaluate(summary => (summary.parentElement as HTMLDetailsElement).open)) await openOptions(page)
+  await agents.click()
+}
 before(async () => {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
@@ -55,7 +63,7 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents · defaults and overrides$/ }).click()
+    await openAgents(page)
     await page.evaluate(async () => {
       const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
       const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
@@ -122,11 +130,12 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     })
     assert.equal(catalogReads.length, 0, "a closed editor has no catalog demand")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    await page.getByLabel("Objective", { exact: true }).fill("Profile fixture")
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Profile fixture")
+    await openOptions(page)
     await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
     assert.equal(catalogReads.length, 0, "collapsed overrides have no catalog demand")
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents · defaults and overrides$/ }).click()
+    await openAgents(page)
     const root = page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }), child = page.locator("form.mission-editor").getByLabel("Specification reviewer · Agent", { exact: true })
     await root.locator('option[value="root-only"]').waitFor({ state: "attached" })
     assert.equal(await root.locator('option[value="child-only"]').count(), 0)
@@ -147,7 +156,7 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     assert.equal(geometry.radius, "0px")
     assert.ok(geometry.rowWidth <= geometry.formWidth, "compact profile row fits the narrow editor")
     assert.equal(await page.getByLabel("Specification reviewer · Model", { exact: true }).locator('option').filter({ hasText: "disabled" }).count(), 0)
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
     const expected = { coordinator: { agent: "root-only", model: { providerID: "p", id: "m", variant: "high" } },
       roles: { "review-spec": { agent: "child-only", model: { providerID: "p", id: "m", variant: "low" } },
@@ -169,12 +178,12 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     await page.evaluate(() => window.missionEditorLifetime.mount(false))
     await page.evaluate(() => window.missionEditorLifetime.mount(true))
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents · defaults and overrides$/ }).click()
+    await openAgents(page)
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Thinking", { exact: true }).inputValue(), "high")
     assert.equal(await page.getByLabel("Specification reviewer · Thinking", { exact: true }).inputValue(), "low")
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "root-only")
     assert.equal(await page.getByLabel("Specification reviewer · Agent", { exact: true }).inputValue(), "child-only")
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).last().click()
     assert.equal(writes.length, 1)
     assert.equal(catalogReads.length, 2, "uncertain draft does not refresh or replace its original profile")
@@ -214,21 +223,22 @@ test("creation waits for owned defaults and sends their exact snapshot without o
       updateInstance("fixture", { client: getRootClient("fixture") })
     })
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    await page.getByLabel("Objective", { exact: true }).fill("Saved default snapshot")
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Saved default snapshot")
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
+    await openOptions(page)
     assert.equal(await page.getByLabel("Playbook", { exact: true }).isDisabled(), true)
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.deepEqual(writes, [], "pending defaults fence direct form admission, not just the Save button")
     release()
-    await page.getByRole("button", { name: "Save", exact: true }).waitFor()
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).waitFor()
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
     assert.match(await page.locator("form.mission-editor").innerText(), /saved-root/)
     assert.match(await page.locator("form.mission-editor").innerText(), /saved-child/)
-    assert.equal(await page.locator("form.mission-editor details").filter({ has: page.locator("summary").filter({ hasText: /^Agents · defaults and overrides$/ }) }).evaluate(element => (element as HTMLDetailsElement).open), false)
+    assert.equal(await page.locator("form.mission-editor summary").filter({ hasText: /^Agents and models$/ }).evaluate(summary => (summary.parentElement as HTMLDetailsElement).open), false)
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
     assert.deepEqual(catalogs, [])
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
     assert.equal(writes.length, 1)
     assert.deepEqual(writes[0].profiles, profiles)
@@ -270,42 +280,40 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
-    assert.equal(await form.locator("details").first().locator("summary").innerText(), "Saved briefs")
-    await form.getByLabel("Objective", { exact: true }).fill("Daily review\nReview the latest work and report changes.")
-    const mode = form.locator("select").filter({ has: page.locator('option[value="recurring"]') })
-    await mode.selectOption("recurring")
+    assert.equal(await form.locator("details").first().locator(":scope > summary").innerText(), "Options")
+    assert.equal(await form.locator("header").count(), 0, "the panel's Create button heads the form")
+    assert.equal(await form.locator(".mission-editor-start-hint").count(), 0, "creation offers an explicit start choice instead of a hint")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Daily review\nReview the latest work and report changes.")
+    await form.getByLabel("Every day at", { exact: true }).check()
+    assert.match(await form.locator(".mission-create-zone").innerText(), /America\/New_York/, "the resolved zone is shown beside the schedule")
+    await form.locator(".mission-create-zone").getByRole("button", { name: "Change", exact: true }).click()
     const zone = form.getByLabel("Time zone (IANA)", { exact: true })
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-invalid") === "false")
     assert.equal(await zone.inputValue(), "America/New_York", "the system zone stays the default")
     // Suggestions come from the runtime's own IANA list, when it has one.
     const suggestions = await zone.evaluate(input => [...((input as HTMLInputElement).list?.options ?? [])].map(option => option.value))
     assert.ok(suggestions.includes("Europe/Paris") && suggestions.includes("America/New_York"), "native time-zone suggestions")
-    // Notes come before the creation hint, which closes the form body.
-    const order = await form.evaluate(element => {
-      const notes = [...element.querySelectorAll("label")].find(label => label.textContent?.startsWith("Notes"))
-      const hint = element.querySelector(".mission-editor-start-hint")
-      return Boolean(notes && hint && notes.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING)
-    })
-    assert.equal(order, true)
     await zone.fill("Not/A_Time_Zone")
     assert.equal(await zone.getAttribute("aria-invalid"), "true")
     await form.getByRole("alert").filter({ hasText: "Enter a valid IANA time zone" }).waitFor()
-    assert.equal(await form.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await form.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     await zone.fill("America/New_York")
     assert.equal(await zone.getAttribute("aria-invalid"), "false")
-    const title = form.locator('input[maxlength="120"]')
+    const title = form.getByLabel("Title", { exact: true })
+    assert.equal(await title.getAttribute("maxlength"), "60")
     assert.equal(await title.inputValue(), "Daily review")
     assert.equal(await form.locator("textarea").first().inputValue(), "Daily review\nReview the latest work and report changes.")
     assert.equal(await form.locator('input[type="number"]').count(), 0)
     assert.doesNotMatch(await form.innerText(), /Publications|Native calls|Effect budget/)
     assert.equal(await form.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
-    const overrides = form.locator("details").filter({ has: page.locator("summary").filter({ hasText: /^Agents · defaults and overrides$/ }) })
-    assert.equal(await overrides.evaluate(element => (element as HTMLDetailsElement).open), false)
+    const overrides = form.locator("summary").filter({ hasText: /^Agents and models$/ })
+    assert.equal(await overrides.evaluate(summary => (summary.parentElement as HTMLDetailsElement).open), false)
     await form.locator("textarea").first().fill("Updated daily review\nKeep the reference conversation in context.")
     assert.equal(await title.inputValue(), "Updated daily review")
     await title.fill("My daily schedule")
-    await mode.selectOption("once")
-    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Updated daily review\nKeep the reference conversation in context.")
-    await mode.selectOption("recurring")
+    await form.getByLabel("Once", { exact: true }).check()
+    assert.equal(await form.getByLabel(OBJECTIVE, { exact: true }).inputValue(), "Updated daily review\nKeep the reference conversation in context.")
+    await form.getByLabel("Every day at", { exact: true }).check()
     assert.equal(await title.inputValue(), "My daily schedule")
     await form.locator(".mission-conversation-picker summary").click()
     await form.getByLabel("Search sessions", { exact: true }).fill("Daily")
@@ -320,7 +328,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
       await mkdir(captureDirectory, { recursive: true })
       await page.screenshot({ path: path.join(captureDirectory, "creation-recurring.png"), fullPage: true })
     }
-    await form.getByRole("button", { name: "Save", exact: true }).click()
+    await form.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     assert.equal(writes.length, 1)
     assert.equal(writes[0].title, "My daily schedule")

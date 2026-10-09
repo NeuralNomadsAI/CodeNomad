@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "Que doit faire la mission ?",
+  "missions.create.objectivePlaceholder": "Décrivez le résultat attendu. Pour une mission quotidienne, ces instructions s'appliquent à chaque exécution.",
+  "missions.create.title": "Titre",
+  "missions.create.when": "Quand",
+  "missions.create.once": "Une fois",
+  "missions.create.daily": "Chaque jour à",
+  "missions.create.zone": "Fuseau horaire : {zone}",
+  "missions.create.zoneChange": "Modifier",
+  "missions.create.options": "Options",
+  "missions.create.agents": "Agents et modèles",
+  "missions.create.zoneOverride": "Fuseau horaire (IANA)",
+  "missions.create.submitStart": "Créer et démarrer",
+  "missions.create.submitOnly": "Créer sans démarrer",
+  "missions.create.starting": "Démarrage…",
+  "missions.create.startUncertain": "« {title} » a été créée, mais son démarrage n'a pas été confirmé. Vérifiez son état, puis utilisez Démarrer si elle attend toujours.",
+  "missions.create.playUncertain": "« {title} » a été créée, mais Lecture n'a pas été confirmé. Vérifiez la planification, puis utilisez Lecture si elle est toujours en pause.",
+} as const

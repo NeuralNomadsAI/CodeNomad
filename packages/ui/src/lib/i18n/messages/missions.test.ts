@@ -2,16 +2,36 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 
-import { missionMessages as de } from "./de/missions"
-import { missionMessages as en } from "./en/missions"
-import { missionMessages as es } from "./es/missions"
-import { missionMessages as fr } from "./fr/missions"
-import { missionMessages as he } from "./he/missions"
-import { missionMessages as ja } from "./ja/missions"
-import { missionMessages as ne } from "./ne/missions"
-import { missionMessages as ru } from "./ru/missions"
-import { missionMessages as tr } from "./tr/missions"
-import { missionMessages as zhHans } from "./zh-Hans/missions"
+import { missionMessages as deMissions } from "./de/missions"
+import { missionCreateMessages as deCreate } from "./de/missions-create"
+const de = { ...deMissions, ...deCreate }
+import { missionMessages as enMissions } from "./en/missions"
+import { missionCreateMessages as enCreate } from "./en/missions-create"
+const en = { ...enMissions, ...enCreate }
+import { missionMessages as esMissions } from "./es/missions"
+import { missionCreateMessages as esCreate } from "./es/missions-create"
+const es = { ...esMissions, ...esCreate }
+import { missionMessages as frMissions } from "./fr/missions"
+import { missionCreateMessages as frCreate } from "./fr/missions-create"
+const fr = { ...frMissions, ...frCreate }
+import { missionMessages as heMissions } from "./he/missions"
+import { missionCreateMessages as heCreate } from "./he/missions-create"
+const he = { ...heMissions, ...heCreate }
+import { missionMessages as jaMissions } from "./ja/missions"
+import { missionCreateMessages as jaCreate } from "./ja/missions-create"
+const ja = { ...jaMissions, ...jaCreate }
+import { missionMessages as neMissions } from "./ne/missions"
+import { missionCreateMessages as neCreate } from "./ne/missions-create"
+const ne = { ...neMissions, ...neCreate }
+import { missionMessages as ruMissions } from "./ru/missions"
+import { missionCreateMessages as ruCreate } from "./ru/missions-create"
+const ru = { ...ruMissions, ...ruCreate }
+import { missionMessages as trMissions } from "./tr/missions"
+import { missionCreateMessages as trCreate } from "./tr/missions-create"
+const tr = { ...trMissions, ...trCreate }
+import { missionMessages as zhHansMissions } from "./zh-Hans/missions"
+import { missionCreateMessages as zhHansCreate } from "./zh-Hans/missions-create"
+const zhHans = { ...zhHansMissions, ...zhHansCreate }
 
 const locales = { de, en, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
 

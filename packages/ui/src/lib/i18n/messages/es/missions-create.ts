@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "¿Qué debe hacer la misión?",
+  "missions.create.objectivePlaceholder": "Describe el resultado que quieres. En una misión diaria, estas instrucciones se aplican a cada ejecución.",
+  "missions.create.title": "Título",
+  "missions.create.when": "Cuándo",
+  "missions.create.once": "Una vez",
+  "missions.create.daily": "Cada día a las",
+  "missions.create.zone": "Zona horaria: {zone}",
+  "missions.create.zoneChange": "Cambiar",
+  "missions.create.options": "Opciones",
+  "missions.create.agents": "Agentes y modelos",
+  "missions.create.zoneOverride": "Zona horaria (IANA)",
+  "missions.create.submitStart": "Crear e iniciar",
+  "missions.create.submitOnly": "Crear sin iniciar",
+  "missions.create.starting": "Iniciando…",
+  "missions.create.startUncertain": "Se creó «{title}», pero su inicio no se confirmó. Comprueba su estado y usa Iniciar si sigue en espera.",
+  "missions.create.playUncertain": "Se creó «{title}», pero Reproducir no se confirmó. Comprueba la programación y usa Reproducir si sigue en pausa.",
+} as const

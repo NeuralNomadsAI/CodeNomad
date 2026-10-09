@@ -12,6 +12,7 @@ import { messagingMessages } from "./messaging"
 import { missionMessages } from "./missions"
 import { missionRecoveryMessages } from "./mission-recovery"
 import { missionConversationMessages } from "./mission-conversations"
+import { missionCreateMessages } from "./missions-create"
 import { permissionReceiptMessages } from "./permission-receipts"
 import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
@@ -36,6 +37,7 @@ export const deMessages = mergeMessageParts(
   missionMessages,
   missionRecoveryMessages,
   missionConversationMessages,
+  missionCreateMessages,
   permissionReceiptMessages,
   toolCallMessages,
   markdownMessages,

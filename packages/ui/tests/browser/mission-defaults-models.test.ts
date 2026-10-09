@@ -25,8 +25,11 @@ after(async () => { await browser?.close(); await server?.close() })
 const profiles = { coordinator: { agent: "root", model: { providerID: "p", id: "m", variant: "high" } }, roles: { specialist: { agent: "child" } } }
 const modelID = "70d47119-e4c3-4b18-814b-3e72ff93a1b2"
 const text = (page: Page, key: string) => page.evaluate(key => window.missionDefaultsModels.text(key), key)
-const openProfiles = async (page: Page) => page.locator("summary").filter({ hasText: await text(page, "missions.defaults.creation") }).click()
-const openModels = async (page: Page) => page.locator("summary").filter({ hasText: await text(page, "missions.models.title") }).click()
+const ensureOptions = async (page: Page) => { const summary = page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }); if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click() }
+const openProfiles = async (page: Page) => { await ensureOptions(page); await page.locator("summary").filter({ hasText: await text(page, "missions.create.agents") }).click() }
+const openModels = ensureOptions
+const toggleOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
+const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create without starting"
 const dispatchOwner = (page: Page, owner: Record<string, unknown>) => page.evaluate(async value => {
   const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
   serverEvents.dispatchBatch([{ type: "storage.configChanged", owner: "ui", value }])
@@ -76,8 +79,9 @@ test("creation waits for loaded defaults, summarizes exact choices and never fet
   const fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles }] }, delay)
   try {
     await page.goto(url)
-    await page.getByLabel("Objective", { exact: true }).fill("Loaded defaults")
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    await ensureOptions(page)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Loaded defaults")
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     assert.equal(fixture.reads.length, 0)
     release()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
@@ -85,7 +89,7 @@ test("creation waits for loaded defaults, summarizes exact choices and never fet
     await page.waitForTimeout(100)
     assert.equal(fixture.reads.length, 0, "summary is preference-only")
     await page.getByLabel("Playbook", { exact: true }).selectOption("wayfinder")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.deepEqual(fixture.creates[0].profiles, { coordinator: profiles.coordinator,
       roles: Object.fromEntries(["cartographer", "research", "prototype", "grilling", "decision"].map(role => [role, profiles.roles.specialist])) })
@@ -99,6 +103,7 @@ test("explicit override survives playbook changes; closed and inactive controls 
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     await openProfiles(page)
     const agent = page.getByLabel("Coordinator · Agent", { exact: true })
     await agent.locator('option[value="root"]').waitFor({ state: "attached" }); await agent.selectOption("root")
@@ -123,13 +128,14 @@ test("saved models store briefs only and manual use creates fresh authority requ
   const fixture = await setup(page, { missionModels: [model] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     await openModels(page)
     await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).selectOption(modelID)
     await page.getByRole("button", { name: await text(page, "missions.models.use"), exact: true }).click()
-    assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), model.objective)
+    assert.equal(await page.getByLabel(OBJECTIVE, { exact: true }).inputValue(), model.objective)
     assert.equal(fixture.creates.length, 0, "Use is not a launch")
     await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill("Second reusable brief")
-    await openModels(page); await openModels(page)
+    await toggleOptions(page); await toggleOptions(page)
     assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "Second reusable brief", "collapsing saved briefs never discards its name draft")
     await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
     await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 2)
@@ -138,17 +144,18 @@ test("saved models store briefs only and manual use creates fresh authority requ
     assert.deepEqual(Object.keys(saved).sort(), ["version", "id", "name", "objective", "notes", "template", "profiles"].sort())
     assert.notEqual(saved.id, model.id)
     assert.equal(fixture.bucket().unrelated, "keep"); assert.equal(fixture.bucket().settings.showThinkingBlocks, true)
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
     const submitted = fixture.creates[0]
     assert.deepEqual(submitted.profiles, profiles)
     assert.equal(submitted.coordinatorSessionID, undefined)
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     await page.evaluate(async () => { await window.missionDefaultsModels.update({ missionProfileDefaults: [], missionModels: [] }); window.missionDefaultsModels.view("create") })
+    await ensureOptions(page)
     await page.getByText(await text(page, "missions.models.current").then(value => value.replace("{name}", model.name)), { exact: true }).waitFor()
-    assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), model.objective)
+    assert.equal(await page.getByLabel(OBJECTIVE, { exact: true }).inputValue(), model.objective)
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     assert.equal(fixture.creates.length, 1, "no retry with new defaults")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
@@ -190,19 +197,20 @@ test("failed UI-owner reads stay fenced despite general readiness and server/sta
     : route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
   try {
     await page.goto(url)
+    await ensureOptions(page)
     await page.waitForFunction(() => window.missionDefaultsModels.generalLoaded())
-    await page.getByLabel("Objective", { exact: true }).fill("Failed-load fence")
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Failed-load fence")
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.loaded()), false)
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     await page.evaluate(async () => {
       const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
       serverEvents.dispatchBatch([{ type: "storage.configChanged", owner: "server", value: {} }, { type: "storage.stateChanged", owner: "ui", value: {} }])
     })
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     fail = false
     await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), false)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), false)
     assert.equal(fixture.creates.length, 0); assert.equal(fixture.reads.length, 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
@@ -212,6 +220,7 @@ test("Use saved defaults explicitly resnapshots after Settings edits while a cre
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles }] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     fixture.replace({ settings: { missionProfileDefaults: [{ template: "custom", profiles: { coordinator: { agent: "all" } } }] } })
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
     await openProfiles(page)
@@ -228,8 +237,9 @@ test("invalid documents cannot masquerade as empty; explicit repair uses raw con
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionModels: { corrupt: true }, missionProfileDefaults: [{ template: "unknown" }] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
-    await page.getByLabel("Objective", { exact: true }).fill("Invalid defaults fence")
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    await ensureOptions(page)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Invalid defaults fence")
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).isDisabled(), true)
     assert.equal(fixture.writes.length, 0)
@@ -252,8 +262,9 @@ test("stale model saves and deletes fail closed without resurrecting another win
   const fixture = await setup(page, { missionModels: [model] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     await openModels(page)
-    await page.getByLabel("Objective", { exact: true }).fill("Another brief")
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Another brief")
     await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill("New model")
     fixture.replace({ settings: { missionModels: [] } })
     await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
@@ -283,6 +294,7 @@ test("explicit defaults reload locks every profile-affecting control until its f
   const hold = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     await openModels(page); await openProfiles(page)
     await page.getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="root"]').waitFor({ state: "attached" })
     await page.route("**/api/storage/config/ui*", async route => { started(); await hold; return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }) })
@@ -292,7 +304,7 @@ test("explicit defaults reload locks every profile-affecting control until its f
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).isDisabled(), true)
     assert.equal(await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).isDisabled(), true)
     assert.equal(await page.getByRole("button", { name: await text(page, "missions.models.use"), exact: true }).isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     release()
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
     assert.equal(await page.getByLabel("Playbook", { exact: true }).inputValue(), "custom")
@@ -334,7 +346,7 @@ test("a saved brief manually creates independent fresh requests and explicit rem
       await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).selectOption(modelID)
       await page.getByRole("button", { name: await text(page, "missions.models.use"), exact: true }).click()
       assert.equal(fixture.creates.length, launch, "Use never launches automatically")
-      await page.getByRole("button", { name: "Save", exact: true }).click()
+      await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
       await page.locator("form.mission-editor").waitFor({ state: "detached" })
     }
     assert.notEqual(fixture.creates[0].requestId, fixture.creates[1].requestId)
@@ -401,11 +413,12 @@ test("earlier unrelated SSE during Save B is reconciled from owner authority bef
     await page.waitForFunction(() => window.missionDefaultsModels.loaded() && window.missionDefaultsModels.preferences().missionProfileDefaults[0]?.profiles.coordinator?.agent === "all")
     assert.equal(reads, 1); assert.equal(fixture.writes.length, 1)
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
+    await ensureOptions(page)
     const summary = page.getByLabel(await text(page, "missions.defaults.summary"))
     await summary.filter({ hasText: "all" }).waitFor()
     assert.equal((await summary.textContent())?.includes("root"), false)
-    await page.getByLabel("Objective", { exact: true }).fill("Freeze accepted B")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Freeze accepted B")
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.equal(fixture.creates[0].profiles.coordinator.agent, "all")
     assert.equal(fixture.bucket().settings.unrelated, "earlier-window-field")
@@ -418,8 +431,9 @@ test("an acknowledged library write with continuously invalidated reads gates cr
   let invalidate = true, reads = 0
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     await openModels(page)
-    await page.getByLabel("Objective", { exact: true }).fill("Saved but owner unreadable")
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Saved but owner unreadable")
     await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill("Accepted once")
     await page.route("**/api/storage/config/ui*", async route => {
       if (route.request().method() === "GET") {
@@ -437,14 +451,14 @@ test("an acknowledged library write with continuously invalidated reads gates cr
     await page.getByText(await text(page, "missions.defaults.reconciliationPending"), { exact: true }).waitFor()
     assert.equal(reads, 3); assert.equal(fixture.writes.length, 1)
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.loaded()), false)
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "", "acknowledged save is not offered as a duplicate retry")
     invalidate = false
     await page.getByRole("button", { name: await text(page, "missions.models.reload"), exact: true }).click()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     assert.equal(fixture.writes.length, 1); assert.equal(reads, 4)
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.preferences().missionModels.length), 1)
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), false)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), false)
     assert.equal(fixture.creates.length, 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
@@ -454,6 +468,7 @@ test("Creation and Settings summaries group requested tuples once and collapse a
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     const label = await text(page, "missions.defaults.summary"), native = await text(page, "missions.simple.profilesNative")
     assert.equal(await page.getByLabel(label).textContent(), native)
     await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
@@ -470,6 +485,7 @@ test("Creation and Settings summaries group requested tuples once and collapse a
     assert.equal(settingsSummary.match(/p\/m \/ high/g)?.length, 1)
     assert.equal(settingsSummary.match(/\bchild\b/g)?.length, 1)
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
+    await ensureOptions(page)
     await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
     const creationSummary = (await page.getByLabel(label).textContent())!
     assert.equal(creationSummary, settingsSummary)
@@ -493,17 +509,18 @@ test("initial mission readiness waits for a stable owner barrier when an earlier
   })
   try {
     await page.goto(url); await firstReached
-    await page.getByLabel("Objective", { exact: true }).fill("Initial stable profile B")
+    await ensureOptions(page)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Initial stable profile B")
     await dispatchOwner(page, earlier)
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.loaded()), false)
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     releaseFirst(); await stableReached
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.loaded()), false, "an invalidated successful response is not initial readiness")
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     releaseStable()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "all" }).waitFor()
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.equal(fixture.creates[0].profiles.coordinator.agent, "all")
     assert.equal(reads, 2); assert.equal(fixture.reads.length, 0)
@@ -519,6 +536,7 @@ test("new independent Missions freeze task policy and expose only primary/all ta
   const fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles: { coordinator: { agent: "root" } }, taskMode: "independent" }] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
     assert.equal(await mode.inputValue(), "independent")
     assert.equal(fixture.reads.length, 0)
@@ -529,16 +547,17 @@ test("new independent Missions freeze task policy and expose only primary/all ta
     assert.equal(await task.locator('option[value="child"]').count(), 0)
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="child"]').count(), 0)
     await task.selectOption("root")
-    await page.getByLabel("Objective", { exact: true }).fill("Independent policy snapshot")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Independent policy snapshot")
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.equal(fixture.creates[0].taskMode, "independent")
     assert.equal(fixture.creates[0].profiles.roles.specialist.agent, "root")
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     await page.evaluate(async () => { await window.missionDefaultsModels.update({ missionProfileDefaults: [{ template: "custom", profiles: {}, taskMode: "native" }] }); window.missionDefaultsModels.view("create") })
+    await ensureOptions(page)
     assert.equal(await mode.inputValue(), "independent")
     assert.equal(await mode.isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     assert.equal(fixture.creates.length, 1)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
@@ -570,6 +589,7 @@ test("playbook task policy can inherit again without resetting profiles or other
     await scope.selectOption("wayfinder")
     assert.equal(await mode.inputValue(), "inherit")
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
+    await ensureOptions(page)
     await page.getByLabel(await text(page, "missions.control.template"), { exact: true }).selectOption("wayfinder")
     assert.equal(await mode.inputValue(), "native")
     assert.equal(await mode.locator('option[value="inherit"]').count(), 0, "creation freezes an explicit policy")
@@ -581,6 +601,7 @@ test("native task defaults and independent preference edits keep global CAS draf
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
     assert.equal(await page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true }).inputValue(), "native")
     await openProfiles(page)
     await page.locator("form.mission-editor").getByText("Optional task presets", { exact: true }).click()
