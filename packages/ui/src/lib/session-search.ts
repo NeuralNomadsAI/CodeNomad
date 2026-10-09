@@ -10,6 +10,8 @@ export interface SessionSearchMatch {
   messageId: string
   partId?: string
   partType?: string
+  /** Native content index of a history hit; resolved to `partId` once the message is loaded. */
+  partIndex?: number
   role: MessageRole
   start: number
   end: number

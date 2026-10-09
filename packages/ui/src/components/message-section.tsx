@@ -21,7 +21,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryMessagePreview from "./history-message-preview"
@@ -151,8 +151,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
       if (record.role === "user") return [null]
-      const display = buildRecordDisplayData(props.instanceId, record)
-      const projected = display.orderedParts.map<TechnicalCleanupTranscriptItem[]>((part) => {
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
         const partId = typeof part.id === "string" ? part.id : ""
         if (!partId) return []
         if (part.type === "tool" || part.type === "reasoning") {
@@ -163,9 +162,6 @@ export default function MessageSection(props: MessageSectionProps) {
         }
         return []
       })
-      // Omitted parts may hold boundaries: never select a cleanup run across them.
-      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
-      return projected.flat()
     })
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
@@ -199,8 +195,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const completed = record.status === "complete" || record.status === "error"
       const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
       const messageInfo = resolvedStore.getMessageInfo(messageId)
-      const display = buildRecordDisplayData(props.instanceId, record)
-      const projected = display.orderedParts.map((part) => {
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
         if (part.type === "step-finish") {
           return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
         }
@@ -223,9 +218,6 @@ export default function MessageSection(props: MessageSectionProps) {
           revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
         }]
       })
-      // Technical groups never span omitted parts; the gap renders between them.
-      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
-      return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)
   })
@@ -234,7 +226,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const displayPartIds = getRecordDisplayPartIds(props.instanceId, record)
+    const displayPartIds = record.partIds
     const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
@@ -318,7 +310,16 @@ export default function MessageSection(props: MessageSectionProps) {
     const matches = currentSearchMatches()
     if (matches.length === 0) return null
     const index = Math.min(Math.max(activeSearchIndex(), 0), matches.length - 1)
-    return matches[index] ?? null
+    const match = matches[index]
+    if (!match) return null
+    if (match.partId || match.partIndex === undefined) return match
+    // Name the hit's part so its chunk of a long message renders before the reveal.
+    const record = store().getMessage(match.messageId)
+    const partId = record?.partIds[match.partIndex]
+    return partId && record?.parts[partId]?.data.type === match.partType ? { ...match, partId } : match
+  }, null, {
+    // Record updates re-resolve the part; only a different target is a new navigation.
+    equals: (previous, next) => previous === next || Boolean(previous && next && previous.id === next.id && previous.partId === next.partId),
   })
 
   const searchResultMessageIds = createMemo(() => new Set(currentSearchMatches().map((match) => match.messageId)))
@@ -330,14 +331,12 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; revealed: number; signature: string; segments: TimelineSegment[] }>()
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
   const residentTimelineSegments = createMemo(() => {
     sessionRevision()
     const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
-    // Revealing omitted parts changes the rendered window without a record revision.
-    const revealedByMessage = new Map(ids.map((messageId) => [messageId, getRevealedRecordParts(props.instanceId, messageId)]))
 
     return untrack(() => {
       const activeIds = new Set(ids)
@@ -345,17 +344,16 @@ export default function MessageSection(props: MessageSectionProps) {
       for (const messageId of ids) {
         const record = resolvedStore.getMessage(messageId)
         if (!record) continue
-        const revealed = revealedByMessage.get(messageId) ?? 0
         const cached = timelineSegmentCache.get(messageId)
-        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale && cached.revealed === revealed) {
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
           segments.push(...cached.segments)
           continue
         }
         const signature = getTimelineRecordSignature(record)
-        const current = cached?.signature === signature && cached.locale === activeLocale && cached.revealed === revealed
+        const current = cached?.signature === signature && cached.locale === activeLocale
           ? cached.segments
           : buildTimelineSegments(props.instanceId, record, t)
-        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, revealed, signature, segments: current })
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
         segments.push(...current)
       }
       for (const messageId of timelineSegmentCache.keys()) {
@@ -1067,7 +1065,7 @@ export default function MessageSection(props: MessageSectionProps) {
           // so Solid keeps existing result buttons and their keyboard focus.
           setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
-            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
+            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind, partIndex: hit.partIndex,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
             occurrence: 0, preview: hit.excerpt,
           })))
@@ -1405,7 +1403,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
-              alignRevealedParts={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
+              revealSearchRange={(range) => listApi()?.revealRect(range.getBoundingClientRect())}
             />
             <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
             </>

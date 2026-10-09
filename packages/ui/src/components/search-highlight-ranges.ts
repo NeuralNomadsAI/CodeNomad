@@ -48,12 +48,12 @@ export function collectSearchRanges(root: HTMLElement, query: string, active?: S
   return result
 }
 
-/** Reveal the actual occurrence through nested code/tool and transcript scrollers. */
-export function revealSearchRange(range: Range): void {
+/** Reveal the actual occurrence through nested code/tool and transcript scrollers, up to `boundary` when given. */
+export function revealSearchRange(range: Range, boundary?: HTMLElement): void {
   const node = range.startContainer
   if (!node.isConnected) return
   const document = node.ownerDocument!
-  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+  for (let parent = node.parentElement; parent; parent = parent === boundary ? null : parent.parentElement) {
     const style = document.defaultView!.getComputedStyle(parent)
     const rect = range.getBoundingClientRect(), bounds = parent.getBoundingClientRect()
     const top = bounds.top + parent.clientTop, left = bounds.left + parent.clientLeft
