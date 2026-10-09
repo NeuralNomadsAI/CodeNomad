@@ -36,11 +36,7 @@ import {
   getSessionSearchQuery,
   getSessionSearchSessions,
   isSessionSearchLoading,
-  revealMissionSession,
 } from "../stores/sessions"
-import { MISSION_GROUP_ROW_ID, isMissionGroupOpen, isMissionRootSession, missionSessionTitle, partitionMissionThreads, setMissionGroupOpen } from "../stores/session-mission-groups"
-import { getSessionRootFromMap } from "../stores/session-tree"
-import SessionMissionGroupRow from "./session-mission-group-row"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
 import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
@@ -257,31 +253,21 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
   })
 
-  // Normal browsing gathers Mission roots into one leading group; search/filter
-  // mode stays flat and marks Mission results with a badge instead.
-  const missionPartition = createMemo(() => props.enableFilterBar
-    ? { ordinary: filteredThreads(), missions: [] }
-    : partitionMissionThreads(filteredThreads()))
-  const missionGroupOpen = () => isMissionGroupOpen(props.instanceId)
-
   const visibleProjection = createMemo(() => {
     const expandAll = Boolean(normalizedQuery())
-    const isExpanded = (sessionId: string) => expandAll || isSessionExpanded(props.instanceId, sessionId)
-    const { ordinary, missions } = missionPartition()
-    const rows = flattenVisibleSessionThreads(ordinary, isExpanded)
-    const missionRows = missions.length && missionGroupOpen() ? flattenVisibleSessionThreads(missions, isExpanded, 1) : []
+    const rows = flattenVisibleSessionThreads(
+      filteredThreads(),
+      (sessionId) => expandAll || isSessionExpanded(props.instanceId, sessionId),
+    )
     const ids: string[] = []
     const rowsById = new Map<string, (typeof rows)[number]>()
     const indexById = new Map<string, number>()
-    const append = (row: (typeof rows)[number]) => {
-      indexById.set(row.sessionId, ids.length)
+    rows.forEach((row, index) => {
       ids.push(row.sessionId)
       rowsById.set(row.sessionId, row)
-    }
-    if (missions.length) ids.push(MISSION_GROUP_ROW_ID)
-    missionRows.forEach(append)
-    rows.forEach(append)
-    return { ids, rowsById, indexById, missions }
+      indexById.set(row.sessionId, index)
+    })
+    return { ids, rowsById, indexById }
   })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
@@ -584,33 +570,21 @@ const SessionList: Component<SessionListProps> = (props) => {
     const sessionId = () => rowProps.session.id
     const isChild = () => rowProps.depth > 0
     const isSubsession = () => Boolean(rowProps.session.parentId)
-    const isMissionRoot = createMemo(() => isMissionRootSession(rowProps.session))
-    // Mission roots are nested under the Missions group, yet remain native roots.
-    const isNativeChild = () => isChild() && !isMissionRoot()
-    const showMissionBadge = createMemo(() => {
-      if (!props.enableFilterBar) return false
-      if (isMissionRoot()) return true
-      const instanceSessions = sessionStateSessions().get(props.instanceId)
-      return Boolean(instanceSessions && isMissionRootSession(getSessionRootFromMap(instanceSessions, sessionId()) ?? undefined))
-    })
 
     const worktreeSlug = createMemo(() => {
-      if (isNativeChild()) return ""
+      if (isChild()) return ""
       const slug = getWorktreeSlugForParentSession(props.instanceId, sessionId())
       return slug === "root" ? "" : getWorktrees(props.instanceId).find(entry => entry.slug === slug)?.label ?? slug
     })
 
     const showWorktreeBadge = createMemo(() => {
-      if (isNativeChild()) return false
+      if (isChild()) return false
       if (getGitRepoStatus(props.instanceId) !== true) return false
       return Boolean(worktreeSlug())
     })
 
     const isActive = () => props.activeSessionId === sessionId()
-    const title = () => {
-      const raw = rowProps.session.title || t("sessionList.session.untitled")
-      return isMissionRoot() ? missionSessionTitle(raw) : raw
-    }
+    const title = () => rowProps.session.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, sessionId())
     const interrupted = () => rowProps.session.generationRecovery === "interrupted"
     const retry = () => getSessionRetry(props.instanceId, sessionId())
@@ -784,11 +758,6 @@ const SessionList: Component<SessionListProps> = (props) => {
                   <span class="session-item-status-label">{statusText()}</span>
                 </span>
               </Show>
-              <Show when={showMissionBadge()}>
-                <span class="neutral-badge badge-shape session-mission-badge" title={t("sessionList.missions.badge.tooltip")}>
-                  {t("sessionList.missions.badge.label")}
-                </span>
-              </Show>
               <Show when={showWorktreeBadge()}>
                 <span class="status-indicator session-status-list worktree-indicator" title={t("sessionList.worktree.tooltip", { worktree: worktreeSlug() })}>
                   <Split class="w-3.5 h-3.5" aria-hidden="true" />
@@ -834,15 +803,6 @@ const SessionList: Component<SessionListProps> = (props) => {
       </div>
     )
   }
-
-  // Navigating to a Mission conversation (including from the Missions panel)
-  // reveals it once; the user may collapse the group again afterwards.
-  createEffect(on(
-    () => [props.activeSessionId, Boolean(sessionStateSessions().get(props.instanceId)?.has(props.activeSessionId ?? ""))] as const,
-    ([activeId, loaded]) => {
-      if (activeId && loaded && !props.enableFilterBar) revealMissionSession(props.instanceId, activeId)
-    },
-  ))
 
   createEffect(on(
     () => [props.activeSessionId, virtualizerHandle()] as const,
@@ -1032,16 +992,6 @@ const SessionList: Component<SessionListProps> = (props) => {
                  keepMounted={keptMountedIndexes()}
                >
                  {(sessionId, index) => {
-                   const isLastRow = () => index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()
-                   if (sessionId === MISSION_GROUP_ROW_ID) return (
-                     <SessionMissionGroupRow
-                       instanceId={props.instanceId}
-                       missions={visibleProjection().missions}
-                       open={missionGroupOpen()}
-                       isLastRow={isLastRow()}
-                       onToggle={() => setMissionGroupOpen(props.instanceId, !missionGroupOpen())}
-                     />
-                   )
                    const row = createMemo(() => visibleProjection().rowsById.get(sessionId))
                    return (
                      <Show when={Boolean(row())}>
@@ -1052,7 +1002,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                          expanded={row()!.expanded}
                          onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
                          isLastChild={row()!.isLastChild}
-                         isLastRow={isLastRow()}
+                         isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
                        />
                      </Show>
                    )

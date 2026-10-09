@@ -30,7 +30,6 @@ import {
 
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree } from "./worktrees"
-import { isMissionGroupOpen, isMissionRootSession, missionCoordinatorFor, partitionMissionThreads, setMissionGroupOpen } from "./session-mission-groups"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -1121,24 +1120,7 @@ function getVisibleSessionIds(instanceId: string): string[] {
   if (threads.length === 0) return []
 
   const expanded = expandedSessions().get(instanceId)
-  // Mirrors the left list: Mission roots precede ordinary families, inside their
-  // collapsible group, so keyboard navigation never visits hidden rows.
-  const { ordinary, missions } = partitionMissionThreads(threads)
-  const ids = collectVisibleSessionIds(ordinary, expanded)
-  return isMissionGroupOpen(instanceId) ? [...collectVisibleSessionIds(missions, expanded), ...ids] : ids
-}
-
-/** Opens the left-list Missions group and the coordinator/native ancestors that
- * contain a Mission session; returns false for ordinary conversations. */
-function revealMissionSession(instanceId: string, sessionId: string): boolean {
-  const instanceSessions = sessions().get(instanceId)
-  const root = instanceSessions ? getSessionRootFromMap(instanceSessions, sessionId) : null
-  if (!instanceSessions || !root || !isMissionRootSession(root)) return false
-  setMissionGroupOpen(instanceId, true)
-  const coordinatorId = missionCoordinatorFor(instanceSessions, root)
-  if (coordinatorId) ensureSessionExpanded(instanceId, coordinatorId)
-  ensureSessionAncestorsExpanded(instanceId, sessionId)
-  return true
+  return collectVisibleSessionIds(threads, expanded)
 }
 
 function setActiveSessionFromList(instanceId: string, sessionId: string): void {
@@ -1430,7 +1412,6 @@ export {
   ensureSessionExpanded,
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
-  revealMissionSession,
   revealWorkingSubsession,
   getPersistentExpandedSessionIds,
   setActiveSessionFromList,

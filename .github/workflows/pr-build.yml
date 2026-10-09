@@ -321,7 +321,6 @@ jobs:
           packages/ui/src/stores/workspace-session-scope.test.ts
           packages/ui/src/stores/session-pending-state.test.ts
           packages/ui/src/stores/session-tree.test.ts
-          packages/ui/src/stores/session-mission-groups.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts

@@ -4,7 +4,7 @@ import { AlertTriangle, Flag, Loader2, Plus, RefreshCw, Settings } from "lucide-
 import type { MissionMap } from "../../../../../../../server/src/api-types"
 import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
-import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, revealMissionSession, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
+import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
 import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
@@ -159,9 +159,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       return false
     }
     batch(() => {
-      // Open conversation and task navigation land in the left list's Missions
-      // group, expanded so the selected Mission session is visible there.
-      revealMissionSession(origin.instanceId, sessionId)
       setActiveSessionFromList(origin.instanceId, sessionId)
       showSessionChatFor(sessionId, origin.scope)
       updateMissionProjectView(origin.scope, { reader: undefined })

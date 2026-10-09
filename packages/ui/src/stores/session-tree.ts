@@ -228,7 +228,6 @@ export function collectVisibleSessionIds(threads: SessionThread[], expanded: Set
 export function flattenVisibleSessionThreads(
   threads: readonly SessionThread[],
   isExpanded: (sessionId: string) => boolean,
-  baseDepth = 0,
 ): VisibleSessionRow[] {
   const rows: VisibleSessionRow[] = []
 
@@ -248,7 +247,7 @@ export function flattenVisibleSessionThreads(
     })
   }
 
-  append(threads, baseDepth)
+  append(threads, 0)
   return rows
 }
 
