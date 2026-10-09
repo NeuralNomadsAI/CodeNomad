@@ -33,6 +33,7 @@ import { LOCK_HEARTBEAT_MS } from "./profile-transition"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
+import { forwardOpenerStartupState, runStartupStateCommandInWindow } from "./opener-startup-state"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -410,6 +411,14 @@ function runPrimary(firstIntent: LaunchIntent) {
     getAllowedOrigins,
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
+    openerStartupState: async (window, command, epoch) => {
+      const opener = preferencesWindows.opener(window)
+      if (!opener) throw new Error("Preferences window is no longer current")
+      return forwardOpenerStartupState(opener, command, epoch, (openerId, effective) => {
+        const target = registry.get(openerId)?.window
+        return runStartupStateCommandInWindow(target, effective, (url) => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
+      })
+    },
     markReady: (window) => preferencesWindows.markReady(window),
     acceptRequest: async (window, request) => {
       await clientState.setPreferences(request)
@@ -543,13 +552,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false): Promise<void> {
+  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false, openerId?: string): Promise<void> {
     if (resume && clientState.lastPreferences) request = { ...request, section: clientState.lastPreferences.section, scrollTop: clientState.lastPreferences.scrollTop }
     if (toggle && preferencesWindows.current()) {
       preferencesWindows.current()?.close()
       return
     }
-    const reused = preferencesWindows.reuse(request)
+    const reused = preferencesWindows.reuse(request, openerId)
     if (reused) {
       if (!preferencesWindows.isReady(reused)) await clientState.setPreferences(request)
       return
@@ -569,7 +578,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const nativeWindowId = window.id
     const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
-    preferencesWindows.register(window, request)
+    preferencesWindows.register(window, request, openerId)
     const tracker = new WindowStateTracker(window, {
       activeWindowId: "preferences",
       saveWindowState: state => clientState.savePreferencesWindow(state),

@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "已清除保存的启动状态。",
   "settings.appearance.startup.clearError": "无法清除保存的启动状态。",
   "settings.appearance.startup.updateError": "无法更新启动恢复设置。",
+  "settings.appearance.startup.opener.scope": "应用于打开偏好设置的 CodeNomad 窗口。",
+  "settings.appearance.startup.opener.unavailable": "打开偏好设置的窗口已关闭或不可用。请从 CodeNomad 窗口打开偏好设置以更改其启动状态。",
   "settings.section.notifications.title": "通知",
   "settings.section.notifications.subtitle": "控制会话活动的系统级通知。",
   "settings.notifications.permission.granted": "已授予",

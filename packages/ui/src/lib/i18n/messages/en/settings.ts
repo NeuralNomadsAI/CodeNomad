@@ -318,6 +318,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Saved startup state cleared.",
   "settings.appearance.startup.clearError": "Could not clear the saved startup state.",
   "settings.appearance.startup.updateError": "Could not update the startup restore setting.",
+  "settings.appearance.startup.opener.scope": "Applies to the CodeNomad window that opened Preferences.",
+  "settings.appearance.startup.opener.unavailable": "The window that opened Preferences is closed or unavailable. Open Preferences from a CodeNomad window to change its startup state.",
   "settings.section.notifications.title": "Notifications",
   "settings.section.notifications.subtitle": "Control OS-level notifications for session activity.",
   "settings.notifications.permission.granted": "Granted",

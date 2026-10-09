@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Gespeicherter Startzustand wurde gelöscht.",
   "settings.appearance.startup.clearError": "Der gespeicherte Startzustand konnte nicht gelöscht werden.",
   "settings.appearance.startup.updateError": "Die Einstellung zur Wiederherstellung beim Start konnte nicht aktualisiert werden.",
+  "settings.appearance.startup.opener.scope": "Gilt für das CodeNomad-Fenster, das die Einstellungen geöffnet hat.",
+  "settings.appearance.startup.opener.unavailable": "Das Fenster, das die Einstellungen geöffnet hat, ist geschlossen oder nicht verfügbar. Öffne die Einstellungen aus einem CodeNomad-Fenster, um dessen Startzustand zu ändern.",
   "settings.section.notifications.title": "Benachrichtigungen",
   "settings.section.notifications.subtitle": "Steuern Sie OS-Benachrichtigungen für Sitzungsaktivitäten.",
   "settings.notifications.permission.granted": "Erteilt",

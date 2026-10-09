@@ -105,6 +105,7 @@ const preferencesElectronAPI = {
   preferencesReady: () => ipcRenderer.invoke("preferences:ready"),
   acceptPreferencesRequest: (request) => ipcRenderer.invoke("preferences:acceptRequest", request),
   resolvePreferencesTransition: (id, approved) => ipcRenderer.invoke("preferences:resolveTransition", id, approved),
+  openerStartupState: (command, epoch) => ipcRenderer.invoke("preferences:openerStartupState", command, epoch),
   onPreferencesSection: (callback) => {
     const handler = (_event, section) => callback(section)
     ipcRenderer.on("preferences:section", handler)

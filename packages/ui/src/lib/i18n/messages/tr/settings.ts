@@ -309,6 +309,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Kayıtlı başlangıç durumu temizlendi.",
   "settings.appearance.startup.clearError": "Kayıtlı başlangıç durumu temizlenemedi.",
   "settings.appearance.startup.updateError": "Başlangıç geri yükleme ayarı güncellenemedi.",
+  "settings.appearance.startup.opener.scope": "Tercihleri açan CodeNomad penceresine uygulanır.",
+  "settings.appearance.startup.opener.unavailable": "Tercihleri açan pencere kapalı veya kullanılamıyor. Başlangıç durumunu değiştirmek için Tercihleri bir CodeNomad penceresinden açın.",
   "settings.section.notifications.title": "Bildirimler",
   "settings.section.notifications.subtitle": "Session etkinliklerine ilişkin işletim sistemi düzeyindeki bildirimleri kontrol edin.",
   "settings.notifications.permission.granted": "Verildi",

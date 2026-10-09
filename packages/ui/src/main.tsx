@@ -28,11 +28,14 @@ if (typeof document !== "undefined") {
 async function bootstrap() {
   let RootComponent: Component = PreferencesWindow
   if (usesClientState(runtimeEnv)) {
-    const [{ initializeClientState }, appModule] = await Promise.all([
+    const [{ initializeClientState }, { runStartupStateCommand }, { installNativeStartupStateCommandHandler }, appModule] = await Promise.all([
       import("./stores/client-state"),
+      import("./stores/client-state-owner-commands"),
+      import("./lib/native/client-state"),
       import("./App"),
     ])
     await initializeClientState()
+    await installNativeStartupStateCommandHandler(runStartupStateCommand).catch(() => undefined)
     RootComponent = appModule.default
   }
 

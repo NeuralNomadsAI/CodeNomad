@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Сохранённое состояние запуска очищено.",
   "settings.appearance.startup.clearError": "Не удалось очистить сохранённое состояние запуска.",
   "settings.appearance.startup.updateError": "Не удалось обновить настройку восстановления при запуске.",
+  "settings.appearance.startup.opener.scope": "Применяется к окну CodeNomad, из которого открыты настройки.",
+  "settings.appearance.startup.opener.unavailable": "Окно, из которого открыты настройки, закрыто или недоступно. Откройте настройки из окна CodeNomad, чтобы изменить его состояние запуска.",
   "settings.section.notifications.title": "Уведомления",
   "settings.section.notifications.subtitle": "Управляйте системными уведомлениями об активности сессий.",
   "settings.notifications.permission.granted": "Разрешены",

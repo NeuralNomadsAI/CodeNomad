@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "L’état de démarrage enregistré a été effacé.",
   "settings.appearance.startup.clearError": "Impossible d’effacer l’état de démarrage enregistré.",
   "settings.appearance.startup.updateError": "Impossible de mettre à jour le réglage de restauration au démarrage.",
+  "settings.appearance.startup.opener.scope": "S'applique à la fenêtre CodeNomad qui a ouvert les Préférences.",
+  "settings.appearance.startup.opener.unavailable": "La fenêtre qui a ouvert les Préférences est fermée ou indisponible. Ouvrez les Préférences depuis une fenêtre CodeNomad pour modifier son état de démarrage.",
   "settings.section.notifications.title": "Notifications",
   "settings.section.notifications.subtitle": "Contrôlez les notifications système liées à l'activité des sessions.",
   "settings.notifications.permission.granted": "Accordée",

@@ -60,7 +60,7 @@ test("Preferences preload exposes only section and frame controls", () => {
   assert.deepEqual(Object.keys(api), [
     "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
-    "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
+    "openerStartupState", "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
   assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), "preferences")
@@ -70,10 +70,13 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.preferencesReady()
   api.acceptPreferencesRequest({ section: "providers" })
   api.resolvePreferencesTransition(4, true)
+  api.openerStartupState("read")
   api.minimizeWindow()
   api.toggleMaximizeWindow()
   api.closeWindow()
-  assert.deepEqual(invoked, ["preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close"])
+  assert.deepEqual(invoked, ["preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState", "preferences:minimize", "preferences:toggleMaximize", "preferences:close"])
+  // Preferences never receives direct client-state authority.
+  assert.ok(!Object.keys(api).some((key) => /ClientState/.test(key)))
 
   const sections: string[] = []
   const dispose = api.onPreferencesSection((section: string) => sections.push(section))

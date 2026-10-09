@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Se borró el estado de inicio guardado.",
   "settings.appearance.startup.clearError": "No se pudo borrar el estado de inicio guardado.",
   "settings.appearance.startup.updateError": "No se pudo actualizar el ajuste de restauración al inicio.",
+  "settings.appearance.startup.opener.scope": "Se aplica a la ventana de CodeNomad que abrió las Preferencias.",
+  "settings.appearance.startup.opener.unavailable": "La ventana que abrió las Preferencias está cerrada o no disponible. Abre las Preferencias desde una ventana de CodeNomad para cambiar su estado de inicio.",
   "settings.section.notifications.title": "Notificaciones",
   "settings.section.notifications.subtitle": "Controla las notificaciones del sistema para la actividad de sesiones.",
   "settings.notifications.permission.granted": "Concedido",

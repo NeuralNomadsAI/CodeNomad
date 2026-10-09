@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "सुरक्षित सुरुआत अवस्था खाली गरियो।",
   "settings.appearance.startup.clearError": "सुरक्षित सुरुआत अवस्था खाली गर्न सकिएन।",
   "settings.appearance.startup.updateError": "सुरुआत पुनर्स्थापना सेटिङ अद्यावधिक गर्न सकिएन।",
+  "settings.appearance.startup.opener.scope": "प्राथमिकताहरू खोल्ने CodeNomad सञ्झ्यालमा लागू हुन्छ।",
+  "settings.appearance.startup.opener.unavailable": "प्राथमिकताहरू खोल्ने सञ्झ्याल बन्द वा अनुपलब्ध छ। यसको सुरुआत अवस्था परिवर्तन गर्न CodeNomad सञ्झ्यालबाट प्राथमिकताहरू खोल्नुहोस्।",
   "settings.section.notifications.title": "सूचनाहरू",
   "settings.section.notifications.subtitle": "सत्र गतिविधिको लागि OS-स्तर सूचनाहरू नियन्त्रण गर्नुहोस्।",
   "settings.notifications.permission.granted": "अनुमति दिइएको",

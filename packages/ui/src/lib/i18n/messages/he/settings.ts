@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "מצב ההפעלה השמור נוקה.",
   "settings.appearance.startup.clearError": "לא ניתן לנקות את מצב ההפעלה השמור.",
   "settings.appearance.startup.updateError": "לא ניתן לעדכן את הגדרת השחזור בעת הפעלה.",
+  "settings.appearance.startup.opener.scope": "חל על חלון CodeNomad שפתח את ההעדפות.",
+  "settings.appearance.startup.opener.unavailable": "החלון שפתח את ההעדפות סגור או אינו זמין. פתח את ההעדפות מחלון CodeNomad כדי לשנות את מצב ההפעלה שלו.",
   "settings.section.notifications.title": "התראות",
   "settings.section.notifications.subtitle": "שלוט בהתראות ברמת מערכת ההפעלה עבור פעילות סשן.",
   "settings.notifications.permission.granted": "ניתן",

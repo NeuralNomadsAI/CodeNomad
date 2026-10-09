@@ -41,6 +41,7 @@
     "allow-client-state-clear",
     "allow-client-state-renderer-flushed",
     "allow-client-state-navigation-flushed",
+    "allow-client-state-startup-command-result",
     "allow-desktop-launch-ready",
     "allow-desktop-launch-next-folder",
     "allow-desktop-launch-acknowledge-folder",

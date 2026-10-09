@@ -317,6 +317,8 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "保存された起動状態を消去しました。",
   "settings.appearance.startup.clearError": "保存された起動状態を消去できませんでした。",
   "settings.appearance.startup.updateError": "起動時の復元設定を更新できませんでした。",
+  "settings.appearance.startup.opener.scope": "環境設定を開いた CodeNomad ウィンドウに適用されます。",
+  "settings.appearance.startup.opener.unavailable": "環境設定を開いたウィンドウは閉じているか利用できません。起動時の状態を変更するには、CodeNomad ウィンドウから環境設定を開いてください。",
   "settings.section.notifications.title": "通知",
   "settings.section.notifications.subtitle": "セッションの動作に関する OS レベルの通知を制御します。",
   "settings.notifications.permission.granted": "許可済み",
