@@ -75,5 +75,19 @@
     { "name": "a full file still replaces this config's stale entry", "otherEntries": 255, "current": "dev", "reason": "none", "stored": "default" },
     { "name": "a full file without this config's entry cannot remember", "otherEntries": 256, "current": null, "reason": "unremembered", "stored": null },
     { "name": "room for one more entry", "otherEntries": 255, "current": null, "reason": "none", "stored": "default" }
+  ],
+  "rememberedProfileStates": [
+    { "lstat": "dir", "stat": "dir", "state": "present" },
+    { "lstat": "ENOENT", "stat": null, "state": "missing" },
+    { "lstat": "ENOTDIR", "stat": null, "state": "missing" },
+    { "lstat": "EACCES", "stat": null, "state": "present" },
+    { "lstat": "file", "stat": "file", "state": "missing" },
+    { "lstat": "dir", "stat": "ENOENT", "state": "missing" },
+    { "lstat": "dir", "stat": "EACCES", "state": "present" },
+    { "lstat": "link", "stat": "dir", "state": "present" },
+    { "lstat": "link", "stat": "ENOENT", "state": "unavailable" },
+    { "lstat": "link", "stat": "ENOTDIR", "state": "unavailable" },
+    { "lstat": "link", "stat": "file", "state": "unavailable" },
+    { "lstat": "link", "stat": "EACCES", "state": "present" }
   ]
 }

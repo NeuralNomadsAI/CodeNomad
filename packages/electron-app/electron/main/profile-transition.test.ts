@@ -6,7 +6,7 @@ import test from "node:test"
 import { profileScope } from "./data-profile"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
 import { SELECTION_TEMP_MAX_AGE_MS, SELECTION_TEMP_PREFIX, sweepSelectionFolders } from "./profile-selection-cleanup"
-import { choiceKey, hasRestorableState, LOCK_STALE_MS, readChoices, rememberedProfileExists, resolveTransitionProfile, selectionDirectory, type TransitionContext } from "./profile-transition"
+import { choiceKey, hasRestorableState, LOCK_STALE_MS, readChoices, rememberedProfileState, resolveTransitionProfile, selectionDirectory, type TransitionContext } from "./profile-transition"
 
 const vectors = JSON.parse(readFileSync(new URL("./data-profile-vectors.json", import.meta.url), "utf8"))
 const fixture = (name: string) => vectors.stateFixtures.find((entry: { name: string }) => entry.name === name)
@@ -121,29 +121,41 @@ test("a remembered named profile that no longer exists for this config reruns de
   assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
 })
 
-test("the existence check follows a relocated scope link; a dangling link reruns detection", (t) => {
+test("a linked scope is followed; while its target is unavailable the choice is kept and this launch is unremembered", (t) => {
   const { write, scopedFile, resolve, context, directory, root } = sandbox(t)
   const relocated = join(root, "other-disk", "dev")
   mkdirSync(relocated, { recursive: true })
   const scopeFolder = dirname(dirname(scopedFile("dev")))
   mkdirSync(dirname(scopeFolder), { recursive: true })
   symlinkSync(relocated, scopeFolder, "junction")
-  write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "dev" } }))
+  const remembered = { version: 1, choices: { [choiceKey(context.configIdentity)]: "dev" } }
+  write(join(directory, "choices.json"), JSON.stringify(remembered))
   write(context.defaultStateFiles[0]!, WITH_TABS)
   assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
-  // The link's target is gone: the profile no longer exists for this config.
+  // The drive holding the target is disconnected: detection decides this launch only.
   rmSync(relocated, { recursive: true })
-  assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "single" })
+  assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "unremembered" })
+  assert.deepEqual(readChoices(directory), { status: "valid", choices: remembered.choices })
+  // The target returns: the remembered profile is used again.
+  mkdirSync(relocated, { recursive: true })
+  assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
 })
 
-test("only a definite absence makes a remembered profile missing; unreadable folders keep the choice", () => {
+test("remembered profile states follow the shared vectors", () => {
   const context = { configIdentity: "/c/config.yaml", defaultIdentity: "/c/config.yaml", userDataBase: "/base" }
-  const failing = (code: string) => () => { throw Object.assign(new Error(code), { code }) }
-  for (const code of ["EACCES", "EPERM", "EBUSY", "EIO", "ELOOP"]) assert.equal(rememberedProfileExists("dev", context, failing(code)), true, code)
-  for (const code of ["ENOENT", "ENOTDIR"]) assert.equal(rememberedProfileExists("dev", context, failing(code)), false, code)
-  assert.equal(rememberedProfileExists("dev", context, () => ({ isDirectory: () => false })), false, "not a folder")
-  assert.equal(rememberedProfileExists("dev", context, () => ({ isDirectory: () => true })), true)
-  assert.equal(rememberedProfileExists("stable", context, failing("ENOENT")), true, "the default profile always exists")
+  const entry = (value: string) => {
+    if (/^E[A-Z]+$/.test(value)) throw Object.assign(new Error(value), { code: value })
+    return { isSymbolicLink: () => value === "link", isDirectory: () => value === "dir" }
+  }
+  for (const vector of vectors.rememberedProfileStates as Array<{ lstat: string; stat: string | null; state: string }>) {
+    const probe = {
+      lstat: () => entry(vector.lstat),
+      stat: () => vector.stat === null ? assert.fail("stat must not run") : entry(vector.stat),
+    }
+    assert.equal(rememberedProfileState("dev", context, probe), vector.state, JSON.stringify(vector))
+  }
+  const absent = { lstat: () => entry("ENOENT"), stat: () => entry("ENOENT") }
+  assert.equal(rememberedProfileState("stable", context, absent), "present", "the default profile always exists")
 })
 
 test("full choices files follow the shared capacity vectors", (t) => {

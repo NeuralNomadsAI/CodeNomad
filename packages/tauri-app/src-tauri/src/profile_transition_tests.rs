@@ -277,7 +277,7 @@ fn link_directory(target: &Path, link: &Path) {
 }
 
 #[test]
-fn the_existence_check_follows_a_relocated_scope_link_and_a_dangling_link_reruns_detection() {
+fn a_linked_scope_is_followed_and_an_unavailable_target_keeps_the_choice_unremembered() {
     let sandbox = sandbox();
     let relocated = sandbox._root.path().join("other-disk").join("dev");
     fs::create_dir_all(&relocated).unwrap();
@@ -291,9 +291,14 @@ fn the_existence_check_follows_a_relocated_scope_link_and_a_dangling_link_reruns
     fs::create_dir_all(scope_folder.parent().unwrap()).unwrap();
     link_directory(&relocated, &scope_folder);
     let id = choice_key(&sandbox.context.config_identity);
+    let remembered = || {
+        let mut expected = Map::new();
+        expected.insert(id.clone(), Value::String("dev".into()));
+        ChoicesFile::Valid(expected)
+    };
     write(
         &sandbox.directory.join(CHOICES_FILENAME),
-        &json!({ "version": 1, "choices": { id: "dev" } }).to_string(),
+        &json!({ "version": 1, "choices": { id.clone(): "dev" } }).to_string(),
         SystemTime::now(),
     );
     write(
@@ -302,40 +307,60 @@ fn the_existence_check_follows_a_relocated_scope_link_and_a_dangling_link_reruns
         SystemTime::now(),
     );
     assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Remembered));
-    // The link's target is gone: the profile no longer exists for this config.
+    // The drive holding the target is disconnected: detection decides this launch only.
     fs::remove_dir_all(&relocated).unwrap();
-    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Single));
+    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Unremembered));
+    assert_eq!(read_choices(&sandbox.directory), remembered());
+    // The target returns: the remembered profile is used again.
+    fs::create_dir_all(&relocated).unwrap();
+    assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Remembered));
 }
 
 #[test]
-fn only_a_definite_absence_makes_a_remembered_profile_missing() {
+fn remembered_profile_states_follow_the_shared_vectors() {
+    use std::io::ErrorKind;
     let sandbox = sandbox();
     let context = &sandbox.context;
-    let failing = |kind: std::io::ErrorKind| {
-        move |_: &Path| -> std::io::Result<bool> { Err(std::io::Error::from(kind)) }
+    let entry = |value: &str, link: bool| -> std::io::Result<bool> {
+        match value {
+            "ENOENT" => Err(ErrorKind::NotFound.into()),
+            "ENOTDIR" => Err(ErrorKind::NotADirectory.into()),
+            "EACCES" => Err(ErrorKind::PermissionDenied.into()),
+            "link" => Ok(link),
+            "dir" => Ok(!link),
+            "file" => Ok(false),
+            other => panic!("unknown vector value {other}"),
+        }
     };
-    use std::io::ErrorKind::*;
-    for kind in [PermissionDenied, ResourceBusy, Other, Interrupted] {
-        assert!(
-            remembered_profile_exists_with("dev", context, failing(kind)),
-            "{kind:?}"
+    for vector in shared_vectors()["rememberedProfileStates"]
+        .as_array()
+        .unwrap()
+    {
+        let lstat = vector["lstat"].as_str().unwrap();
+        let stat = vector["stat"].as_str();
+        let expected = match vector["state"].as_str().unwrap() {
+            "present" => RememberedProfileState::Present,
+            "missing" => RememberedProfileState::Missing,
+            "unavailable" => RememberedProfileState::Unavailable,
+            other => panic!("unknown state {other}"),
+        };
+        let state = remembered_profile_state_with(
+            "dev",
+            context,
+            |_| entry(lstat, true),
+            |_| entry(stat.expect("stat must not run"), false),
         );
+        assert_eq!(state, expected, "{vector}");
     }
-    for kind in [NotFound, NotADirectory] {
-        assert!(
-            !remembered_profile_exists_with("dev", context, failing(kind)),
-            "{kind:?}"
-        );
-    }
-    assert!(!remembered_profile_exists_with("dev", context, |_| Ok(
-        false
-    )));
-    assert!(remembered_profile_exists_with("dev", context, |_| Ok(true)));
-    assert!(remembered_profile_exists_with(
-        "stable",
-        context,
-        failing(NotFound)
-    ));
+    assert_eq!(
+        remembered_profile_state_with(
+            "stable",
+            context,
+            |_| Err(ErrorKind::NotFound.into()),
+            |_| Err(ErrorKind::NotFound.into()),
+        ),
+        RememberedProfileState::Present
+    );
 }
 
 #[test]

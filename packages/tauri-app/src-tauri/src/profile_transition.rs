@@ -189,36 +189,69 @@ pub(crate) fn read_choices(directory: &Path) -> ChoicesFile {
 /// `scopes/<scope>` under the userData base when they open a scoped profile (Electron's userData,
 /// Tauri's client-state). A deleted one is ignored so detection runs again instead of silently
 /// opening an empty profile. The default profile always exists. Mirrors Electron's
-/// `rememberedProfileExists`.
+/// `rememberedProfileState`; both run the shared `rememberedProfileStates` vectors.
 ///
 /// Unlike deletion, which never follows links, this check follows a symlink/junction: the hosts
-/// open a relocated profile through it. Only a definite absence counts as deleted (not found,
-/// including a dangling link, or something that is not a folder); an unreadable folder or any
-/// other error keeps the choice.
-pub(crate) fn remembered_profile_exists(key: &str, context: &TransitionContext) -> bool {
-    remembered_profile_exists_with(key, context, |path| {
-        fs::metadata(path).map(|metadata| metadata.is_dir())
-    })
+/// open a relocated profile through it.
+/// - `Present`: a folder, also through a link; an unreadable entry or any other error keeps the
+///   choice.
+/// - `Missing`: a definite absence of a plain entry (not found, not a directory). Detection reruns
+///   and its result replaces the remembered choice.
+/// - `Unavailable`: the entry is a link whose target is missing or not a folder, e.g. a
+///   disconnected removable or network drive. Detection reruns for this launch only; the choice is
+///   kept, so the profile is used again once its target returns.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RememberedProfileState {
+    Present,
+    Missing,
+    Unavailable,
 }
 
-pub(crate) fn remembered_profile_exists_with(
+pub(crate) fn remembered_profile_state(
     key: &str,
     context: &TransitionContext,
+) -> RememberedProfileState {
+    remembered_profile_state_with(
+        key,
+        context,
+        |path| fs::symlink_metadata(path).map(|metadata| metadata.file_type().is_symlink()),
+        |path| fs::metadata(path).map(|metadata| metadata.is_dir()),
+    )
+}
+
+/// `is_link` inspects the entry itself (symlink metadata); `is_directory` follows links.
+pub(crate) fn remembered_profile_state_with(
+    key: &str,
+    context: &TransitionContext,
+    is_link: impl Fn(&Path) -> std::io::Result<bool>,
     is_directory: impl Fn(&Path) -> std::io::Result<bool>,
-) -> bool {
+) -> RememberedProfileState {
+    use RememberedProfileState::*;
     if key == DEFAULT_PROFILE_KEY {
-        return true;
+        return Present;
     }
     let scope = profile_scope(key, &context.config_identity, &context.default_identity);
     if !scope.scoped {
-        return true;
+        return Present;
     }
-    match is_directory(&context.user_data_base.join("scopes").join(scope.scope_name)) {
-        Ok(directory) => directory,
-        Err(error) => !matches!(
+    let absent = |error: &std::io::Error| {
+        matches!(
             error.kind(),
             std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-        ),
+        )
+    };
+    let path = context.user_data_base.join("scopes").join(scope.scope_name);
+    let unusable = match is_link(&path) {
+        Ok(true) => Unavailable,
+        Ok(false) => Missing,
+        Err(error) if absent(&error) => return Missing,
+        Err(_) => return Present,
+    };
+    match is_directory(&path) {
+        Ok(true) => Present,
+        Ok(false) => unusable,
+        Err(error) if absent(&error) => unusable,
+        Err(_) => Present,
     }
 }
 
@@ -230,11 +263,12 @@ fn remembered_key(directory: &Path, context: &TransitionContext) -> Option<Strin
             .as_str()?,
     )
     .ok()?;
-    remembered_profile_exists(&key, context).then_some(key)
+    (remembered_profile_state(&key, context) == RememberedProfileState::Present).then_some(key)
 }
 
 /// Stores the profile name (never a path); a valid existing choice for this config is never replaced,
-/// unless it names a profile that no longer exists for this config. Remembering is best effort: an
+/// unless it names a profile that is definitely missing for this config (an unavailable linked
+/// profile keeps its choice, so that launch is unremembered). Remembering is best effort: an
 /// I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile) only means the transition runs
 /// again next launch, so it never prevents startup.
 fn write_choice(directory: &Path, context: &TransitionContext, key: &str) -> bool {
@@ -258,12 +292,14 @@ fn try_write_choice(
     }
     let mut choices = file.choices();
     let id = choice_key(&context.config_identity);
-    let existing_is_current = choices
+    let existing_is_kept = choices
         .get(&id)
         .and_then(Value::as_str)
         .and_then(|name| parse_profile_name(name).ok())
-        .is_some_and(|existing| remembered_profile_exists(&existing, context));
-    if existing_is_current || (!choices.contains_key(&id) && choices.len() >= MAX_CHOICES) {
+        .is_some_and(|existing| {
+            remembered_profile_state(&existing, context) != RememberedProfileState::Missing
+        });
+    if existing_is_kept || (!choices.contains_key(&id) && choices.len() >= MAX_CHOICES) {
         return Ok(false);
     }
     choices.insert(id, Value::String(profile_display_name(key).to_string()));

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs"
+import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs"
 import { join } from "node:path"
 import { parseClientState, type ClientWindowStateRecord } from "./client-state-envelope"
 import { DEFAULT_PROFILE_KEY, parseProfileName, profileDisplayName, profileScope, TRANSITION_PROFILE_KEYS } from "./data-profile"
@@ -144,22 +144,45 @@ export function readChoices(directory: string): ChoicesFile {
  * opening an empty profile. The default profile always exists.
  *
  * Unlike deletion, which never follows links, this check follows a symlink/junction: the hosts open
- * a relocated profile through it. Only a definite absence counts as deleted (not found, including a
- * dangling link, or something that is not a folder); an unreadable folder or any other error keeps
- * the choice.
+ * a relocated profile through it. Three outcomes, shared with Tauri through the
+ * `rememberedProfileStates` vectors:
+ * - `present`: a folder, also through a link; an unreadable entry or any other error keeps the choice.
+ * - `missing`: a definite absence of a plain entry (not found, not a directory). Detection reruns and
+ *   its result replaces the remembered choice.
+ * - `unavailable`: the entry is a link whose target is missing or not a folder, e.g. a disconnected
+ *   removable or network drive. Detection reruns for this launch only; the choice is kept, so the
+ *   profile is used again once its target returns.
  */
-export function rememberedProfileExists(
+export type RememberedProfileState = "present" | "missing" | "unavailable"
+
+export interface ProfileFolderProbe {
+  lstat(path: string): { isSymbolicLink(): boolean }
+  stat(path: string): { isDirectory(): boolean }
+}
+
+const systemProbe: ProfileFolderProbe = { lstat: lstatSync, stat: statSync }
+const isAbsent = (error: unknown) => hasCode(error, "ENOENT") || hasCode(error, "ENOTDIR")
+
+export function rememberedProfileState(
   key: string,
   context: Pick<TransitionContext, "configIdentity" | "defaultIdentity" | "userDataBase">,
-  stat: (path: string) => { isDirectory(): boolean } = statSync,
-): boolean {
-  if (key === DEFAULT_PROFILE_KEY) return true
+  probe: ProfileFolderProbe = systemProbe,
+): RememberedProfileState {
+  if (key === DEFAULT_PROFILE_KEY) return "present"
   const scope = profileScope(key, context.configIdentity, context.defaultIdentity)
-  if (!scope.scoped) return true
+  if (!scope.scoped) return "present"
+  const path = join(context.userDataBase, "scopes", scope.scopeName)
+  let link: boolean
   try {
-    return stat(join(context.userDataBase, "scopes", scope.scopeName)).isDirectory()
+    link = probe.lstat(path).isSymbolicLink()
   } catch (error) {
-    return !hasCode(error, "ENOENT") && !hasCode(error, "ENOTDIR")
+    return isAbsent(error) ? "missing" : "present"
+  }
+  const unusable = link ? "unavailable" : "missing"
+  try {
+    return probe.stat(path).isDirectory() ? "present" : unusable
+  } catch (error) {
+    return isAbsent(error) ? unusable : "present"
   }
 }
 
@@ -168,12 +191,13 @@ function rememberedKey(directory: string, context: TransitionContext): string | 
   const name = file.status === "future" ? undefined : file.choices[choiceKey(context.configIdentity)]
   if (name === undefined) return undefined
   const key = parseProfileName(name)
-  return rememberedProfileExists(key, context) ? key : undefined
+  return rememberedProfileState(key, context) === "present" ? key : undefined
 }
 
 /**
  * Stores the profile name (never a path); a valid existing choice for this config is never replaced,
- * unless it names a profile that no longer exists for this config. Remembering is best effort: an
+ * unless it names a profile that is definitely missing for this config (an unavailable linked
+ * profile keeps its choice, so that launch is unremembered). Remembering is best effort: an
  * I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile) only means the transition runs
  * again next launch, so it never prevents startup.
  */
@@ -182,7 +206,7 @@ function writeChoice(directory: string, context: TransitionContext, key: string)
   if (file.status === "future") return false
   const id = choiceKey(context.configIdentity)
   const existing = file.choices[id]
-  if (existing !== undefined && rememberedProfileExists(parseProfileName(existing), context)) return false
+  if (existing !== undefined && rememberedProfileState(parseProfileName(existing), context) !== "missing") return false
   // Replacing this config's stale entry never grows the file; only a new entry needs room.
   if (existing === undefined && Object.keys(file.choices).length >= MAX_CHOICES) return false
   try {
