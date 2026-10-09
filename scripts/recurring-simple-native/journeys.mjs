@@ -241,10 +241,50 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
       } else {
         assert.deepEqual(R.mark, [], "an ordinary answer leaves no UI mark")
         assert.doesNotMatch(R.decisionResult ?? "", /"disposition"\s*:\s*"reported"/, "gate refuses without the mark")
+        // The model gets an actionable refusal, not the opaque Effect wrapper.
+        assert.match(R.decisionResult ?? "", /Human decision required: the user must answer this question from the CodeNomad interface/)
+        assert.doesNotMatch(R.decisionResult ?? "", /Effect\.tryPromise/)
         assert.equal(R.outcome, "ended-without-report", "no human decision, no final report")
       }
     }
     Q.result = "passed"
     await c.control(scheduleID, "stop")
+  }
+
+  if (c.journeys.includes("N")) {
+    c.setStage("N ordinary question Form through the dock")
+    const QUESTION = { question: "Pick a color?", header: "Color", options: [{ label: "Blue", description: "Calm" }] }
+    c.scenarios.push(turn => {
+      if (!turn.first.includes("[JOURNEY-N]")) return undefined
+      if (!turn.calls.includes("question")) return { calls: [{ name: "question", args: { questions: [QUESTION] } }] }
+      const answered = turn.messages.filter(m => m.role === "tool").map(m => typeof m.content === "string" ? m.content : JSON.stringify(m.content)).join("")
+      return { text: answered.includes("Blue") ? "N-ANSWER-RECEIVED Blue" : "N-ANSWER-MISSING" }
+    })
+    const N = c.evidence.journeys.N = {}
+    const session = await c.client.session.create({ location, title: "Ordinary conversation with a question" })
+    N.sessionID = session.id
+    N.missionMetadata = Boolean(session.metadata?.["codenomad.mission"])
+    assert.equal(N.missionMetadata, false, "ordinary non-Mission session")
+    await c.client.session.prompt({ sessionID: session.id, text: "[JOURNEY-N] Ask me a question." })
+    let forms = []
+    await c.until(async () => (forms = (await c.client.form.list({ location })).data.filter(f => f.sessionID === session.id)).length === 1, 120_000)
+    const form = N.form = { id: forms[0].id, sessionID: forms[0].sessionID }
+    const marksBefore = db(d => d.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%/human-marks/%'").get().count)
+    // Exactly what the InterruptionDock sends: authenticated cookie plus the human-answer hint.
+    const reply = await c.bridge().inject({ method: "POST", url: `/workspaces/${c.workspace().id}/instance/api/session/${form.sessionID}/form/${form.id}/reply`,
+      headers: { cookie: "session=isolated-human", "content-type": "application/json", "x-codenomad-human-answer": "1" },
+      payload: JSON.stringify({ answer: { q0: "Blue" } }) })
+    N.reply = { status: reply.statusCode, body: reply.body.slice(0, 300) }
+    assert.ok(reply.statusCode >= 200 && reply.statusCode < 300, `ordinary reply succeeds: ${reply.statusCode} ${reply.body}`)
+    await c.until(() => calls(session.id).some(call => call.name.startsWith("N-ANSWER")), 120_000)
+    await c.quiet(session.id)
+    N.modelSaw = calls(session.id).map(call => call.name)
+    assert.ok(N.modelSaw.includes("N-ANSWER-RECEIVED Blue"), "the native question received the dock answer")
+    N.pendingForms = (await c.client.form.list({ location })).data.filter(f => f.sessionID === session.id).length
+    assert.equal(N.pendingForms, 0)
+    N.marks = db(d => d.prepare("SELECT key FROM kv WHERE key LIKE '%/human-marks/%'").all()).map(row => row.key)
+    assert.equal(N.marks.length, marksBefore, "no UI mark is written for a non-Mission Form")
+    assert.equal(N.marks.some(key => key.includes(session.id)), false)
+    N.result = "passed"
   }
 }

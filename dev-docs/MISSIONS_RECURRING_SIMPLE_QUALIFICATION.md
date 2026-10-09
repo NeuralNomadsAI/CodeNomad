@@ -1,5 +1,76 @@
 # Simple recurring Missions — real native qualification
 
+## Final reference run (2026-10-09, merge `697dc342` + `cf1cf70e`, `6d18639b`)
+
+Merge `697dc342` combines the integration line (not-started archive and
+same-identity retry, Mission-only UI-answer marks with ordinary fallback,
+observers for Run now while Interrupted and Stop with pending, `lastError`
+backoff, starting/uncertain states) with native2 (`e200e8c4` idle-outcome
+failures, `85aa0c7e` Windows path normalization, `1554d277` gate chain check,
+`f71239db` journeys E/F/W/Q). Then:
+
+- `cf1cf70e`: a recorded admission is never re-sent. Retry applies only while
+  `pending.admission` is null and native shows neither the session message nor
+  an inbox entry; a later-absent start message (pruned) is observed history and
+  the passage settles by quiescence (offline regression C4: 2 admissions before
+  the fix, 1 after).
+- `6d18639b`: a Wayfinder gate refusal reaches the model as "Human decision
+  required: the user must answer this question from the CodeNomad interface. …
+  (cause)" instead of "An error occurred in Effect.tryPromise".
+- New journey **N**: an ordinary (non-Mission) session asks a native question
+  Form, answered through the production dock route exactly as the
+  InterruptionDock sends it (authenticated cookie + `x-codenomad-human-answer`,
+  auth enabled).
+
+Same isolated read-copy of OpenCode 2.0.26; nothing installed, no OpenCode change.
+
+```powershell
+npm run build:missions --workspace packages/server
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> EFWQN
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> A
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> BCD
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> G
+```
+
+| Journey | Evidence suffix | Result | Mission starts | Archive latency |
+| --- | --- | --- | --- | --- |
+| A daily work, backend closed | `bmlwc1` | completed, nextDueAt = due + 24 h | **1** | 3.0 s after quiescence |
+| B restart pending → Resume | `dgnt0S` | `ended-without-report` / `interrupted`, 1 provider call total | **1** (same message) | 19 ms after Resume |
+| C Run now ×2 + duplicate | `dgnt0S` | two completed passages; exact duplicate → 200, same passage | **1 each** | 2.1 s, 3.1 s |
+| D Pause → Stop | `dgnt0S` | no root session after due + 30 s; Resume after Stop → 503 | **0** | n/a |
+| G paused Run now | `RT5Z4f` | completed with schedule still paused | **1** | 3.0 s |
+| E background child + shell | `mNFSMz` | pending while child/shell run, then completed | **1** (+2 native notices) | 3.1 s |
+| F provider HTTP 400 | `mNFSMz` | `failed` from idle outcome; `event` rows 0; no retry (1/1 provider calls) | **1** | 3.0 s |
+| W watched ×4 | `mNFSMz` | completed, completed, failed, completed; cursor moves only on completed | **1 each** | — |
+| Q Wayfinder UI vs ordinary | `mNFSMz` | UI: mark confirmed/ui, readout reported, completed. Ordinary: 204, no mark, tool error "Human decision required … (Exact native human mark unavailable)", `ended-without-report` | **1 each** | — |
+| **N** ordinary dock Form | `mNFSMz` | dock route (cookie + hint) → ordinary native reply 204; model received "Blue"; no pending Form; **no mark** written | n/a | — |
+
+- A `rcs_cbbf9dd0…`, coordinator `ses_35d24469…`, single start `msg_3045e658…`.
+- B `rcs_ca5bc45d…`; C `rcs_80439b8a…` (`rcp_911a313c…`, `rcp_70514fe4…`); D `rcs_8a579c39…`.
+- G `rcs_1bd69db0…`; E `rcs_4eee4679…`; F `rcs_6188e453…`; W `rcs_40ec5db8…`.
+- N session `ses_ee07150d…`, Form `frm_11f8eafb…`; the only human-mark key in the
+  database is Q's UI run Form.
+
+Owned service PIDs `56616`, `56088`, `25876`, `50420`, `47196` stopped through the
+owned child handle. An executable-path/command-line scan afterwards found zero
+fixture services, Node fixtures or `e-wait.mjs` shells.
+
+Offline validation on the final code: server and UI typecheck, `build:missions`
+pass. `src/missions` (top-level, host-authority, native-subsession-experiment):
+834/834. `src/missions/durable-host`, one file at a time: 10 files pass;
+`human-fences.test.ts` 13/14 with test 7 cancelled at its 15 s timeout, unchanged
+from `abbafb71`. `src/opencode/missions/*.test.ts` (incl. recurring-day e2e,
+http-server dock human-answer tests): 238 pass, 1 skipped. Mission routes:
+279/279. UI browser `mission-*` + `interruption-dock` (`--test-concurrency=1`):
+282/282.
+
+Remaining gaps: tomorrow's real passage (offline e2e only), managed-service
+restart, post-restart Check passage natively, native CAS-conflict/lost-reply
+journeys, one-time (non-recurring) Wayfinder natively. The pruned-start case is
+covered offline only (no native pruning trigger was used). An admission accepted
+natively whose `recordAdmission` write is lost before a later prune remains
+indistinguishable from never admitted.
+
 ## Extended journeys E/F/W/Q (2026-10-09, after `1554d277`)
 
 Same isolated read-copy of OpenCode 2.0.26; nothing installed, no OpenCode change.

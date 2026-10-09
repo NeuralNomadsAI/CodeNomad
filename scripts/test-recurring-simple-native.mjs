@@ -1,6 +1,6 @@
 // Real isolated OpenCode + shipped bundle + authenticated production HTTP/HMAC routes.
-// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [ordered subset of ABCDGEFWQ; default ABCD]
-// E/F/W/Q (family quiescence, provider failure, watched cursors, Wayfinder Form) live in recurring-simple-native/journeys.mjs.
+// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [ordered subset of ABCDGEFWQN; default ABCD]
+// E/F/W/Q/N (family quiescence, provider failure, watched cursors, Wayfinder Form, ordinary dock Form) live in recurring-simple-native/journeys.mjs.
 // No installer, default service discovery, shared database/config or pattern kills.
 // Settlement is event-driven: each archive must follow family quiescence within
 // SETTLE (2.5 min), far below the hourly Job ceiling. Next-day passages cannot be
@@ -19,7 +19,7 @@ import { OpenCode } from "@opencode/client"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
-assert.match(journeys, /^A?B?C?D?G?E?F?W?Q?$/, "Journeys: ordered subset of ABCDGEFWQ")
+assert.match(journeys, /^A?B?C?D?G?E?F?W?Q?N?$/, "Journeys: ordered subset of ABCDGEFWQN")
 const root = await realpath(await mkdtemp(path.join(process.env.LOCALAPPDATA, "Temp/opencode/recurring-simple-native-")))
 const cli = path.join(root, "opencode.exe"), project = path.join(root, "project")
 await copyFile(source, cli)
@@ -368,7 +368,7 @@ try {
     await control(id, "stop")
     G.result = "passed"
   }
-  if (/[EFWQ]/.test(journeys)) {
+  if (/[EFWQN]/.test(journeys)) {
     const { runJourneys } = await import("./recurring-simple-native/journeys.mjs")
     await runJourneys({ journeys, evidence, scenarios, holds, client, project, env, create, control, runNow, snapshot,
       passageStarts, sessions, until, quiet, nextMinute, SETTLE, SLOW, bridge: () => bridge, workspace: () => workspace,

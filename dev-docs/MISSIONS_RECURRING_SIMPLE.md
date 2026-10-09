@@ -241,6 +241,8 @@ lost/uncertain reply leaves it pending forever. Pending never qualifies, so a
 later non-UI answer cannot borrow an earlier failed UI attempt; Wayfinder may ask again.
 The Wayfinder human gate accepts only a native Form with the matching confirmed UI mark.
 An ordinary native answer without that mark is not a proven UI human decision.
+A refusal reaches the model as "Human decision required: the user must answer this
+question from the CodeNomad interface", with the gate's cause as a detail.
 The shipped bundle publishes no native task binding, so the gate also proves the
 decision session natively: a fresh child of the expected parent's exact `subagent`
 call whose prompt carries the declared assignment. Native 2.0.26 `serve` writes no
@@ -300,7 +302,7 @@ plugin, scheduler, storage and `mission_*` tools, but its scripted model only
 records `read`/`shell` call names; it executes no real shell or backend tool.
 Real shell/backend execution under native permissions is covered only by the
 isolated native qualification fixture (`MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md`,
-journeys A–G, W and Q; acceptance remains partial), not by the offline e2e.
+journeys A–G, W, Q and N; acceptance remains partial), not by the offline e2e.
 Native tests must use isolated service/database/provider fixtures, never the shared
 daemon or user Mission. No install, daemon mutation or push is authorized by this doc.
 
