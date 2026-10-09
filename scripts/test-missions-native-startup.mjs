@@ -1,4 +1,6 @@
 // One read-copied artifact, private native managed service only. No product activation.
+// Startup/claim probe from the superseded signed recurring model; simple recurring
+// acceptance lives in scripts/test-recurring-simple-native.mjs.
 // node scripts/test-missions-native-startup.mjs <absolute-cli> [--loader-only] [--bun <existing-bun>] [--claim-resume|--claim-timer|--claim-watcher]
 import assert from "node:assert/strict"
 import { execFile, spawn } from "node:child_process"
