@@ -54,6 +54,8 @@ const message = { id: messageId, type: "assistant", agent: "build", model: { pro
     : scenario === "parts-merge" ? [...textParts.slice(0, 499), ...reads("merge"), ...textParts.slice(499)]
     // More than one reveal step: revealed text merges into the head row and a placeholder remains.
     : scenario === "parts-long" ? Array.from({ length: 2237 }, (_, index) => ({ type: "text", text: `Paragraph ${String(index).padStart(4, "0")} 完整.\n\n` }))
+    // A tail of hidden reads renders short, so the placeholder is visible while following the bottom.
+    : scenario === "parts-short-tail" ? [...textParts.slice(0, 1000), ...reads("tail", 499), textParts[1000]]
     // The head ends with a two-read group the test expands before revealing two more.
     : scenario === "parts-merge-expanded" ? [...textParts.slice(0, 498), ...reads("expanded", 4), ...textParts.slice(498)]
     : [tool] }
@@ -73,7 +75,7 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
 setActiveSession(instanceId, sessionId)
 await applyUiSettings({ showMessageTimeline: scenario === "parts", toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
   diagnosticsExpansion: "collapsed",
-  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: "expanded", other: "expanded" } } })
+  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: scenario === "parts-short-tail" ? "hidden" : "expanded", other: "expanded" } } })
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <main style={{ display: "flex", height: "800px", width: "1000px" }}>

@@ -162,6 +162,28 @@ test("a partial reveal that merges into the row above focuses the first revealed
   await page.waitForFunction(() => document.activeElement?.closest("[data-part-id]")?.textContent?.includes("Paragraph 0500"))
 }))
 
+test("revealing while following the bottom keeps the revealed parts and focus in view", { timeout: 90_000 }, async () => withFixture("parts-short-tail", async page => {
+  const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
+  const button = block.locator(".message-hidden-parts").getByRole("button", { name: "Show 500 more", exact: true })
+  await button.waitFor()
+  // No scrolling: the list still follows the bottom when the reveal is activated.
+  // The list settles at the bottom, where the short tail leaves the placeholder visible.
+  await page.waitForFunction(() => {
+    const stream = document.querySelector<HTMLElement>(".message-stream")
+    const rect = document.querySelector(".message-hidden-parts-button")?.getBoundingClientRect()
+    return Boolean(stream && rect && rect.bottom > 0 && rect.top < innerHeight
+      && stream.scrollHeight - stream.clientHeight - stream.scrollTop < 2)
+  })
+  await button.focus()
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(() => document.activeElement?.closest("[data-part-id]")?.textContent?.includes("Paragraph 0500"))
+  await page.waitForTimeout(700)
+  assert.ok(await page.evaluate(() => {
+    const rect = document.activeElement!.getBoundingClientRect()
+    return rect.bottom > 0 && rect.top < innerHeight
+  }), "Focus and the first revealed part stay in view instead of being pushed above by bottom-following")
+}))
+
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {
   const body = page.locator(".tool-call-error-content")
   await body.waitFor()

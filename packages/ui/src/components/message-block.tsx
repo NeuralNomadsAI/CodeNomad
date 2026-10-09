@@ -517,6 +517,8 @@ interface MessageBlockProps {
   onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
   isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
   setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
+  /** Leaves bottom-following and holds `target` `viewportOffset` px below the transcript top. */
+  alignRevealedParts?: (target: HTMLElement, viewportOffset: number) => void
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -850,18 +852,16 @@ export default function MessageBlock(props: MessageBlockProps) {
     return true
   }
 
-  // The placeholder unmounts on reveal; move keyboard focus to where the revealed parts begin.
+  // Reveal in place: keep the reveal point where it was activated and move keyboard
+  // focus there, since the placeholder unmounts or ends up below the revealed parts.
   const revealInPlace = (button: HTMLButtonElement, item: HiddenPartsDisplayItem) => {
     const revealCount = Math.min(item.count, MESSAGE_PART_REVEAL_STEP)
     const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + revealCount) ?? []
+    const stream = button.closest<HTMLElement>(".message-stream")
+    const activationTop = button.getBoundingClientRect().top
     const hadFocus = document.activeElement === button
     revealHiddenRecordParts(props.instanceId, item.messageId)
-    if (!hadFocus) return
     requestAnimationFrame(() => {
-      // Respect focus moved elsewhere meanwhile. The clicked button may stay mounted when
-      // revealed parts merge into the row above it, so it does not mark the reveal point.
-      const active = document.activeElement
-      if (active && active !== document.body && active !== button) return
       const element = blockRef()
       if (!element) return
       // Revealed parts may merge into an earlier row or a collapsed group that renders
@@ -876,8 +876,19 @@ export default function MessageBlock(props: MessageBlockProps) {
       const groupToggle = found?.matches("[data-group-part-ids]")
         ? found.querySelector<HTMLElement>(".message-technical-group-toggle")
         : null
+      const revealPoint = groupToggle ?? found
+      // The virtualizer and bottom-following keep the message end fixed while a partly
+      // scrolled row grows, which can push the revealed parts far above the viewport.
+      if (revealPoint && stream?.isConnected) {
+        props.alignRevealedParts?.(revealPoint, activationTop - stream.getBoundingClientRect().top)
+      }
+      if (!hadFocus) return
+      // Respect focus moved elsewhere meanwhile. The clicked button may stay mounted when
+      // revealed parts merge into the row above it, so it does not mark the reveal point.
+      const active = document.activeElement
+      if (active && active !== document.body && active !== button) return
       // Nothing revealed rendered (hidden tools/thinking): stay at the next placeholder if any.
-      const target = groupToggle ?? found ?? element.querySelector<HTMLElement>(".message-hidden-parts-button") ?? element
+      const target = revealPoint ?? element.querySelector<HTMLElement>(".message-hidden-parts-button") ?? element
       if (target === groupToggle || target.matches(".message-hidden-parts-button")) {
         target.focus({ preventScroll: true })
         return
