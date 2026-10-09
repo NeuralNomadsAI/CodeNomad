@@ -1,5 +1,6 @@
 // Real isolated OpenCode + shipped bundle + authenticated production HTTP/HMAC routes.
-// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [any of A, B, C, D, G; default ABCD]
+// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [ordered subset of ABCDGEFWQ; default ABCD]
+// E/F/W/Q (family quiescence, provider failure, watched cursors, Wayfinder Form) live in recurring-simple-native/journeys.mjs.
 // No installer, default service discovery, shared database/config or pattern kills.
 // Settlement is event-driven: each archive must follow family quiescence within
 // SETTLE (2.5 min), far below the hourly Job ceiling. Next-day passages cannot be
@@ -18,7 +19,7 @@ import { OpenCode } from "@opencode/client"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
-assert.match(journeys, /^A?B?C?D?G?$/, "Journeys: ordered subset of ABCDG")
+assert.match(journeys, /^A?B?C?D?G?E?F?W?Q?$/, "Journeys: ordered subset of ABCDGEFWQ")
 const root = await realpath(await mkdtemp(path.join(process.env.LOCALAPPDATA, "Temp/opencode/recurring-simple-native-")))
 const cli = path.join(root, "opencode.exe"), project = path.join(root, "project")
 await copyFile(source, cli)
@@ -56,35 +57,47 @@ const { registerMissionRecurrenceControl } = await load("server/routes/mission-r
 const { registerMissionRecurrenceManual } = await load("server/routes/mission-recurrence-manual")
 const { WorktreeDeletionFence } = await load("workspaces/worktree-session-evacuation")
 const { CODENOMAD_MISSIONS_RPC } = await load("missions/rpc")
+const { registerInstanceProxyRoutes } = await load("server/http-server")
 let child, closed, output = "", endpoint, manager, bridge, plugin, removeBridge, client, workspace, stage = "provider"
 let hold = false, held = false
 const releases = new Set()
+// Journey modules add deterministic model plans: (turn) => { calls } | { text } | { fail } | { hold } | undefined.
+const scenarios = [], holds = new Map()
+const contentText = content => typeof content === "string" ? content : (content ?? []).map(part => part.text ?? "").join("")
 const provider = createServer(async (request, response) => {
   try {
     let raw = ""; for await (const chunk of request) raw += chunk
     const body = JSON.parse(raw), primary = request.headers["x-fixture-kind"] === "primary"
-    let call
+    let answer = { text: "Done" }
     if (primary) {
       const messages = body.messages ?? [], tools = (body.tools ?? []).map(t => t.function.name)
       const calls = messages.flatMap(m => m.tool_calls ?? []).map(t => t.function.name)
-      const name = ["read", "shell", "mission_inspect", "mission_report"].find(name => !calls.includes(name))
-      evidence.providerCalls.push({ sessionID: request.headers["x-fixture-session"], model: body.model, name: name ?? "done", tools })
-      if (hold) {
+      const turn = { sessionID: request.headers["x-fixture-session"], messages, tools, calls, all: JSON.stringify(messages),
+        first: contentText(messages.find(m => m.role === "user")?.content) }
+      let planned
+      for (const scenario of scenarios) if ((planned = await scenario(turn)) !== undefined) break
+      const name = planned ? undefined : ["read", "shell", "mission_inspect", "mission_report"].find(name => !calls.includes(name))
+      answer = planned ?? (name ? { calls: [{ name, args: name === "read" ? { filePath: path.join(project, "input.txt") }
+        : name === "shell" ? { command: "echo native-recurring-useful-work", description: "Isolated useful shell" }
+        : name === "mission_inspect" ? {} : { outcome: "completed", summary: "Native read and shell completed", final: true } }] } : { text: "Done" })
+      evidence.providerCalls.push({ sessionID: turn.sessionID, model: body.model, at: Date.now(), tools,
+        name: answer.calls ? answer.calls.map(c => c.name).join("+") : answer.fail ? "provider-error" : planned ? answer.text : "done" })
+      if (hold || answer.hold) {
         held = true
-        await new Promise(resolve => { releases.add(resolve); response.once("close", resolve) })
+        await new Promise(resolve => { (answer.hold ? holds.set(answer.hold, resolve) : releases.add(resolve)); response.once("close", resolve) })
         if (response.destroyed) return
       }
-      if (name) {
-        assert.ok(tools.includes(name), `Ordinary/native tool ${name} unavailable: ${tools.join(",")}`)
-        const args = name === "read" ? { filePath: path.join(project, "input.txt") }
-          : name === "shell" ? { command: "echo native-recurring-useful-work", description: "Isolated useful shell" }
-          : name === "mission_inspect" ? {} : { outcome: "completed", summary: "Native read and shell completed", final: true }
-        call = { index: 0, id: `call_${randomUUID().replaceAll("-", "")}`, type: "function", function: { name, arguments: JSON.stringify(args) } }
-      }
+      for (const call of answer.calls ?? []) assert.ok(tools.includes(call.name), `Ordinary/native tool ${call.name} unavailable: ${tools.join(",")}`)
+    }
+    if (answer.fail) { // Non-retryable provider error (HTTP 400 invalid_request_error).
+      response.writeHead(400, { "content-type": "application/json" })
+      return response.end(JSON.stringify({ error: { message: "FIXTURE_PROVIDER_FAILURE", type: "invalid_request_error" } }))
     }
     response.setHeader("content-type", body.stream ? "text/event-stream" : "application/json")
     if (!body.stream) return response.end(JSON.stringify({ id: "fixture", choices: [{ message: { role: "assistant", content: "Fixture" }, finish_reason: "stop" }] }))
-    for (const [delta, finish_reason] of [[call ? { role: "assistant", tool_calls: [call] } : { role: "assistant", content: "Done" }, null], [{}, call ? "tool_calls" : "stop"]])
+    const calls = (answer.calls ?? []).map((call, index) => ({ index, id: call.id ?? `call_${randomUUID().replaceAll("-", "")}`,
+      type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }))
+    for (const [delta, finish_reason] of [[calls.length ? { role: "assistant", tool_calls: calls } : { role: "assistant", content: answer.text ?? "Done" }, null], [{}, calls.length ? "tool_calls" : "stop"]])
       response.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model: body.model,
         choices: [{ index: 0, delta, finish_reason }] })}\n\n`)
     response.end("data: [DONE]\n\n")
@@ -124,7 +137,7 @@ await writeFile(yaml, "server:\n  environmentVariables: {}\n")
 const profileScope = { channel: "native-fixture", configIdentity: yaml, key: createHash("sha256").update(`native-fixture\0${yaml}`).digest("hex") }
 const settings = { getProfileScope: () => profileScope, configYamlPathForAuthority: () => yaml,
   getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) }
-const human = { sessionId: "isolated-human" }
+const human = { sessionId: "isolated-human", username: "fixture-human" }
 const auth = { isAuthEnabled: () => true, isLoopbackRequest: () => true, getCookieName: () => "session",
   getSessionFromHeaders: headers => headers.cookie === "session=isolated-human" ? human : null,
   getSessionFromRequest: request => request.headers.cookie === "session=isolated-human" ? human : null }
@@ -143,6 +156,9 @@ async function openBackend() {
   registerMissionRecurrenceCreate(bridge, { workspaceManager: manager, worktreeDeletionFence: fence, auth, settings, bridgeToken: registration.token })
   for (const register of [registerMissionRecurrenceControl, registerMissionRecurrenceManual])
     register(bridge, { manager, fence, auth, settings, bridgeToken: registration.token })
+  // Production instance proxy, including the InterruptionDock human-answer route.
+  registerInstanceProxyRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence: fence, logger: pino({ level: "silent" }),
+    humanAnswers: { auth, manager, settings, bridgeToken: registration.token } })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
@@ -164,12 +180,15 @@ async function http(suffix, payload) {
   assert.equal(response.statusCode, 200, response.body)
   return response.json()
 }
-async function create(title, due) {
+async function create(title, due, options = {}) {
   const selected = { agent: "fixture-worker", model: { providerID: "fixture", id: "fixture" } }
+  const template = options.template ?? "custom"
   const result = await http("", { requestID: `create_${randomUUID().replaceAll("-", "")}`, title,
-    instructions: "Read input.txt, run an echo shell, inspect the mission and submit a final completed mission_report.",
-    clock: { time: new Date(due).toISOString().slice(11,16), zone: "UTC" }, template: "custom",
-    profiles: { coordinator: selected, roles: { specialist: selected } }, taskMode: "native", watchedConversationIDs: [] })
+    instructions: options.instructions ?? "Read input.txt, run an echo shell, inspect the mission and submit a final completed mission_report.",
+    clock: { time: new Date(due).toISOString().slice(11,16), zone: "UTC" }, template,
+    profiles: { coordinator: selected, roles: Object.fromEntries((template === "wayfinder"
+      ? ["cartographer", "research", "prototype", "grilling", "decision"] : ["specialist"]).map(role => [role, selected])) },
+    taskMode: "native", watchedConversationIDs: options.watched ?? [] })
   assert.equal(result.schedule.state, "paused")
   return result.schedule.id
 }
@@ -348,6 +367,12 @@ try {
     G.tools = evidence.providerCalls.filter(c => c.sessionID === sessionID).map(c => c.name)
     await control(id, "stop")
     G.result = "passed"
+  }
+  if (/[EFWQ]/.test(journeys)) {
+    const { runJourneys } = await import("./recurring-simple-native/journeys.mjs")
+    await runJourneys({ journeys, evidence, scenarios, holds, client, project, env, create, control, runNow, snapshot,
+      passageStarts, sessions, until, quiet, nextMinute, SETTLE, SLOW, bridge: () => bridge, workspace: () => workspace,
+      setStage: value => { stage = value } })
   }
   evidence.outcome = "passed"
 } catch (error) {
