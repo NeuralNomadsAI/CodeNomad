@@ -1,10 +1,28 @@
-/* Dot-only indicator of a collapsed parent's busy subsessions (`session-child-activity.tsx`).
-   Colour comes from the shared session-status modifiers; no label, pill or background. */
-.session-item-badges .session-child-activity {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  min-width: 22px;
-  min-height: 22px;
+/* A collapsed parent's chevron takes the most urgent state of its busy
+   subsessions (`session-child-activity.ts`). Input requests stay steady;
+   work and compaction pulse like the session status dot. */
+.session-item-expander[data-child-activity] {
+  opacity: 1;
+  color: var(--session-child-activity-color);
+}
+
+.session-item-expander[data-child-activity="permission"] {
+  --session-child-activity-color: var(--session-status-permission-fg);
+}
+
+.session-item-expander[data-child-activity="working"] {
+  --session-child-activity-color: var(--session-status-working-fg);
+}
+
+.session-item-expander[data-child-activity="compacting"] {
+  --session-child-activity-color: var(--session-status-compacting-fg);
+}
+
+.session-item-expander[data-child-activity="working"] .disclosure-chevron,
+.session-item-expander[data-child-activity="compacting"] .disclosure-chevron {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.session-item-expander[data-child-activity] .disclosure-chevron {
+  stroke-width: 3;
 }

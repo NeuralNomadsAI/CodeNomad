@@ -42,6 +42,7 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "Sitzung ausklappen",
   "sessionList.expand.collapseTitle": "Einklappen",
   "sessionList.expand.expandTitle": "Ausklappen",
+  "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "Neue Sitzung",
   "sessionList.actions.newSession.title": "Neue Sitzung",
   "sessionList.actions.copyId.ariaLabel": "Sitzungs-ID kopieren",
