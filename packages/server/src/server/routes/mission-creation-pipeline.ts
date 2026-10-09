@@ -7,13 +7,14 @@ import { stableToken } from "../../missions/journal"
 import { isMissionCreateNoEffectError } from "../../missions/rpc-errors"
 import { missionProfilesInputSchema, sameMissionProfiles, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
+import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "../../missions/mission-title"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
 
 export const missionCreationRequestSchema = z.object({
-  objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
+  objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "wayfinder", "pocock-fix-bug"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.default("native"),
@@ -88,6 +89,7 @@ export async function prepareMissionCreation(input: {
   const creationMessageID = `msg_${stableToken(request.requestId, 28)}`
   const nativeInput = {
     prepared: true, requestID: request.requestId, objective: request.objective,
+    ...(request.title === undefined ? {} : { title: request.title }),
     ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode,
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
     ...(request.coordinatorSessionId ? { coordinatorSessionID: request.coordinatorSessionId } : {}),
@@ -135,7 +137,7 @@ export async function prepareMissionCreation(input: {
         }
         const coordinator = result.mission?.actors?.find(actor => actor.sessionId === sessionID && actor.kind === "coordinator")
         if (result.mission?.id !== missionID || result.mission.projectID !== projectID
-          || result.mission.coordinatorSessionId !== sessionID || !coordinator
+          || result.mission.coordinatorSessionId !== sessionID || !coordinator || result.mission.title !== nativeInput.title
           || !sameLocation(coordinator.location, nativeInput.expectedCoordinatorLocation)
           || !sameMissionProfiles(result.mission.profiles, nativeInput.profiles)
           || (result.mission.taskMode ?? "native") !== nativeInput.taskMode) throw new MissionCreationHoldError("creation-uncertain")

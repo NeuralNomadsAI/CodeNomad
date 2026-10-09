@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "मिसनले के गर्नुपर्छ?",
+  "missions.create.objectivePlaceholder": "तपाईंले चाहेको नतिजा वर्णन गर्नुहोस्। दैनिक मिसनमा, यी निर्देशनहरू हरेक चलाइमा लागू हुन्छन्।",
+  "missions.create.title": "शीर्षक",
+  "missions.create.when": "कहिले",
+  "missions.create.once": "एक पटक",
+  "missions.create.daily": "हरेक दिन",
+  "missions.create.zone": "समय क्षेत्र: {zone}",
+  "missions.create.zoneChange": "परिवर्तन",
+  "missions.create.options": "विकल्पहरू",
+  "missions.create.agents": "एजेन्ट र मोडेलहरू",
+  "missions.create.zoneOverride": "समय क्षेत्र (IANA)",
+  "missions.create.submitStart": "बनाउनुहोस् र सुरु गर्नुहोस्",
+  "missions.create.submitOnly": "सुरु नगरी बनाउनुहोस्",
+  "missions.create.starting": "सुरु हुँदैछ…",
+  "missions.create.startUncertain": "“{title}” बनाइयो, तर यसको सुरुवात पुष्टि भएन। यसको अवस्था जाँच्नुहोस्, अझै पर्खिरहेको छ भने सुरु गर्नुहोस् प्रयोग गर्नुहोस्।",
+  "missions.create.playUncertain": "“{title}” बनाइयो, तर प्ले पुष्टि भएन। तालिका जाँच्नुहोस्, अझै रोकिएको छ भने प्ले प्रयोग गर्नुहोस्।",
+} as const

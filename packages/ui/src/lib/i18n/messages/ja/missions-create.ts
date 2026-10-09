@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "ミッションで何をしますか？",
+  "missions.create.objectivePlaceholder": "望む結果を記述してください。毎日のミッションでは、この指示が毎回の実行に適用されます。",
+  "missions.create.title": "タイトル",
+  "missions.create.when": "実行タイミング",
+  "missions.create.once": "1 回",
+  "missions.create.daily": "毎日",
+  "missions.create.zone": "タイムゾーン: {zone}",
+  "missions.create.zoneChange": "変更",
+  "missions.create.options": "オプション",
+  "missions.create.agents": "エージェントとモデル",
+  "missions.create.zoneOverride": "タイムゾーン (IANA)",
+  "missions.create.submitStart": "作成して開始",
+  "missions.create.submitOnly": "開始せずに作成",
+  "missions.create.starting": "開始中…",
+  "missions.create.startUncertain": "「{title}」は作成されましたが、開始は確認されていません。状態を確認し、まだ待機中なら開始を使ってください。",
+  "missions.create.playUncertain": "「{title}」は作成されましたが、再生は確認されていません。スケジュールを確認し、まだ一時停止中なら再生を使ってください。",
+} as const

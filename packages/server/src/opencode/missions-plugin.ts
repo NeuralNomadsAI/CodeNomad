@@ -30,6 +30,7 @@ import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCata
 import { buildAssignmentPrompt } from "../missions/recipes"
 import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
+import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
 import type { NativeHumanAnswerGate } from "../missions/human-answer"
 
@@ -557,6 +558,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   return {
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     requestID: requiredText(value.requestID, "requestID", 128),
+    ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),
     objective: requiredText(value.objective, "objective", 20_000),
     notes: optionalBodyText(value.notes, "notes", 20_000),
     template,
@@ -639,6 +641,12 @@ function object(value: unknown): Record<string, unknown> {
 function requiredText(value: unknown, name: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`${name} must be a non-empty string of at most ${max} characters`)
   return value.trim()
+}
+
+function missionTitle(value: unknown): string {
+  const title = parseMissionTitle(value)
+  if (title === undefined) throw new Error(`title must be a single line of 1–${MISSION_TITLE_MAX} characters`)
+  return title
 }
 
 function optionalText(value: unknown, name: string, max: number): string | undefined {

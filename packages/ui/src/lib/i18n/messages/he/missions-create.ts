@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "מה המשימה צריכה לעשות?",
+  "missions.create.objectivePlaceholder": "תארו את התוצאה הרצויה. במשימה יומית, ההוראות האלה חלות על כל הרצה.",
+  "missions.create.title": "כותרת",
+  "missions.create.when": "מתי",
+  "missions.create.once": "פעם אחת",
+  "missions.create.daily": "כל יום בשעה",
+  "missions.create.zone": "אזור זמן: {zone}",
+  "missions.create.zoneChange": "שינוי",
+  "missions.create.options": "אפשרויות",
+  "missions.create.agents": "סוכנים ומודלים",
+  "missions.create.zoneOverride": "אזור זמן (IANA)",
+  "missions.create.submitStart": "יצירה והפעלה",
+  "missions.create.submitOnly": "יצירה ללא הפעלה",
+  "missions.create.starting": "מפעיל…",
+  "missions.create.startUncertain": "„{title}” נוצרה, אך ההפעלה שלה לא אושרה. בדקו את מצבה והשתמשו בהפעלה אם היא עדיין ממתינה.",
+  "missions.create.playUncertain": "„{title}” נוצרה, אך ההפעלה המתוזמנת לא אושרה. בדקו את התזמון והשתמשו בהפעלה אם הוא עדיין מושהה.",
+} as const

@@ -198,7 +198,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       }
       if (change === "selection") await page.getByRole("button", { name: "Objective B", exact: true }).click()
       else if (change === "actor") await actor(page, "B")
-      else if (change === "editor") { await page.getByRole("button", { name: "Create mission", exact: true }).click(); await page.getByLabel("Objective", { exact: true }).fill("New editor intent") }
+      else if (change === "editor") { await page.getByRole("button", { name: "Create mission", exact: true }).click(); await page.getByLabel("What should the mission do?", { exact: true }).fill("New editor intent") }
       else await read(page, "B")
       const before = await page.evaluate(() => window.missionNavigation.snapshot())
       await page.evaluate(() => window.missionNavigation.created("ses_A"))
@@ -209,7 +209,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
         await page.screenshot({ path: path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.png`) })
       }
       assert.deepEqual(after, before, "stale navigation must not activate, clear/install readers or reveal")
-      if (change === "editor") assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), "New editor intent")
+      if (change === "editor") assert.equal(await page.getByLabel("What should the mission do?", { exact: true }).inputValue(), "New editor intent")
       assert.equal(await page.getByRole("alert").count(), 0)
       assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
       assert.ok(requests.every(request => request.startsWith("GET ")), "navigation is read-only")

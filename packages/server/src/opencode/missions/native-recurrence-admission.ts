@@ -7,6 +7,7 @@ import { MissionControl } from "../../missions/control"
 import type { MissionStorage } from "../../missions/journal"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import { matchesExecution } from "../../missions/execution"
+import { missionCoordinatorTitle } from "../../missions/mission-title"
 import type { MissionNativeService, NativeCreateInput, NativeRootPlacement } from "./native-service-adapter"
 import type { NativePassageObservation } from "./native-passage-observation"
 import { readAutonomousMissionEnvironment, type AutonomousProfileSource } from "./autonomous-environment"
@@ -43,7 +44,7 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
   if (!coordinator?.agent || !coordinator.model) throw new Error("Passage profile unavailable")
   const metadata = { "codenomad.mission": { version: 1, missionID: passage.missionID, kind: "coordinator", role: "coordinator",
     recurrence: { scheduleID: doc.id, passageID: passage.passageID } } }
-  const request: NativeCreateInput = { id: passage.coordinatorSessionID, title: `Mission coordinator: ${doc.config.consigne}`.slice(0, 160),
+  const request: NativeCreateInput = { id: passage.coordinatorSessionID, title: missionCoordinatorTitle(doc.config.title, doc.config.consigne),
     location: { directory: native.location.directory }, metadata, agent: coordinator.agent, model: coordinator.model }
   const dispatch = async () => {
     const fresh = await input.read()

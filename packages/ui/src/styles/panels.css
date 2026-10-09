@@ -12,6 +12,7 @@
 @import "./panels/right-panel.css";
 @import "./panels/mission-control.css";
 @import "./panels/mission-recurrence.css";
+@import "./panels/mission-create.css";
 @import "./panels/mission-schedule.css";
 @import "./panels/mission-list-item.css";
 @import "./panels/mission-overview.css";

@@ -13,6 +13,12 @@ Scheduled work runs in the OpenCode service/plugin with the CodeNomad UI and
 intermediary backend closed. Neither a persistent CodeNomad backend nor a window
 timer satisfies this contract. Do not modify OpenCode to implement it.
 Creation stores a paused schedule; it never starts work or arms a timer.
+The UI's **Create and start** then sends one ordinary Play control (new request ID,
+`expectedRevision` from the confirmed create) through the same route as the list's
+Play button. If that Play is unconfirmed the schedule stays visible with its normal
+controls; a repeated Play carries a new request at the then-current revision, so
+CAS refuses a duplicate. Creation is never resent. New schedule titles follow the
+Mission title rule (1–60 characters); stored schedules keep their 120-character bound.
 Explicit user controls and native execution are separate responsibilities.
 
 ## Schedule document and revision

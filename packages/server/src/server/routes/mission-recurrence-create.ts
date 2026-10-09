@@ -8,6 +8,7 @@ import { recurrenceConfigSchema, recurrenceTitle, type RecurrenceConfig } from "
 import { dailyClockSchema } from "../../missions/recurrence-clock"
 import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfileCatalog, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
+import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "../../missions/mission-title"
 import { readMissionCatalog } from "../../missions/native-catalog"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -23,7 +24,9 @@ import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../
 
 const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   instructions: z.string().trim().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
-  title: z.string().trim().min(1).max(120).optional(),
+  // New schedules share the Mission title rule; stored schedules keep the
+  // historical 120-character bound in recurrenceConfigSchema.
+  title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(),
   notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]),
   directory: z.string().min(1).max(4096).optional(),

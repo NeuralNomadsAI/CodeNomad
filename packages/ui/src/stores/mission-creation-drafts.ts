@@ -5,6 +5,7 @@ import type { MissionTaskMode } from "../lib/mission-defaults"
 
 export interface UncertainMissionCreation {
   requestId: string
+  title?: string
   objective: string
   notes: string
   template: MissionMap["template"]
@@ -48,7 +49,7 @@ export function missionCreationPayloadIdentity(operation: Omit<UncertainMissionC
   const execution = (value?: MissionExecution) => value === undefined ? null : [value.agent ?? null,
     value.model ? [value.model.providerID, value.model.id, value.model.variant ?? null] : null]
   const profiles = operation.profiles
-  return JSON.stringify([operation.objective, operation.notes, operation.template, operation.directory ?? null, operation.taskMode ?? null,
+  return JSON.stringify([operation.title ?? null, operation.objective, operation.notes, operation.template, operation.directory ?? null, operation.taskMode ?? null,
     profiles === undefined ? null : [execution(profiles.coordinator), profiles.roles === undefined ? null
       : Object.keys(profiles.roles).sort().map(role => [role, execution(profiles.roles![role])])]])
 }

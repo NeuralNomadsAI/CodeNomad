@@ -1,0 +1,18 @@
+export const missionCreateMessages = {
+  "missions.create.objective": "Что должна сделать миссия?",
+  "missions.create.objectivePlaceholder": "Опишите нужный результат. Для ежедневной миссии эти инструкции применяются к каждому запуску.",
+  "missions.create.title": "Название",
+  "missions.create.when": "Когда",
+  "missions.create.once": "Один раз",
+  "missions.create.daily": "Каждый день в",
+  "missions.create.zone": "Часовой пояс: {zone}",
+  "missions.create.zoneChange": "Изменить",
+  "missions.create.options": "Параметры",
+  "missions.create.agents": "Агенты и модели",
+  "missions.create.zoneOverride": "Часовой пояс (IANA)",
+  "missions.create.submitStart": "Создать и запустить",
+  "missions.create.submitOnly": "Создать без запуска",
+  "missions.create.starting": "Запуск…",
+  "missions.create.startUncertain": "«{title}» создана, но её запуск не подтверждён. Проверьте состояние и используйте «Запустить», если она всё ещё ожидает.",
+  "missions.create.playUncertain": "«{title}» создана, но воспроизведение не подтверждено. Проверьте расписание и используйте «Воспроизвести», если оно всё ещё приостановлено.",
+} as const
