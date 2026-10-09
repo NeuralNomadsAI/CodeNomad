@@ -284,6 +284,14 @@ export class RecurringDayFixture {
     }),
   }
   async flush() { for (let n = 0; n < 4; n++) await new Promise<void>(resolve => setTimeout(resolve, 1)) }
+  // Bounded real-time wait for asynchronous storage/admission I/O; virtual time never moves here.
+  async until(predicate: () => boolean | Promise<boolean>, message: string, timeoutMs = 5_000) {
+    const deadline = Date.now() + timeoutMs
+    while (!await predicate()) {
+      assert(Date.now() < deadline, message)
+      await this.flush()
+    }
+  }
   async advance(to: number) {
     assert(to >= this.now)
     await this.flush()

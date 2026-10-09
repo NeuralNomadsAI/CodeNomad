@@ -370,10 +370,11 @@ test("I. Seventy sequential daily passages never exhaust the passage business ca
   await f.create(); await f.control("play")
   for (let day = 0; day < 70; day++) {
     await f.advance(DUE + day * DAY)
-    assert.equal(f.starts.length, day + 1, `day ${day} admitted`)
+    await f.until(() => f.starts.length >= day + 1, `day ${day} admitted`)
+    assert.equal(f.starts.length, day + 1, `day ${day} admitted once`)
     await f.model()
     await f.advance(DUE + day * DAY + 3_600_000)
-    assert.equal((await f.snapshot()).pending, null, `day ${day} settled`)
+    await f.until(async () => (await f.snapshot()).pending === null, `day ${day} settled`)
   }
   const done = await f.snapshot()
   assert.equal(done.history.length, 30)
