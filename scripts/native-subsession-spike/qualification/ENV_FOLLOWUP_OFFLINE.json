@@ -1,9 +1,0 @@
-{
-  "oldArtifact": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-8LpPg8/results.json",
-  "oldArtifactSHA256": "ebfd12544ceacb911a121fd640ebcb755b8f5faaa3615e7c0d93a69ec4bd0282",
-  "expectedFailedBefore": true,
-  "immutableRetentionPassed": true,
-  "exactCorrelationPassed": true,
-  "WindowsConflictRejectionPassed": true,
-  "completeDiffPassed": true
-}

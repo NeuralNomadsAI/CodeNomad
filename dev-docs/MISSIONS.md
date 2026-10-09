@@ -290,7 +290,7 @@ The authenticated owning backend checks native activity, inbox, descendant inven
 
 ### Refactor qualification status
 
-The independent-of-desktop target and private proof artifacts are documented in `MISSIONS_CONTINUITY_CONTRACT.md`, `MISSIONS_CONTINUITY_SPIKE.md`, `MISSIONS_AUTHORITY_SPIKE.md` and `MISSIONS_HOST_SPIKE.md`. They are not proof of a shipped persistent authorization backend or secure migration. The current product still follows backend presence; native trust provisioning, known-writer exclusion, service-owned due work, packaged parity and final Gatekeeper acceptance remain open. Electron/Tauri persistent-backend detach/reattach is separate, retained research. Interrupting a parent alone cannot prevent a native background child's late notification from waking it.
+The independent-of-desktop target and private proof artifacts are documented in `MISSIONS_CONTINUITY_CONTRACT.md`; the continuity, authority and host spikes are preserved on `preserve/missions-full-20261009`. They are not proof of a shipped persistent authorization backend or secure migration. The current product still follows backend presence; native trust provisioning, known-writer exclusion, service-owned due work, packaged parity and final Gatekeeper acceptance remain open. Electron/Tauri persistent-backend detach/reattach is separate, retained research. Interrupting a parent alone cannot prevent a native background child's late notification from waking it.
 
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads a snapshot after reconnect because native event subscriptions are live-only.
 
@@ -400,7 +400,7 @@ RPC initially register through backend presence. `retainMissionWork` preserves
 registered Missions while active/unsettled work, receipts or uncertain storage
 remain, including after lease loss. This retains native work, but does not replace
 the owning backend's fresh admission checks for subsequent protected sends. No
-project-local files are installed; `.opencode/checks/` checks the native contract.
+project-local files are installed; the server typecheck covers the plugin contract.
 
 Assignment prompts and report synthetics use a narrow authenticated loopback bridge mode. The owning backend reconciles the persisted task/report via `codenomad.missions.snapshot`, validates complete native session ownership and selection, acquires the worktree mutation fence, and applies the current full profile environment before admission. Native environment errors are redacted and fail closed. No environment data travels through the UI or plugin. Multiple owning backends are rejected rather than choosing a profile arbitrarily.
 
@@ -433,7 +433,8 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
 
 Build the shipped plugin with `npm run build:missions --workspace @neuralnomads/codenomad`, then run `node scripts/test-missions-native.mjs <absolute-opencode-executable>`. The fixture uses isolated configuration/storage, the real bundled plugin, typed RPC, WorkspaceManager and bridge, plus a local deterministic provider. It verifies catalog selection, variant persistence, a busy actor's durable queue, mismatched selection refusal, per-send actor/coordinator environment, presence removal/re-registration, and retry idempotence. No shared service or user provider is used. The fixture passed on Windows with CLI/client/plugin 2.0.11 on 2026-09-20.
 
-The native runtime findings and recovery matrix are recorded in [`MISSIONS_RUNTIME_SPIKE.md`](MISSIONS_RUNTIME_SPIKE.md).
+Historical runtime spikes and experiments are preserved on the local branch
+`preserve/missions-full-20261009`; they are not part of this product tree.
 
 The project-briefing follow-up was checked on Windows on 2026-10-05 against an
 isolated 2.0.22 runtime and the rebuilt shipped plugin (16 native gates), including

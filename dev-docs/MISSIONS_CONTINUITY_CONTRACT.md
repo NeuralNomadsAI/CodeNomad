@@ -160,7 +160,7 @@ Autres preuves produit :
   `settings/yaml-doc-store.ts:51-77` cache le fichier après son premier load et
   remplace une erreur de lecture par `{}`. Ce comportement ne suffit pas pour
   promettre fraîcheur filesystem et fail-closed à un nouveau lecteur headless.
-- L'audit [MISSIONS_RELIABILITY_REVIEW.md](MISSIONS_RELIABILITY_REVIEW.md) prouve
+- L'audit `MISSIONS_RELIABILITY_REVIEW.md` (branche `preserve/missions-full-20261009`) prouve
   le couplage de disponibilité, pas une interruption native causée par quit.
 
 L'ancien spike beta prouve storage partagé main/worktree et idempotence ; il ne
@@ -523,7 +523,9 @@ doivent être qualifiées dans le service OpenCode, sans backend CodeNomad persi
   `dev-docs/MISSIONS_RELIABILITY_REVIEW.md`, `dev-docs/MISSIONS_RUNTIME_SPIKE.md`.
 - Chemins produit abrégés ci-dessus sous `packages/server/src/` ; déclarations
   installées `@opencode/client` / `@opencode/plugin` 2.0.21 et contract check
-  `.opencode/checks/codenomad-missions.ts` (lecture, pas exécution).
+  `.opencode/checks/codenomad-missions.ts` (lecture, pas exécution). Les
+  documents de spike/revue et ce contract check sont conservés sur la branche
+  locale `preserve/missions-full-20261009`, hors de l'arbre produit.
 - https://opencode.ai/v2/docs/build/plugins
 - https://opencode.ai/v2/docs/build/plugins/rpc
 - https://opencode.ai/v2/docs/tools

@@ -353,7 +353,8 @@ global finish; a business readout never proves executor termination or human con
   zero model requests. A pre-close snapshot cannot satisfy fresh-per-send profile
   admission. No unsafe native retry, copied secret, runtime patch or fake gate.
 
-Source/evidence handoff: `MISSIONS_EMPIRICAL_WORK_MAP.md`. The real coordinator
+Source/evidence handoff: `MISSIONS_EMPIRICAL_WORK_MAP.md` (preserved on
+`preserve/missions-full-20261009`). The real coordinator
 map is now `msn_1419ef45b9c308177f1c123c`; normal native results are its business
 readout source. No upstream publication/commit/merge or installed-app replacement.
 
