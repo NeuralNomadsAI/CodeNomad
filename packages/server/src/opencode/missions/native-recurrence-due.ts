@@ -128,7 +128,7 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         await source.finish(scheduleID, result.result, now(), current, result.expectedRevision)
         settleNativePassageBusiness(result.result.conversationID)
         return "settled"
-      })).pipe(Effect.catchCause(() => Effect.succeed("pending" as NativePassageWake)))
+      }))
     }
     if (doc.state !== "running") return "idle" as NativePassageWake
     const outcome = yield* Effect.tryPromise(() => new MissionRecurrenceRunner(source, admission, now).tick(scheduleID))

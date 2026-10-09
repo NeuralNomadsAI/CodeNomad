@@ -108,12 +108,13 @@ export class NativeMissionRecurrenceStore {
         if (prior.action !== input.action || prior.expectedRevision !== input.expectedRevision) throw new Error("Recurrence request conflict")
         return doc
       }
-      if (doc.revision !== input.expectedRevision || doc.state === "stopped" || doc.controls.length >= 64
+      // Terminal Stop admits only Check, which merely observes its pending passage.
+      if (doc.revision !== input.expectedRevision || doc.state === "stopped" && input.action !== "check" || doc.controls.length >= 64
         || doc.controls.some(item => !item.controlsComplete && !(["resume", "pause", "stop", "check"].includes(input.action)
           && (item.action === "play" || item.action === "resume" || item.action === "run-now" || item.action === "check")))) throw new Error("Recurrence control conflict")
       if (input.action === "play" && (doc.state !== "paused" || doc.pending)) throw new Error("Recurrence cannot play")
       // Check only restarts reconcile-only observation of a paused pending passage.
-      if (input.action === "check" && (doc.state !== "paused" || !doc.pending)) throw new Error("Recurrence has nothing to check")
+      if (input.action === "check" && (doc.state === "running" || !doc.pending)) throw new Error("Recurrence has nothing to check")
       if (input.action === "run-now" && doc.pending) throw new Error("Recurrence pending")
       if (profileSource) {
         if (profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost

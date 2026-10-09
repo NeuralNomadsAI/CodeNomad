@@ -44,7 +44,10 @@ export interface MissionRecurrenceSnapshot {
     clock: { time: string; zone: string }
     nextDueAt: number | null
     interruptionReason?: "service-restart" | "error"
+    /** Non-blocking display warning: the latest wake failed and is being retried. */
+    lastError?: { code: "wake-failed" | "admission-failed" | "settlement-failed"; at: number }
     pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
+      trigger?: "daily" | "manual"; reason?: "not-observed" | "admission-failing"
       missionID?: string; conversationID?: string } | null
     actions: Array<"play" | "pause" | "stop" | "resume" | "run-now" | "check">
     controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
@@ -72,6 +75,8 @@ export interface MissionRecurrenceReceipt {
   /** `interrupted`: a service restart cut the passage and nothing resumed it.
    * `not-started`: its start message was never admitted and cannot be. */
   reason?: "interrupted" | "not-started"
+  /** Daily schedule or an explicit Run now. */
+  trigger?: "daily" | "manual"
   missionID?: string
   conversationID?: string
 }

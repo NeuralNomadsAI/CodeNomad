@@ -7,10 +7,14 @@ export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceI
   expectedRevision: z.number().int().nonnegative().safe(),
 }).strict()
 export type RecurrenceControlRequest = z.infer<typeof recurrenceControlRequestSchema>
-/** Desired state committed by a control; Check stays paused, Run now has none. */
+/** Desired state committed by a control; Run now has none. */
 export function recurrenceControlTargetState(action: RecurrenceControlRequest["action"]) {
   return action === "play" || action === "resume" ? "running" : action === "pause" || action === "check" ? "paused"
     : action === "stop" ? "stopped" : undefined
+}
+/** Check keeps whichever inactive state it observed: paused, or terminal stopped. */
+export function recurrenceControlStateMatches(action: RecurrenceControlRequest["action"], state: string | undefined) {
+  return action === "check" ? state === "paused" || state === "stopped" : state === recurrenceControlTargetState(action)
 }
 export const recurrenceControlHttpSchema = recurrenceControlRequestSchema.extend({
   directory: z.string().min(1).max(4096).optional(), retry: z.boolean().optional(),
@@ -37,13 +41,15 @@ export const recurrenceControlRequestWire = { type: "object", properties: {
 const timestamp = z.number().int().nonnegative().safe()
 const reference = z.object({ passageID: recurrenceIDSchema, dueAt: timestamp, settledAt: timestamp,
   outcome: z.enum(["completed", "failed", "stopped", "ended-without-report"]), reason: z.enum(["interrupted", "not-started"]).optional(),
-  missionID: z.string().optional(), conversationID: z.string().optional() }).strict().refine(value => value.settledAt >= value.dueAt)
+  trigger: z.enum(["daily", "manual"]).optional(), missionID: z.string().optional(), conversationID: z.string().optional() }).strict().refine(value => value.settledAt >= value.dueAt)
 export const recurrenceSnapshotSchema = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   projectCanonical: z.string().min(1).max(4096), location: z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict(),
   schedules: z.array(z.object({ id: recurrenceIDSchema, title: z.string().min(1).max(120), revision: timestamp,
     state: z.enum(["paused", "running", "interrupted", "stopped"]), clock: dailyClockSchema, nextDueAt: timestamp.nullable(),
     interruptionReason: z.enum(["service-restart", "error"]).optional(),
+    lastError: z.object({ code: z.enum(["wake-failed", "admission-failed", "settlement-failed"]), at: timestamp }).strict().optional(),
     pending: z.object({ passageID: recurrenceIDSchema, status: z.enum(["starting", "running", "settling", "uncertain"]),
+      trigger: z.enum(["daily", "manual"]).optional(), reason: z.enum(["not-observed", "admission-failing"]).optional(),
       missionID: z.string().optional(), conversationID: z.string().optional() }).strict().nullable(),
     latestResult: reference.nullable(), history: z.array(reference).max(30),
     actions: z.array(z.enum(["play", "pause", "stop", "resume", "run-now", "check"])).max(6).refine(items => new Set(items).size === items.length),
@@ -58,7 +64,8 @@ export const recurrenceSnapshotSchema = z.object({ version: z.literal(1), projec
 const numberWire = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
 const referenceWire = { type: ["object", "null"], properties: { passageID: { type: "string" }, dueAt: numberWire,
   settledAt: numberWire, outcome: { type: "string", enum: ["completed", "failed", "stopped", "ended-without-report"] },
-  reason: { type: "string", enum: ["interrupted", "not-started"] }, missionID: { type: "string" }, conversationID: { type: "string" } },
+  reason: { type: "string", enum: ["interrupted", "not-started"] },
+  trigger: { type: "string", enum: ["daily", "manual"] }, missionID: { type: "string" }, conversationID: { type: "string" } },
   required: ["passageID", "dueAt", "settledAt", "outcome"], additionalProperties: false } as const
 export const recurrenceControlStatusWire = { type: "object", properties: { version: { type: "integer", const: 1 },
   scheduleID: { type: "string" }, requestID: { type: "string" }, expectedRevision: numberWire, revision: numberWire,
@@ -75,7 +82,10 @@ export const recurrenceSnapshotOutput = { type: "object", properties: { version:
     state: { type: "string", enum: ["paused", "running", "interrupted", "stopped"] },
     clock: { type: "object", properties: { time: { type: "string" }, zone: { type: "string" } }, required: ["time", "zone"], additionalProperties: false },
     nextDueAt: { type: ["integer", "null"], minimum: 0 }, interruptionReason: { type: "string", enum: ["service-restart", "error"] },
+    lastError: { type: "object", properties: { code: { type: "string", enum: ["wake-failed", "admission-failed", "settlement-failed"] }, at: numberWire },
+      required: ["code", "at"], additionalProperties: false },
     pending: { type: ["object", "null"], properties: { passageID: { type: "string" }, status: { type: "string", enum: ["starting", "running", "settling", "uncertain"] },
+      trigger: { type: "string", enum: ["daily", "manual"] }, reason: { type: "string", enum: ["not-observed", "admission-failing"] },
       missionID: { type: "string" }, conversationID: { type: "string" } }, required: ["passageID", "status"], additionalProperties: false },
     latestResult: referenceWire, history: { type: "array", maxItems: 30, items: { ...referenceWire, type: "object" } },
     actions: { type: "array", maxItems: 6, uniqueItems: true, items: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] } },

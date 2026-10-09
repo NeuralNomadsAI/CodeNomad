@@ -38,6 +38,7 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
   const encode = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
   let graph!: Context.Context<never>, now = Date.parse("2026-10-08T00:00:00Z"), wakes = 0, starts = 0, reconciles = 0
   const origin = now
+  const statusWrites = new Map<string, unknown>() // Display-only wake warnings, outside the schedule document.
   const client = Object.assign(() => {}, { unsafe: (sql: string, params: readonly unknown[]) => ({
     withoutTransform: Effect.sync(() => db.prepare(sql).all(...params as [])),
   }) })
@@ -45,7 +46,8 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
     get: (key: string) => Effect.sync(() => {
       const row = db.prepare("SELECT value FROM kv WHERE key=?").get(encode(key)) as { value: string } | undefined
       return row ? JSON.parse(row.value) : undefined
-    }), set: () => Effect.fail(new Error("not used")),
+    }), set: (key: string, value: unknown) => Effect.sync(() => { statusWrites.set(key, value) }),
+    remove: (key: string) => Effect.sync(() => { statusWrites.delete(key) }),
     scan: ({ prefix, after, limit }: { prefix: string; after?: string; limit: number }) => Effect.sync(() => {
       const rows = db.prepare("SELECT key,value FROM kv WHERE substr(key,1,?)=? AND key>? ORDER BY key LIMIT ?")
         .all(encode(prefix).length, encode(prefix), encode(after ?? prefix), limit + 1) as { key: string; value: string }[]
@@ -124,7 +126,22 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
     assert.equal(reconciles, 1); assert.equal(starts, 1, "pending Resume never starts a second passage")
     await run(cancelNativeRecurrenceClock(placement))
     doc = (await store.read(doc.id))!; await store.setState(doc.id, doc.revision, "running", current)
-    await run(startNativeRecurrenceClock(placement, () => Effect.fail(new Error("private error details")), ctx, resumeClock))
+    // A transient wake failure records a display warning and retries; it does not end the Job.
+    let retried = 0, warning: unknown
+    const backoff = { now: () => now, sleep: (ms: number) => Effect.promise(async () => {
+      retried++; warning = [...statusWrites.values()][0]; assert.equal(ms, 30_000, "first retry uses the capped backoff, not a tight loop")
+      const fresh = (await store.read(doc.id))!; await store.setState(doc.id, fresh.revision, "paused", current)
+    }) }
+    await run(startNativeRecurrenceClock(placement, () => Effect.fail(new Error("private error details")), ctx, backoff))
+    assert.equal(await Effect.runPromise([...jobs.values()][0]!.run), "inactive")
+    assert.equal(retried, 1)
+    assert.deepEqual(warning, { code: "admission-failed", at: now })
+    assert.equal(statusWrites.size, 0, "the next successful wake clears the warning")
+    assert.equal((await store.read(doc.id))!.interruptionReason, undefined, "a transient failure is not an interruption")
+    await run(cancelNativeRecurrenceClock(placement)); jobs.clear()
+    doc = (await store.read(doc.id))!; await store.setState(doc.id, doc.revision, "running", current)
+    // Only a definitively fatal cause (Location/Job binding gone) ends the Job as Interrupted(error).
+    await run(startNativeRecurrenceClock(placement, () => Effect.fail(new Error("Recurrence Job Location changed")), ctx, resumeClock))
     await assert.rejects(Effect.runPromise([...jobs.values()][0]!.run))
     const failed = [...jobs.values()][0]!
     failed.status = "error"

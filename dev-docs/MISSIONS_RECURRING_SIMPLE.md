@@ -166,15 +166,24 @@ deterministic start message exists (delivered or inbox):
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 Manual runs do not masquerade as a different scheduled civil day's completion.
 
-Run now on a paused schedule starts a separate **settlement-only observer Job**
-using the same sleep/wake seam, including the native execution-event wake and the
-pending fallback backoff. It is reconcile-only (never a second coordinator
-message), never starts daily passages, exits once the passage settles or the
-schedule leaves paused, and Pause/Stop cancel it. A running schedule's own Job
-observes its manual passage instead. After a service restart while paused with a
-pending passage, the snapshot offers an explicit **Check passage** (`check`)
-control, admitted like the others (requestID, expectedRevision, authenticated
-route), which only restarts that observer and keeps the schedule paused.
+Run now without a live schedule Job (paused, or Interrupted after a restart)
+starts a separate **settlement-only observer Job** using the same sleep/wake seam,
+including the native execution-event wake and the pending fallback backoff. It is
+reconcile-only (never a second coordinator message; at most the original start
+identity while dispatch is allowed), never starts daily passages and exits once
+the passage settles. Pause cancels it. Stop keeps (restarts) it for a pending
+passage so the passage still archives honestly; the schedule stays terminal. A
+live running schedule's own Job observes its manual passage instead. After a
+service restart with a pending passage on a paused or stopped schedule, the
+snapshot offers an explicit **Check passage** (`check`) control, admitted like the
+others (requestID, expectedRevision, authenticated route), which only restarts
+that observer and keeps the schedule paused or stopped.
+
+A failed wake does not end the Job. It records a display-only `lastError
+{ code, at }` in a sibling kv key (outside the document revision) and retries with
+a capped backoff (30 s, 2 min, 5 min, 15 min, 1 h). The next successful wake clears
+it. Only definitively fatal causes (Location or Job binding gone) end the Job as
+Interrupted with reason `error`; a missing or stopped schedule simply exits.
 
 ## Passage tools and journals
 
@@ -249,7 +258,11 @@ both one-time and recurring Wayfinder, not unrelated one-time lifecycle receipts
 Expose `id`, `title`, `clock`, display `nextDueAt`, revision and available actions.
 Expose state including Interrupted and `interruptionReason` when applicable.
 Expose pending status `starting | running | settling | uncertain`, exact identity,
-latestResult and history. Do not expose epochs/grants/receipts/budgets.
+latestResult and history. `starting` means a live Job/observer is handling a not
+yet admitted start; `uncertain` (with reason `not-observed` or `admission-failing`)
+only when no observer is live or that admission keeps failing. History and pending
+items carry their `daily | manual` trigger; a non-blocking `lastError` is exposed
+while relevant. Do not expose epochs/grants/receipts/budgets.
 Actions reflect terminality, unresolved controls and pending passage state.
 Read-only projections and invalidations never start work or settle unknown sends.
 

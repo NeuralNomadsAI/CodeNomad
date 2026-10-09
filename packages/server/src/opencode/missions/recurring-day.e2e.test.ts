@@ -171,6 +171,107 @@ test("E. Pause cancels wakeups and future admissions; Stop is terminal", async t
   await assert.rejects(f.control("run-now"))
 })
 
+const settleJobs = (f: RecurringDayFixture) => [...f.jobs.values()].filter(job => job.type === "codenomad.missions.recurrence.settle" && job.status === "running")
+
+test("K. Run now on an Interrupted schedule is observed by a settlement-only Job until it settles", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play")
+  await f.restart()
+  assert.equal((await f.snapshot()).state, "interrupted")
+  await f.control("run-now")
+  assert.equal(f.starts.length, 1)
+  assert.equal(settleJobs(f).length, 1, "no live schedule Job, so the observer starts regardless of stored state")
+  assert.equal(dailyJobs(f).length, 0, "Run now never rearms daily scheduling")
+  await f.model(); await f.advance(f.now + 3_600_000)
+  const settled = await f.snapshot()
+  assert.equal(settled.latestResult?.outcome, "completed")
+  assert.equal(settled.latestResult?.trigger, "manual")
+  assert.equal(settled.state, "interrupted")
+  assert.equal(settleJobs(f).length, 0, "observer exits once settled")
+})
+
+test("L. Stop keeps a settlement-only observer until the pending passage archives; the schedule stays terminal", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play"); await f.advance(DUE)
+  await f.model({ report: false, keepActive: true })
+  const form = f.pendingForm() // Stop interrupts the coordinator; the open Form keeps the family unsettled.
+  const stopped = await f.control("stop")
+  assert.equal(stopped.state, "stopped")
+  assert(stopped.pending, "Stop never clears live work")
+  assert.equal(dailyJobs(f).length, 0)
+  assert.equal(settleJobs(f).length, 1)
+  await f.answerForm(form)
+  await f.advance(DUE + 3_600_000)
+  const archived = await f.snapshot()
+  assert.equal(archived.pending, null)
+  assert.equal(archived.latestResult?.outcome, "ended-without-report")
+  assert.equal(archived.state, "stopped")
+  assert.deepEqual(archived.actions, [])
+  assert.equal(settleJobs(f).length, 0)
+  await f.advance(DUE + DAY)
+  assert.equal(f.starts.length, 1)
+})
+
+test("L2. After a restart, a stopped schedule's pending passage offers Check, which only observes it", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play"); await f.advance(DUE)
+  await f.model({ report: false, keepActive: true })
+  f.pendingForm(); await f.control("stop"); await f.restart()
+  const parked = await f.snapshot()
+  assert.equal(parked.state, "stopped")
+  assert.deepEqual(parked.actions, ["check"])
+  assert.equal(parked.pending?.status, "running")
+  assert.equal(f.jobs.size, 0, "reads never restart the observer")
+  // Stop already interrupted the coordinator and the restart cleared the Form,
+  // so the Check-started observer can settle the family on its first wake.
+  await f.control("check"); await f.advance(DUE + 3_600_000)
+  assert.equal(settleJobs(f).length, 0, "the observer exits once settled")
+  const archived = await f.snapshot()
+  assert.equal(archived.pending, null)
+  assert.equal(archived.latestResult?.outcome, "ended-without-report")
+  assert.equal(archived.state, "stopped")
+  assert.equal(f.starts.length, 1)
+})
+
+test("M. Transient wake failures warn without ending the Job; starting is not uncertain while observed", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play")
+  f.crash = "before-message"
+  await f.advance(DUE)
+  assert.equal(f.starts.length, 0)
+  const starting = await f.snapshot()
+  assert.equal(starting.state, "running")
+  assert.equal(starting.pending?.status, "starting", "a live Job is still handling the unadmitted passage")
+  assert.equal(starting.pending?.trigger, "daily")
+  f.crash = "before-message"
+  await f.advance(DUE + 3_600_000)
+  const warned = await f.snapshot()
+  assert.equal(warned.state, "running", "one transient failure does not interrupt scheduling")
+  assert.equal(warned.interruptionReason, undefined)
+  assert.equal(warned.lastError?.code, "admission-failed")
+  assert.equal(warned.pending?.status, "uncertain")
+  assert.equal(warned.pending?.reason, "admission-failing")
+  assert.equal(dailyJobs(f).length, 1)
+  await f.advance(DUE + 3_600_000 + 31_000)
+  const recovered = await f.snapshot()
+  assert.equal(recovered.lastError, undefined, "the next successful wake clears the warning")
+  assert.equal(recovered.pending?.status, "running")
+  assert.equal(f.starts.length, 1)
+  await f.restart()
+  assert.equal((await f.snapshot()).pending?.status, "running", "admitted work is not uncertain")
+})
+
+test("M2. An unadmitted passage without any live observer is uncertain (not observed)", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play")
+  f.crash = "after-create"
+  await f.advance(DUE)
+  await f.restart()
+  const parked = await f.snapshot()
+  assert.equal(parked.pending?.status, "uncertain")
+  assert.equal(parked.pending?.reason, "not-observed")
+})
+
 const dailyJobs = (f: RecurringDayFixture) => [...f.jobs.values()].filter(job => job.type === "codenomad.missions.recurrence" && job.status === "running")
 
 test("G. Run now on a paused schedule settles through a reconcile-only observer, never daily work", async t => {

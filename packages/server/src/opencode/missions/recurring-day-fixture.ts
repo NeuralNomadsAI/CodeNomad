@@ -33,8 +33,10 @@ type MessageInfo = typeof SessionMessage.Info.Type
 export type Schedule = {
   id: string; title: string; revision: number; clock: { time: string; zone: string }; nextDueAt: number
   state: "paused" | "running" | "interrupted" | "stopped"; interruptionReason?: string | null
-  pending: null | { status: string }; latestResult: null | { passageID: string; outcome: string }
-  history: Array<{ passageID: string; outcome: string }>; actions: string[]
+  pending: null | { status: string; reason?: string; trigger?: string }
+  latestResult: null | { passageID: string; outcome: string; reason?: string; trigger?: string }
+  history: Array<{ passageID: string; outcome: string; reason?: string; trigger?: string }>; actions: string[]
+  lastError?: { code: string; at: number }
 }
 
 /** Offline native boundaries only. No recurrence runner, settlement policy or journal event producer lives here.
@@ -46,7 +48,8 @@ export class RecurringDayFixture {
   autoDeliver = true
   wakeups = 0
   private wakeTimes: number[] = []
-  crash: "after-pending" | "after-create" | "after-message" | undefined
+  /** `before-message`: a transient native admission refusal; nothing is admitted. */
+  crash: "after-pending" | "after-create" | "before-message" | "after-message" | undefined
   crashHits = 0
   readonly tools = new Map<string, NativeTool>()
   readonly calls: Array<{ name: string; sessionID: string }> = []
@@ -347,6 +350,7 @@ export class RecurringDayFixture {
     assert.equal(typeof input.id, "string", "caller message ID required")
     this.assertWriteAhead(id)
     this.session(sessionID)
+    this.fail("before-message")
     const payload = { text: input.text, ...(type === "synthetic" ? { description: input.description ?? "Daily passage", metadata: input.metadata ?? {} } : {}) }
     const old = this.db.prepare("SELECT payload FROM session_inbox WHERE id=?").get(id)
     if (old) return Schema.decodeUnknownSync(SessionInbox.Info)(JSON.parse(String(old.payload)))

@@ -7,6 +7,7 @@ import { latestDailyDue, nextDailyDue } from "../../missions/recurrence-clock"
 import { isNewDailyDue } from "../../missions/recurrence-store"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import type { Plugin } from "@opencode/plugin/effect"
+import { clearRecurrenceWakeError, recordRecurrenceWakeError, type RecurrenceWakeError } from "./native-recurrence-wake-status"
 
 const jobTag = Context.Service<never, NativeJob>("@opencode/Job")
 const mapTag = Context.Service<never, NativeLocations>("@opencode/example/LocationServiceMap")
@@ -100,6 +101,10 @@ const SETTLED_EVENT_DEBOUNCE_MS = 3_000
 /** Only when the native Bus listener contract is absent, and only while pending. */
 const PENDING_FALLBACK_BACKOFF_MS = [30_000, 120_000, 300_000] as const
 const executionTerminal = /^session\.execution\.(succeeded|failed|interrupted)(\.\d+)?$/
+/** Per-wake retry after an ordinary failure; never faster than the pending fallback. */
+const WAKE_ERROR_BACKOFF_MS = [30_000, 120_000, 300_000, 900_000, 3_600_000] as const
+/** Only these end the Job (Interrupted with reason `error`): the Location or Job binding is gone. */
+const fatalWakeError = /Recurrence (Job )?(Location (changed|unavailable|replaced)|schedule differs|binding differs|generation changed)/
 
 /** Volatile wake hint, never settlement evidence: the woken Job re-observes the whole
  * family. Uses the native Bus `listen(listener) => Effect<Unsubscribe>` contract
@@ -156,10 +161,12 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
   const run = Effect.scoped(Effect.gen(function* () {
     // While a passage is pending, a native execution terminal event wakes settlement promptly.
     const settled = yield* nativeExecutionSettledSignal(Option.getOrUndefined(bus))
-    let pendingWakes = 0
+    let pendingWakes = 0, failures = 0, staleError = true
+    let phase: RecurrenceWakeError["code"] = "wake-failed"
     // Each wake borrows and validates a fresh Location graph. No minute polling.
     while (true) {
       settled.reset()
+      phase = "wake-failed"
       const delay = yield* Effect.scoped(Effect.gen(function* () {
         const graph = borrow(yield* locations.contextEffect(ref))
         // Native and bundled Location.Info classes differ; validate fields, then rewrap (as the due path does).
@@ -177,10 +184,12 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         const source = yield* acquireNativeRecurrenceStore({ storage: exactCtx.storage, location }).pipe(Effect.provide(graph))
         let document = yield* Effect.promise(() => source.read(input.scheduleID))
         current()
-        // Settle mode exits once settled, or when a running schedule's own Job owns observation.
+        // Settle mode observes the pending passage in any state (paused Run now, Interrupted
+        // Run now, Stop) and exits once it settles; it never starts a daily passage.
         const active = (doc: RecurrenceDocument | undefined): doc is RecurrenceDocument => kind === "schedule"
-          ? doc?.state === "running" : doc?.state === "paused" && !!doc.pending
+          ? doc?.state === "running" : !!doc?.pending
         if (!active(document)) return null
+        phase = !document.pending ? "wake-failed" : document.pending.admission ? "settlement-failed" : "admission-failed"
         const now = clock.now(), dueAt = recurrenceNextDueAt(document, now)
         if (!document.pending && dueAt > now) return Math.min(dueAt - now, 3_600_000)
         const beforeRevision = document.revision
@@ -204,7 +213,19 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         const next = document.pending ? nextDailyDue(document.config.clock, after).at : recurrenceNextDueAt(document, after)
         if (!document.pending && next <= after && document.revision === beforeRevision) throw new Error("recurrence-passage-state-unknown")
         return Math.min(next - after, 3_600_000)
-      }))
+      })).pipe(
+        Effect.tap(() => Effect.gen(function* () {
+          failures = 0
+          if (staleError) { staleError = false; yield* clearRecurrenceWakeError(exactCtx, input.scheduleID) }
+        })),
+        // One transient failure must not end the Job: record a display warning and retry
+        // with capped backoff. Only a definitively fatal cause interrupts scheduling.
+        Effect.catchCause(cause => {
+          if (Cause.hasInterruptsOnly(cause) || fatalWakeError.test(Cause.pretty(cause))) return Effect.failCause(cause)
+          failures++; staleError = true
+          return recordRecurrenceWakeError(exactCtx, input.scheduleID, { code: phase, at: clock.now() })
+            .pipe(Effect.as(WAKE_ERROR_BACKOFF_MS[Math.min(failures, WAKE_ERROR_BACKOFF_MS.length) - 1]!))
+        }))
       // A healthy accepted passage stays pending until its terminal archive;
       // polling it never admits another effect, but must not retire tomorrow's Job.
       if (delay === null) return "inactive"

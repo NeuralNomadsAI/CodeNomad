@@ -92,6 +92,11 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
       action: input.action, record })).pipe(Effect.catchCause(() => Effect.succeed(record)))
     record = { ...actors, schedulerCancellation: cancelled ? "acknowledged" : "unknown",
       controlsComplete: cancelled && actors.targetsKnown && actors.targets.every(target => target.outcome === "acknowledged") }
+    // Stop is terminal for scheduling, not for honest observation: keep a settlement-only
+    // observer until the pending passage archives, then it exits. Pause keeps it cancelled.
+    const stopped = input.action === "stop" ? yield* Effect.promise(() => store.read(input.scheduleID)) : undefined
+    if (stopped?.state === "stopped" && stopped.pending)
+      yield* startNativeRecurrenceSettlement(ctx, placement, stopped).pipe(Effect.catchCause(() => Effect.void))
   }
   yield* Effect.promise(() => store.recordControl(input.scheduleID, record, () => true))
   return response()
