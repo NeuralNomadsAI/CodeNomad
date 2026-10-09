@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -94,6 +93,10 @@ pub(crate) struct BrowserController {
 }
 
 impl BrowserController {
+    fn storage_directory(&self) -> std::path::PathBuf {
+        self.profile.join("shared-v1")
+    }
+
     pub(crate) fn new(profile: std::path::PathBuf) -> Self {
         Self {
             emulation_lock: Arc::new(Mutex::new(())),
@@ -127,9 +130,9 @@ impl BrowserController {
         let navigation_registration_id = registration_id.clone();
         let policy_controller = self.clone();
         let policy_registration_id = registration_id.clone();
-        let profile = self
-            .profile
-            .join(format!("{:x}", Sha256::digest(input.session_id.as_bytes())));
+        // Every preview is a tab in the same browser profile. Its navigation
+        // history and automation attachment remain owned by its session.
+        let profile = self.storage_directory();
         let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(blank))
             .data_directory(profile)
             .on_navigation(move |url| {

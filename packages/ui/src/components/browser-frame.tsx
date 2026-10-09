@@ -961,7 +961,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             <webview
               ref={bindWebview}
               src={nativeTarget()}
-              partition={`persist:codenomad-browser-${props.sessionId}`}
+              partition="persist:codenomad-browser-shared-v1"
               allowpopups
               class={isResponsiveViewport() ? "border-0 bg-surface" : "border-0 bg-surface shadow-xl"}
               style={{
