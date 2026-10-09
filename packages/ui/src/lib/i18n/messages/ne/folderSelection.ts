@@ -25,6 +25,8 @@ export const folderSelectionMessages = {
   "folderSelection.browse.button": "फोल्डरहरू ब्राउज गर्नुहोस्",
   "folderSelection.browse.buttonOpening": "खोलिँदैछ...",
   "folderSelection.clone.button": "Git Repo क्लोन गर्नुहोस्",
+  "folderSelection.temporary.button": "नयाँ अस्थायी उदाहरण",
+  "folderSelection.temporary.description": "CodeNomad ले व्यवस्थापन गर्ने खाली फोल्डरमा सुरु गर्नुहोस्; ट्याब बन्द गर्दा राख्न वा हटाउन सक्नुहुन्छ",
   "folderSelection.clone.destination.title": "क्लोन गन्तव्य चयन गर्नुहोस्",
   "folderSelection.clone.destination.description": "रिपोजिटरी क्लोन गरिनुपर्ने फोल्डर चयन गर्नुहोस्।",
   "folderSelection.clone.dialog.title": "Git रिपोजिटरी क्लोन गर्नुहोस्",

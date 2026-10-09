@@ -25,6 +25,8 @@ export const folderSelectionMessages = {
   "folderSelection.browse.button": "Browse Folders",
   "folderSelection.browse.buttonOpening": "Opening...",
   "folderSelection.clone.button": "Clone Git Repo",
+  "folderSelection.temporary.button": "New temporary instance",
+  "folderSelection.temporary.description": "Start in an empty folder managed by CodeNomad; keep or discard it when you close the tab",
   "folderSelection.clone.destination.title": "Select Clone Destination",
   "folderSelection.clone.destination.description": "Select the folder where the repository should be cloned.",
   "folderSelection.clone.dialog.title": "Clone Git Repository",

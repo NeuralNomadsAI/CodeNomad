@@ -397,6 +397,15 @@ export const serverApi = {
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
+  createTemporaryFolder(): Promise<{ path: string }> {
+    return request("/api/workspaces/temporary", { method: "POST" })
+  },
+  keepTemporaryWorkspace(id: string): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
+  },
+  discardTemporaryWorkspace(id: string): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST" })
+  },
   getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
     const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
     for (const directory of optionalDirectories) query.append("optionalDirectories", directory)

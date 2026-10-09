@@ -8,6 +8,7 @@ import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
+import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
@@ -535,6 +536,26 @@ const App: Component = () => {
 
   useDesktopFolderLaunch(handleSelectFolder)
 
+  async function handleNewTemporaryInstance(): Promise<void> {
+    clearLaunchError()
+    setIsSelectingFolder(true)
+    try {
+      selectInstanceTab(await openTemporaryInstance())
+      setShowFolderSelection(false)
+    } catch (error) {
+      const message = formatLaunchErrorMessage(
+        error,
+        t("app.launchError.fallbackMessage"),
+        t("app.launchError.invalidConfig"),
+        t("opencodeBinarySelector.validation.v2Required"),
+      )
+      showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary: isMissingBinaryMessage(message) })
+      log.error("Failed to create temporary instance", error)
+    } finally {
+      setIsSelectingFolder(false)
+    }
+  }
+
   function handleSelectExistingInstance(instanceId: string, recentPath: string) {
     const instance = instances().get(instanceId)
     if (!instance) return
@@ -640,6 +661,12 @@ const App: Component = () => {
 
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
+    if (tab.kind === "instance" && tab.instance.temporary) {
+      // Asks to keep or discard; the tab closes itself only after either succeeds.
+      await closeTemporaryInstance(tab.instance.id)
+      return
+    }
+
     if (tab.kind === "instance") {
       closeInstanceTab(tab.instance.id)
     } else {
@@ -681,6 +708,7 @@ const App: Component = () => {
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
     handleNewInstanceRequest,
+    handleNewTemporaryInstance,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
     handleStopInstance,
     handleNewSession,
@@ -876,6 +904,7 @@ const App: Component = () => {
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
             onSelectExistingInstance={handleSelectExistingInstance}
+            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
             onOpenSidecar={handleOpenSidecarPicker}
           />
@@ -887,6 +916,7 @@ const App: Component = () => {
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 onSelectExistingInstance={handleSelectExistingInstance}
+                onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {

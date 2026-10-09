@@ -46,6 +46,8 @@ export interface WorkspaceDescriptor {
   updatedAt: string
   /** Present when `status` is "error". */
   error?: string
+  /** The folder is a CodeNomad-managed temporary folder that discarding deletes. */
+  temporary?: boolean
 }
 
 export interface WorkspaceCreateRequest {

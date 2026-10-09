@@ -51,6 +51,7 @@ export interface UseCommandsOptions {
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
+  handleNewTemporaryInstance: () => Promise<void>
   handleCloseActiveTab: () => Promise<void>
   handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
@@ -121,6 +122,15 @@ export function useCommands(options: UseCommandsOptions) {
       keywords: () => splitKeywords("commands.newInstance.keywords"),
       shortcut: { key: "N", meta: true },
       action: options.handleNewInstanceRequest,
+    })
+
+    commandRegistry.register({
+      id: "new-temporary-instance",
+      label: () => tGlobal("commands.newTemporaryInstance.label"),
+      description: () => tGlobal("commands.newTemporaryInstance.description"),
+      category: "Instance",
+      keywords: () => splitKeywords("commands.newTemporaryInstance.keywords"),
+      action: options.handleNewTemporaryInstance,
     })
 
     commandRegistry.register({

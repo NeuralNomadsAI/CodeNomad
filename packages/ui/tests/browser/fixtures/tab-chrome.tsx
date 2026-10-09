@@ -7,6 +7,8 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import type { AppTabRecord } from "../../../src/stores/app-tabs"
+import AlertDialog from "../../../src/components/alert-dialog"
+import { showChoiceDialog } from "../../../src/stores/alerts"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
 
@@ -14,6 +16,7 @@ const instance: Instance = { id: "tab-fixture", folder: "D:/fixture", port: 0, p
 const tabs = Array.from({ length: 9 }, (_, i): AppTabRecord => ({
   id: `instance:${i}`, kind: "instance", instance: { ...instance, id: `fixture-${i}`, folder: `D:/Project-${i}`, projectName: `Project ${i} — workspace` },
 }))
+tabs[3] = { id: "instance:temporary", kind: "instance", instance: { ...instance, id: "fixture-temporary", folder: "D:/temporary-workspaces/1", projectName: "Temporary · 12:00", temporary: true } }
 tabs[2] = { id: "sidecar:preview", kind: "sidecar", sidecarTab: {
   token: "preview", sidecarId: "preview", name: "Preview", prefixMode: "strip",
   proxyBasePath: "/fixture/preview", shellUrl: "/fixture/preview",
@@ -27,6 +30,10 @@ function Fixture() {
   ;(window as any).tabFixture = {
     count: setCount,
     palette: (id: string) => applyColorScheme(normalizeColorScheme(id)),
+    choice: () => showChoiceDialog("Keep or discard?", [
+      { value: "discard", label: "Discard", tone: "danger" },
+      { value: "keep", label: "Keep", tone: "primary" },
+    ], { cancelLabel: "Cancel" }).then((value) => { (window as any).tabFixture.chosen = value }),
   }
   applyColorScheme(normalizeColorScheme("classic"))
   return <>
@@ -50,6 +57,7 @@ function Fixture() {
     <div data-fixture="reference" style={{ width: "280px", height: "45px", overflow: "auto", "margin-top": "20px" }}>
       <div style={{ width: "1200px", height: "1px" }} />
     </div>
+    <AlertDialog />
   </>
 }
 

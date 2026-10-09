@@ -37,4 +37,6 @@ export interface Instance {
   binaryLabel?: string
   binaryVersion?: string
   environmentVariables?: Record<string, string>
+  /** CodeNomad-managed temporary folder: closing offers to keep or discard it. */
+  temporary?: boolean
 }

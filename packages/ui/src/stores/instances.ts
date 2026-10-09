@@ -573,6 +573,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
     binaryLabel: descriptor.binaryLabel,
     binaryVersion: descriptor.binaryVersion ?? existing?.binaryVersion,
     environmentVariables: existing?.environmentVariables ?? serverSettings().environmentVariables ?? {},
+    ...(descriptor.temporary ? { temporary: true } : {}),
   }
 }
 

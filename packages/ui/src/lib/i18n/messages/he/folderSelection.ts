@@ -25,6 +25,8 @@ export const folderSelectionMessages = {
   "folderSelection.browse.button": "עיון בתיקיות",
   "folderSelection.browse.buttonOpening": "פותח...",
   "folderSelection.clone.button": "שכפל מאגר Git",
+  "folderSelection.temporary.button": "מופע זמני חדש",
+  "folderSelection.temporary.description": "התחל בתיקייה ריקה שמנוהלת על ידי CodeNomad; בסגירת הלשונית תוכל לשמור או למחוק אותה",
   "folderSelection.clone.destination.title": "בחר יעד לשכפול",
   "folderSelection.clone.destination.description": "בחר את התיקייה שאליה יש לשכפל את המאגר.",
   "folderSelection.clone.dialog.title": "שכפול מאגר Git",

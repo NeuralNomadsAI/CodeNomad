@@ -523,11 +523,11 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
 
-function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string): RecentFolder[] {
+function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string, name?: string): RecentFolder[] {
   const matchingPaths = new Set([folderPath, aliasPath].filter((value): value is string => Boolean(value)))
   const aliasEntry = aliasPath ? source.find((folder) => folder.path === aliasPath) : undefined
   const canonicalEntry = source.find((folder) => folder.path === folderPath)
-  const projectName = aliasEntry?.projectName ?? canonicalEntry?.projectName
+  const projectName = name?.trim() || aliasEntry?.projectName || canonicalEntry?.projectName
   const folders = source.filter((folder) => !matchingPaths.has(folder.path))
   folders.unshift({
     path: folderPath,
@@ -1035,6 +1035,12 @@ function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
   )
 }
 
+/** Adds a named project to the recent folders, e.g. a kept temporary folder. */
+async function addNamedRecentFolder(folderPath: string, projectName: string): Promise<void> {
+  await ensureLoaded()
+  await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, recentFolders(), undefined, projectName) })
+}
+
 function addRecentModelPreference(model: ModelPreference): void {
   if (!model.providerId || !model.modelId) return
   const recents = uiState().models.recents
@@ -1448,6 +1454,7 @@ export {
   addRecentFolder,
   removeRecentFolder,
   renameRecentFolderProject,
+  addNamedRecentFolder,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,
