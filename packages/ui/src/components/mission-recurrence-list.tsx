@@ -161,7 +161,7 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
       <MissionDisclosure missionId={schedule().id} name="passage-history" defaultOpen={false} title={t("missions.recurrence.history")}>
         <For each={schedule().history}>{item => <div class="mission-recurrence-history-item">
           <bdi>{new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", timeZone: schedule().clock.zone }).format(item.dueAt)}</bdi>
-          <span>{t(`missions.recurrence.result.${item.outcome}`)}</span>
+          <span>{t(item.reason === "interrupted" ? "missions.recurrence.result.interrupted" : `missions.recurrence.result.${item.outcome}`)}</span>
         </div>}</For>
       </MissionDisclosure>
       <MissionDisclosure missionId={schedule().id} name="schedule-technical" defaultOpen={false} title={t("missions.control.task.details")}>

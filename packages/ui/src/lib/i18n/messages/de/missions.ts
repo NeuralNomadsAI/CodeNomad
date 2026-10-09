@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "Ergebnis wird gespeichert…",
   "missions.recurrence.pending.uncertain": "Ausführungsstatus unbekannt. Fortsetzen prüft den laufenden Durchlauf; er wird niemals zweimal gesendet.",
   "missions.recurrence.result.ended-without-report": "Ohne Bericht beendet",
+  "missions.recurrence.result.interrupted": "Durch einen Neustart unterbrochen",
   "missions.recurrence.followedConversations": "Verfolgte Gespräche (optional)",
   "missions.recurrence.selectedConversation": "Ausgewähltes Gespräch",
   "missions.recurrence.chooseConversations": "Gespräche auswählen",

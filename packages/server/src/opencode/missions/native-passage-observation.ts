@@ -23,6 +23,9 @@ export type PassageSessionObservation = {
   id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
   active: boolean; inbox: number; pending: number; suspended: boolean; runningTools: number
   failed: boolean; messagePresent: boolean
+  /** Execution claim written before this service process started and not live here:
+   * a restart cut the turn. An owned unmanaged `serve` never sweeps such claims. */
+  orphaned?: boolean
 }
 export interface NativePassageObservation {
   assertCurrent(): true
@@ -34,9 +37,11 @@ export interface NativePassageObservation {
   requests(sessionIDs: readonly string[]): Promise<boolean>
 }
 
+const serviceStartedAt = Date.now() - process.uptime() * 1000
+
 /** Read-only native contracts, not signed authority or event replay. Unknown
  * coverage fails closed. SQL only observes durable inbox/claim and ancestry. */
-export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* () {
+export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* (startedAt = serviceStartedAt) {
   const graph = yield* Effect.context<never>()
   const get = (key: typeof databaseTag) => {
     const value = Context.getOption(graph, key)
@@ -97,12 +102,15 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
       assertCurrent()
+      const claimedAt = session.time_suspended
+      if (claimedAt != null && !Number.isSafeInteger(claimedAt)) throw new Error("Native passage claim unavailable")
       // Native SQL stores slash-separated Windows paths; the Location graph uses host separators.
       return { id, projectID: session.project_id, directory: path.normalize(session.directory),
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
-        active, inbox, pending, suspended: session.time_suspended != null, runningTools,
-        failed: terminal?.type === "session.execution.failed.1", messagePresent }
+        active, inbox, pending, suspended: claimedAt != null, runningTools,
+        failed: terminal?.type === "session.execution.failed.1", messagePresent,
+        orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },
     children: async (id: string) => {
       assertCurrent()

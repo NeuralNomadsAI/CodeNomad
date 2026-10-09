@@ -260,7 +260,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           <h3>{t("missions.recurrence.history")}</h3>
           <Show when={schedule().history.length} fallback={<p>{t("missions.recurrence.historyEmpty")}</p>}>
             <ol class="mission-recurrence-history"><For each={[...schedule().history].reverse()}>{(receipt, index) =>
-              <li><h4>{index() === 0 ? t("missions.recurrence.latest") : t("missions.recurrence.passage")}: {t(`missions.recurrence.result.${receipt.outcome}`)}</h4>
+              <li><h4>{index() === 0 ? t("missions.recurrence.latest") : t("missions.recurrence.passage")}: {t(receipt.reason === "interrupted" ? "missions.recurrence.result.interrupted" : `missions.recurrence.result.${receipt.outcome}`)}</h4>
                 <Show when={receipt.missionID}><button type="button" class="window-text-button icon-toggle"
                   aria-label={t("missions.recurrence.readResult", { id: receipt.passageID })}
                   aria-pressed={(target()?.itemId ?? schedule().latestResult?.passageID) === receipt.passageID}

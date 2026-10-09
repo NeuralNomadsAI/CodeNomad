@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "Сохранение результата…",
   "missions.recurrence.pending.uncertain": "Состояние запуска неизвестно. Возобновление проверяет текущий запуск и никогда не отправляет его дважды.",
   "missions.recurrence.result.ended-without-report": "Завершено без отчёта",
+  "missions.recurrence.result.interrupted": "Прервано перезапуском",
   "missions.recurrence.followedConversations": "Отслеживаемые разговоры (необязательно)",
   "missions.recurrence.selectedConversation": "Выбранный разговор",
   "missions.recurrence.chooseConversations": "Выбрать разговоры",

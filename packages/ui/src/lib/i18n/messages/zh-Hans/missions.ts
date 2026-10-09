@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "正在记录结果…",
   "missions.recurrence.pending.uncertain": "执行状态未知。恢复时会检查正在进行的执行，绝不会重复发送。",
   "missions.recurrence.result.ended-without-report": "已结束，但没有报告",
+  "missions.recurrence.result.interrupted": "因重启而中断",
   "missions.recurrence.followedConversations": "关注的对话（可选）",
   "missions.recurrence.selectedConversation": "已选对话",
   "missions.recurrence.chooseConversations": "选择对话",

@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.recurrence.pending.settling": "नतिजा अभिलेख गरिँदैछ…",
   "missions.recurrence.pending.uncertain": "सञ्चालनको स्थिति अज्ञात छ। पुनः जारी गर्दा चलिरहेको सञ्चालन जाँचिन्छ; त्यसलाई कहिल्यै दुई पटक पठाइँदैन।",
   "missions.recurrence.result.ended-without-report": "प्रतिवेदनबिना समाप्त भयो",
+  "missions.recurrence.result.interrupted": "पुनः सुरु गर्दा अवरुद्ध भयो",
   "missions.recurrence.followedConversations": "पछ्याइएका कुराकानीहरू (ऐच्छिक)",
   "missions.recurrence.selectedConversation": "छानिएको कुराकानी",
   "missions.recurrence.chooseConversations": "कुराकानीहरू छान्नुहोस्",

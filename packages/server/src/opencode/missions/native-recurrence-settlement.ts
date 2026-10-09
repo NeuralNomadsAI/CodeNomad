@@ -31,7 +31,9 @@ export async function observeNativePassageSettlement(input: {
     const session = await native.session(next.id, next.id === passage.coordinatorSessionID ? passage.messageID : undefined)
     if (session.projectID !== doc.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
       || session.parentID !== next.parentID) throw new Error("Passage family moved")
-    if (session.active || session.inbox || session.pending || session.suspended || session.runningTools) return undefined
+    // A claim from an earlier service process with no live execution is a turn cut by a
+    // restart that nothing resumed; Resume never sends a continuation for it.
+    if (session.active || session.inbox || session.pending || session.suspended && !session.orphaned || session.runningTools) return undefined
     if (next.id === passage.coordinatorSessionID && !session.messagePresent) return undefined
     family.push(session)
     const ids = await native.children(next.id)
@@ -54,8 +56,9 @@ export async function observeNativePassageSettlement(input: {
   }
   if (await native.requests([...seen])) return undefined
   signal.throwIfAborted(); input.current(); native.assertCurrent()
+  const interrupted = outcome === "ended-without-report" && family.some(session => session.orphaned)
   const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
-    conversationID: passage.coordinatorSessionID, outcome, artifactMessageIDs: [],
+    conversationID: passage.coordinatorSessionID, outcome, ...(interrupted ? { reason: "interrupted" as const } : {}), artifactMessageIDs: [],
     cursors: outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
   // The archive must be published with `finish(..., expectedRevision)`: any document
   // change since this awaited observation is a CAS conflict, re-observed next wake.
