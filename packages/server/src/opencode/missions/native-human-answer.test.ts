@@ -10,6 +10,7 @@ import { Context, Effect } from "effect"
 import { AuthManager } from "../../auth/manager"
 import { stableToken, MissionJournal, type MissionStorage } from "../../missions/journal"
 import { MissionControl } from "../../missions/control"
+import { buildAssignmentPrompt } from "../../missions/recipes"
 import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
 import { createAutomationBridgeRegistration, publishAutomationBridge } from "../automation-plugin"
 import { registerAutomationPluginRoute } from "../../server/routes/automation-plugin"
@@ -148,6 +149,47 @@ test("Windows native SQL slash-separated session directories still bind the dock
     assert.equal((await f.submit()).statusCode, 200)
     assert.equal(f.get(f.markKey)?.state, "confirmed")
     assert.equal((await f.native.verify(f.decision)).via, "ui")
+  } finally { await f.dispose() }
+})
+
+test("the gate reads the durable message projection; an empty native event table (2.0.26 serve) still qualifies", async () => {
+  const f = await fixture()
+  try {
+    assert.equal((await f.submit()).statusCode, 200)
+    f.db.exec("DELETE FROM event")
+    assert.equal((await f.native.verify(f.decision)).via, "ui")
+  } finally { await f.dispose() }
+})
+
+test("Wayfinder without a published binding accepts only the exact fresh assignment child with a UI mark", async () => {
+  const f = await fixture()
+  try {
+    f.db.exec("DELETE FROM event")
+    const control = new MissionControl({ storage: f.storage, project: { id: "project", canonical: f.directory, location: { directory: f.directory } },
+      sessions: { get: f.nativeGet, create: async () => { throw new Error("No ghost root") }, prompt: async () => {}, synthetic: async () => {} }, humanGate: request => f.native.verify(request) })
+    const made = await control.create({ requestID: "wayfinder-unbound", objective: "Choose the seam", template: "wayfinder", coordinatorSessionID: "ses_root" })
+    f.decision.contract.missionID = made.mission.id
+    // Simple native passages publish no task.native-bound event: only the declaration exists.
+    await new MissionJournal(f.storage, "project", f.directory).append({ version: 1, id: "decision_created", type: "task.created", missionID: made.mission.id,
+      projectID: "project", createdAt: made.mission.createdAt + 1, task: { id: "tsk_decision", key: "decision", title: "Decision", brief: "Ask the human",
+        role: "decision", executionMode: { kind: "native", parentTaskKey: null }, blockedBy: [] } })
+    const mission = (await control.snapshot()).missions[0], assignment = buildAssignmentPrompt(mission, mission.tasks[0])
+    const delegate = (input: Record<string, unknown>) => f.db.prepare("UPDATE session_message SET data=? WHERE id='msg_delegate'").run(JSON.stringify({ content: [
+      { type: "tool", name: "subagent", id: "call_delegate", executed: false, state: { status: "running", input, metadata: { sessionID: "ses_child" } } }] }))
+    const { question, answer, projectID: _, directory: _directory, delegationToolName: _name, ...provenance } = f.decision
+    const report = (nativeCall = provenance.nativeCall) => ({ missionID: mission.id, taskKey: "decision", outcome: "completed" as const, summary: "Human chose the seam",
+      evidence: [], next: [], final: false, artifact: { kind: "decision", question, answer, provenance: { ...provenance, nativeCall } } })
+    delegate({ agent: "worker", description: "Decision", prompt: assignment })
+    await assert.rejects(control.report("ses_root", report()), "no UI mark yet")
+    assert.equal((await f.submit()).statusCode, 200)
+    delegate({ agent: "worker", description: "Decision", prompt: "Unrelated work" })
+    await assert.rejects(control.report("ses_root", report()), /not this assignment/)
+    delegate({ agent: "worker", description: "Decision", prompt: assignment, sessionID: "ses_child" })
+    await assert.rejects(control.report("ses_root", report()), /not this assignment/, "a continuation is not a fresh assignment child")
+    delegate({ agent: "worker", description: "Decision", prompt: `Context first.\n${assignment}` })
+    await assert.rejects(control.report("ses_root", report({ ...provenance.nativeCall, parentSessionID: "ses_other" })), /invocation unavailable/)
+    assert.equal((await control.report("ses_root", report())).disposition, "reported")
+    assert.equal((await control.snapshot()).missions[0].tasks[0].status, "completed")
   } finally { await f.dispose() }
 })
 

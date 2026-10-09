@@ -20,7 +20,9 @@ export const humanAnswerResultSchema = z.object({ status: z.literal("answered") 
 export const humanAnswerBindingInputSchema = z.object({ sessionID: id, formID: id, profileID: id, executionHost: id }).strict()
 export const humanDecisionRequestSchema = nativeDecisionProvenance.extend({ question: z.string().min(1).max(20000),
   answer: z.union([z.string().min(1).max(20000), z.array(z.string().min(1).max(20000)).min(1).max(32)]),
-  projectID: id, directory: z.string().min(1).max(4096), delegationToolName: z.enum(["subagent", "task"]) }).strict()
+  projectID: id, directory: z.string().min(1).max(4096), delegationToolName: z.enum(["subagent", "task"]),
+  /** Required when no binding was published: the fresh delegation call's prompt must carry this exact assignment. */
+  assignmentPrompt: z.string().min(1).max(128 * 1024).optional() }).strict()
 export const HUMAN_ANSWER_RPC = { id: "codenomad.missions.human-answer", methods: {
   binding: { input: humanAnswerBindingInputSchema, output: humanAnswerBindingSchema.nullable() },
   reply: { input: humanAnswerRpcInputSchema, output: humanAnswerResultSchema },
