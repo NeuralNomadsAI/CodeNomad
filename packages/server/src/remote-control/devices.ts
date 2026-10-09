@@ -32,14 +32,18 @@ export class RemoteDeviceRegistry {
   private state: StoredState
   private pairing: { codeHash: Buffer; expiresAt: number } | null = null
   private readonly persistedLastSeen = new Map<string, number>()
+  private persisted: boolean
 
   constructor(private readonly filePath: string, private readonly now: () => number = Date.now) {
-    this.state = readState(filePath) ?? { version: 1, route: newRoute(), devices: [] }
+    const stored = readState(filePath)
+    this.state = stored ?? { version: 1, route: newRoute(), devices: [] }
+    this.persisted = stored !== null
     this.pruneExpired()
-    this.persist()
   }
 
+  /** The tunnel route, stored on first use so installations that never enable Remote Control write nothing. */
   route(): string {
+    if (!this.persisted) this.persist()
     return this.state.route
   }
 
@@ -55,14 +59,19 @@ export class RemoteDeviceRegistry {
     this.pairing = null
   }
 
-  /** Consumes a pairing code once and returns the new device credential. */
-  exchange(code: string, name: string): { device: RemoteControlDevice; token: string } | null {
+  /**
+   * Consumes a pairing code once and returns the new device credential. At the
+   * device limit, the least recently seen device is replaced and reported.
+   */
+  exchange(code: string, name: string): { device: RemoteControlDevice; token: string; evictedId?: string } | null {
     const pairing = this.pairing
     if (!pairing || pairing.expiresAt <= this.now() || !timingSafeEqual(pairing.codeHash, hash(code))) return null
     this.pairing = null
     this.pruneExpired()
+    let evictedId: string | undefined
     if (this.state.devices.length >= MAX_DEVICES) {
-      this.state.devices.sort((left, right) => left.lastSeenAt.localeCompare(right.lastSeenAt)).shift()
+      evictedId = this.state.devices.sort((left, right) => left.lastSeenAt.localeCompare(right.lastSeenAt)).shift()?.id
+      if (evictedId) this.persistedLastSeen.delete(evictedId)
     }
     const token = randomBytes(32).toString("base64url")
     const timestamp = new Date(this.now()).toISOString()
@@ -75,7 +84,7 @@ export class RemoteDeviceRegistry {
     }
     this.state.devices.push(stored)
     this.persist()
-    return { device: publicDevice(stored), token }
+    return { device: publicDevice(stored), token, ...(evictedId ? { evictedId } : {}) }
   }
 
   authenticate(token: string | undefined): RemoteControlDevice | null {
@@ -122,6 +131,7 @@ export class RemoteDeviceRegistry {
     const temporary = `${this.filePath}.${process.pid}.tmp`
     fs.writeFileSync(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600 })
     fs.renameSync(temporary, this.filePath)
+    this.persisted = true
   }
 }
 

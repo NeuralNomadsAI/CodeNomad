@@ -54,21 +54,26 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     reject(reply, 400, "Invalid request path")
     return true
   }
-  if (PUBLIC_PATHS.has(pathname)) return false
-  if (isLocalOnly(pathname) && !(method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname))) {
+  if (isLocalOnly(pathname) && !PUBLIC_PATHS.has(pathname) && !(method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname))) {
     reject(reply, 404, "Not found")
     return true
   }
 
   const device = deps.authenticate(parseCookies(request.headers.cookie)[DEVICE_COOKIE_NAME])
-  if (!device) {
-    if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
-    else reject(reply, 401, "This device is not paired")
-    return true
+  if (device) {
+    attachRemoteDevice(request, device.id)
+    deps.assignDevice(request.raw.socket, device.id)
+    return false
   }
-  attachRemoteDevice(request, device.id)
-  deps.assignDevice(request.raw.socket, device.id)
-  return false
+  // Public paths still identify a paired device, so status reports it as authenticated.
+  if (PUBLIC_PATHS.has(pathname)) return false
+  // The UI bundle is public on local listeners too, and browsers fetch the PWA
+  // manifest without cookies. HTML entry points, APIs and workspaces stay gated.
+  if ((method === "GET" || method === "HEAD") && isStaticBundlePath(pathname)) return false
+
+  if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
+  else reject(reply, 401, "This device is not paired")
+  return true
 }
 
 export function deviceCookie(token: string): string {
@@ -87,6 +92,11 @@ function decodePath(rawPath: string): string | null {
   } catch {
     return null
   }
+}
+
+function isStaticBundlePath(pathname: string): boolean {
+  return /\.[A-Za-z0-9]+$/.test(pathname) && !/\.html?$/i.test(pathname)
+    && !pathname.startsWith("/api/") && !pathname.startsWith("/workspaces/")
 }
 
 function isLocalOnly(pathname: string): boolean {

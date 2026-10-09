@@ -86,7 +86,11 @@ export class RemoteControlManager {
 
   exchangePairing(code: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
     if (!this.enabled || !this.tunnel) return null
-    return this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent))
+    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent))
+    if (!paired) return null
+    // A device replaced at the limit loses its live connections, as on revocation.
+    if (paired.evictedId) this.ingress.disconnectDevice(paired.evictedId)
+    return { device: paired.device, token: paired.token }
   }
 
   devices(): RemoteControlDevice[] {

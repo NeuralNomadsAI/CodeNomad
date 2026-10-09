@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "Erneut bei CodeNomad anmelden",
   "authRecovery.description": "Ihre CodeNomad-Anmeldung ist nicht mehr gültig. Dies kann nach einem Serverneustart passieren. Melden Sie sich erneut an, um die Verbindung wiederherzustellen.",
+  "authRecovery.pairing": "Dieses Gerät ist nicht mehr mit CodeNomad gekoppelt. Öffnen Sie auf dem Host Einstellungen → Remote-Zugriff, erstellen Sie einen neuen Kopplungslink, öffnen Sie ihn auf diesem Gerät und prüfen Sie erneut.",
+  "authRecovery.pairingTitle": "Dieses Gerät erneut koppeln",
   "authRecovery.drafts": "Diese Seite bleibt geöffnet, damit Ihre Entwürfe erhalten bleiben. Wiederholen Sie nach der Anmeldung die fehlgeschlagene Aktion.",
   "authRecovery.username": "Benutzername",
   "authRecovery.password": "Passwort",

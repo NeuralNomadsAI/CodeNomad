@@ -142,7 +142,7 @@ codenomad --https=true --http=true
 
 ### Remote Control
 
-Remote Control reaches CodeNomad from anywhere without an inbound port, VPN or LAN binding. Turn it on in **Settings → Remote**, then scan the one-time pairing link (valid for five minutes) on the other device. It is independent of `--host` direct access; neither falls back to the other.
+Remote Control reaches CodeNomad from anywhere without an inbound port, VPN or LAN binding. Turn it on in **Settings → Remote Access**, then scan the one-time pairing link (valid for five minutes) on the other device. It is independent of `--host` direct access; neither falls back to the other.
 
 - **Transport**: CodeNomad claims a random route on the device's shared [OpenTunnel](https://github.com/anomalyco/opentunnel) identity (the default profile, also used by `opencode pair --remote`). The relay forwards ciphertext only; the TLS certificate and its private key stay on this machine. The relay can still observe hostnames, connection timing and sizes. `CODENOMAD_REMOTE_CONTROL_API` selects a self-hosted OpenTunnel API.
 - **Authorization**: Every remote request must carry a paired device's credential, even with `--dangerously-skip-auth`; password login and the token bootstrap are not available remotely. Device credentials are stored hashed in `~/.config/codenomad/remote-control-devices.json`, expire after 30 days without use and can be revoked from Settings, which also ends that device's open streams.

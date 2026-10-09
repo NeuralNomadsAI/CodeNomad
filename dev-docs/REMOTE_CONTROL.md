@@ -42,14 +42,22 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   tunnel `Host` and the public `Origin` on mutations, and strips forwarding
   headers. It denies host-only paths after percent-decoding: login and token
   bootstrap, Remote Control management, remote windows/proxy, SideCars,
-  previews and the automation bridge. Every other path requires a paired
-  device. Refusals close the connection, because an unread body would
-  otherwise break the client's next keep-alive request.
+  previews and the automation bridge. Static UI bundle files stay public, as
+  on local listeners, because browsers fetch the PWA manifest without cookies.
+  Every other path requires a paired device. Refusals close the connection,
+  because an unread body would otherwise break the client's next keep-alive
+  request.
+- A remote `/api/auth/status` without a valid device reports
+  `pairingRequired`. The recovery dialog then explains how to pair again
+  instead of offering password login, keeping the page and its drafts.
+  Pairing from another tab restores it on the next check.
 - `devices.ts` issues one five-minute, single-use pairing code. The link carries
   it in the fragment, never in the query or a log. It stores SHA-256 hashes of
   device credentials and expires devices after 30 days without use.
-  `__Host-codenomad_device` is `Secure; HttpOnly; SameSite=Lax`. Revocation
-  also destroys that device's open connections.
+  `__Host-codenomad_device` is `Secure; HttpOnly; SameSite=Lax`. Revocation,
+  and replacement of the least recently seen device at the 32-device limit,
+  also destroy that device's open connections. The registry file is written
+  only once Remote Control is used.
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
 

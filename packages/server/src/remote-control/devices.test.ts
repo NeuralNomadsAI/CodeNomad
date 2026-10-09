@@ -24,6 +24,30 @@ test("the tunnel route is a stable random DNS label", (t) => {
   assert.equal(open().route(), route)
 })
 
+test("nothing is written until Remote Control needs its route", (t) => {
+  const { file, open } = fixture(t)
+  const registry = open()
+  assert.equal(fs.existsSync(file), false)
+  registry.route()
+  assert.equal(fs.existsSync(file), true)
+})
+
+test("pairing at the device limit replaces and reports the least recently seen device", (t) => {
+  const { open, advance } = fixture(t)
+  const registry = open()
+  const first = registry.exchange(registry.createPairing().code, "Oldest")
+  assert.ok(first)
+  for (let index = 1; index < 32; index += 1) {
+    advance(1_000)
+    assert.equal(registry.exchange(registry.createPairing().code, `Device ${index}`)?.evictedId, undefined)
+  }
+  advance(1_000)
+  const replacing = registry.exchange(registry.createPairing().code, "Newest")
+  assert.equal(replacing?.evictedId, first.device.id)
+  assert.equal(registry.list().length, 32)
+  assert.equal(registry.authenticate(first.token), null)
+})
+
 test("a pairing code is single-use and a newer code replaces it", (t) => {
   const { open } = fixture(t)
   const registry = open()

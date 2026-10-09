@@ -11,7 +11,7 @@ import { sendUnauthorized } from "../../../server/src/auth/http-auth"
 import { registerAuthRoutes } from "../../../server/src/server/routes/auth"
 
 let server: ViteDevServer, backend: FastifyInstance, browser: Browser, url: string
-let auth: AuthManager, mutationAttempts = 0, loginCount = 0, offline = false
+let auth: AuthManager, mutationAttempts = 0, loginCount = 0, offline = false, remoteUnpaired = false
 const streams = new Set<ServerResponse>()
 const logger: any = { debug() {}, warn() {}, child() { return this } }
 const newAuth = () => new AuthManager({ configPath: fileURLToPath(new URL("./unused-auth-fixture/config.json", import.meta.url)),
@@ -34,6 +34,8 @@ before(async () => {
     if (request.url === "/api/workspaces" && request.method === "POST") mutationAttempts++
     if (request.url === "/api/auth/login") loginCount++
     if (offline) return reply.code(503).send({ error: "Unavailable" })
+    // Models the Remote Control surface reached by a revoked device.
+    if (remoteUnpaired && request.url === "/api/auth/status") return reply.send({ authenticated: false, pairingRequired: true })
     if (request.url.startsWith("/api/auth/")) return
     if (!auth.getSessionFromRequest(request)) return sendUnauthorized(request, reply)
   })
@@ -72,6 +74,7 @@ after(async () => {
 })
 async function setup(width = 1100) {
   offline = false
+  remoteUnpaired = false
   restart()
   const page = await browser.newPage({ locale: "en-US", viewport: { width, height: 800 } })
   const errors: string[] = []
@@ -144,6 +147,31 @@ test("an upstream 401 and an offline server do not ask for CodeNomad credentials
     await unavailable
     assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { offline = false; await page.close() }
+})
+
+test("a revoked Remote Control device is asked to pair again, keeping drafts and never posting a password", async () => {
+  const { page, errors } = await setup()
+  try {
+    const composer = page.locator(".prompt-input-container textarea").first()
+    await composer.fill("REMOTE_DRAFT")
+    const beforeLogin = loginCount
+    remoteUnpaired = true
+    auth = newAuth()
+    await page.evaluate(() => (window as any).fixture.openProject())
+    const dialog = page.getByRole("dialog", { name: "Pair this device again" })
+    await dialog.waitFor()
+    await dialog.getByText("Settings → Remote Access", { exact: false }).waitFor()
+    assert.equal(await dialog.getByLabel("Password", { exact: true }).count(), 0)
+    assert.equal(await dialog.getByRole("button", { name: "Sign in", exact: true }).count(), 0)
+    // Pairing again in another tab restores the shared device cookie.
+    remoteUnpaired = false
+    await page.request.post(`${url}/api/auth/login`, { data: { username: "fixture", password: "fixture-only" } })
+    await dialog.getByRole("button", { name: "Check connection" }).click()
+    await dialog.waitFor({ state: "hidden" })
+    assert.equal(loginCount, beforeLogin + 1, "only the out-of-band renewal signs in")
+    assert.equal(await composer.inputValue(), "REMOTE_DRAFT")
+    assert.deepEqual(errors, [])
+  } finally { remoteUnpaired = false; await page.close() }
 })
 
 test("API expiry recovery works above an error dialog and accepts login renewed in another tab", async () => {

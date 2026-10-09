@@ -27,6 +27,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   const uiDir = path.join(directory, "ui")
   fs.mkdirSync(uiDir)
   fs.writeFileSync(path.join(uiDir, "index.html"), "<!doctype html><title>CodeNomad UI</title>")
+  fs.writeFileSync(path.join(uiDir, "manifest.webmanifest"), JSON.stringify({ name: "CodeNomad" }))
   const authManager = new AuthManager({
     configPath: path.join(directory, "config.yaml"),
     username: "codenomad",
