@@ -48,8 +48,7 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     return true
   }
 
-  // Judge the decoded path so percent-encoding cannot slip past host-only prefixes.
-  const pathname = decodePath((request.raw.url ?? "/").split("?")[0] ?? "/")
+  const pathname = routedPath(request.raw.url ?? "/")
   if (pathname === null) {
     reject(reply, 400, "Invalid request path")
     return true
@@ -86,9 +85,17 @@ function reject(reply: FastifyReply, status: number, error: string): void {
   reply.header("connection", "close").code(status).send({ error })
 }
 
-function decodePath(rawPath: string): string | null {
+/**
+ * The path the router will route, or null for a target to refuse. Browsers send
+ * origin-form targets only; the router also routes absolute-form targets and
+ * strips fragments, so those would otherwise be judged as different paths. The
+ * result is percent-decoded, so encoding cannot slip past host-only prefixes, and
+ * cut at ";", which the router treats as a path-parameter delimiter.
+ */
+function routedPath(target: string): string | null {
+  if (!target.startsWith("/") || target.startsWith("//") || target.includes("#")) return null
   try {
-    return decodeURIComponent(rawPath)
+    return decodeURIComponent(target.split("?")[0]!).split(";")[0]!
   } catch {
     return null
   }

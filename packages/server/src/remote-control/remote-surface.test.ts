@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import http from "node:http"
+import net from "node:net"
 import test from "node:test"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 
@@ -132,11 +133,44 @@ test("host-only interfaces stay closed to paired devices, including encoded path
     ["POST", "/api/opencode-plugin/automation"],
     ["POST", "/api/remote-proxy/sessions"],
     ["GET", "/sidecars/example/"],
+    // The router treats ";" as a path-parameter delimiter.
+    ["POST", "/api/auth/password;x"],
+    ["DELETE", "/api/remote-control;x"],
+    ["POST", "/api/remote-servers/probe;x"],
+    ["GET", "/login;x"],
   ] as const) {
     const response = await send(target(), pathname, { method, headers: mutation, body: method === "GET" ? undefined : "{}" }).catch((error: Error) => {
       throw new Error(`${method} ${pathname}: ${error.message}`)
     })
     assert.equal(response.status, 404, `${method} ${pathname}`)
+  }
+})
+
+// Writes a raw request line, which the HTTP client would otherwise normalize.
+function sendRaw(target: string, requestTarget: string, method: string, cookie: string): Promise<number> {
+  const [hostname, port] = target.split(":")
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(Number(port), hostname, () => socket.end(
+      `${method} ${requestTarget} HTTP/1.1\r\nHost: ${HOST}\r\nCookie: ${cookie}\r\nOrigin: ${ORIGIN}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}`,
+    ))
+    let data = ""
+    socket.on("data", (chunk) => { data += chunk })
+    socket.on("close", () => resolve(Number(data.split(" ")[1])))
+    socket.on("error", reject)
+  })
+}
+
+test("request targets the router would reinterpret cannot reach host-only routes", async (t) => {
+  const { target, code } = await startRemoteSurface(t)
+  const cookie = await pair(target(), code)
+  for (const [method, requestTarget, expected] of [
+    ["POST", "/api/auth/password;x", 404],
+    ["POST", `http://${HOST}/api/auth/password`, 400],
+    ["POST", `http://${HOST}/api/remote-proxy/sessions`, 400],
+    ["POST", "/api/auth/password#x", 400],
+    ["POST", "//api/auth/password", 400],
+  ] as const) {
+    assert.equal(await sendRaw(target(), requestTarget, method, cookie), expected, `${method} ${requestTarget}`)
   }
 })
 
