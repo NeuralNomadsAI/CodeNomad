@@ -31,8 +31,10 @@ async function fixture() {
   const put = (key: string, value: unknown) => db.prepare("INSERT OR REPLACE INTO kv VALUES(?,?,1,1)").run(encode(key), JSON.stringify(value))
   const get = (key: string) => { const row = db.prepare("SELECT value FROM kv WHERE key=?").get(encode(key)) as { value: string } | undefined; return row && JSON.parse(row.value) }
   const location = { directory, project: { id: "project", canonical: directory, directory } }
+  // A one-time Mission coordinator root, as MissionControl creates it; only Mission families take the mark path.
+  const oneTime = JSON.stringify({ "codenomad.mission": { version: 1, missionID: "msn_test", kind: "coordinator" } })
   for (const [id, parent] of [["ses_root", null], ["ses_child", "ses_root"], ["ses_other", "ses_root"]])
-    db.prepare("INSERT INTO session_v2 VALUES(?,?,?, ?,NULL,'{}')").run(id, parent, "project", directory)
+    db.prepare("INSERT INTO session_v2 VALUES(?,?,?, ?,NULL,?)").run(id, parent, "project", directory, parent ? "{}" : oneTime)
   const nativeGet = async ({ sessionID }: { sessionID: string }) => {
     const row = db.prepare("SELECT * FROM session_v2 WHERE id=?").get(sessionID) as { id: string; parent_id: string | null; directory: string; metadata: string }
     if (!row) throw new Error("Session not found")
@@ -146,6 +148,14 @@ test("the same native answer without a human header produces no mark and gate re
   } finally { await f.dispose() }
 })
 
+test("an ordinary conversation's dock answer is an ordinary native reply: no mark, never blocked", async () => {
+  const f = await fixture()
+  try { f.db.prepare("UPDATE session_v2 SET metadata='{}' WHERE id='ses_root'").run()
+    assert.equal((await f.submit()).statusCode, 200); assert.equal(f.counts(), 1)
+    assert.equal(f.get(f.markKey), undefined); await assert.rejects(f.native.verify(f.decision))
+  } finally { await f.dispose() }
+})
+
 const recurring = (f: Awaited<ReturnType<typeof fixture>>) => f.db.prepare("UPDATE session_v2 SET metadata=? WHERE id='ses_root'").run(JSON.stringify({
   "codenomad.mission": { version: 1, kind: "coordinator", role: "coordinator", missionID: "msn_test", recurrence: { passageID: "passage" } } }))
 
@@ -204,8 +214,10 @@ test("a cached pending or cancelled Form refuses a mark even with completed nati
 
 test("the origin header without a live authenticated UI session cannot mint a mark", async () => {
   const f = await fixture()
-  try { assert.equal((await f.submit(true, "Module", "invalid-cookie")).statusCode, 409)
-    assert.equal(f.get(f.markKey), undefined); assert.equal(f.counts(), 0)
+  // The answer itself still goes through the ordinary native reply; it just never qualifies.
+  try { assert.equal((await f.submit(true, "Module", "invalid-cookie")).statusCode, 200)
+    assert.equal(f.get(f.markKey), undefined); assert.equal(f.counts(), 1)
+    await assert.rejects(f.native.verify(f.decision))
   } finally { await f.dispose() }
 })
 
