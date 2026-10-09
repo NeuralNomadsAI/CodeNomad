@@ -1,7 +1,7 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile } from "../../../server/src/api-types"
+import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -881,6 +881,11 @@ function deleteColorSchemePreset(id: string): Promise<void> {
    await patchConfigOwner("server", { listeningMode: mode })
  }
 
+/** Saves which releases are offered; desktop data and the backend stay unchanged. */
+async function setUpdateFeed(feed: UpdateFeed): Promise<void> {
+  await patchConfigOwner("server", { updateFeed: feed })
+}
+
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
   void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
     log.error("Failed to update environment variables", error),
@@ -1429,6 +1434,7 @@ export {
   getProviderModelVisibilityPreference,
   providerModelVisibilitySaveFailed,
   setListeningMode,
+  setUpdateFeed,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,

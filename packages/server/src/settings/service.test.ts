@@ -41,6 +41,17 @@ describe("SettingsService config persistence", () => {
     assert.deepEqual(result, { logLevel: "INFO", opencodeBinary: "opencode2", sidecars: [{ id: "one" }] })
   })
 
+  it("keeps only known update feeds", () => {
+    const owner = (updateFeed: unknown) => serviceWithStore({
+      getOwner: () => ({}),
+      replaceOwner: (_owner: string, value: unknown) => value,
+    }).mergePatchOwner("config", "server", { updateFeed })
+    assert.deepEqual(owner("preview"), { updateFeed: "preview" })
+    assert.deepEqual(owner("stable"), { updateFeed: "stable" })
+    assert.deepEqual(owner("dev"), {})
+    assert.deepEqual(owner(null), {})
+  })
+
   it("does not report a persisted patch as failed when an event listener throws", () => {
     let warnings = 0
     const service = serviceWithStore({

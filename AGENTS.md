@@ -105,6 +105,7 @@
 
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.
 - Built-in right-panel tabs are constructed directly in `right-panel/core-runtime.tsx`; external sandboxed panels retain their independent consent/loading path. Do not restore an empty first-party plugin loader. Native transcript events reduce through `stores/opencode-data.ts` and publish bounded snapshots with `hydrateMessages`; do not reintroduce an unused second partial-part reducer. Shared speech byte/MediaSource transport lives in `lib/audio-utils.ts`, while playback ownership and cancellation stay with its callers.
+- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. It is read on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`, and must not touch desktop data scopes, singletons, backends or OpenCode state. Preview offers use publication order (dev builds carry the previous release number) and open the release page; only an explicit stable feed may call the WinGet stable installer.
 - Uphold DRY: share helpers via dedicated modules before copy/pasting logic across stores, components, or scripts.
 - Enforce single responsibility; split large files when concerns diverge (state, actions, API, events, etc.).
 - Prefer composable primitives (signals, hooks, utilities) over deep inheritance or implicit global state.

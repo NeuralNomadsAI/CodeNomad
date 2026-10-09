@@ -83,6 +83,40 @@ for (const host of ["web", "tauri", "electron"] as const) test(`${host}: Windows
   } finally { await page.close() }
 })
 
+test("the update feed is saved as a server preference and only changes the offered release", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  await setup(page, "tauri")
+  const patches: unknown[] = []
+  let feed = "preview"
+  const preview = { version: "0.20.1-dev-20261009-43165435", tag: "v0.20.1-dev-20261009-43165435", url: "https://example.test/preview", channel: "preview" }
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.method() === "PATCH") {
+      const body = request.postDataJSON()
+      patches.push({ path: new URL(request.url()).pathname, body })
+      if (body?.updateFeed) feed = body.updateFeed
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(body ?? {}) })
+    }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(new URL(request.url()).pathname === "/api/meta"
+      ? { ...baseMeta, serverVersion: "0.20.1-dev-20261008-027f5094", updateFeed: feed, update: feed === "preview" ? preview : null,
+        support: { supported: true, latestServerVersion: "0.20.1", latestServerUrl: "https://example.test/stable" } }
+      : {}) })
+  })
+  try {
+    await page.goto(url)
+    const selector = page.getByLabel("Update feed", { exact: true })
+    await page.waitForFunction(() => (document.getElementById("settings-update-feed") as HTMLSelectElement | null)?.value === "preview")
+    assert.equal(await rowValue(page, "Latest version").innerText(), preview.version)
+    await selector.selectOption("stable")
+    await page.waitForFunction(() => [...document.querySelectorAll(".settings-info-value")].some(e => e.textContent === "0.20.1"))
+    assert.equal(await selector.inputValue(), "stable")
+    assert.deepEqual(patches, [{ path: "/api/storage/config/server", body: { updateFeed: "stable" } }])
+  } catch (error) {
+    console.error({ patches, content: await page.locator("body").innerText() })
+    throw error
+  } finally { await page.close() }
+})
+
 test("older or unreachable servers never borrow the client platform", async () => {
   const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
   await setup(page, "web")

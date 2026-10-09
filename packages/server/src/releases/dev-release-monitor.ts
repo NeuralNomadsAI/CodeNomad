@@ -1,19 +1,21 @@
 import { fetch } from "undici"
-import type { LatestReleaseInfo } from "../api-types"
+import type { LatestReleaseInfo, UpdateFeed } from "../api-types"
 import type { Logger } from "../logger"
 import { compareVersionStrings, stripTagPrefix } from "./release-monitor"
 
-interface DevReleaseMonitorOptions {
+interface PreviewReleaseMonitorOptions {
   /** Current running server version (from package.json). */
   currentVersion: string
   /** GitHub repo in the form "owner/name". */
   repo: string
   logger: Logger
+  /** Read on every refresh; only the preview feed polls GitHub. */
+  feed: () => UpdateFeed
   onUpdate: (release: LatestReleaseInfo | null) => void
   pollIntervalMs?: number
 }
 
-interface GithubReleaseListItem {
+export interface GithubReleaseListItem {
   tag_name?: string
   name?: string
   html_url?: string
@@ -24,20 +26,43 @@ interface GithubReleaseListItem {
   draft?: boolean
 }
 
-export interface DevReleaseMonitor {
+export interface PreviewReleaseMonitor {
+  refresh(): void
   stop(): void
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 15 * 60 * 1000
 
-export function matchesDevReleaseChannel(tag: string, currentVersion: string): boolean {
-  const v2 = "-dev-v2-"
-  return currentVersion.includes(v2) ? tag.includes(v2) : tag.includes("-dev-") && !tag.includes(v2)
+/** The update feed only selects which releases are offered. An explicit saved
+ * choice wins; otherwise the installed build's label picks the initial feed. */
+export function resolveUpdateFeed(configured: unknown, currentVersion: string): UpdateFeed {
+  if (configured === "stable" || configured === "preview") return configured
+  return /-dev[.-]/i.test(currentVersion) ? "preview" : "stable"
 }
 
-export function startDevReleaseMonitor(options: DevReleaseMonitorOptions): DevReleaseMonitor {
+const tagOf = (release: GithubReleaseListItem) => release.tag_name || release.name || ""
+const publishedOf = (release: GithubReleaseListItem) => Date.parse(release.published_at ?? release.created_at ?? "") || 0
+
+/** Preview builds reuse the last stable version plus a `-dev-*` (or legacy
+ * `-dev-v2-*`) label, so SemVer alone ranks newer previews below their base
+ * release. Offer the newest published release of any kind, newer by
+ * publication than the installed release when it is known. */
+export function selectPreviewRelease(list: GithubReleaseListItem[], currentVersion: string): GithubReleaseListItem | null {
+  const releases = list.filter((release) => release && release.draft !== true && stripTagPrefix(tagOf(release)))
+  const latest = releases.reduce<GithubReleaseListItem | null>((best, release) =>
+    !best || publishedOf(release) > publishedOf(best) ? release : best, null)
+  if (!latest) return null
+  const current = stripTagPrefix(currentVersion)
+  const latestVersion = stripTagPrefix(tagOf(latest))
+  if (latestVersion === current) return null
+  const installed = releases.find((release) => stripTagPrefix(tagOf(release)) === current)
+  if (installed) return publishedOf(latest) > publishedOf(installed) ? latest : null
+  return compareVersionStrings(latestVersion!, currentVersion) > 0 ? latest : null
+}
+
+export function startPreviewReleaseMonitor(options: PreviewReleaseMonitorOptions): PreviewReleaseMonitor {
   let stopped = false
-  let timer: ReturnType<typeof setInterval> | null = null
+  let generation = 0
 
   const pollIntervalMs =
     Number.isFinite(options.pollIntervalMs) && (options.pollIntervalMs ?? 0) > 0
@@ -46,32 +71,38 @@ export function startDevReleaseMonitor(options: DevReleaseMonitorOptions): DevRe
 
   const refresh = async () => {
     if (stopped) return
+    const current = ++generation
+    if (options.feed() !== "preview") {
+      options.onUpdate(null)
+      return
+    }
     try {
-      const release = await fetchLatestPrerelease({
+      const release = await fetchLatestPreview({
         repo: options.repo,
         currentVersion: options.currentVersion,
       })
-      options.onUpdate(release)
+      // A feed change during the request supersedes this result.
+      if (!stopped && current === generation && options.feed() === "preview") options.onUpdate(release)
     } catch (error) {
-      options.logger.debug({ err: error }, "Failed to refresh dev prerelease information")
+      options.logger.debug({ err: error }, "Failed to refresh preview release information")
     }
   }
 
   void refresh()
-  timer = setInterval(() => void refresh(), pollIntervalMs)
+  const timer = setInterval(() => void refresh(), pollIntervalMs)
 
   return {
+    refresh() {
+      void refresh()
+    },
     stop() {
       stopped = true
-      if (timer) {
-        clearInterval(timer)
-        timer = null
-      }
+      clearInterval(timer)
     },
   }
 }
 
-async function fetchLatestPrerelease(args: {
+async function fetchLatestPreview(args: {
   repo: string
   currentVersion: string
 }): Promise<LatestReleaseInfo | null> {
@@ -80,7 +111,7 @@ async function fetchLatestPrerelease(args: {
     throw new Error(`Invalid GitHub repo: ${args.repo}`)
   }
 
-  const apiUrl = `https://api.github.com/repos/${normalizedRepo}/releases?per_page=20`
+  const apiUrl = `https://api.github.com/repos/${normalizedRepo}/releases?per_page=30`
   const response = await fetch(apiUrl, {
     headers: {
       Accept: "application/vnd.github+json",
@@ -93,33 +124,16 @@ async function fetchLatestPrerelease(args: {
   }
 
   const list = (await response.json()) as GithubReleaseListItem[]
-  const latest = list.find((release) => {
-    const tag = release?.tag_name || release?.name || ""
-    return release?.prerelease === true && release.draft !== true && matchesDevReleaseChannel(tag, args.currentVersion)
-  })
-  if (!latest) {
-    return null
-  }
-
-  const tag = latest.tag_name || latest.name
-  if (!tag) {
-    return null
-  }
-
-  const normalizedVersion = stripTagPrefix(tag)
-  if (!normalizedVersion) {
-    return null
-  }
-
-  if (compareVersionStrings(normalizedVersion, args.currentVersion) <= 0) {
-    return null
-  }
+  const latest = selectPreviewRelease(Array.isArray(list) ? list : [], args.currentVersion)
+  const tag = latest ? tagOf(latest) : ""
+  const version = stripTagPrefix(tag)
+  if (!latest || !version) return null
 
   return {
-    version: normalizedVersion,
+    version,
     tag,
     url: latest.html_url ?? `https://github.com/${normalizedRepo}/releases/tag/${encodeURIComponent(tag)}`,
-    channel: "dev",
+    channel: latest.prerelease === true ? "preview" : "stable",
     publishedAt: latest.published_at ?? latest.created_at,
     notes: latest.body,
   }
