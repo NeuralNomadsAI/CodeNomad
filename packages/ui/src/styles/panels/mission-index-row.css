@@ -1,0 +1,50 @@
+/* Mission/schedule rows: title + state line, one text action and an overflow menu.
+   The selected entry is highlighted and its card follows inside the same item. */
+.mission-control-index { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-index-entry { min-width: 0; border-block-end: 1px solid var(--border-base); border-inline-start: 2px solid transparent; }
+.mission-index-entry-selected { background: var(--surface-base); border-inline-start-color: var(--accent-primary); }
+.mission-index-row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; padding-inline-end: var(--space-xs); }
+.mission-index-row:hover { box-shadow: inset 0 0 0 999px var(--surface-hover-overlay); }
+.mission-index-select {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-primary);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+.mission-index-select:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-index-title { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.mission-index-title > bdi { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mission-index-title .neutral-badge { flex: 0 0 auto; padding-block: 0; font-size: var(--font-size-xs); font-weight: 400; white-space: nowrap; }
+.mission-index-meta { min-width: 0; overflow: hidden; color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; text-overflow: ellipsis; }
+.mission-index-row:is([data-status="active"], [data-status="running"]) .mission-index-meta > span:first-child { color: var(--accent-primary); }
+.mission-index-row[data-status="completed"] .mission-index-meta > span:first-child { color: var(--status-success); }
+.mission-index-row:is([data-status="paused"], [data-status="interrupted"]) .mission-index-meta > span:first-child { color: var(--status-warning); }
+.mission-index-row:is([data-status="failed"], [data-status="error"]) .mission-index-meta > span:first-child { color: var(--status-error); }
+.mission-index-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
+.mission-index-primary { min-height: var(--touch-target-size-compact); padding-inline: var(--space-sm); font-size: var(--font-size-xs); white-space: nowrap; border: 1px solid var(--border-base); }
+.mission-index-primary:disabled { opacity: .45; }
+.mission-index-more {
+  display: inline-flex;
+  min-width: var(--touch-target-size-compact);
+  min-height: var(--touch-target-size-compact);
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border-radius: 0;
+}
+.mission-index-more:hover:not(:disabled) { color: var(--accent-primary); background: var(--surface-hover-overlay); }
+.mission-index-feedback { display: grid; padding-inline: var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-index-feedback small[role="alert"] { color: var(--status-warning); }
+@container mission-panel (max-width: 300px) {
+  .mission-index-row { flex-wrap: wrap; }
+  .mission-index-select { flex-basis: 100%; }
+  .mission-index-actions { margin-inline-start: auto; }
+}

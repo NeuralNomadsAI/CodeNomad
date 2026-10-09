@@ -23,3 +23,9 @@
 .mission-editor .window-body { padding: var(--space-sm); }
 .mission-editor .window-header, .mission-editor .window-footer { padding: var(--space-sm); }
 .mission-editor .mission-editor-start-hint { margin-block: var(--space-sm) 0; font-size: var(--font-size-xs); }
+/* Schedule reader: rule, selected run, the run list, identifiers folded last. */
+.mission-recurrence-reader { display: grid; gap: var(--space-sm); }
+.mission-recurrence-reader > p, .mission-recurrence-reader h3 { margin: 0; }
+.mission-recurrence-rule { color: var(--text-secondary); }
+.mission-recurrence-runs { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-recurrence-failure { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }

@@ -1,0 +1,58 @@
+/* Selected Mission card: Needs you, Result, Tasks, coordinator field, More. */
+.mission-card { display: grid; gap: var(--space-sm); min-width: 0; padding: var(--space-xs) var(--space-sm) var(--space-sm); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.mission-card h3 { display: flex; align-items: center; gap: var(--space-xs); margin: 0; font-size: var(--font-size-sm); font-weight: 600; }
+.mission-card h3 > small { margin-inline-start: auto; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 400; }
+.mission-card > p { margin: 0; color: var(--text-secondary); }
+
+.mission-needs { display: grid; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); background: var(--status-starting-bg); border-inline-start: 2px solid var(--status-warning); }
+.mission-needs-item { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; padding-block: var(--space-xs); }
+.mission-needs-copy { display: grid; flex: 1; min-width: 0; }
+.mission-needs-copy > span, .mission-needs-copy > code { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-needs-answer { flex: 0 0 auto; border: 1px solid var(--border-base); }
+
+.mission-result { display: grid; gap: var(--space-xs); }
+.mission-result-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; margin: 0; overflow: hidden; line-height: 1.45; color: var(--text-primary); }
+.mission-result-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-result-read { margin-inline-start: auto; font-size: var(--font-size-xs); }
+.mission-result-note { margin: 0; color: var(--status-warning); font-size: var(--font-size-xs); }
+.mission-briefing-feedback { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); font-size: var(--font-size-xs); }
+.mission-briefing-feedback p { flex-basis: 100%; margin: 0; color: var(--text-secondary); }
+
+.mission-checklist { display: grid; gap: 2px; }
+.mission-checklist ul { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-checklist-task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--touch-target-size-compact);
+  padding-inline: var(--space-xs);
+  color: var(--text-primary);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.mission-checklist-task:hover { background: var(--surface-hover-overlay); }
+.mission-checklist-task:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-checklist-mark { display: inline-flex; flex: 0 0 auto; color: var(--text-muted); }
+.mission-checklist-task[data-word="done"] .mission-checklist-mark { color: var(--status-success); }
+.mission-checklist-task[data-word="active"] .mission-checklist-mark, .mission-checklist-task[data-word="active"] .mission-checklist-word { color: var(--accent-primary); }
+.mission-checklist-task[data-word="blocked"] :is(.mission-checklist-mark, .mission-checklist-word) { color: var(--status-warning); }
+.mission-checklist-task[data-word="failed"] :is(.mission-checklist-mark, .mission-checklist-word) { color: var(--status-error); }
+.mission-checklist-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mission-checklist-word { flex: 0 0 auto; color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-checklist-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); padding-inline-start: calc(var(--space-xs) + 18px); font-size: var(--font-size-xs); }
+
+.mission-more { border-block-start: 1px solid var(--border-base); }
+.mission-more .mission-disclosure-trigger { padding-inline: 0; }
+.mission-more > div > .mission-disclosure { padding-inline-start: var(--space-sm); }
+.mission-technical { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-xs) var(--space-sm); margin: 0; font-size: var(--font-size-xs); }
+.mission-technical dt { color: var(--text-secondary); }
+.mission-technical dd { margin: 0; overflow-wrap: anywhere; }
+.mission-past-runs { display: grid; gap: 2px; padding-block: var(--space-xs); }
+.mission-past-runs h4 { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 400; }
+.mission-past-runs ol { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-past-run { width: 100%; min-height: var(--touch-target-size-compact); padding-inline: var(--space-xs); text-align: start; font-size: var(--font-size-xs); background: transparent; border: 0; border-radius: 0; }
+.mission-past-run:hover { background: var(--surface-hover-overlay); }

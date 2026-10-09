@@ -9,7 +9,7 @@ import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { MissionReaderSection } from "./mission-reader"
 import { missionTaskConversation } from "./mission-task-navigation"
 import type { MissionObservedFamily } from "./mission-attention-model"
-import { missionExcerpt, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
+import { missionExcerpt, missionReports, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
 import type { MissionPassageSection } from "./mission-passage-section"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
@@ -31,6 +31,11 @@ export function MissionTaskReader(props: {
     onClick={() => navigate(key)}>{t(label, { tasks: byKey(key)?.title ?? key, task: byKey(key)?.title ?? key })}</button>
   const latest = createMemo<MissionReport | undefined>(() => missionTaskReport(props.mission, props.task))
   const history = createMemo(() => missionTaskHistory(props.mission, props.task))
+  const readout = createMemo(() => missionReports(props.mission).find(report => report.taskKey === props.task.key && !report.late
+    && report.delivery === "coordinator-readout"))
+  // Once a task is done, the tasks it unblocked need no pointer.
+  const unblocks = createMemo(() => props.task.status === "completed" ? []
+    : props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key) && task.status !== "withdrawn" && !task.replacedByTaskKey))
   const sections = (report: MissionReport) => [
       { label: "missions.control.summary", text: report.summary },
       { label: "missions.control.report.next", text: report.next.join("\n\n") },
@@ -44,12 +49,17 @@ export function MissionTaskReader(props: {
   }
   const reportSource = (label: string, report: MissionReport) => source(label.split(".").at(-1) as MissionPassageSection["section"], report)
   return <div class="mission-task-reader" data-task-id={props.task.id}>
-    <Show when={latest()} fallback={<>
+    <Show when={latest()} fallback={<Show when={props.task.status === "completed"} fallback={<>
       <Show when={props.task.status === "blocked" || props.task.status === "needs-input"}>
         <p>{t(props.task.status === "needs-input" ? "missions.progress.obstacle" : missionTaskStatusKey(props.task))}</p>
       </Show>
       <p>{t("missions.progress.noTaskResult")}</p>
-    </>}>{report => <>
+    </>}>
+      {/* Completed without its own report: say so plainly, with the coordinator's readout when one exists. */}
+      <p>{t("missionsPanel.task.done")}</p>
+      <Show when={readout()}>{report => <MissionReaderSection label="missionsPanel.task.readout" text={report().summary}
+        identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} source={reportSource("missions.control.summary", report())} />}</Show>
+    </Show>}>{report => <>
       <p>{t(`missions.control.report.outcome.${report().outcome}`)}</p>
       <For each={sections(report()).map(section => section.label)}>{label => {
         const section = () => sections(report()).find(section => section.label === label)!
@@ -59,7 +69,7 @@ export function MissionTaskReader(props: {
     </>}</Show>
     <div class="mission-task-dependencies">
       <For each={props.task.blockedBy}>{key => link(key, "missions.control.task.blockedBy")}</For>
-      <For each={props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key))}>{task => link(task.key, "missions.control.task.blocks")}</For>
+      <For each={unblocks()}>{task => link(task.key, "missionsPanel.task.unblocks")}</For>
       <Show when={props.task.replacedByTaskKey}>{key => link(key(), "missions.control.task.replacedBy")}</Show>
     </div>
     <Show when={history().length}>

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
-import { chromium, type Browser, type Page, type Request } from "playwright"
+import { chromium, type Browser, type Locator, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap, MissionActivityProjection } from "../../../server/src/api-types"
@@ -185,7 +185,7 @@ async function expand(page: Page, id: string) {
   if (await button.getAttribute("aria-expanded") !== "true") await button.click()
 }
 async function conversations(page: Page) {
-  const details = page.getByRole("button", { name: /^(Technical details|פרטים טכניים)$/ })
+  const details = page.locator(".mission-index-entry-selected .mission-card .mission-more > h3 > .mission-disclosure-trigger")
   if (await details.getAttribute("aria-expanded") !== "true") await details.click()
   assert.equal(await details.getAttribute("aria-expanded"), "true")
   const button = page.locator(".mission-disclosure-trigger").filter({ hasText: /Conversations|שיחות/ }).first()
@@ -232,6 +232,8 @@ test("production SessionList/SessionView select recursive children, steer/queue 
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
+/** The "Needs you" item's Answer action, whose description names the target conversation. */
+const answer = (attention: Locator, text: string) => attention.locator("li.mission-needs-item", { hasText: text }).locator("button.mission-needs-answer")
 const conversationRow = (page: Page, id: string) => page.locator(`.mission-conversation-node[data-session-id="ses_${id}"] > .mission-activity-actor`)
 async function assertConversationGeometry(page: Page, rtl: boolean) {
   const geometry = await page.locator(".mission-activity-list").evaluate(list => {
@@ -489,7 +491,11 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     const attention = page.locator(".mission-attention-list")
     await attention.getByText("Child choice", { exact: true }).waitFor()
     assert.equal(await attention.getByText("Global choice", { exact: true }).count(), 0)
-    await attention.getByRole("button", { name: "Open ses_grandchild", exact: true }).click()
+    const childAnswer = answer(attention, "Child choice")
+    // An ordinary descendant is not a declared actor: its Answer names the native conversation title (or a generic role),
+    // never a session identifier; the exact target is the routed session.
+    assert.match(await childAnswer.getAttribute("aria-description") ?? "", /^Open (?!ses_)\S/)
+    await childAnswer.click()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_grandchild")
     const form = page.locator(".interruption-dock").getByRole("form", { name: "Child choice", exact: true })
     await form.locator('input[type="text"]').fill("Answer through native dock")
@@ -503,7 +509,9 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     assert.equal(await attention.getByText("global-fixture.txt", { exact: true }).count(), 0)
     // Upstream's dock retains its selected request instead of automatically
     // selecting a newly enqueued permission. Target the exact attention action.
-    await attention.getByRole("button", { name: "Open ses_grandchild", exact: true }).click()
+    const permissionAnswer = answer(attention, "safe-fixture.txt")
+    assert.match(await permissionAnswer.getAttribute("aria-description") ?? "", /^Open (?!ses_)\S/)
+    await permissionAnswer.click()
     await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
     assert((await page.locator(".interruption-dock").innerText()).includes("safe-fixture.txt"))
     const permissionReceipt = page.waitForResponse(response => response.url().includes("child-permission") && response.request().method() !== "GET")
@@ -537,7 +545,9 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     await page.locator(".session-header-drawer-toggle--right button:visible").tap()
     const attention = page.locator(".mission-attention-list")
     await attention.getByText("safe-fixture.txt", { exact: true }).waitFor()
-    await attention.getByRole("button", { name: /ses_grandchild/ }).tap()
+    const permissionAnswer = answer(attention, "safe-fixture.txt")
+    assert.equal(await page.locator(".mission-attention-list li.mission-needs-item").count(), 1, "the uncorrelated global permission stays out of Needs you")
+    await permissionAnswer.tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("safe-fixture.txt"))
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_grandchild")
     await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })

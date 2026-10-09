@@ -11,8 +11,6 @@
 .mission-recurrence-item small { grid-column: 1 / -1; color: var(--text-muted); word-break: break-all; }
 .mission-recurrence-item span { color: var(--text-secondary); font-size: var(--font-size-xs); }
 .mission-recurrence-item > span { grid-column: 1 / -1; }
-.mission-recurrence-controls { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); min-width: 0; }
-.mission-recurrence-controls small { flex-basis: 100%; color: var(--text-secondary); }
 .mission-recurrence-read { justify-self: end; }
 .mission-recurrence-decisions { grid-column: 1 / -1; display: grid; gap: var(--space-xs); }
 .mission-recurrence-history { padding-inline-start: var(--space-lg); display: grid; gap: var(--space-sm); }

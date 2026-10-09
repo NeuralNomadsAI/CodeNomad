@@ -44,17 +44,36 @@ function mission(id = "revision"): MissionMap {
 }
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
   (window as any).missionVisibility[method](arg), { method, arg })
+const row = (page: Page, title?: string) => title ? page.locator(".mission-control-index > li.mission-index-entry")
+  .filter({ has: page.getByRole("button", { name: title, exact: true }) }).locator(".mission-index-row") : page.locator(".mission-index-row").first()
+const pause = (page: Page, title?: string) => row(page, title).getByRole("button", { name: "Pause mission", exact: true })
+// Unresolved requests replace the contextual primary with a status check.
+const check = (page: Page, title?: string) => row(page, title).getByRole("button", { name: "Check control status", exact: true })
+async function menu(page: Page, title?: string) {
+  await row(page, title).getByRole("button", { name: "More actions", exact: true }).click()
+  const items = page.getByRole("menuitem"); await items.first().waitFor()
+  const labels = await Promise.all((await items.all()).map(async item => (await item.innerText()).trim()))
+  await page.keyboard.press("Escape"); await items.first().waitFor({ state: "detached" })
+  return labels
+}
+async function choose(page: Page, label: string, title?: string) {
+  await row(page, title).getByRole("button", { name: "More actions", exact: true }).click()
+  await page.getByRole("menuitem", { name: label, exact: true }).click()
+}
+async function retry(page: Page, title?: string) {
+  // Menu actions launch after the menu closes; wait for the actual dispatch.
+  const sent = page.waitForRequest(request => request.url().endsWith("/control"))
+  await choose(page, "Retry last action", title); await sent
+}
 async function open(page: Page) {
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).missionVisibility))
   await fixture(page, "activate", true)
-  await page.getByRole("button", { name: "Pause mission", exact: true }).waitFor()
+  await row(page).locator(".mission-index-primary").waitFor()
 }
 async function settled(page: Page) {
-  await page.waitForFunction(() => {
-    const pause = document.querySelector('[aria-label="Pause mission"]') as HTMLButtonElement | null
-    return pause && !pause.closest(".mission-lifecycle")?.querySelector('[role="status"]')
-  })
+  await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready"
+    && !document.querySelector('.mission-index-feedback [role="status"]'))
 }
 
 test("real RightPanel discards only certified rejected intent; two revision conflicts require explicit fresh Pause", async () => {
@@ -77,19 +96,18 @@ test("real RightPanel discards only certified rejected intent; two revision conf
       return route.fulfill({ json: { mission: current } })
     })
     await open(page)
-    const pause = page.getByRole("button", { name: "Pause mission", exact: true })
-    const retry = page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true })
-    await pause.click(); await settled(page)
+    const retryCount = async () => (await menu(page)).filter(label => label === "Retry last action").length
+    await pause(page).click(); await settled(page)
     // Retain the original failing wire proof, rather than stop at the first UI assertion.
-    if (await retry.count()) { await retry.click(); await settled(page); console.info("BEFORE stale retry wire", JSON.stringify({ calls, displayRevision: current.revision })) }
-    assert.equal(await retry.count(), 0, "a certified pre-intent rejection must not expose stale Try again")
+    if (await retryCount()) { await retry(page); await settled(page); console.info("BEFORE stale retry wire", JSON.stringify({ calls, displayRevision: current.revision })) }
+    assert.equal(await retryCount(), 0, "a certified pre-intent rejection must not expose a stale retry")
     assert.equal(calls.length, 1, "refresh must not automatically submit a new intent")
-    await pause.click(); await settled(page)
-    assert.equal(await retry.count(), 0)
+    await pause(page).click(); await settled(page)
+    assert.equal(await retryCount(), 0)
     assert.equal(calls.length, 2)
     assert.deepEqual(calls.map(call => [call.action, call.expectedRevision]), [["pause", 1], ["pause", 2]])
     assert.notEqual(calls[0].requestId, calls[1].requestId)
-    await pause.click(); await settled(page)
+    await pause(page).click(); await settled(page)
     assert.equal(calls.length, 3)
     assert.equal(calls[2].expectedRevision, 3)
     assert.notEqual(calls[1].requestId, calls[2].requestId)
@@ -113,11 +131,13 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
         return route.fulfill({ json: { mission: current } })
       })
       await open(page)
-      await page.getByRole("button", { name: "Pause mission", exact: true }).click(); await settled(page)
-      assert.equal(await page.getByRole("button", { name: "Pause mission", exact: true }).isDisabled(), true)
-      assert.equal(await page.getByRole("button", { name: "Stop mission permanently", exact: true }).isDisabled(), true)
+      await pause(page).click(); await settled(page)
+      // Never a second Pause or a fresh Stop while the exact request is unresolved.
+      assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
+      const labels = await menu(page)
+      assert.equal(labels.includes("Stop…"), false); assert.equal(labels.includes("Retry last action"), true)
       await fixture(page, "event", "session.status")
-      await page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true }).click()
+      await retry(page)
       await settled(page)
       assert.equal(calls.length, 2); assert.deepEqual(calls[1], calls[0])
       console.info("UNKNOWN exact retry wire", code, JSON.stringify(calls))
@@ -125,7 +145,7 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
   })
 }
 
-test("real RightPanel ignores late rejection in a newly selected mission", async () => {
+test("real RightPanel ignores late rejection after row disposal in a newly selected mission", async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
   let release!: () => void, submitted!: () => void, reads = 0
   const held = new Promise<void>(resolve => { release = resolve })
@@ -138,15 +158,20 @@ test("real RightPanel ignores late rejection in a newly selected mission", async
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
     await open(page)
-    await page.getByRole("button", { name: "Pause mission", exact: true }).click(); await sent
+    await pause(page, "Lifecycle one").click(); await sent
+    // Rows survive selection; unmounting the panel disposes the dispatching row.
+    await fixture(page, "mount", false); await row(page).waitFor({ state: "detached" }); await fixture(page, "mount", true)
     await page.getByRole("button", { name: "Lifecycle two", exact: true }).click()
-    await settled(page)
+    await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    assert.equal(reads, before, "old selected-mission completion must not refresh the new context")
-    assert.equal(await page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true }).count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Pause mission", exact: true }).isEnabled(), true)
+    assert.equal(reads, before, "disposed-row completion must not refresh the new context")
+    for (const title of ["Lifecycle one", "Lifecycle two"]) {
+      assert.equal((await menu(page, title)).includes("Retry last action"), false)
+      assert.equal(await pause(page, title).isEnabled(), true)
+    }
     assert.equal(calls.length, 1)
   } finally { release(); await page.close() }
 })
@@ -163,7 +188,7 @@ test("real RightPanel does not refresh hidden demand on late lifecycle completio
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
     await open(page)
-    await page.getByRole("button", { name: "Pause mission", exact: true }).click(); await sent
+    await pause(page).click(); await sent
     await fixture(page, "activate", false)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response
@@ -188,12 +213,14 @@ for (const action of ["pause", "stop"] as const) {
         return calls.length === 1 ? route.fulfill({ status: 503, json: { code: "control-pending" } }) : route.fulfill({ json: { mission: current } })
       })
       await open(page)
-      await page.getByRole("button", { name: action === "pause" ? "Pause mission" : "Stop mission permanently", exact: true }).click()
-      if (action === "stop") await page.locator(".mission-stop-confirmation button").first().click()
-      await settled(page)
+      const sent = page.waitForRequest(request => request.url().endsWith("/control"))
+      if (action === "pause") await pause(page).click()
+      else { await choose(page, "Stop…"); await page.getByRole("dialog").getByRole("button", { name: "Stop mission permanently", exact: true }).click() }
+      await sent; await settled(page)
       await page.reload(); await open(page)
-      await page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true }).click()
-      if (action === "stop") await page.locator(".mission-lifecycle").waitFor({ state: "detached" })
+      assert.equal(await check(page).count(), 1, "the durable partial request is checked, never resent as a fresh action")
+      await retry(page)
+      if (action === "stop") await row(page).locator(".mission-index-primary").waitFor({ state: "detached" })
       else await settled(page)
       assert.equal(calls.length, 2); assert.deepEqual(calls[1], calls[0])
       assert.equal(current.control?.pending.length, 0)
@@ -202,7 +229,7 @@ for (const action of ["pause", "stop"] as const) {
   })
 }
 
-test("Stop is an inline confirmation: cancel and Escape never submit; confirmation submits once", async () => {
+test("Stop asks for confirmation in a dialog: cancel and Escape never submit; confirmation submits once", async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
   let current = mission()
   try {
@@ -214,18 +241,18 @@ test("Stop is an inline confirmation: cancel and Escape never submit; confirmati
       return route.fulfill({ json: { mission: current } })
     })
     await open(page)
-    const stop = page.locator(".mission-lifecycle-actions button").filter({ has: page.locator("svg.lucide-square") })
-    await stop.click()
+    const dialog = page.getByRole("dialog")
+    await choose(page, "Stop…"); await dialog.waitFor()
     assert.deepEqual(calls, [])
-    await page.locator(".mission-stop-confirmation button").last().click()
-    assert.equal(await stop.getAttribute("aria-expanded"), "false")
-    await stop.click()
-    await page.locator(".mission-stop-confirmation button").first().press("Escape")
-    assert.equal(await stop.getAttribute("aria-expanded"), "false")
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    await choose(page, "Stop…"); await dialog.waitFor()
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "hidden" })
     assert.deepEqual(calls, [])
-    await stop.click()
-    await page.locator(".mission-stop-confirmation button").first().click()
-    await page.locator(".mission-lifecycle").waitFor({ state: "detached" })
+    await choose(page, "Stop…"); await dialog.waitFor()
+    await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
+    await row(page).locator(".mission-index-primary").waitFor({ state: "detached" })
     assert.equal(calls.length, 1)
     assert.equal(calls[0].action, "stop")
   } finally { await page.close() }

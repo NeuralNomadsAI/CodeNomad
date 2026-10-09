@@ -71,7 +71,14 @@ async function setup(missing = false) {
   }
   return { page, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
 }
-const row = (page: Page, id: string) => page.locator(".mission-control-index > .mission-list-item").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
+const row = (page: Page, id: string) => page.locator(".mission-control-index > li.mission-index-entry").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
+async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
+  if (origin === "actor") return clickMissionAction(row(page, id).locator(".mission-index-row"), "Open conversation")
+  // The overview reader belongs to the selected Mission's card ("Read all").
+  const select = row(page, id).getByRole("button", { name: `Objective ${id}`, exact: true })
+  if (await select.getAttribute("aria-current") !== "true") await select.click()
+  await row(page, id).locator(".mission-card .mission-result-read").click()
+}
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }
 for (const origin of ["actor", "reader"] as const) for (const change of ["session", "session-aba", "preview", "preview-aba"] as const) {
@@ -80,7 +87,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["sessio
     try {
       defer()
       if (origin === "reader") await page.evaluate(() => window.missionCrossNavigation.clearActive())
-      await clickMissionAction(row(page, "A"), origin === "actor" ? "Open coordinator" : "Read in chat area")
+      await navigate(page, origin)
       await reached.promise
       if (change.startsWith("session")) {
         await ordinarySession(page, "B")
@@ -110,7 +117,7 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
   try {
     defer()
     if (origin === "reader") await page.evaluate(() => window.missionCrossNavigation.clearActive())
-    await clickMissionAction(row(page, "A"), origin === "actor" ? "Open coordinator" : "Read in chat area")
+    await navigate(page, origin)
     await reached.promise
     hold.release(); await complete.promise
     await page.waitForFunction(origin => {
@@ -124,7 +131,7 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
 for (const change of ["session", "preview"] as const) test(`shell stale missing actor cannot publish an error over external ${change}`, async () => {
   const { page, errors, networkErrors, hold, reached, complete, defer } = await setup(true)
   try {
-    defer(); await clickMissionAction(row(page, "A"), "Open coordinator"); await reached.promise
+    defer(); await navigate(page, "actor"); await reached.promise
     if (change === "session") await ordinarySession(page, "B")
     else await page.getByRole("button", { name: "Open web preview", exact: true }).click()
     const before = await page.evaluate(() => ({ state: window.missionCrossNavigation.snapshot(), writes: window.missionCrossNavigation.history().length }))

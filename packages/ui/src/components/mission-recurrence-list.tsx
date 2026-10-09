@@ -1,30 +1,35 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
-import { Eye, Play, Pause, Square, Search, ScanSearch, Zap, RotateCcw } from "lucide-solid"
-import { Tooltip } from "@kobalte/core/tooltip"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
+import { showConfirmDialog } from "../stores/alerts"
 import { MissionDisclosure } from "./mission-disclosure"
-import { MissionListItem } from "./mission-list-item"
+import { MissionIndexRow } from "./mission-index-row"
+import type { ActionOverflowMenuItem } from "./action-overflow-menu"
+import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { showSessionChatFor } from "../stores/session-previews"
 import { activeSessionId } from "../stores/sessions"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
+import { missionScheduleText } from "./mission-schedule-text"
 import { createRecurrenceControlIntent, completedRecurrenceControl, completedRecurrenceManual, partialRecurrenceControl,
   type RecurrenceControlStatus, type RecurrenceControlIntent } from "../lib/mission-recurrence-control"
 
 // Lost replies survive remounts. Only an exact status read releases the hold.
 const unresolved = new Map<string, RecurrenceControlIntent>()
 const partialResults = new Map<string, RecurrenceControlStatus>()
-function RecurrenceControls(props: { schedule: RecurrenceSchedule; identity: string; instanceId: string;
+const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
+
+/** Schedule controls for one row: a single contextual primary action and the
+ * remaining available actions for the overflow menu. */
+function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identity: string; instanceId: string;
   directory: string; active: () => boolean; enabled: () => boolean; refresh: () => void }) {
   const { t } = useI18n()
   const key = createMemo(() => JSON.stringify([props.identity, props.schedule.id]))
   const [held, setHeld] = createSignal(unresolved.get(key()))
   const [busy, setBusy] = createSignal(false)
   const [partial, setPartial] = createSignal(partialResults.get(key()))
-  const [confirmStop, setConfirmStop] = createSignal(false)
   const connection = createMemo(() => ({ client: instances().get(props.instanceId)?.client,
     generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
     { equals: (a, b) => Boolean(a && a.client === b.client && a.generation === b.generation) })
@@ -32,7 +37,7 @@ function RecurrenceControls(props: { schedule: RecurrenceSchedule; identity: str
   createEffect(() => {
     const identity = key(); props.active()
     connection()
-    generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false); setConfirmStop(false)
+    generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false)
   })
   onCleanup(() => { generation++ })
   const outstanding = () => props.schedule.controls.find(control => control.controlsComplete !== true)
@@ -58,7 +63,7 @@ function RecurrenceControls(props: { schedule: RecurrenceSchedule; identity: str
     if (retry ? !retryCapable() : !capable(action)) return
     const identity = key(), captured = generation, instanceId = props.instanceId
     const intent = retry ? heldIntent()! : createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
-    unresolved.set(identity, intent); setHeld(intent); setBusy(true); setConfirmStop(false)
+    unresolved.set(identity, intent); setHeld(intent); setBusy(true)
     try {
       if (action === "run-now") {
         const result = await serverApi.runMissionRecurrenceNow(instanceId, intent)
@@ -86,49 +91,48 @@ function RecurrenceControls(props: { schedule: RecurrenceSchedule; identity: str
     } catch { /* Retain the exact request identity. */ }
     finally { if (captured === generation) setBusy(false) }
   }
-  // "check" reconciles a paused pending passage; its label differs from the control-outcome status check below.
-  const label = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
-  return <div class="mission-recurrence-controls">
-    <For each={props.schedule.actions}>{action => <Tooltip placement="top" openDelay={300}><Tooltip.Trigger type="button" class="mission-control-icon-button"
-      classList={{ "mission-schedule-resume button-primary": action === "resume" || action === "check", "mission-schedule-run-now": action === "run-now" }}
-      disabled={!capable(action)} aria-label={label(action)} title={label(action)}
-      onClick={() => action === "stop" ? setConfirmStop(true) : void act(action)}>
-      {action === "pause" ? <Pause class="h-4 w-4" /> : action === "stop" ? <Square class="h-4 w-4" />
-        : action === "run-now" ? <Zap class="h-4 w-4" /> : action === "check" ? <ScanSearch class="h-4 w-4" /> : <Play class="h-4 w-4" />}
-      <Show when={action === "resume"}><span>{t("missions.simple.resume")}</span></Show>
-      <Show when={action === "check"}><span>{t("missions.simple.checkPassage")}</span></Show>
-      <Show when={action === "run-now"}><span class="mission-schedule-action-label">{t("missions.simple.runNow")}</span></Show>
-    </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content class="section-info-tooltip">{label(action)}</Tooltip.Content></Tooltip.Portal></Tooltip>}</For>
-    <Show when={confirmStop()}><span role="group" aria-label={t("missions.simple.confirmStop", { title: props.schedule.title })}
-      onKeyDown={event => { if (event.key === "Escape") setConfirmStop(false) }}>
-      <span>{t("missions.simple.confirmStop", { title: props.schedule.title })}</span>
-      <button type="button" class="window-text-button" onClick={() => void act("stop")}>{t("missions.simple.stop")}</button>
-      <button type="button" class="window-text-button" onClick={() => setConfirmStop(false)}>{t("missions.simple.cancel")}</button>
-    </span></Show>
-    <Show when={heldIntent()}><button type="button" class="mission-control-icon-button" disabled={busy() || !props.enabled()}
-      onClick={() => void check()} aria-label={t("missions.recurrence.check", { id: props.schedule.title })}
-      title={t("missions.recurrence.check", { id: props.schedule.title })}><Search class="h-4 w-4" /></button>
-      <small role="status">{t("missions.recurrence.uncertain")}</small></Show>
-    <Show when={retryCapable()}><button type="button" class="mission-control-icon-button" onClick={() => void act(heldIntent()!.action, true)}
-      aria-label={t("missions.recurrence.retry", { id: props.schedule.title })} title={t("missions.recurrence.retry", { id: props.schedule.title })}>
-      <RotateCcw class="h-4 w-4" /></button></Show>
-  </div>
+  const stop = async () => {
+    if (!capable("stop")) return
+    const identity = key(), revision = props.schedule.revision, captured = generation
+    const confirmed = await showConfirmDialog(t("missions.simple.confirmStop", { title: props.schedule.title }), { variant: "warning",
+      confirmLabel: t("missions.simple.stop"), cancelLabel: t("missions.simple.cancel") })
+    // The confirmation described this exact schedule revision.
+    if (confirmed && captured === generation && key() === identity && props.schedule.revision === revision) await act("stop")
+  }
+  // "check" reconciles a paused pending passage; its label differs from the control-outcome status check.
+  const label = (action: RecurrenceAction) => t(action === "check" ? "missionsPanel.action.checkPassage" : action === "run-now"
+    ? "missionsPanel.action.runNow" : action === "play" ? "missionsPanel.action.start" : action === "stop" ? "missionsPanel.action.stop"
+    : `missionsPanel.action.${action}`)
+  const description = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
+  const primaryAction = () => heldIntent() ? undefined : PRIMARY.find(action => props.schedule.actions.includes(action))
+  const primary = (): MissionPrimaryAction | undefined => {
+    if (heldIntent()) return { key: "status", label: t("missionsPanel.action.checkStatus"), ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), onSelect: check }
+    const action = primaryAction()
+    return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), onSelect: () => act(action) } : undefined
+  }
+  const menu = (): ActionOverflowMenuItem[] => [
+    ...(retryCapable() ? [{ key: "retry", label: t("missionsPanel.action.retry"), description: t("missions.recurrence.retry", { id: props.schedule.title }),
+      onSelect: () => act(heldIntent()!.action, true) }] : []),
+    ...props.schedule.actions.filter(action => action !== primaryAction() && !heldIntent()).map(action => ({
+      key: action, label: label(action), description: description(action), disabled: !capable(action),
+      onSelect: () => action === "stop" ? stop() : act(action),
+    })),
+  ]
+  const feedback = <Show when={heldIntent()}><small role="status">{t("missions.recurrence.uncertain")}</small></Show>
+  return { primary, menu, feedback }
 }
 
 export function MissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
   selectedSchedule?: string; onSelect?: (id: string) => void; onRead?: (restoreChat?: boolean) => void;
-  children?: JSX.Element; tracking?: JSX.Element; technicalDetails?: boolean }) {
+  children?: JSX.Element; tracking?: (more: () => JSX.Element) => JSX.Element; hasTracking?: boolean }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
     projectID: () => props.projectID, directory: () => props.scope, refresh: () => props.refresh + revision(), active: props.active })
   const valid = () => !loading() && !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
-  const selected = () => snapshot()?.schedules.find(schedule => schedule.id === props.selectedSchedule)
-  const hasNext = (schedule: RecurrenceSchedule) => schedule.state === "running" && schedule.nextDueAt !== null
-  const when = (schedule: RecurrenceSchedule, at: number) =>
-    new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", timeZone: schedule.clock.zone }).format(at)
-  const next = (schedule: RecurrenceSchedule) => !hasNext(schedule) ? t("missions.simple.noNext") : when(schedule, schedule.nextDueAt!)
-  /** One sentence; its action is the adjacent control (Check passage or Resume). */
+  const text = missionScheduleText(t, locale)
+  const { date, outcome } = text
+  /** One sentence; its action is the row's primary control (Check passage or Resume). */
   const notice = (schedule: RecurrenceSchedule) => {
     if (schedule.pending?.status === "uncertain") return schedule.pending.reason === "admission-failing" ? "missions.recurrence.pending.retrying"
       : schedule.actions.includes("check") ? "missions.recurrence.pending.checkNeeded"
@@ -137,52 +141,68 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
     return schedule.interruptionReason === "service-restart" ? "missions.simple.restart"
       : schedule.interruptionReason === "error" ? "missions.recurrence.interruptedError" : "missions.simple.resumeExplanation"
   }
-  const reading = (id: string) => {
+  const reading = (id: string, passageID?: string) => {
     const reader = missionProjectView(props.scope).reader
-    return reader?.kind === "recurrence" && reader.missionId === id && reader.instanceId === props.instanceId && reader.projectID === props.projectID
+    return reader?.kind === "recurrence" && reader.missionId === id && reader.instanceId === props.instanceId
+      && reader.projectID === props.projectID && reader.itemId === passageID
   }
-  const read = (id: string) => {
-    const wasReading = reading(id)
+  const read = (id: string, passageID?: string) => {
+    const wasReading = reading(id, passageID)
     showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.scope)
     updateMissionProjectView(props.scope, { reader: wasReading ? undefined : { kind: "recurrence", missionId: id,
-      instanceId: props.instanceId, projectID: props.projectID } })
+      instanceId: props.instanceId, projectID: props.projectID, ...(passageID ? { itemId: passageID } : {}) } })
     if (!wasReading) props.onRead?.()
   }
+  const pastRuns = (schedule: RecurrenceSchedule) => <Show when={schedule.history.length}>
+    <section class="mission-past-runs" aria-label={t("missionsPanel.pastRuns")}><h4>{t("missionsPanel.pastRuns")}</h4>
+      <ol><For each={[...schedule.history].reverse()}>{item => <li>
+        <button type="button" class="mission-past-run icon-toggle" aria-pressed={reading(schedule.id, item.passageID)}
+          onClick={() => read(schedule.id, item.passageID)}>
+          <bdi>{text.run(schedule, item)}</bdi>
+        </button></li>}</For></ol>
+    </section></Show>
+  const technical = (schedule: RecurrenceSchedule) => <><dt>{t("missionsPanel.technical.schedule")}</dt><dd><bdi>{schedule.id}</bdi></dd></>
   return <>
-    <nav class="mission-control-index" aria-label={t("missions.control.mapLabel")}>
+    <ul class="mission-control-index" aria-label={t("missions.control.mapLabel")}>
       {props.children}
-      <For each={snapshot()?.schedules}>{schedule => <MissionListItem text={schedule.title}
-        secondary={<span class="neutral-badge badge-shape"><bdi>{t("missions.simple.daily", schedule.clock)}</bdi></span>}
-        title={schedule.title} selected={props.selectedSchedule === schedule.id} onSelect={() => props.onSelect?.(schedule.id)}
-        status={<Show when={hasNext(schedule)} fallback={<span>{t(`missions.recurrence.state.${schedule.state}`)}</span>}>
-          <bdi>{t("missions.recurrence.nextDue", { date: next(schedule) })}</bdi></Show>} statusKind={schedule.state}
-        actions={[{ key: "read", label: t("missions.recurrence.read", { id: schedule.title }), checked: reading(schedule.id),
-          icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => read(schedule.id) }]} />}</For>
-    </nav>
+      <For each={snapshot()?.schedules.map(schedule => schedule.id)}>{id => {
+        // Keyed by identity: a refreshed snapshot keeps the row, its focus and an open menu.
+        const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
+        const controls = createRecurrenceControls({ get schedule() { return schedule() }, get identity() { return JSON.stringify([props.instanceId, props.projectID, props.scope]) },
+          get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid,
+          refresh: () => setRevision(value => value + 1) })
+        const selected = () => props.selectedSchedule === schedule().id
+        return <MissionIndexRow title={schedule().title} cardId={`mission-schedule-card-${schedule().id}`}
+          badge={<span class="neutral-badge badge-shape" title={schedule().clock.zone}><bdi>{t("missionsPanel.daily", { time: text.clock(schedule()) })}</bdi></span>}
+          meta={<Show when={text.next(schedule())} fallback={<span>{t(`missions.recurrence.state.${schedule().state}`)}</span>}>
+            {next => <bdi>{next()}</bdi>}</Show>}
+          statusKind={schedule().state} selected={selected()} onSelect={() => props.onSelect?.(schedule().id)}
+          primary={controls.primary()} menu={controls.menu()} feedback={controls.feedback}>
+          <section class="mission-schedule-detail" aria-label={schedule().title}>
+            {/* The row already says when the next run is; the card states the rule once. */}
+            <p class="mission-schedule-when"><bdi>{text.every(schedule())}</bdi></p>
+            <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
+            <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
+              {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
+            {props.tracking?.(() => <>{pastRuns(schedule())}</>)}
+            <Show when={!props.hasTracking}>
+              <section class="mission-result" aria-label={t("missionsPanel.result")}>
+                <p class="mission-result-text"><Show when={schedule().latestResult} fallback={t("missionsPanel.schedule.noRuns")}>{latest =>
+                  t("missionsPanel.schedule.lastRun", { when: date(schedule(), latest().dueAt), outcome: outcome(latest()) })}</Show></p>
+                <p class="mission-result-meta"><button type="button" class="window-text-button icon-toggle mission-result-read"
+                  aria-pressed={reading(schedule().id)} onClick={() => read(schedule().id)}>{t("missionsPanel.readAll")}</button></p>
+              </section>
+              <MissionDisclosure missionId={schedule().id} name="more" defaultOpen={false} class="mission-more" title={t("missionsPanel.more")}>
+                {pastRuns(schedule())}
+                <MissionDisclosure missionId={schedule().id} name="schedule-technical" defaultOpen={false} title={t("missionsPanel.technical")}>
+                  <dl class="mission-technical">{technical(schedule())}</dl>
+                </MissionDisclosure>
+              </MissionDisclosure>
+            </Show>
+          </section>
+        </MissionIndexRow>
+      }}</For>
+    </ul>
     <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    <Show when={selected()}>{schedule => <section class="mission-schedule-detail" aria-label={schedule().title}>
-      <header class="window-header"><strong class="window-title">{schedule().title}</strong>
-        <button type="button" class="mission-control-icon-button icon-toggle" aria-pressed={reading(schedule().id)}
-          aria-label={t("missions.recurrence.read", { id: schedule().title })} onClick={() => read(schedule().id)}><Eye class="h-4 w-4" /></button></header>
-      <Show when={hasNext(schedule())}><p>{t("missions.simple.next")}: <bdi>{next(schedule())}</bdi></p></Show>
-      <RecurrenceControls schedule={schedule()} identity={JSON.stringify([props.instanceId, props.projectID, props.scope])}
-        instanceId={props.instanceId} directory={props.scope} active={props.active} enabled={valid} refresh={() => setRevision(value => value + 1)} />
-      <Show when={notice(schedule())}>{key => <p role="status">{t(key())}</p>}</Show>
-      <Show when={schedule().lastError}>{error => <p class="mission-control-stale" role="status">
-        {t("missions.recurrence.lastError", { time: when(schedule(), error().at) })}</p>}</Show>
-      {props.tracking}
-      <MissionDisclosure missionId={schedule().id} name="passage-history" defaultOpen={false} title={t("missions.recurrence.history")}>
-        <For each={schedule().history}>{item => <div class="mission-recurrence-history-item">
-          <span><bdi>{when(schedule(), item.dueAt)}</bdi> <span class="neutral-badge badge-shape">{t(`missions.recurrence.trigger.${item.trigger ?? "daily"}`)}</span></span>
-          <span>{t(item.reason ? `missions.recurrence.result.${item.reason}` : `missions.recurrence.result.${item.outcome}`)}</span>
-        </div>}</For>
-      </MissionDisclosure>
-      {/* A passage's tracking carries the single Technical details disclosure. */}
-      <Show when={props.technicalDetails !== false}>
-        <MissionDisclosure missionId={schedule().id} name="schedule-technical" defaultOpen={false} title={t("missions.control.task.details")}>
-          <bdi>{schedule().id}</bdi>
-        </MissionDisclosure>
-      </Show>
-    </section>}</Show>
   </>
 }

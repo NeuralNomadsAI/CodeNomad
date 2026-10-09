@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -12,6 +12,7 @@ import { MISSION_LIFECYCLE_TEXT_LIMIT } from "../../../server/src/missions/lifec
 import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-read-budget"
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
+import { clickMissionAction } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -22,7 +23,7 @@ before(async () => {
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
     plugins: [solid(), shutdown.plugin, { name: "mission-recurrence", configureServer(s) { s.middlewares.use("/recurrence", async (_req, res) => {
       res.setHeader("Content-Type", "text/html")
-      res.end(await s.transformIndexHtml("/recurrence", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script></body></html>'))
+      res.end(await s.transformIndexHtml("/recurrence", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script><script type="module" src="/tests/browser/fixtures/mission-recurrence-alerts.tsx"></script></body></html>'))
     }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
   shutdown.own(server); await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/recurrence`
@@ -33,6 +34,19 @@ after(async () => { await browser?.close(); await server?.close() })
 function scheduleFixture(): RecurrenceSchedule {
   return { id: "rec_fixture", title: "Daily source review", revision: 2, state: "running", clock: { time: "08:15", zone: "UTC" },
     nextDueAt: Date.UTC(2026, 9, 9, 8, 15), pending: null, latestResult: null, history: [], controls: [], actions: ["pause", "stop", "run-now"] }
+}
+function scheduleEntry(page: Page, title = "Daily source review") {
+  return page.locator("li.mission-index-entry", { has: page.getByRole("button", { name: title, exact: true }) })
+}
+async function menuItems(page: Page, entry: Locator) {
+  await entry.getByRole("button", { name: "More actions", exact: true }).click()
+  // Kobalte renders the menu content after the trigger's click settles.
+  await page.getByRole("menuitem").first().waitFor()
+  const items = await page.getByRole("menuitem").evaluateAll(nodes => nodes.map(node =>
+    [node.textContent?.trim(), node.getAttribute("aria-description")]))
+  await page.keyboard.press("Escape")
+  await page.getByRole("menu").waitFor({ state: "hidden" })
+  return items
 }
 function snapshotFixture(schedule: RecurrenceSchedule) {
   return recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture",
@@ -46,7 +60,7 @@ test("browser schedule fixtures satisfy the real snapshot schema and reject cont
 })
 
 test("unified list retains one-time missions, next passage, explicit Resume and confirmed Stop without replay", async () => {
-  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "UTC", viewport: { width: 1200, height: 950 } })
   page.setDefaultTimeout(10_000)
   const errors: string[] = [], posts: any[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -87,27 +101,33 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 })
     await page.getByRole("button", { name: "One-time review", exact: true }).waitFor()
     await captureMissionView(page, "unified-list-desktop")
+    const entry = scheduleEntry(page)
+    // Running rows show their next run instead of the state word.
+    await entry.locator(".mission-index-meta").getByText(/^Next: /).waitFor()
+    assert.equal(await entry.locator(".neutral-badge").innerText(), "Daily 8:15 AM")
     await page.getByRole("button", { name: "Daily source review", exact: true }).click()
     assert.equal(await page.getByRole("button", { name: "One-time review", exact: true }).count(), 1)
-    await page.getByText("Next passage:", { exact: false }).waitFor()
-    await captureMissionView(page, "schedule-header-next-passage")
+    assert.equal(await page.getByRole("button", { name: "Daily source review", exact: true }).getAttribute("aria-current"), "true")
+    const when = entry.locator(".mission-schedule-detail .mission-schedule-when")
+    assert.equal(await when.innerText(), "Every day at 8:15 AM", "the card states the rule; the row alone says when the next run is")
+    assert.equal(await entry.getByText(/^Next: /).count(), 1)
+    await captureMissionView(page, "schedule-detail-next-passage")
     for (const state of ["paused", "stopped"] as const) {
       schedule.state = state
       schedule.nextDueAt = null
       await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-      await page.locator(".mission-control-index").getByText(state === "paused" ? "Paused" : "Stopped", { exact: true }).waitFor()
-      assert.equal(await page.getByText("Next passage:", { exact: false }).count(), 0)
+      const word = state === "paused" ? "Paused" : "Stopped"
+      await entry.locator(".mission-index-meta").getByText(word, { exact: true }).waitFor()
+      assert.equal(await when.innerText(), "Every day at 8:15 AM")
+      assert.equal(await page.getByText(/next: |Next: /).count(), 0)
     }
-    const runNow = page.getByRole("button", { name: "Run Daily source review now", exact: true })
-    assert.equal(await runNow.locator(".mission-schedule-action-label").isVisible(), true)
-    await page.getByRole("button", { name: "Stop schedule Daily source review", exact: true }).hover()
-    await page.getByRole("tooltip").getByText("Stop schedule Daily source review", { exact: true }).waitFor()
-    await page.mouse.move(1100, 900)
-    await page.getByRole("tooltip").waitFor({ state: "hidden" })
+    // Secondary actions live in the overflow menu with their descriptive names; no tooltips or icon buttons.
+    assert.deepEqual(await menuItems(page, entry), [["Stop…", "Stop schedule Daily source review"], ["Run now", "Run Daily source review now"]])
+    assert.equal(await entry.locator(".mission-index-row button").count(), 3, "select, one primary and More actions")
     schedule.state = "interrupted"; schedule.interruptionReason = "service-restart"; schedule.pending!.status = "uncertain"
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await page.getByText(/OpenCode restarted/).waitFor()
-    assert.equal(await page.getByText("Next passage:", { exact: false }).count(), 0, "stale due dates stay hidden outside running state")
+    await entry.locator(".mission-schedule-notice").getByText(/OpenCode restarted/).waitFor()
+    assert.equal(await page.getByText(/next: |Next: /).count(), 0, "stale due dates stay hidden outside running state")
     assert.equal(await page.getByText("Passage pending; outcome unconfirmed", { exact: true }).count(), 0)
     assert.equal(await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).innerText(), "Resume")
     await captureMissionView(page, "interrupted-resume")
@@ -115,17 +135,27 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
     await page.getByText("Resume checks the running passage; it never sends it twice.").waitFor()
     await captureMissionView(page, "uncertain-passage")
-    await page.getByRole("button", { name: "Stop schedule Daily source review", exact: true }).click()
+    await clickMissionAction(entry, "Stop…")
+    const dialog = page.getByRole("dialog")
+    await dialog.getByText("Stop Daily source review?", { exact: true }).waitFor()
     assert.equal(posts.length, 0, "Stop first asks for confirmation")
     await captureMissionView(page, "stop-confirmation")
-    await page.getByRole("group", { name: "Stop Daily source review?" }).getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    assert.equal(posts.length, 0, "cancelled confirmation sends nothing")
     await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).click()
-    await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).waitFor()
+    const check = page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true })
+    await check.waitFor()
+    assert.equal(await check.innerText(), "Check status")
+    await entry.locator(".mission-index-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.").waitFor()
     assert.equal(posts.length, 1)
     assert.deepEqual(Object.keys(posts[0].body).sort(), ["action", "directory", "expectedRevision", "requestID", "scheduleID"])
-    await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).click()
+    await check.click()
     await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).waitFor({ state: "visible" })
-    await page.getByRole("button", { name: /Passage history/ }).click()
+    // Without an admitted passage card, the schedule card keeps the last result and past runs under More.
+    assert.match(await entry.locator(".mission-result-text").innerText(), /^Last run Oct 8, 2026, 8:15 AM: Completed/)
+    await entry.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
+    assert.match(await entry.locator("button.mission-past-run").innerText(), /^Oct 8, 2026, 8:15 AM · Completed/)
     await captureMissionView(page, "schedule-history")
     await page.setViewportSize({ width: 390, height: 850 })
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
@@ -136,7 +166,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
 })
 
 test("rows say Next, stuck passages explain their one action, history is plain and one-time controls stay scoped", async () => {
-  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "UTC", viewport: { width: 1200, height: 950 } })
   page.setDefaultTimeout(10_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -162,31 +192,39 @@ test("rows say Next, stuck passages explain their one action, history is plain a
   })
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
-    await page.locator(".mission-control-index").getByText(/^Next run: Oct 9, 2026/).waitFor()
+    const entry = scheduleEntry(page), once = scheduleEntry(page, "One-time review")
+    await entry.locator(".mission-index-meta").getByText(/^Next: /).waitFor()
     assert.equal(await page.locator(".mission-control-index").getByText(/^Running/).count(), 0, "a running row shows its next run, not its state")
-    // The selected one-time Mission titles its own controls, after the whole list.
-    const header = page.locator(".mission-one-time-header")
-    assert.match(await header.innerText(), /One-time review[\s\S]*One-time/)
-    await page.getByText("Agents and models", { exact: false }).first().waitFor()
-    const scoped = await page.locator(".mission-control").evaluate(node => {
-      const index = node.querySelector(".mission-control-index")!, title = node.querySelector(".mission-one-time-header")!
-      const start = [...node.querySelectorAll("button")].find(button => /Start mission/.test(button.textContent ?? ""))!
-      const profiles = [...node.querySelectorAll("*")].find(item => item.children.length === 0 && /^Agents and models/.test(item.textContent ?? ""))!
-      const following = Node.DOCUMENT_POSITION_FOLLOWING
-      return !index.contains(title) && Boolean(index.compareDocumentPosition(title) & following)
-        && Boolean(title.compareDocumentPosition(start) & following) && Boolean(title.compareDocumentPosition(profiles) & following)
+    // The selected one-time Mission owns its controls and card inside its own list entry, before the schedules.
+    await once.locator(".mission-index-meta").getByText(/^Prepared · /).waitFor()
+    assert.equal(await once.getByRole("button", { name: "Start mission", exact: true }).innerText(), "Start")
+    const card = page.locator("li.mission-index-entry-selected > div.mission-card")
+    assert.equal(await card.count(), 1)
+    await card.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
+    await card.getByRole("button", { name: "Technical details", exact: true }).click()
+    await card.getByText("Agents and models", { exact: false }).first().waitFor()
+    const scoped = await page.locator(".mission-control-index").evaluate(index => {
+      const entries = [...index.querySelectorAll(":scope > li.mission-index-entry")]
+      const selected = index.querySelector(":scope > li.mission-index-entry-selected")!
+      return entries.indexOf(selected) === 0 && entries.length === 2
+        && Boolean(selected.querySelector(".mission-card")) && !entries[1]!.querySelector(".mission-card")
+        && !entries[1]!.querySelector("button[aria-label='Start mission']")
     })
     assert.equal(scoped, true)
     await captureMissionView(page, "one-time-scoped")
     await page.getByRole("button", { name: schedule.title, exact: true }).click()
-    assert.equal(await header.count(), 0, "one-time controls never appear under a recurring row")
-    await page.getByText("This passage has not started yet. It is retried automatically under the same identity.", { exact: true }).waitFor()
+    await entry.locator(".mission-card .mission-schedule-detail").waitFor()
+    assert.equal(await once.locator(".mission-card").count(), 0, "one-time controls never appear under a recurring row")
+    assert.equal(await entry.getByRole("button", { name: "Start mission", exact: true }).count(), 0)
+    await entry.locator(".mission-schedule-notice").getByText("This passage has not started yet. It is retried automatically under the same identity.", { exact: true }).waitFor()
     await page.getByText(/^The last scheduled check failed at Oct 9, 2026/).waitFor()
-    await page.getByRole("button", { name: /Passage history/ }).click()
-    const items = page.locator(".mission-recurrence-history-item")
-    assert.match(await items.nth(0).innerText(), /Run now[\s\S]*Completed/)
-    assert.match(await items.nth(1).innerText(), /Scheduled[\s\S]*Not started: its start message could not be sent/)
-    assert.equal(await page.getByRole("button", { name: "Technical details", exact: true }).count(), 1)
+    await entry.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
+    const items = entry.locator("button.mission-past-run")
+    assert.match(await items.nth(0).innerText(), /^Oct 8, 2026, 8:15 AM · Not started$/)
+    assert.match(await items.nth(1).innerText(), /^Oct 7, 2026, 9:00 AM · Completed · Run now$/)
+    assert.equal(await entry.getByRole("button", { name: "Technical details", exact: true }).count(), 1)
+    await entry.getByRole("button", { name: "Technical details", exact: true }).click()
+    await entry.locator(".mission-technical").getByText("rec_fixture", { exact: true }).waitFor()
     await captureMissionView(page, "stuck-passage-history")
     // Without a live observer the sentence names the one action that reconciles it.
     schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined
@@ -230,13 +268,15 @@ test("paused pending passage exposes a labelled reconcile-only Check passage con
     await page.getByRole("button", { name: schedule.title, exact: true }).click()
     const check = page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true })
     assert.equal(await check.innerText(), "Check passage")
-    assert.equal(await check.evaluate(element => element.classList.contains("button-primary")), true)
+    assert.equal(await check.evaluate(element => element.classList.contains("mission-index-primary")), true)
+    assert.deepEqual(await menuItems(page, scheduleEntry(page)), [["Resume", "Resume schedule Daily source review"], ["Stop…", "Stop schedule Daily source review"]])
     await captureMissionView(page, "paused-check-passage")
     await check.click()
     await check.waitFor({ state: "hidden" })
     assert.equal(posts.length, 1)
     assert.equal(posts[0].action, "check")
-    assert.equal(await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).count(), 0)
+    await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).waitFor({ state: "hidden" })
+    await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).waitFor()
     assert.equal(posts.length, 1, "refresh never resends")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -283,9 +323,11 @@ for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`r
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await page.getByRole("button", { name: schedule.title, exact: true }).click()
+    const entry = scheduleEntry(page)
     if (mode === "manual") {
-      await page.getByRole("button", { name: "Run Daily source review now", exact: true }).click()
+      await clickMissionAction(entry, "Run now")
       await page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true }).waitFor()
+      assert.equal(await entry.getByRole("button", { name: "More actions", exact: true }).count(), 0, "a held run-now offers no other action")
       await page.evaluate(() => window.missionEditorLifetime.mount(false))
       await page.evaluate(() => window.missionEditorLifetime.mount(true))
       assert.equal(posts.length, 1)
@@ -294,15 +336,23 @@ for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`r
       assert.deepEqual(statusReads, posts, "status reads preserve the entire original tuple")
     } else {
       const action = mode === "partial-pause" ? "pause" : "stop"
-      await page.getByRole("button", { name: action === "pause" ? "Pause schedule Daily source review" : "Stop schedule Daily source review", exact: true }).click()
-      if (action === "stop") await page.getByRole("group", { name: "Stop Daily source review?" }).getByRole("button", { name: "Stop", exact: true }).click()
-      const retry = page.getByRole("button", { name: "Retry remaining controls for Daily source review", exact: true })
-      await retry.waitFor()
+      if (action === "pause") await page.getByRole("button", { name: "Pause schedule Daily source review", exact: true }).click()
+      else {
+        await clickMissionAction(entry, "Stop…")
+        await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click()
+      }
+      const check = page.getByRole("button", { name: "Check control outcome for Daily source review", exact: true })
+      await check.waitFor()
+      assert.deepEqual(await menuItems(page, entry), [["Retry last action", "Retry remaining controls for Daily source review"]])
       assert.equal(posts.length, 1)
       await page.evaluate(() => window.missionEditorLifetime.mount(false))
       await page.evaluate(() => window.missionEditorLifetime.mount(true))
-      await retry.click()
-      await retry.waitFor({ state: "hidden" })
+      await check.waitFor()
+      assert.equal(posts.length, 1, "remounting never resends")
+      await clickMissionAction(entry, "Retry last action")
+      // The open menu hides the page from the accessibility tree; wait for it to close first.
+      await page.getByRole("menu").waitFor({ state: "hidden" })
+      await check.waitFor({ state: "hidden" })
       assert.equal(posts.length, 2)
       assert.deepEqual(posts[1], { ...posts[0], retry: true })
     }

@@ -161,14 +161,17 @@ async function setup(missing = false) {
   return { page, held, reached, completed, errors, networkErrors, requests, cancelledRecurrenceReads,
     retireRecurrenceDemand: () => { recurrenceDemandRetired = true } }
 }
-const row = (page: Page, id: string) => page.locator(".mission-control-index > .mission-list-item").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
+const row = (page: Page, id: string) => page.locator(".mission-control-index > li.mission-index-entry").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
 async function read(page: Page, id: string) {
   await row(page, id).waitFor()
-  await clickMissionAction(row(page, id), "Read in chat area")
+  // The overview reader belongs to the selected Mission's card ("Read all").
+  const select = row(page, id).getByRole("button", { name: `Objective ${id}`, exact: true })
+  if (await select.getAttribute("aria-current") !== "true") await select.click()
+  await row(page, id).locator(".mission-card .mission-result-read").click()
 }
 async function actor(page: Page, id: string) {
   await row(page, id).waitFor()
-  await clickMissionAction(row(page, id), "Open coordinator")
+  await clickMissionAction(row(page, id).locator(".mission-index-row"), "Open conversation")
 }
 async function settled(page: Page) {
   // Let the fulfilled HTTP response traverse the real Promise client and Solid
@@ -197,7 +200,13 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
         await page.evaluate(() => window.missionNavigation.mount(false)); await page.evaluate(() => window.missionNavigation.mount(true))
       }
       if (change === "selection") await page.getByRole("button", { name: "Objective B", exact: true }).click()
-      else if (change === "actor") await actor(page, "B")
+      else if (change === "actor") {
+        // Menu actions launch after the menu restores focus; let B's newer
+        // navigation land before capturing the state the stale A must keep.
+        await actor(page, "B")
+        await page.waitForFunction(() => { const value = window.missionNavigation.snapshot(); return value.view.selected === "B" && value.selectedSession === "ses_B" })
+        await settled(page)
+      }
       else if (change === "editor") { await page.getByRole("button", { name: "Create mission", exact: true }).click(); await page.getByLabel("What should the mission do?", { exact: true }).fill("New editor intent") }
       else await read(page, "B")
       const before = await page.evaluate(() => window.missionNavigation.snapshot())
@@ -225,7 +234,7 @@ test("current reader without active session opens coordinator then installs its 
     held.release(); await completed.promise
     await page.waitForFunction(() => window.missionNavigation.snapshot().view.reader?.missionId === "A")
     const after = await page.evaluate(() => window.missionNavigation.snapshot())
-    assert.equal(after.selectedSession, "ses_A"); assert.deepEqual(after.view.reader, { missionId: "A", kind: "overview" }); assert.equal(after.reveals, 2)
+    assert.equal(after.selectedSession, "ses_A"); assert.deepEqual(JSON.parse(JSON.stringify(after.view.reader)), { missionId: "A", kind: "overview" }); assert.equal(after.reveals, 2)
     assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
   } finally { held.release(); await page.close() }
 })

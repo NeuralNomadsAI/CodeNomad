@@ -26,10 +26,11 @@ async function prepare(page: Page) {
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).missionRowFixture))
-  await page.locator('[data-fixture="attention"] .mission-list-item').first().waitFor()
+  await page.locator('[data-fixture="attention"] .mission-needs-item').first().waitFor()
   await page.locator('[data-fixture="cleanup"] .mission-list-item').waitFor()
 }
-const attentionRows = '[data-fixture="attention"] .mission-list-item'
+const attentionRows = '[data-fixture="attention"] .mission-needs-item'
+const answerButtons = `${attentionRows} button.mission-needs-answer`
 const cleanupRow = '[data-fixture="cleanup"] .mission-list-item'
 async function refetch(page: Page) { await page.evaluate(() => (window as any).missionRowFixture.refetch()); await page.waitForTimeout(80) }
 
@@ -43,18 +44,20 @@ test("Attention retains exact Form/permission buttons across identical queues an
       return route.fulfill({ contentType: "application/json", body: "{}" })
     })
     assert.equal(await page.locator(attentionRows).count(), 2) // same native ID, different type/session
+    assert.deepEqual(await page.locator(answerButtons).allTextContents(), ["Answer", "Answer"])
     for (const index of [0, 1]) {
-      const button = await page.locator(`${attentionRows} .mission-list-inline button`).nth(index).elementHandle()
+      const button = await page.locator(answerButtons).nth(index).elementHandle()
       await button!.focus()
       await refetch(page)
       assert.equal(await button!.evaluate(e => e.isConnected && e === document.activeElement), true)
     }
-    const form = await page.locator(`${attentionRows} .mission-list-inline button`).first().elementHandle()
+    const form = await page.locator(answerButtons).first().elementHandle()
     await form!.focus()
     await page.evaluate(() => (window as any).missionRowFixture.update())
     await page.waitForTimeout(80)
     assert.equal(await form!.evaluate(e => e.isConnected && e === document.activeElement), true)
-    assert.match((await form!.getAttribute("aria-label"))!, /refreshed/)
+    assert.match((await form!.getAttribute("aria-description"))!, /refreshed/)
+    assert.match((await page.locator(attentionRows).nth(1).textContent())!, /Fresh permission title.*Permission requested by Actor B refreshed.*fresh\.txt/)
     await page.keyboard.press("Enter")
     await page.waitForFunction(() => document.querySelector('[data-fixture="navigation"]')?.textContent === "actor-a:3")
     assert.match((await page.locator(attentionRows).first().textContent())!, /Fresh form title/)
@@ -62,42 +65,37 @@ test("Attention retains exact Form/permission buttons across identical queues an
   } finally { await page.close() }
 })
 
-test("Attention keeps an exact open menu item through queue refresh and routes the current target only", async () => {
+test("Attention keeps an exact narrow Answer button through queue refresh and routes the current target only", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
     await prepare(page)
+    // Attention has no overflow menu: the single Answer action stays visible
+    // even at a very narrow width.
     await page.evaluate(() => (window as any).missionRowFixture.width(60))
     const form = page.locator(attentionRows).first()
     await page.waitForTimeout(100)
-    assert.equal(await form.locator(".action-overflow-trigger").isVisible(), true, JSON.stringify(await form.evaluate(e => {
-      const range = document.createRange(); range.selectNodeContents(e.querySelector(".mission-list-status")!)
-      return { width: e.getBoundingClientRect().width, footer: e.querySelector(".mission-list-footer")!.getBoundingClientRect().width,
-        inline: e.querySelector(".mission-list-inline")!.getBoundingClientRect().width, status: range.getBoundingClientRect().width, class: e.className }
-    })))
-    await form.locator(".action-overflow-trigger").click()
-    // Kobalte's deferred opening autofocus must finish before choosing the
-    // exact item whose focus a subsequent snapshot refresh must preserve.
-    await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menu")
-    const menu = await page.getByRole("menuitem").elementHandle()
-    await menu!.focus()
+    assert.equal(await form.locator(".action-overflow-trigger").count(), 0)
+    assert.equal(await form.locator("button.mission-needs-answer").isVisible(), true)
+    const answer = await form.locator("button.mission-needs-answer").elementHandle()
+    await answer!.focus()
     await refetch(page)
-    assert.equal(await menu!.evaluate(e => e.isConnected && e === document.activeElement), true)
+    assert.equal(await answer!.evaluate(e => e.isConnected && e === document.activeElement), true)
     await page.evaluate(() => (window as any).missionRowFixture.update())
     await page.waitForTimeout(80)
-    assert.equal(await menu!.evaluate(e => e.isConnected && e === document.activeElement), true)
-    assert.match((await menu!.textContent())!, /refreshed/)
+    assert.equal(await answer!.evaluate(e => e.isConnected && e === document.activeElement), true)
+    assert.match((await answer!.getAttribute("aria-description"))!, /refreshed/)
     await page.keyboard.press("Enter")
     await page.waitForFunction(() => document.querySelector('[data-fixture="navigation"]')?.textContent === "actor-a:2")
     await page.evaluate(() => (window as any).missionRowFixture.width(420))
-    const previous = await form.locator(".mission-list-inline button").elementHandle()
+    const previous = await form.locator("button.mission-needs-answer").elementHandle()
     await page.locator('[data-fixture="outside"]').focus()
     await page.evaluate(() => (window as any).missionRowFixture.moveForm())
     await page.waitForTimeout(80)
     assert.equal(await previous!.evaluate(e => e.isConnected), false)
     assert.equal(await page.locator('[data-fixture="outside"]').evaluate(e => e === document.activeElement), true)
-    await page.locator(`${attentionRows} .mission-list-inline button`).first().click()
+    await page.locator(answerButtons).first().click()
     await page.waitForFunction(() => document.querySelector('[data-fixture="navigation"]')?.textContent === "actor-b:2")
-    const current = await page.locator(`${attentionRows} .mission-list-inline button`).first().elementHandle()
+    const current = await page.locator(answerButtons).first().elementHandle()
     await page.evaluate(() => (window as any).missionRowFixture.closeForm())
     assert.equal(await current!.evaluate(e => e.isConnected), false)
     await current!.evaluate(e => (e as HTMLButtonElement).click())

@@ -15,12 +15,14 @@
   padding: 0 0 var(--space-sm);
 }
 
-.mission-control-actions { width: 100%; justify-content: space-between; }
+.mission-control-actions { display: flex; align-items: center; gap: 2px; }
 .mission-control-create { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target-size-compact); padding-inline: var(--space-xs) var(--space-sm); font-size: var(--font-size-sm); color: var(--text-primary); }
 .mission-control-create:hover:not(:disabled) { background: var(--surface-hover-overlay); color: var(--accent-primary); }
 .mission-control-create:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .mission-control-create:disabled { opacity: .35; }
-.mission-control-preferences { border-block-start: 1px solid var(--border-base); }
+.mission-control-preferences { margin-block-end: var(--space-sm); padding: 0 var(--space-sm) var(--space-sm); background: var(--surface-base); border: 1px solid var(--border-base); }
+.mission-control-preferences:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-control-preferences > .window-header { padding-inline: 0; font-size: var(--font-size-sm); }
 
 .mission-control-icon-button {
   display: inline-flex;
@@ -43,8 +45,7 @@
 
 .mission-control-icon-button:disabled { opacity: .35; cursor: default; }
 
-.mission-control-icon-button:focus-visible,
-.mission-control-index-item:focus-visible {
+.mission-control-icon-button:focus-visible {
   outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
@@ -83,17 +84,4 @@
   font-size: var(--font-size-xs);
 }
 
-.mission-control-index {
-  display: grid;
-  max-height: 192px;
-  overflow-y: auto;
-}
-
 .mission-control > .mission-disclosure { border-top: 1px solid var(--border-base); }
-.mission-lifecycle { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding-block: var(--space-xs); }
-.mission-lifecycle-actions { display: flex; flex-shrink: 0; }
-.mission-lifecycle small { color: var(--text-secondary); font-size: var(--font-size-xs); }
-.mission-lifecycle > .mission-profile-summary { flex-basis: 100%; margin: 0; }
-.mission-lifecycle-actions button { gap: var(--space-xs); }
-.mission-lifecycle-actions .mission-lifecycle-start { width: auto; padding-inline: var(--space-sm); white-space: nowrap; }
-.mission-stop-confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); flex-basis: 100%; font-size: var(--font-size-sm); }

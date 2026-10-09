@@ -21,7 +21,7 @@ import { useMissionCurrentPassage } from "../stores/mission-recurrence"
 import { MissionPassageSectionContent, type MissionPassageSection } from "./mission-passage-section"
 
 import { useMissionRecurrence } from "../stores/mission-recurrence"
-import { MissionRecurrencePassageReader } from "./mission-recurrence-passage-reader"
+import { MissionRecurrenceReader } from "./mission-recurrence-reader"
 import type { MissionMarkdownPage } from "../lib/mission-markdown-pages"
 import { MissionReaderNumber } from "./mission-reader-number"
 
@@ -247,35 +247,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={target()?.kind === "recurrence"}>
         <Show when={recurrenceState.loading() && !recurrenceState.snapshot()}><p role="status">{t("missions.control.loading")}</p></Show>
         <Show when={recurrenceState.error()}><p role="status">{t(recurrenceState.stale() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-        <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule => <>
-          <p>{t(`missions.recurrence.state.${schedule().state}`)}</p>
-          <Show when={schedule().nextDueAt != null}><p>{t("missions.recurrence.nextDue", { date: new Date(schedule().nextDueAt!).toLocaleString(locale()) })}</p></Show>
-          <Show when={schedule().interruptionReason}><p role="status">{t(schedule().interruptionReason === "service-restart" ? "missions.recurrence.interruptedRestart" : "missions.recurrence.interruptedError")}</p></Show>
-          <Show when={schedule().pending}><p role="status">{t(`missions.recurrence.pending.${schedule().pending!.status}`)}</p></Show>
-          <Show when={schedule().history.find(receipt => receipt.passageID === (target()?.itemId ?? schedule().latestResult?.passageID))}>
-            {receipt => <Show when={receipt().missionID}><MissionRecurrencePassageReader instanceId={props.instanceId} scope={props.scope}
-              projectID={recurrenceState.snapshot()!.projectID} scheduleID={schedule().id} receipt={receipt()} /></Show>}
-          </Show>
-          <h3>{t("missions.recurrence.history")}</h3>
-          <Show when={schedule().history.length} fallback={<p>{t("missions.recurrence.historyEmpty")}</p>}>
-            <ol class="mission-recurrence-history"><For each={[...schedule().history].reverse()}>{(receipt, index) =>
-              <li><h4>{index() === 0 ? t("missions.recurrence.latest") : t("missions.recurrence.passage")}: {t(receipt.reason ? `missions.recurrence.result.${receipt.reason}` : `missions.recurrence.result.${receipt.outcome}`)}</h4>
-                <Show when={receipt.missionID}><button type="button" class="window-text-button icon-toggle"
-                  aria-label={t("missions.recurrence.readResult", { id: receipt.passageID })}
-                  aria-pressed={(target()?.itemId ?? schedule().latestResult?.passageID) === receipt.passageID}
-                  onClick={() => updateMissionProjectView(props.scope, { reader: { ...target()!, itemId: receipt.passageID } })}>
-                  {t("missions.control.read")}
-                </button></Show>
-                <dl>
-                  <dt>{t("missions.recurrence.passage")}</dt><dd><bdi>{receipt.passageID}</bdi></dd>
-                  <dt>{t("missions.recurrence.due")}</dt><dd><time dateTime={new Date(receipt.dueAt).toISOString()}>{new Date(receipt.dueAt).toLocaleString(locale())}</time></dd>
-                  <dt>{t("missions.recurrence.settledAt")}</dt><dd><time dateTime={new Date(receipt.settledAt).toISOString()}>{new Date(receipt.settledAt).toLocaleString(locale())}</time></dd>
-                  <Show when={receipt.missionID}><dt>{t("missions.recurrence.missionRef")}</dt><dd><bdi>{receipt.missionID}</bdi></dd></Show>
-                  <Show when={receipt.conversationID}><dt>{t("missions.recurrence.conversationRef")}</dt><dd><bdi>{receipt.conversationID}</bdi></dd></Show>
-                </dl></li>
-            }</For></ol>
-          </Show>
-        </>}</Show>
+        <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule =>
+          <MissionRecurrenceReader instanceId={props.instanceId} scope={props.scope} projectID={recurrenceState.snapshot()!.projectID}
+            schedule={schedule()} passageID={target()?.itemId}
+            onSelect={passageID => updateMissionProjectView(props.scope, { reader: { ...target()!, itemId: passageID } })} />}</Show>
       </Show>
       <Show when={target()?.kind === "overview" && mission()?.briefing && !mission()?.summary}>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>
