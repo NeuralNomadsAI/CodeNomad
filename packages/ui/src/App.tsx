@@ -7,6 +7,7 @@ import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
+import { installKeyboardOffset } from "./lib/keyboard-offset"
 import { showConfirmDialog } from "./stores/alerts"
 import { closeTemporaryInstance, openTemporaryInstance, resumeTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
@@ -214,27 +215,8 @@ const App: Component = () => {
 
   onMount(() => {
     if (typeof window === "undefined") return
-    const vv = window.visualViewport
-    if (!vv) return
-
-    const updateKeyboardOffset = () => {
-      // visualViewport shrinks when the OSK is visible. Use the delta as a bottom inset.
-      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      document.documentElement.style.setProperty("--keyboard-offset", `${Math.floor(inset)}px`)
-    }
-
-    const schedule = () => requestAnimationFrame(updateKeyboardOffset)
-    schedule()
-    vv.addEventListener("resize", schedule)
-    vv.addEventListener("scroll", schedule)
-    window.addEventListener("orientationchange", schedule)
-
-    onCleanup(() => {
-      vv.removeEventListener("resize", schedule)
-      vv.removeEventListener("scroll", schedule)
-      window.removeEventListener("orientationchange", schedule)
-      document.documentElement.style.removeProperty("--keyboard-offset")
-    })
+    // On-screen keyboard inset, limited to touch devices editing text.
+    onCleanup(installKeyboardOffset(window))
   })
 
   // If the user exits browser fullscreen via browser UI, restore chrome.
