@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "取消",
   "temporaryInstance.keep.failedTitle": "无法保留临时实例",
   "temporaryInstance.discard.failedTitle": "无法丢弃临时实例",
+  "temporaryInstance.error.running": "此临时实例中仍有对话在运行。请先停止它。",
+  "temporaryInstance.error.openElsewhere": "此临时实例已在其他标签页或窗口中打开。请先在那里关闭。",
+  "temporaryInstance.error.notTemporary": "此实例已不再是临时实例。",
 
   "instanceShell.leftPanel.sessionsTitle": "会话",
   "instanceShell.leftPanel.instanceInfo": "实例信息",

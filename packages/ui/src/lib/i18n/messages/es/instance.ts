@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "Cancelar",
   "temporaryInstance.keep.failedTitle": "No se pudo conservar la instancia temporal",
   "temporaryInstance.discard.failedTitle": "No se pudo descartar la instancia temporal",
+  "temporaryInstance.error.running": "Todavía hay una conversación en curso en esta instancia temporal. Detenla primero.",
+  "temporaryInstance.error.openElsewhere": "Esta instancia temporal está abierta en otra pestaña o ventana. Ciérrala allí primero.",
+  "temporaryInstance.error.notTemporary": "Esta instancia ya no es temporal.",
 
   "instanceShell.leftPanel.sessionsTitle": "Sesiones",
   "instanceShell.leftPanel.instanceInfo": "Info de la instancia",

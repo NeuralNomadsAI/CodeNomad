@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "रद्द गर्नुहोस्",
   "temporaryInstance.keep.failedTitle": "अस्थायी उदाहरण राख्न सकिएन",
   "temporaryInstance.discard.failedTitle": "अस्थायी उदाहरण हटाउन सकिएन",
+  "temporaryInstance.error.running": "यो अस्थायी उदाहरणमा अझै कुराकानी चलिरहेको छ। पहिले यसलाई रोक्नुहोस्।",
+  "temporaryInstance.error.openElsewhere": "यो अस्थायी उदाहरण अर्को ट्याब वा विन्डोमा खुला छ। पहिले त्यहाँ बन्द गर्नुहोस्।",
+  "temporaryInstance.error.notTemporary": "यो उदाहरण अब अस्थायी छैन।",
 
   "instanceShell.leftPanel.sessionsTitle": "सत्रहरू",
   "instanceShell.leftPanel.instanceInfo": "उदाहरण जानकारी",

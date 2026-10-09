@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "Cancel",
   "temporaryInstance.keep.failedTitle": "Unable to keep the temporary instance",
   "temporaryInstance.discard.failedTitle": "Unable to discard the temporary instance",
+  "temporaryInstance.error.running": "A conversation is still running in this temporary instance. Stop it first.",
+  "temporaryInstance.error.openElsewhere": "This temporary instance is open in another tab or window. Close it there first.",
+  "temporaryInstance.error.notTemporary": "This instance is no longer temporary.",
 
   "instanceShell.leftPanel.sessionsTitle": "Sessions",
   "instanceShell.leftPanel.instanceInfo": "Instance Info",

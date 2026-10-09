@@ -1,6 +1,6 @@
 import path from "node:path"
 import { randomBytes } from "node:crypto"
-import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
 import type { WorkspaceManager } from "./manager"
 import type { WorktreeDeletionFence } from "./worktree-session-evacuation"
@@ -9,8 +9,16 @@ import { normalizeWslUncPath } from "./worktree-directory"
 const PAGE_SIZE = 200
 const MAX_PAGES = 1_000
 
+/** Stable codes the client localizes; messages stay English diagnostics. */
+export type TemporaryWorkspaceErrorCode =
+  | "temporary_not_found"
+  | "temporary_not_temporary"
+  | "temporary_open_elsewhere"
+  | "temporary_running"
+  | "temporary_not_empty"
+
 export class TemporaryWorkspaceError extends Error {
-  constructor(message: string, readonly statusCode: number) {
+  constructor(readonly code: TemporaryWorkspaceErrorCode, message: string, readonly statusCode: number) {
     super(message)
     this.name = "TemporaryWorkspaceError"
   }
@@ -65,6 +73,10 @@ export class TemporaryFolderRegistry {
 
   has(folder: string): boolean {
     return this.isUnderRoot(folder) && this.folders.has(hostIdentity(folder, this.platform))
+  }
+
+  list(): string[] {
+    return [...this.folders.values()]
   }
 
   async add(folder: string): Promise<void> {
@@ -130,7 +142,18 @@ export class TemporaryWorkspaces {
     registry: TemporaryFolderRegistry
     workspaceManager: WorkspaceManager
     deletionFence: WorktreeDeletionFence
+    /** Receives every registered folder after the registry changes. */
+    onChange?: (folders: string[]) => void
   }) {}
+
+  /** Registered folders, including ones no tab currently shows. */
+  list(): string[] {
+    return this.options.registry.list()
+  }
+
+  private changed() {
+    this.options.onChange?.(this.options.registry.list())
+  }
 
   /** Creates and registers an empty, uniquely named folder under the temporary root. */
   async createFolder(now = new Date()): Promise<string> {
@@ -139,14 +162,32 @@ export class TemporaryWorkspaces {
     const folder = path.join(registry.root, `${stamp}-${randomBytes(4).toString("hex")}`)
     await mkdir(folder)
     await registry.add(folder)
+    this.changed()
     return folder
+  }
+
+  /** Removes a registered folder that never opened, e.g. after a failed launch. */
+  async abandonFolder(folder: string): Promise<void> {
+    const { registry, workspaceManager } = this.options
+    if (!registry.has(folder)) throw new TemporaryWorkspaceError("temporary_not_temporary", "This folder is not temporary", 400)
+    if (workspaceManager.list().some((workspace) => workspace.path === folder)) {
+      throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in a tab", 409)
+    }
+    const entries = await readdir(folder).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return []
+      throw error
+    })
+    if (entries.length) throw new TemporaryWorkspaceError("temporary_not_empty", "This temporary folder is not empty", 409)
+    await rm(folder, { recursive: true, force: true })
+    await registry.delete(folder)
+    this.changed()
   }
 
   private requireTemporary(workspaceId: string) {
     const workspace = this.options.workspaceManager.get(workspaceId)
-    if (!workspace) throw new TemporaryWorkspaceError("Workspace not found", 404)
+    if (!workspace) throw new TemporaryWorkspaceError("temporary_not_found", "Workspace not found", 404)
     if (!this.options.registry.has(workspace.path)) {
-      throw new TemporaryWorkspaceError("This workspace is not temporary", 400)
+      throw new TemporaryWorkspaceError("temporary_not_temporary", "This workspace is not temporary", 400)
     }
     return workspace
   }
@@ -156,6 +197,7 @@ export class TemporaryWorkspaces {
     const workspace = this.requireTemporary(workspaceId)
     await this.options.registry.delete(workspace.path)
     this.options.workspaceManager.clearTemporary(workspace.path)
+    this.changed()
   }
 
   /**
@@ -167,7 +209,7 @@ export class TemporaryWorkspaces {
     const manager = this.options.workspaceManager
     const workspace = this.requireTemporary(workspaceId)
     if (manager.list().some((other) => other.id !== workspaceId && other.path === workspace.path)) {
-      throw new TemporaryWorkspaceError("This temporary folder is open in another tab", 409)
+      throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in another tab", 409)
     }
     const serviceDirectory = manager.getServiceDirectory(workspaceId) ?? workspace.path
     await this.options.deletionFence.run(workspace.path, [workspace.path, serviceDirectory], async () => {
@@ -175,7 +217,7 @@ export class TemporaryWorkspaces {
       const sessions = await listSessions(client, serviceDirectory)
       const active = await client.session.active()
       if (sessions.some((session) => Object.prototype.hasOwnProperty.call(active, session.id))) {
-        throw new TemporaryWorkspaceError("A conversation is still running in this temporary instance", 409)
+        throw new TemporaryWorkspaceError("temporary_running", "A conversation is still running in this temporary instance", 409)
       }
       for (const session of deepestFirst(sessions)) {
         try {
@@ -192,8 +234,9 @@ export class TemporaryWorkspaces {
       } finally {
         release()
       }
-      // A failed removal stays registered, so the folder is not forgotten.
+      // A failed removal stays registered; the home page lists it for another discard.
       await this.options.registry.delete(workspace.path)
+      this.changed()
     })
   }
 }

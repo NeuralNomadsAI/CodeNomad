@@ -27,6 +27,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.button": "Клонировать Git-репозиторий",
   "folderSelection.temporary.button": "Новый временный экземпляр",
   "folderSelection.temporary.description": "Начать в пустой папке под управлением CodeNomad; при закрытии вкладки её можно сохранить или удалить",
+  "folderSelection.temporary.resume": "Продолжить {name}",
+  "folderSelection.temporary.resumeDescription": "Снова открыть оставшийся временный экземпляр, чтобы сохранить или удалить его",
   "folderSelection.clone.destination.title": "Выберите папку для клонирования",
   "folderSelection.clone.destination.description": "Выберите папку, куда нужно клонировать репозиторий.",
   "folderSelection.clone.dialog.title": "Клонировать Git-репозиторий",

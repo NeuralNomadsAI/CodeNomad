@@ -15,11 +15,16 @@ serverApi.discardTemporaryWorkspace = async (id) => {
   calls.push(`discard:${id}`)
   if (discardError) throw discardError
 }
+serverApi.createTemporaryFolder = async () => { calls.push("create"); return { path: "D:\\temp\\20261009-120000-dead" } }
+serverApi.createWorkspace = async () => { throw new Error("opencode_update_required") }
+serverApi.abandonTemporaryFolder = async (path) => { calls.push(`abandon:${path}`) }
 
+const { tGlobal } = await import("../lib/i18n")
+const { serverEvents } = await import("../lib/server-events")
 const { alertDialogState } = await import("./alerts")
 const { appTabs, attachInstanceTab } = await import("./app-tabs")
 const { addInstance, instances, removeInstance } = await import("./instances")
-const { closeTemporaryInstance } = await import("./temporary-instances")
+const { closeTemporaryInstance, leftoverTemporaryFolders, openTemporaryInstance, temporaryFolderLabel } = await import("./temporary-instances")
 
 const folder = "D:\\CodeNomad\\temporary-workspaces\\20261009-120000-abcd"
 function open(...ids: string[]) {
@@ -29,6 +34,7 @@ function open(...ids: string[]) {
   }
 }
 const tabOpen = (id: string) => appTabs().some((tab) => tab.id === `instance:${id}`)
+const temporaryChanged = (folders: string[]) => (serverEvents as any).dispatch({ type: "workspace.temporaryChanged", folders })
 async function answer(value: string | null) {
   await new Promise((resolve) => setTimeout(resolve, 0))
   const dialog = alertDialogState()
@@ -68,16 +74,16 @@ test("keeping clears the temporary mark on every tab of the folder and records t
   } finally { reset("keep-a", "keep-b") }
 })
 
-test("a refused discard reports the reason and keeps the tab open", async () => {
+test("a refused discard shows the localized reason and keeps the tab open", async () => {
   open("busy")
-  discardError = new Error("A conversation is still running in this temporary instance")
+  discardError = new Error("temporary_running")
   try {
     const closing = closeTemporaryInstance("busy")
     await answer("discard")
     await closing
     assert.deepEqual(calls, ["discard:busy"])
     assert.ok(tabOpen("busy"))
-    assert.equal(alertDialogState()?.message, "A conversation is still running in this temporary instance")
+    assert.equal(alertDialogState()?.message, tGlobal("temporaryInstance.error.running"))
   } finally { reset("busy") }
 })
 
@@ -90,4 +96,24 @@ test("a successful discard closes the tab", async () => {
     assert.deepEqual(calls, ["discard:gone"])
     assert.equal(tabOpen("gone"), false)
   } finally { reset("gone") }
+})
+
+test("a keep announced by another window clears the mark, and unopened folders are offered to resume", async () => {
+  open("elsewhere")
+  const leftover = "D:\\CodeNomad\\temporary-workspaces\\20261008-093000-beef"
+  try {
+    temporaryChanged([folder, leftover])
+    assert.equal(instances().get("elsewhere")?.temporary, true)
+    assert.deepEqual(leftoverTemporaryFolders(), [leftover])
+    assert.notEqual(temporaryFolderLabel(leftover), "20261008-093000-beef")
+    temporaryChanged([leftover])
+    assert.equal(instances().get("elsewhere")?.temporary, false)
+  } finally { reset("elsewhere"); temporaryChanged([]) }
+})
+
+test("a failed launch removes the folder it just created", async () => {
+  try {
+    await assert.rejects(openTemporaryInstance(), /opencode_update_required/)
+    assert.deepEqual(calls, ["create", "abandon:D:\\temp\\20261009-120000-dead"])
+  } finally { reset() }
 })

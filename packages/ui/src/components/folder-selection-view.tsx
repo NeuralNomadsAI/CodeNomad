@@ -19,6 +19,7 @@ import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getExistingInstanceForFolder } from "../stores/instances"
 import { renameProject } from "../stores/project-names"
+import { ensureTemporaryFoldersLoaded, leftoverTemporaryFolders, temporaryFolderLabel } from "../stores/temporary-instances"
 import { LocaleSelector } from "./locale-selector"
 import { RemoteServerDialog } from "./remote-server-dialog"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
@@ -33,7 +34,8 @@ type HomeTab = "local" | "servers"
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string) => void
   onSelectExistingInstance: (instanceId: string, recentPath: string) => void
-  onNewTemporaryInstance?: () => void
+  /** Without a folder, creates a new temporary instance; with one, resumes it. */
+  onNewTemporaryInstance?: (folder?: string) => void
   onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
@@ -215,6 +217,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
 
   onMount(() => {
+    if (props.onNewTemporaryInstance) ensureTemporaryFoldersLoaded()
     window.addEventListener("keydown", handleKeyDown)
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
@@ -954,6 +957,22 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                         <span>{t("folderSelection.temporary.button")}</span>
                       </div>
                     </button>
+                    <For each={leftoverTemporaryFolders()}>
+                      {(folder) => (
+                        <button
+                          type="button"
+                          onClick={() => props.onNewTemporaryInstance?.(folder)}
+                          disabled={props.isLoading}
+                          title={t("folderSelection.temporary.resumeDescription")}
+                          class="button-secondary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                        >
+                          <div class="flex items-center gap-2 min-w-0">
+                            <Hourglass class="w-4 h-4 shrink-0" />
+                            <span class="truncate">{t("folderSelection.temporary.resume", { name: temporaryFolderLabel(folder) })}</span>
+                          </div>
+                        </button>
+                      )}
+                    </For>
                   </Show>
 
                   <button

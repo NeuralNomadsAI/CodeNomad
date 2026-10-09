@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "キャンセル",
   "temporaryInstance.keep.failedTitle": "一時インスタンスを保持できませんでした",
   "temporaryInstance.discard.failedTitle": "一時インスタンスを破棄できませんでした",
+  "temporaryInstance.error.running": "この一時インスタンスではまだ会話が実行中です。先に停止してください。",
+  "temporaryInstance.error.openElsewhere": "この一時インスタンスは別のタブまたはウィンドウで開かれています。先にそちらで閉じてください。",
+  "temporaryInstance.error.notTemporary": "このインスタンスはもう一時インスタンスではありません。",
 
   "instanceShell.leftPanel.sessionsTitle": "セッション",
   "instanceShell.leftPanel.instanceInfo": "インスタンス情報",

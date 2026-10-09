@@ -22,6 +22,8 @@ export const folderSelectionMessages = {
   "folderSelection.clone.button": "Git Deposunu Klonla",
   "folderSelection.temporary.button": "Yeni geçici instance",
   "folderSelection.temporary.description": "CodeNomad'ın yönettiği boş bir klasörde başlayın; sekmeyi kapatırken saklayın veya atın",
+  "folderSelection.temporary.resume": "{name} devam et",
+  "folderSelection.temporary.resumeDescription": "Bu kalan geçici instance'ı saklamak veya atmak için yeniden aç",
   "folderSelection.clone.destination.title": "Klon Hedefini Seç",
   "folderSelection.clone.destination.description": "Deponun klonlanacağı klasörü seçin.",
   "folderSelection.clone.dialog.title": "Git Deposunu Klonla",

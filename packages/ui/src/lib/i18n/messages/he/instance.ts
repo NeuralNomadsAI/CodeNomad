@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "ביטול",
   "temporaryInstance.keep.failedTitle": "לא ניתן לשמור את המופע הזמני",
   "temporaryInstance.discard.failedTitle": "לא ניתן למחוק את המופע הזמני",
+  "temporaryInstance.error.running": "עדיין רצה שיחה במופע הזמני הזה. עצור אותה קודם.",
+  "temporaryInstance.error.openElsewhere": "המופע הזמני הזה פתוח בלשונית או בחלון אחרים. סגור אותו שם קודם.",
+  "temporaryInstance.error.notTemporary": "המופע הזה כבר אינו זמני.",
 
   "instanceShell.leftPanel.sessionsTitle": "סשנים",
   "instanceShell.leftPanel.instanceInfo": "מידע על המופע",

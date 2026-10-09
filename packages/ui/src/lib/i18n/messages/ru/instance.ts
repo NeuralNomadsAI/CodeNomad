@@ -59,6 +59,9 @@ export const instanceMessages = {
   "temporaryInstance.close.cancel": "Отмена",
   "temporaryInstance.keep.failedTitle": "Не удалось сохранить временный экземпляр",
   "temporaryInstance.discard.failedTitle": "Не удалось удалить временный экземпляр",
+  "temporaryInstance.error.running": "В этом временном экземпляре ещё выполняется разговор. Сначала остановите его.",
+  "temporaryInstance.error.openElsewhere": "Этот временный экземпляр открыт в другой вкладке или окне. Сначала закройте его там.",
+  "temporaryInstance.error.notTemporary": "Этот экземпляр больше не временный.",
 
   "instanceShell.leftPanel.sessionsTitle": "Сессии",
   "instanceShell.leftPanel.instanceInfo": "Информация об экземпляре",

@@ -35,9 +35,12 @@ async function harness() {
     reserveWorktreeDeletion: async () => () => {},
     clearTemporary: (folder: string) => { cleared.push(folder) },
   } as unknown as WorkspaceManager
-  const temporary = new TemporaryWorkspaces({ registry, workspaceManager: manager, deletionFence: new WorktreeDeletionFence() })
+  const changes: string[][] = []
+  const temporary = new TemporaryWorkspaces({
+    registry, workspaceManager: manager, deletionFence: new WorktreeDeletionFence(), onChange: (folders) => changes.push(folders),
+  })
   return {
-    base, file, registry, workspaces, removed, cleared, temporary,
+    base, file, registry, workspaces, removed, cleared, temporary, changes,
     setSessions: (next: typeof sessions) => { sessions = next },
     setActive: (next: typeof active) => { active = next },
     cleanup: () => rm(base, { recursive: true, force: true }),
@@ -102,6 +105,28 @@ test("discarding removes conversations children first, closes the workspace and 
   } finally { await h.cleanup() }
 })
 
+test("registry changes are announced and a never-opened empty folder can be abandoned", async () => {
+  const h = await harness()
+  try {
+    const unused = await h.temporary.createFolder()
+    const used = await h.temporary.createFolder()
+    const open = await h.temporary.createFolder()
+    assert.deepEqual(h.changes.at(-1), [unused, used, open])
+    await writeFile(path.join(used, "notes.md"), "keep me")
+    h.workspaces.set("open", { id: "open", path: open })
+    const code = (expected: string) => (error: unknown) => error instanceof TemporaryWorkspaceError && error.code === expected
+    await assert.rejects(h.temporary.abandonFolder(used), code("temporary_not_empty"))
+    await assert.rejects(h.temporary.abandonFolder(open), code("temporary_open_elsewhere"))
+    await assert.rejects(h.temporary.abandonFolder(h.base), code("temporary_not_temporary"))
+    await h.temporary.abandonFolder(unused)
+    await assert.rejects(stat(unused), { code: "ENOENT" })
+    assert.deepEqual(h.temporary.list(), [used, open])
+    assert.deepEqual(h.changes.at(-1), [used, open])
+    await h.temporary.keep("open")
+    assert.deepEqual(h.changes.at(-1), [used])
+  } finally { await h.cleanup() }
+})
+
 test("running conversations and duplicate tabs block discarding without removing anything", async () => {
   const h = await harness()
   try {
@@ -109,7 +134,7 @@ test("running conversations and duplicate tabs block discarding without removing
     h.workspaces.set("temp", { id: "temp", path: folder })
     h.setSessions([{ id: "root", location: { directory: folder } }])
     h.setActive({ root: { type: "busy" } })
-    await assert.rejects(h.temporary.discard("temp"), (error: unknown) => error instanceof TemporaryWorkspaceError && error.statusCode === 409)
+    await assert.rejects(h.temporary.discard("temp"), (error: unknown) => error instanceof TemporaryWorkspaceError && error.code === "temporary_running")
     h.setActive({})
     h.workspaces.set("duplicate", { id: "duplicate", path: folder })
     await assert.rejects(h.temporary.discard("temp"), (error: unknown) => error instanceof TemporaryWorkspaceError && error.statusCode === 409)

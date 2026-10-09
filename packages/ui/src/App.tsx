@@ -8,7 +8,7 @@ import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
-import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
+import { closeTemporaryInstance, openTemporaryInstance, resumeTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
@@ -536,11 +536,12 @@ const App: Component = () => {
 
   useDesktopFolderLaunch(handleSelectFolder)
 
-  async function handleNewTemporaryInstance(): Promise<void> {
+  // `folder` resumes a leftover temporary folder; otherwise a new one is created.
+  async function handleNewTemporaryInstance(folder?: string): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
-      selectInstanceTab(await openTemporaryInstance())
+      selectInstanceTab(folder ? await resumeTemporaryInstance(folder) : await openTemporaryInstance())
       setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
@@ -549,7 +550,12 @@ const App: Component = () => {
         t("app.launchError.invalidConfig"),
         t("opencodeBinarySelector.validation.v2Required"),
       )
-      showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary: isMissingBinaryMessage(message) })
+      const missingBinary = isMissingBinaryMessage(message)
+      if (missingBinary || message.includes("opencode_update_required")) {
+        openOpenCodeSetup(() => handleNewTemporaryInstance(folder))
+        return
+      }
+      showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
       log.error("Failed to create temporary instance", error)
     } finally {
       setIsSelectingFolder(false)
@@ -610,6 +616,10 @@ const App: Component = () => {
   }
 
   async function handleStopInstance(instanceId: string) {
+    if (instances().get(instanceId)?.temporary) {
+      await closeTemporaryInstance(instanceId)
+      return
+    }
     const confirmed = await showConfirmDialog(
       t("app.stopInstance.confirmMessage"),
       {
@@ -708,7 +718,7 @@ const App: Component = () => {
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
     handleNewInstanceRequest,
-    handleNewTemporaryInstance,
+    handleNewTemporaryInstance: () => handleNewTemporaryInstance(),
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
     handleStopInstance,
     handleNewSession,
@@ -904,7 +914,7 @@ const App: Component = () => {
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
             onSelectExistingInstance={handleSelectExistingInstance}
-            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+            onNewTemporaryInstance={(folder) => void handleNewTemporaryInstance(folder)}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
             onOpenSidecar={handleOpenSidecarPicker}
           />
@@ -916,7 +926,7 @@ const App: Component = () => {
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 onSelectExistingInstance={handleSelectExistingInstance}
-                onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+                onNewTemporaryInstance={(folder) => void handleNewTemporaryInstance(folder)}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {
