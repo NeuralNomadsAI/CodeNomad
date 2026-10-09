@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import path from "node:path"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Form } from "@opencode/schema/form"
 import { Location } from "@opencode/schema/location"
@@ -63,7 +64,9 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
   }
   const session = (id: string) => query("SELECT id,parent_id,project_id,directory,workspace_id FROM session_v2 WHERE id=?", [id]).pipe(Effect.map(result => {
     const value = result[0]
-    if (!value || value.id !== id || value.project_id !== location.project.id || value.directory !== location.directory
+    // Native SQL stores slash-separated Windows paths; the Location graph uses host separators.
+    if (!value || value.id !== id || value.project_id !== location.project.id || typeof value.directory !== "string"
+      || path.normalize(value.directory) !== path.normalize(location.directory)
       || value.workspace_id !== (location.workspaceID ?? null)) throw new Error("Native answer session moved or foreign")
     return value
   }))

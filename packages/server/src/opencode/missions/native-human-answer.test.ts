@@ -36,7 +36,8 @@ async function fixture() {
   const nativeGet = async ({ sessionID }: { sessionID: string }) => {
     const row = db.prepare("SELECT * FROM session_v2 WHERE id=?").get(sessionID) as { id: string; parent_id: string | null; directory: string; metadata: string }
     if (!row) throw new Error("Session not found")
-    return { id: row.id, projectID: "project", location: { directory: row.directory }, metadata: JSON.parse(row.metadata), title: "Decision", agent: "worker",
+    // The native API returns host separators even when SQL stores `/` (Windows).
+    return { id: row.id, projectID: "project", location: { directory: path.normalize(row.directory) }, metadata: JSON.parse(row.metadata), title: "Decision", agent: "worker",
       model: { providerID: "provider", id: "model" }, ...(row.parent_id ? { parentID: row.parent_id } : {}) }
   }
   const input = { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }
@@ -136,6 +137,17 @@ test("dock header writes a secret-free mark before native reply and gate accepts
     assert.equal(JSON.stringify(mark).includes("cookie"), false)
     assert.equal(JSON.stringify(mark).includes("signature"), false)
     for (const secret of f.secrets) assert.equal(JSON.stringify(mark).includes(secret), false)
+  } finally { await f.dispose() }
+})
+
+test("Windows native SQL slash-separated session directories still bind the dock answer and gate", async () => {
+  const f = await fixture()
+  try {
+    // Observed natively (2.0.26, hF44ln): session_v2 stores `/`, Location keeps host `\` separators.
+    f.db.prepare("UPDATE session_v2 SET directory=?").run(f.directory.replaceAll("\\", "/"))
+    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal(f.get(f.markKey)?.state, "confirmed")
+    assert.equal((await f.native.verify(f.decision)).via, "ui")
   } finally { await f.dispose() }
 })
 
