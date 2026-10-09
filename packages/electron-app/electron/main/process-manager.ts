@@ -23,6 +23,8 @@ import { getUserShellEnv, supportsUserShell } from "./user-shell"
 import { resolveShellEnvironment, restoreDesktopProfileEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 import { startNativeService } from "./native-service-start"
+import { BACKEND_PROFILE_ENVIRONMENT } from "./data-profile"
+import { stripPrivateRelaunchEnvironment } from "./profile-selection-cleanup"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -138,10 +140,18 @@ export declare interface CliProcessManager {
   on(event: "error", listener: (error: Error) => void): this
 }
 
+let backendProfileScope: { profile: string; configIdentity: string } | undefined
+
+/** Records the resolved data profile the backend uses as its Mission profile scope
+ * (`CODENOMAD_UPDATE_CHANNEL`/`CODENOMAD_PROFILE_CONFIG_IDENTITY` on the backend only). */
+export function setBackendProfileScope(scope: { profile: string; configIdentity: string }): void {
+  backendProfileScope = { ...scope }
+}
+
 export class CliProcessManager extends EventEmitter {
   private readonly desktopProfile = {
-    CODENOMAD_UPDATE_CHANNEL: process.env.CODENOMAD_UPDATE_CHANNEL,
-    CODENOMAD_PROFILE_CONFIG_IDENTITY: process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY,
+    CODENOMAD_UPDATE_CHANNEL: backendProfileScope?.profile,
+    CODENOMAD_PROFILE_CONFIG_IDENTITY: backendProfileScope?.configIdentity,
     CLI_CONFIG: process.env.CLI_CONFIG,
   }
   private child?: ChildProcess
@@ -231,6 +241,12 @@ export class CliProcessManager extends EventEmitter {
     restoreDesktopProfileEnvironment(env, this.desktopProfile)
     env.ELECTRON_RUN_AS_NODE = "1"
     env.CODENOMAD_NATIVE_PARENT = "1"
+    // The host's resolved profile wins over any value captured from the user's shell.
+    const profile = process.env[BACKEND_PROFILE_ENVIRONMENT]
+    if (profile) env[BACKEND_PROFILE_ENVIRONMENT] = profile
+    else delete env[BACKEND_PROFILE_ENVIRONMENT]
+    // Private relaunch hand-offs belong to the desktop host only (also consumed at startup).
+    stripPrivateRelaunchEnvironment(env)
     delete env.npm_config_prefix
     delete env.NPM_CONFIG_PREFIX
 

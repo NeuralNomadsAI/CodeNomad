@@ -174,6 +174,49 @@ test("upright tabs retain native pointer reordering and sidecar selection", asyn
   } finally { await page.close() }
 })
 
+test("double-click, F2 and the context menu rename the tab's project through the shared dialog", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  const patches: any[] = []
+  try {
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.route("**/api/storage/state/ui", async route => {
+      const recentFolders = [{ path: "D:/Project-0", lastAccessed: 1 }, { path: "D:/Project-1", lastAccessed: 0 }]
+      if (route.request().method() === "PATCH") patches.push(route.request().postDataJSON())
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ recentFolders: patches.at(-1)?.recentFolders ?? recentFolders }) })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).tabFixture))
+    const tab = page.locator('[data-fixture="instances"] [role="tab"]').first()
+    const dialog = page.getByRole("dialog")
+    const input = dialog.getByRole("textbox")
+
+    await tab.dblclick()
+    assert.equal(await input.inputValue(), "Project 0 — workspace")
+    assert.equal(await input.evaluate(e => e === document.activeElement), true)
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "detached" })
+
+    await tab.locator(".tab-close").dblclick()
+    await page.waitForTimeout(150)
+    assert.equal(await dialog.count(), 0, "double-clicking the close control does not rename")
+
+    await tab.focus()
+    await page.keyboard.press("F2")
+    assert.equal(await input.inputValue(), "Project 0 — workspace")
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "detached" })
+
+    await tab.click({ button: "right" })
+    await page.getByRole("menuitem").click()
+    await input.waitFor()
+    await page.waitForFunction(() => document.activeElement?.matches('[role="dialog"] input'))
+    await input.fill("Client A")
+    await page.keyboard.press("Enter")
+    await dialog.waitFor({ state: "detached" })
+    assert.deepEqual(patches.at(-1).recentFolders.map((folder: any) => folder.projectName), ["Client A", undefined])
+  } finally { await page.close() }
+})
+
 test("touch layout retains scrolling without a mirrored tab layer", async () => {
   const page = await browser.newPage({ viewport: { width: 720, height: 800 }, hasTouch: true })
   try {

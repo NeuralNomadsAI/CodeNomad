@@ -1,5 +1,6 @@
-use sha2::{Digest, Sha256};
+use crate::{data_profile, profile_transition};
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 pub(crate) const STABLE_IDENTIFIER: &str = "ai.neuralnomads.codenomad.client";
 pub(crate) const LOCAL_WINDOW_PREFIX: &str = "local-";
@@ -7,7 +8,8 @@ const DEFAULT_CONFIG: &str = "~/.config/codenomad/config.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IdentityScope {
-    pub(crate) channel: String,
+    /// Profile storage key; `stable` is the default profile (see data_profile.rs).
+    pub(crate) profile: String,
     pub(crate) config_identity: String,
     pub(crate) suffix: String,
     pub(crate) scoped: bool,
@@ -34,33 +36,60 @@ pub(crate) fn local_window_id(label: &str) -> Result<String, String> {
     Ok(id.to_string())
 }
 
-pub(crate) fn resolve_update_channel(
-    explicit: Option<&str>,
-    version: &str,
+#[derive(Debug)]
+pub(crate) enum LaunchProfile {
+    Ready(String),
+    Ask {
+        candidates: Vec<profile_transition::Candidate>,
+        lock: profile_transition::SelectionLock,
+        context: profile_transition::TransitionContext,
+    },
+}
+
+/// Resolves the data profile before the identifier, singleton or WebView data directory is fixed.
+/// Explicit settings win; packaged launches without them use the one-time transition.
+pub(crate) fn resolve_launch_profile(
+    profile: Option<&str>,
+    legacy_channel: Option<&str>,
+    cli_config: Option<&str>,
     packaged: bool,
-) -> String {
-    if let Some(value) = explicit.map(str::trim).filter(|value| !value.is_empty()) {
-        let mut normalized = String::new();
-        for character in value.to_ascii_lowercase().chars() {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
-                normalized.push(character);
-            } else if !normalized.ends_with('-') {
-                normalized.push('-');
+    cwd: &Path,
+    home: &Path,
+) -> Result<LaunchProfile, String> {
+    if let Some(explicit) =
+        data_profile::resolve_explicit_profile(profile, legacy_channel, packaged)?
+    {
+        return Ok(LaunchProfile::Ready(explicit.key));
+    }
+    let user_data_base = electron_user_data_base(home);
+    let context = profile_transition::TransitionContext {
+        config_identity: normalize_config_identity(cli_config, cwd, home),
+        default_identity: normalize_config_identity(None, cwd, home),
+        default_state_files: crate::client_state::default_state_files(&user_data_base),
+        user_data_base,
+    };
+    Ok(
+        match profile_transition::resolve_transition_profile(
+            &context,
+            SystemTime::now,
+            std::thread::sleep,
+        )
+        .map_err(|error| format!("Unable to select the CodeNomad data profile: {error}"))?
+        {
+            profile_transition::TransitionResult::Resolved { key, reason } => {
+                eprintln!(
+                    "[startup] data profile {} ({reason:?})",
+                    data_profile::profile_display_name(&key)
+                );
+                LaunchProfile::Ready(key)
             }
-        }
-        return normalized;
-    }
-    if !packaged {
-        return "dev".to_string();
-    }
-    let lower = version.to_ascii_lowercase();
-    if lower.ends_with("-dev-v2") || lower.contains("-dev-v2-") {
-        "dev-v2".to_string()
-    } else if lower.contains("-dev.") || lower.contains("-dev-") {
-        "dev".to_string()
-    } else {
-        "stable".to_string()
-    }
+            profile_transition::TransitionResult::Ask { candidates, lock } => LaunchProfile::Ask {
+                candidates,
+                lock,
+                context,
+            },
+        },
+    )
 }
 
 fn lexical_normalize(path: PathBuf) -> PathBuf {
@@ -132,7 +161,7 @@ pub(crate) fn normalize_config_identity(raw: Option<&str>, cwd: &Path, home: &Pa
     }
 }
 
-fn electron_user_data_base(home: &Path) -> PathBuf {
+pub(crate) fn electron_user_data_base(home: &Path) -> PathBuf {
     if cfg!(windows) {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
@@ -149,24 +178,19 @@ fn electron_user_data_base(home: &Path) -> PathBuf {
 }
 
 pub(crate) fn resolve_scope(
-    explicit_channel: Option<&str>,
+    profile: &str,
     cli_config: Option<&str>,
-    version: &str,
-    packaged: bool,
     cwd: &Path,
     home: &Path,
     local_data: &Path,
 ) -> IdentityScope {
-    let channel = resolve_update_channel(explicit_channel, version, packaged);
     let config_identity = normalize_config_identity(cli_config, cwd, home);
     let default_identity = normalize_config_identity(None, cwd, home);
-    let scoped = channel != "stable" || config_identity != default_identity;
-    let digest = Sha256::digest(format!("{channel}\0{config_identity}").as_bytes());
-    let suffix = digest[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let scope_name = format!("{channel}-{suffix}");
+    let data_profile::ProfileScope {
+        scoped,
+        suffix,
+        scope_name,
+    } = data_profile::profile_scope(profile, &config_identity, &default_identity);
     let identifier = if scoped {
         format!("{STABLE_IDENTIFIER}.scope.s{suffix}")
     } else {
@@ -174,7 +198,7 @@ pub(crate) fn resolve_scope(
     };
     let webview_root = local_data.join(format!("{STABLE_IDENTIFIER}-v2"));
     IdentityScope {
-        channel,
+        profile: profile.to_string(),
         config_identity,
         suffix,
         scoped,
@@ -198,29 +222,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn channel_and_default_compatibility_match_electron() {
-        assert_eq!(
-            resolve_update_channel(Some("Beta Channel"), "1.0.0", false),
-            "beta-channel"
-        );
-        assert_eq!(resolve_update_channel(None, "1.0.0", false), "dev");
-        assert_eq!(resolve_update_channel(None, "1.0.0-dev.2", true), "dev");
-        assert_eq!(resolve_update_channel(None, "1.0.0-dev-v2", true), "dev-v2");
-        assert_eq!(
-            resolve_update_channel(None, "1.0.0-dev-v2-2", true),
-            "dev-v2"
-        );
-        assert_eq!(resolve_update_channel(None, "1.0.0", true), "stable");
+    fn default_profile_keeps_unscoped_paths_and_named_profiles_are_scoped() {
         let root = Path::new("/home/dev");
-        let stable = resolve_scope(None, None, "1.0.0", true, root, root, Path::new("/local"));
+        let stable = resolve_scope("stable", None, root, root, Path::new("/local"));
         assert!(!stable.scoped);
         assert_eq!(stable.identifier, STABLE_IDENTIFIER);
         assert_eq!(stable.client_state_directory, None);
+        assert_eq!(
+            stable.webview_data_directory,
+            Path::new("/local").join(format!("{STABLE_IDENTIFIER}-v2"))
+        );
+        let dev = resolve_scope("dev", None, root, root, Path::new("/local"));
+        assert!(dev.scoped);
+        assert_eq!(
+            dev.identifier,
+            format!("{STABLE_IDENTIFIER}.scope.s{}", dev.suffix)
+        );
+        assert!(dev
+            .webview_data_directory
+            .ends_with(Path::new("scopes").join(format!("dev-{}", dev.suffix))));
         let alternate = resolve_scope(
-            None,
+            "stable",
             Some("other/config.json"),
-            "1.0.0",
-            true,
             root,
             root,
             Path::new("/local"),
@@ -233,6 +256,25 @@ mod tests {
             .client_state_directory
             .unwrap()
             .ends_with(Path::new("client-state")));
+    }
+
+    #[test]
+    fn explicit_launch_profiles_never_consult_the_transition() {
+        let root = Path::new("/nonexistent-codenomad-home");
+        let ready = |profile, channel, packaged| match resolve_launch_profile(
+            profile, channel, None, packaged, root, root,
+        )
+        .unwrap()
+        {
+            LaunchProfile::Ready(key) => key,
+            LaunchProfile::Ask { .. } => panic!("unexpected question"),
+        };
+        assert_eq!(ready(Some("Team"), Some("dev"), true), "team");
+        assert_eq!(ready(None, Some("dev-v2"), true), "dev-v2");
+        assert_eq!(ready(None, None, false), "dev");
+        assert!(
+            resolve_launch_profile(Some("not a profile"), None, None, true, root, root).is_err()
+        );
     }
 
     #[test]

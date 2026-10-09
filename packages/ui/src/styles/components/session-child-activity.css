@@ -1,0 +1,10 @@
+/* Dot-only indicator of a collapsed parent's busy subsessions (`session-child-activity.tsx`).
+   Colour comes from the shared session-status modifiers; no label, pill or background. */
+.session-item-badges .session-child-activity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 22px;
+  min-height: 22px;
+}

@@ -30,7 +30,7 @@ The pinned `@opencode/plugin` 2.0.4 Promise tool context has no `signal`. Browse
 
 ## Native Hosts
 
-Electron uses a hardened `<webview>` with per-session storage. Attachment verifies guest ownership, allows only credential-free HTTP(S) URLs, denies permissions and downloads, and uses Chromium accessibility/CDP commands for snapshots and actions.
+Electron uses hardened `<webview>` tabs sharing one persistent browser partition (`persist:codenomad-browser-shared-v1`) per native CodeNomad channel/config profile. Attachment verifies guest ownership, allows only credential-free HTTP(S) URLs, denies permissions and downloads, and uses Chromium accessibility/CDP commands for snapshots and actions.
 
 Windows Tauri uses a child webview owned by the local application window. Commands, capabilities, navigation checks, bounds, visibility, and storage are managed by `browser_controller.rs`. Application capabilities select primary `local-*` webviews, never their parent-window wildcard: Tauri combines window/webview matching with OR, so a window grant would also authorize an untrusted child. Full primary-renderer navigation disposes its preview children. Final-window decisions count native windows, including multi-webview windows. Other Tauri platforms continue to use the existing iframe preview and do not advertise native browser automation.
 
@@ -40,6 +40,12 @@ Each session has its own preview record, scoped by project folder and session ID
 
 Closing the project/window or restarting the renderer ends the live document. The saved URL history and cursor are restored only when the user explicitly opens that session's browser; neither session activation nor startup creates hidden browsers. Only its current URL loads at first. Back/Forward reuse owned native CDP entry IDs when available; a saved entry without a live ID loads only that selected URL, never replays intermediate pages. URL-only restoration does not preserve DOM, unsent forms, scroll, JavaScript memory or POST bodies. Existing per-session cookies/site storage remain persistent. URLs must be credential-free HTTP(S), and history is limited to 32 entries/session within the existing 4 KB aggregate preview layout value; history is trimmed before saved previews are evicted. This is a navigation journal, not a disk image of Chromium sessions.
 
+## Shared profile and upgrade
+
+Native preview tabs share cookies, sign-ins, localStorage and other site storage across sessions and projects within the same CodeNomad host/profile. Windows Tauri selects the common `browser/shared-v1` WebView2 data directory. This browser profile remains separate from the trusted application renderer, remote-window profiles, other CodeNomad config/channel profiles and the other desktop engine. Documents, forms, sessionStorage, native navigation stacks, persisted history cursors and automation attachments remain tab/session-owned. Logging out of a site in one tab logs out the others, just as in a normal browser.
+
+Existing per-session browser profiles are retained on disk, but are not automatically merged: they can contain conflicting accounts and database state. The new shared profile may require one initial sign-in. Iframe fallbacks retain their opaque-origin capability sandbox and are not advertised as a full shared native browser profile.
+
 ## Focused Validation
 
 - Server: `automation-plugin.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions
@@ -48,3 +54,4 @@ Closing the project/window or restarting the renderer ends the live document. Th
 - Tauri: `browser_controller.rs` and `browser_controller_regressions.rs` tests, including actual capability resolution, primary-renderer cleanup, window counting, lock ordering and expired dispatch
 - UI: `browser-frame-security.test.ts`, `lib/native/browser.test.ts` and `tests/browser/browser-frame-native.test.ts` (real Solid/Electron guests, insecure HTTP, registration disposal and Tauri IPC failure recovery). Linux Electron rendering requires a display; CI runs the browser suite under Xvfb.
 - Session lifetime: `tests/browser/session-browser-history.test.ts` exercises the real instance shell/store, a real Electron guest and the Tauri IPC boundary across chat/session/project/Info transitions, the preview's X, retained Back history and legacy URL migration.
+- Shared site state: the same suite tests real Electron HttpOnly-cookie/localStorage sharing, independent documents/history, app-profile isolation and shared logout; Rust regressions verify Tauri's common persistent browser directory.

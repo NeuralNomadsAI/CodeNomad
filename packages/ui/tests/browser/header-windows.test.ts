@@ -35,7 +35,12 @@ before(async () => {
           res.setHeader("Content-Type", "text/html")
           res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
         })
-      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: {
+        // The middleware HTML is invisible to Vite's file scanner. Scan its real
+        // fixture entry instead of prebundling the unrelated application pages.
+        entries: ["tests/browser/fixtures/header-windows.tsx"],
+        exclude: ["lucide-solid"],
+      },
       server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
     })
     shutdown.own(server)
@@ -51,13 +56,15 @@ before(async () => {
 })
 after(disposeFixture)
 
-test("the real shell badge reopens the selected question with a same-session permission queued", async () => {
+test("the real shell badge reopens the selected question with a same-session permission queued", async (t) => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
   page.setDefaultTimeout(15000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  const diagnostics = observeHeaderFixture(page)
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await diagnostics.install()
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.locator("textarea.prompt-input").fill("Keep the composer draft")
@@ -78,7 +85,11 @@ test("the real shell badge reopens the selected question with a same-session per
     assert.equal(await answer.inputValue(), "Keep this question selected")
     assert.equal(await page.locator("textarea.prompt-input").inputValue(), "Keep the composer draft")
     assert.deepEqual(errors, [])
+  } catch (error) {
+    await diagnostics.diagnose(message => t.diagnostic(message)).catch(() => {})
+    throw error
   } finally {
+    diagnostics.detach()
     await page.close()
   }
 })

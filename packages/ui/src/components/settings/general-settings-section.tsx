@@ -7,9 +7,12 @@ import { BehaviorSettingRows } from "./behavior-setting-rows"
 import { ThemeSchemeSettings } from "./theme-scheme-settings"
 
 const StartupStateSettingsCard = lazy(() => import("./startup-state-settings-card").then((module) => ({ default: module.StartupStateSettingsCard })))
+const OpenerStartupStateSettingsCard = lazy(() => import("./opener-startup-state-settings-card").then((module) => ({ default: module.OpenerStartupStateSettingsCard })))
 
 interface GeneralSettingsSectionProps {
   showStartupState?: boolean
+  /** "opener": the native Preferences window, which never owns client state. */
+  startupStateOwner?: "self" | "opener"
 }
 
 export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (props) => {
@@ -41,7 +44,11 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
       </div>
       <ThemeSchemeSettings />
 
-      <Show when={props.showStartupState !== false}><StartupStateSettingsCard /></Show>
+      <Show when={props.showStartupState !== false}>
+        <Show when={props.startupStateOwner === "opener"} fallback={<StartupStateSettingsCard />}>
+          <OpenerStartupStateSettingsCard />
+        </Show>
+      </Show>
 
       <div class="settings-card">
         <div class="settings-stack">

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
 import { getLogger } from "../logger"
+import { isStartupStateCommand, type StartupStateCommand, type StartupStateSnapshot } from "./startup-state-command"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
   isPrimary: boolean
@@ -80,3 +82,36 @@ export const acknowledgeNativeClientStateNavigationFlush = (generation: number) 
   acknowledge("client_state_navigation_flushed", { generation })
 export const acknowledgeNativeClientStateRendererFlush = (generation: number) =>
   acknowledge("client_state_renderer_flushed", { generation })
+
+/**
+ * Lets the host forward startup-state commands from the Preferences window to
+ * this local window only. Tauri replies with this renderer's access proof.
+ */
+export async function installNativeStartupStateCommandHandler(
+  run: (command: StartupStateCommand) => Promise<StartupStateSnapshot>,
+): Promise<() => void> {
+  if (!isLocalWindow()) return () => undefined
+  if (isElectronHost()) {
+    const handler = (command: unknown) => {
+      if (!isStartupStateCommand(command)) return Promise.reject(new Error("Invalid startup state command"))
+      return run(command)
+    }
+    window.__CODENOMAD_STARTUP_STATE_COMMAND__ = handler
+    return () => {
+      if (window.__CODENOMAD_STARTUP_STATE_COMMAND__ === handler) delete window.__CODENOMAD_STARTUP_STATE_COMMAND__
+    }
+  }
+  if (!isTauriHost()) return () => undefined
+  return listen<{ id: number; windowId: unknown; command: unknown }>("client-state:startup-command", ({ payload }) => {
+    // Tauri delivers events to every Any-target listener; act only for this window.
+    if (!Number.isSafeInteger(payload?.id) || payload.windowId !== window.__CODENOMAD_WINDOW_ID__) return
+    if (!isStartupStateCommand(payload.command)) return
+    void run(payload.command)
+      .then((state) => acknowledge("client_state_startup_command_result", { id: payload.id, stateResult: state }))
+      .catch((error) => {
+        log.warn("Startup state command failed", error)
+        return acknowledge("client_state_startup_command_result", { id: payload.id, stateResult: null })
+      })
+      .catch((error) => log.warn("Startup state command result was not delivered", error))
+  })
+}

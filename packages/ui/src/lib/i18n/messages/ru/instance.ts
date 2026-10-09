@@ -47,6 +47,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "Простой",
   "instanceTab.status.ariaLabel": "Статус экземпляра: {status}",
   "instanceTab.actions.close.ariaLabel": "Закрыть экземпляр",
+  "instanceTab.actions.rename": "Переименовать…",
 
   "instanceShell.leftPanel.sessionsTitle": "Сессии",
   "instanceShell.leftPanel.instanceInfo": "Информация об экземпляре",

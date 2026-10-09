@@ -46,8 +46,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI 已更新",
   "releases.uiUpdated.message": "UI 已更新到 {version}。",
 
-  "releases.devUpdateAvailable.title": "可用的开发版",
-  "releases.devUpdateAvailable.message": "有新的开发版可用：{version}。",
+  "releases.devUpdateAvailable.title": "有可用更新",
+  "releases.devUpdateAvailable.message": "有更新的版本可用：{version}。",
   "releases.devUpdateAvailable.action": "查看发布",
 
   "theme.mode.system": "系统",

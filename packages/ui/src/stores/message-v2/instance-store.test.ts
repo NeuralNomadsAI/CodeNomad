@@ -3,7 +3,14 @@ import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
-import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
+import {
+  buildRecordDisplayData,
+  clearRecordDisplayCacheForInstance,
+  getRecordDisplayPartIds,
+  MESSAGE_PART_DISPLAY_LIMIT,
+  MESSAGE_PART_REVEAL_STEP,
+  revealHiddenRecordParts,
+} from "./record-display-cache.ts"
 import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
 import type { MessageInfo } from "../../types/message"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
@@ -19,9 +26,11 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(data.orderedParts.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(data.orderedParts[0]?.id, "part-0")
   assert.equal(data.orderedParts.at(-1)?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
-  assert.equal(data.truncated, true)
+  assert.equal(data.hiddenCount, 2)
+  assert.equal(data.gapIndex, MESSAGE_PART_DISPLAY_LIMIT / 2)
+  assert.equal(data.orderedParts[data.gapIndex]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + 2}`)
 
-  const displayPartIds = getRecordDisplayPartIds({
+  const displayPartIds = getRecordDisplayPartIds("bounded-parts", {
     id: "message", sessionId: "session", role: "assistant", status: "complete",
     createdAt: 1, updatedAt: 1, revision: 1, partIds,
     parts: {},
@@ -29,6 +38,36 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(displayPartIds[0], "part-0")
   assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+})
+
+it("reveals omitted parts in place and resets with the instance", () => {
+  const total = MESSAGE_PART_DISPLAY_LIMIT + MESSAGE_PART_REVEAL_STEP + 5
+  const partIds = Array.from({ length: total }, (_, index) => `part-${index}`)
+  const record = {
+    id: "message", sessionId: "session", role: "assistant" as const, status: "complete" as const,
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: Object.fromEntries(partIds.map((id) => [id, { id, revision: 1, data: { id, type: "text" as const, text: id } }])),
+  }
+  const initial = buildRecordDisplayData("revealed-parts", record)
+  assert.equal(initial.hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
+  assert.equal(initial.hiddenStart, MESSAGE_PART_DISPLAY_LIMIT / 2)
+
+  revealHiddenRecordParts("revealed-parts", "message")
+  const partial = buildRecordDisplayData("revealed-parts", record)
+  assert.notEqual(partial, initial, "revealing must invalidate the cached projection")
+  assert.equal(partial.hiddenCount, 5)
+  assert.equal(partial.orderedParts.length, total - 5)
+  assert.equal(partial.orderedParts[partial.gapIndex - 1]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + MESSAGE_PART_REVEAL_STEP - 1}`)
+  assert.equal(partial.orderedParts[partial.gapIndex]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + MESSAGE_PART_REVEAL_STEP + 5}`)
+
+  revealHiddenRecordParts("revealed-parts", "message")
+  const complete = buildRecordDisplayData("revealed-parts", record)
+  assert.equal(complete.hiddenCount, 0)
+  assert.deepEqual(complete.orderedParts.map((part) => part.id), partIds)
+  assert.deepEqual(getRecordDisplayPartIds("revealed-parts", record), partIds)
+
+  clearRecordDisplayCacheForInstance("revealed-parts")
+  assert.equal(buildRecordDisplayData("revealed-parts", record).hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
 })
 
 describe("message window replacement authority", () => {

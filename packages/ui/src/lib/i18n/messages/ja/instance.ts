@@ -47,6 +47,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "待機中",
   "instanceTab.status.ariaLabel": "インスタンス状態: {status}",
   "instanceTab.actions.close.ariaLabel": "インスタンスを閉じる",
+  "instanceTab.actions.rename": "名前を変更…",
 
   "instanceShell.leftPanel.sessionsTitle": "セッション",
   "instanceShell.leftPanel.instanceInfo": "インスタンス情報",

@@ -2,7 +2,7 @@
 
 ## Shared Model
 
-CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is update channel plus config profile: each scope has one native singleton process and one CodeNomad backend, with multiple UUID-backed windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window.
+CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is data profile plus config identity (never the installed version or update feed; see `dev-docs/DESKTOP_DATA_PROFILES.md`): each scope has one native singleton process and one CodeNomad backend, with multiple UUID-backed windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window.
 
 OpenCode sessions and messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: prepare immutable partitions, fence migration and writes on current ownership and renderer authority, atomically publish the root, then remove only partitions unreferenced by every window.
 
@@ -15,6 +15,8 @@ Iframe SideCar/browser fallbacks are sandboxed without `allow-same-origin`; DOM 
 | Entry and host wiring | `packages/electron-app/electron/main/main.ts` | `packages/tauri-app/src-tauri/src/main.rs` |
 | Backend process | `packages/electron-app/electron/main/process-manager.ts` | `packages/tauri-app/src-tauri/src/cli_manager.rs` |
 | Launch and singleton behavior | `packages/electron-app/electron/main/startup.ts` | `packages/tauri-app/src-tauri/src/launch.rs`, `identity.rs`, `local_windows.rs` |
+| Data profile and transition | `packages/electron-app/electron/main/data-profile.ts`, `profile-transition.ts` | `packages/tauri-app/src-tauri/src/data_profile.rs`, `profile_transition.rs` |
+| Deleting other data profiles | `packages/electron-app/electron/main/data-profile-cleanup.ts`, `data-profile-cleanup-ipc.ts` | `packages/tauri-app/src-tauri/src/data_profile_cleanup.rs` |
 | Native commands | `packages/electron-app/electron/main/ipc.ts` | command handlers registered in `packages/tauri-app/src-tauri/src/main.rs` |
 | Renderer bridge | `packages/electron-app/electron/preload/index.cjs` | Tauri invoke/plugins through `packages/ui/src/lib/native/tauri/functions.ts` |
 | Client state | `packages/electron-app/electron/main/client-state.ts` and `client-state-*.ts` | `packages/tauri-app/src-tauri/src/client_state.rs` and `client_state/` |

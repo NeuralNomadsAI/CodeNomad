@@ -1,16 +1,21 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron"
 import { validateMainFrame } from "./ipc-security"
 import { requirePreferencesRequest, type PreferencesRequest } from "./preferences-window"
+import {
+  requireOpenerEpoch, requireStartupStateCommand,
+  type OpenerStartupStateResult, type StartupStateCommand,
+} from "./opener-startup-state"
 
 interface IPCRegistrar {
   handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: any[]) => any): void
 }
 
 interface PreferencesIPCDependencies {
-  resolveLocal(sender: IpcMainInvokeEvent["sender"]): { window: BrowserWindow } | undefined
+  resolveLocal(sender: IpcMainInvokeEvent["sender"]): { id: string; window: BrowserWindow } | undefined
   resolvePreferences(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
-  openPreferences(request: PreferencesRequest, toggle?: boolean, resume?: boolean): Promise<void>
+  openPreferences(request: PreferencesRequest, toggle?: boolean, resume?: boolean, openerId?: string): Promise<void>
+  openerStartupState(window: BrowserWindow, command: StartupStateCommand, epoch: number | undefined): Promise<OpenerStartupStateResult>
   getRequest(window: BrowserWindow): PreferencesRequest | undefined
   markReady(window: BrowserWindow): void
   acceptRequest(window: BrowserWindow, request: PreferencesRequest): void | Promise<void>
@@ -19,11 +24,11 @@ interface PreferencesIPCDependencies {
 }
 
 export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: PreferencesIPCDependencies): void {
-  const local = (event: IpcMainInvokeEvent): BrowserWindow => {
+  const local = (event: IpcMainInvokeEvent): { id: string; window: BrowserWindow } => {
     const record = dependencies.resolveLocal(event.sender)
     if (!record) throw new Error("Preferences can only be opened from a local window")
     validateMainFrame(event, record.window, dependencies.getAllowedOrigins(record.window))
-    return record.window
+    return record
   }
   const preferences = (event: IpcMainInvokeEvent): BrowserWindow => {
     const window = dependencies.resolvePreferences(event.sender)
@@ -40,12 +45,14 @@ export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: Prefere
   }
 
   ipcMain.handle("preferences:open", async (event, section: unknown, context: unknown, toggle: unknown, resume: unknown) => {
-    local(event)
+    const opener = local(event)
     if (typeof toggle !== "undefined" && typeof toggle !== "boolean") throw new Error("Invalid Preferences toggle")
     if (typeof resume !== "undefined" && typeof resume !== "boolean") throw new Error("Invalid Preferences resume flag")
-    await dependencies.openPreferences(requirePreferencesRequest(section, context), toggle === true, resume === true)
+    await dependencies.openPreferences(requirePreferencesRequest(section, context), toggle === true, resume === true, opener.id)
     return { ok: true }
   })
+  ipcMain.handle("preferences:openerStartupState", (event, command: unknown, epoch: unknown) =>
+    dependencies.openerStartupState(preferences(event), requireStartupStateCommand(command), requireOpenerEpoch(epoch)))
   ipcMain.handle("preferences:getSection", (event) => {
     const window = preferences(event)
     return dependencies.getRequest(window) ?? { section: "general" }

@@ -14,12 +14,6 @@ export type { ToolStateCompleted, ToolStateError, ToolStateRunning }
 export const diffCapableTools = new Set(["edit", "patch"])
 export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
 export const TOOL_TITLE_RENDER_CHARACTER_LIMIT = 384
-export const MESSAGE_PART_RENDER_LIMIT = 200
-
-export function getItemsForRender<T>(items: readonly T[], limit: number) {
-  return { parts: items.slice(0, limit), truncated: items.length > limit }
-}
-
 export function limitToolOutputForRender(text: string): string {
   if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
   const suffix = `\n\n${tGlobal("toolCall.output.truncated")}`

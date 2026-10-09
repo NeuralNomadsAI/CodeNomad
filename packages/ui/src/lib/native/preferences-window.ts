@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
 import type { SettingsSectionId } from "../../stores/settings-screen"
 import { getLogger } from "../logger"
+import { normalizeOpenerStartupStateResult, type OpenerStartupStateResult, type StartupStateCommand } from "./startup-state-command"
 
 const sections = new Set<SettingsSectionId>([
   "general", "chat", "notifications", "speech", "remote", "opencode",
@@ -141,6 +142,27 @@ export async function onNativePreferencesTransitionRequested(callback: (id: numb
   if (isElectronHost()) return window.electronAPI?.onPreferencesTransitionRequested?.(handle) ?? (() => undefined)
   if (isTauriHost()) return await listen<unknown>("preferences:transition-requested", (event) => handle(event.payload))
   return () => undefined
+}
+
+/**
+ * Reads or changes startup state of the local window that opened Preferences.
+ * The host resolves that window itself; `epoch` fences mutations against a
+ * newer opener so a change never lands on a window the user did not see.
+ */
+export async function requestOpenerStartupState(command: StartupStateCommand, epoch?: number): Promise<OpenerStartupStateResult> {
+  let value: unknown
+  if (isElectronHost()) {
+    const request = window.electronAPI?.openerStartupState
+    if (!request) throw new Error("Opener startup state is unavailable")
+    value = await request(command, epoch)
+  } else if (isTauriHost()) {
+    value = await invoke<unknown>("preferences_opener_startup_state", { command, epoch: epoch ?? null })
+  } else {
+    throw new Error("Opener startup state is unavailable")
+  }
+  const result = normalizeOpenerStartupStateResult(value)
+  if (!result) throw new Error("Invalid opener startup state")
+  return result
 }
 
 export async function resolveNativePreferencesTransition(id: number, approved: boolean): Promise<void> {

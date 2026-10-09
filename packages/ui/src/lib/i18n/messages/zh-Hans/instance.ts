@@ -47,6 +47,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "空闲",
   "instanceTab.status.ariaLabel": "实例状态：{status}",
   "instanceTab.actions.close.ariaLabel": "关闭实例",
+  "instanceTab.actions.rename": "重命名…",
 
   "instanceShell.leftPanel.sessionsTitle": "会话",
   "instanceShell.leftPanel.instanceInfo": "实例信息",

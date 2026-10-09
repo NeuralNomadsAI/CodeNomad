@@ -24,8 +24,8 @@ const todos = Array.from({ length: 237 }, (_, index) => ({
   id: `todo-${index}`, content: `Task ${String(index).padStart(3, "0")} 完整`, status: "pending", priority: "medium",
 }))
 const error = `Error start: ${"Original error 完整\n".repeat(900)}END-ERROR`
-const textParts = Array.from({ length: 237 }, (_, index) => ({
-  type: "text", text: `Paragraph ${String(index).padStart(3, "0")} 完整.\n\n`,
+const textParts = Array.from({ length: 1237 }, (_, index) => ({
+  type: "text", text: `Paragraph ${String(index).padStart(4, "0")} 完整.\n\n`,
 }))
 const input = { filePath, payload: `INPUT-START ${"Untruncated input 完整 ".repeat(1200)} INPUT-END`, nested: { retained: true } }
 const output = "Distinct output: this is not the tool input"
@@ -38,9 +38,27 @@ const tool = {
         metadata: scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
         content: [{ type: "text", text: scenario === "input" ? output : "Tool completed" }] },
 }
+// A tool inside the omitted range proves derived projections follow the reveal.
+const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },
+  state: { status: "completed", input: { filePath: "/fixture/hidden-range.ts" }, metadata: {}, content: [{ type: "text", text: "hidden range" }] } }
+// Consecutive reads at the start of the omitted range form a collapsed exploration group.
+const reads = (prefix: string, count = 3) => Array.from({ length: count }, (_, index) => ({ ...hiddenTool, id: `${prefix}-read-${index}`,
+  state: { ...hiddenTool.state, input: { filePath: `/fixture/${prefix}-${index}.ts` } } }))
+const groupReads = reads("group")
 // Native API records enter through the real load/normalize/store/display path.
 const message = { id: messageId, type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" },
-  time: { created: 1, completed: 2 }, content: scenario === "parts" ? textParts : [tool] }
+  time: { created: 1, completed: 2 },
+  content: scenario === "parts" ? [...textParts.slice(0, 600), hiddenTool, ...textParts.slice(600)]
+    : scenario === "parts-group" ? [...textParts.slice(0, 500), ...groupReads, ...textParts.slice(500)]
+    // The head ends with one read; revealed reads merge into its group.
+    : scenario === "parts-merge" ? [...textParts.slice(0, 499), ...reads("merge"), ...textParts.slice(499)]
+    // More than one reveal step: revealed text merges into the head row and a placeholder remains.
+    : scenario === "parts-long" ? Array.from({ length: 2237 }, (_, index) => ({ type: "text", text: `Paragraph ${String(index).padStart(4, "0")} 完整.\n\n` }))
+    // A tail of hidden reads renders short, so the placeholder is visible while following the bottom.
+    : scenario === "parts-short-tail" ? [...textParts.slice(0, 1000), ...reads("tail", 499), textParts[1000]]
+    // The head ends with a two-read group the test expands before revealing two more.
+    : scenario === "parts-merge-expanded" ? [...textParts.slice(0, 498), ...reads("expanded", 4), ...textParts.slice(498)]
+    : [tool] }
 const requests: string[] = []
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
@@ -55,9 +73,9 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 2 },
 } as any]])))
 setActiveSession(instanceId, sessionId)
-await applyUiSettings({ showMessageTimeline: false, toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
+await applyUiSettings({ showMessageTimeline: scenario === "parts", toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
   diagnosticsExpansion: "collapsed",
-  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: "expanded", other: "expanded" } } })
+  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: scenario === "parts-short-tail" ? "hidden" : "expanded", other: "expanded" } } })
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <main style={{ display: "flex", height: "800px", width: "1000px" }}>

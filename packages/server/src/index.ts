@@ -28,7 +28,8 @@ import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/networ
 import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
-import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
+import { resolveUpdateFeed, startPreviewReleaseMonitor } from "./releases/dev-release-monitor"
+import { readDesktopProfile } from "./desktop-profile"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
@@ -474,20 +475,29 @@ async function main() {
     minServerVersion: uiResolution.minServerVersion,
   }
 
-  const updateChannel = (process.env.CODENOMAD_UPDATE_CHANNEL ?? "").trim().toLowerCase()
+  serverMeta.desktopProfile = readDesktopProfile(process.env)
+
+  // The feed is a saved server preference, independent of the desktop data
+  // profile and of CODENOMAD_UPDATE_CHANNEL, which hosts read only as a deprecated profile alias.
   const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
-  const isDevVersion = packageJson.version.includes("-dev.") || packageJson.version.includes("-dev-")
-  const enableDevUpdateChecks = updateChannel === "dev" || (updateChannel === "" && isDevVersion)
-  const devReleaseMonitor = enableDevUpdateChecks
-    ? startDevReleaseMonitor({
-        currentVersion: packageJson.version,
-        repo: githubRepo,
-        logger: logger.child({ component: "updates" }),
-        onUpdate: (release) => {
-          serverMeta.update = release
-        },
-      })
-    : null
+  const readUpdateFeed = () => resolveUpdateFeed(settings.getOwner("config", "server")?.updateFeed, packageJson.version)
+  serverMeta.updateFeed = readUpdateFeed()
+  const devReleaseMonitor = startPreviewReleaseMonitor({
+    currentVersion: packageJson.version,
+    repo: githubRepo,
+    logger: logger.child({ component: "updates" }),
+    feed: () => serverMeta.updateFeed ?? "stable",
+    onUpdate: (release) => {
+      serverMeta.update = release
+    },
+  })
+  eventBus.on("storage.configChanged", (event: { owner?: string }) => {
+    if (event.owner !== "server" && event.owner !== "*") return
+    const feed = readUpdateFeed()
+    if (feed === serverMeta.updateFeed) return
+    serverMeta.updateFeed = feed
+    devReleaseMonitor.refresh()
+  })
 
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({

@@ -47,6 +47,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "Idle",
   "instanceTab.status.ariaLabel": "Instance status: {status}",
   "instanceTab.actions.close.ariaLabel": "Close instance",
+  "instanceTab.actions.rename": "Rename…",
 
   "instanceShell.leftPanel.sessionsTitle": "Sessions",
   "instanceShell.leftPanel.instanceInfo": "Instance Info",

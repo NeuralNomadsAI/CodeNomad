@@ -3,6 +3,9 @@ import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, normalize, resolve } from "node:path"
 import { parse as parseYaml } from "yaml"
+import { resolveCrossHostStatePath, resolveLegacyCrossHostStatePath, resolveLegacyTauriDataDirectory } from "./client-state-cross-host"
+import { profileDisplayName, profileScope, resolveExplicitProfile, type ExplicitProfile } from "./data-profile"
+import { resolveTransitionProfile, type SelectionLock, type TransitionCandidate, type TransitionContext, type TransitionResult } from "./profile-transition"
 
 export interface LaunchIntent {
   newWindow: boolean
@@ -10,7 +13,8 @@ export interface LaunchIntent {
 }
 
 export interface StorageScope {
-  channel: string
+  /** Profile storage key; `stable` is the default profile (see data-profile.ts). */
+  profile: string
   configIdentity: string
   scoped: boolean
   userDataPath: string
@@ -97,37 +101,65 @@ export function resolveSelectedConfig(raw: string | undefined, cwd: string): str
   return normalize(target)
 }
 
-function normalizeConfigIdentity(raw: string | undefined, cwd: string): string {
+export function normalizeConfigIdentity(raw: string | undefined, cwd: string): string {
   let target = resolveSelectedConfig(raw?.trim() || "~/.config/codenomad/config.json", cwd)!
   if (/\.json$/i.test(target)) target = join(resolve(target, ".."), "config.yaml")
   if (!/\.ya?ml$/i.test(target)) target = join(target, "config.yaml")
   return process.platform === "win32" ? target.toLowerCase() : target
 }
 
-export function resolveUpdateChannel(environmentChannel: string | undefined, appVersion: string, packaged: boolean): string {
-  const explicit = environmentChannel?.trim().toLowerCase()
-  if (explicit) return explicit.replace(/[^a-z0-9._-]+/g, "-")
-  if (!packaged) return "dev"
-  if (/-dev-v2(?:-|$)/i.test(appVersion)) return "dev-v2"
-  return /-dev(?:\.|-)/i.test(appVersion) ? "dev" : "stable"
+export type LaunchProfile =
+  | { kind: "ready"; key: string; source: ExplicitProfile["source"] | "transition" }
+  | { kind: "ask"; candidates: TransitionCandidate[]; lock: SelectionLock; context: TransitionContext }
+
+/** Resolves the data profile before any profile path, singleton or Chromium storage is fixed. */
+export function resolveLaunchProfile(options: {
+  environment: Record<string, string | undefined>
+  packaged: boolean
+  cliConfig?: string
+  cwd: string
+  baseUserDataPath: string
+  /** Unremembered answer handed to this relaunch by the asking process (already validated). */
+  selectionAnswer?: string
+  transition?: (context: TransitionContext) => TransitionResult
+}): LaunchProfile {
+  const explicit = resolveExplicitProfile(options.environment, options.packaged)
+  if (explicit) return { kind: "ready", ...explicit }
+  if (options.selectionAnswer) {
+    console.info(`[electron-startup] data profile ${profileDisplayName(options.selectionAnswer)} (unremembered answer)`)
+    return { kind: "ready", key: options.selectionAnswer, source: "transition" }
+  }
+  const context: TransitionContext = {
+    configIdentity: normalizeConfigIdentity(options.cliConfig, options.cwd),
+    defaultIdentity: normalizeConfigIdentity(undefined, options.cwd),
+    userDataBase: options.baseUserDataPath,
+    defaultStateFiles: [
+      resolveCrossHostStatePath(options.environment),
+      resolveLegacyCrossHostStatePath(options.environment),
+      join(options.baseUserDataPath, "client-state.json"),
+      join(resolveLegacyTauriDataDirectory(options.environment), "client-state.json"),
+    ],
+  }
+  const result = (options.transition ?? resolveTransitionProfile)(context)
+  if (result.kind === "ask") return { kind: "ask", candidates: result.candidates, lock: result.lock, context }
+  console.info(`[electron-startup] data profile ${profileDisplayName(result.key)} (${result.reason})`)
+  return { kind: "ready", key: result.key, source: "transition" }
 }
 
 export function resolveStorageScope(options: {
-  appVersion: string
-  environmentChannel?: string
+  profileKey: string
   cliConfig?: string
   cwd: string
   baseUserDataPath: string
   packaged: boolean
 }): StorageScope {
-  const channel = resolveUpdateChannel(options.environmentChannel, options.appVersion, options.packaged)
+  const profile = options.profileKey
   const configIdentity = normalizeConfigIdentity(options.cliConfig, options.cwd)
   const defaultIdentity = normalizeConfigIdentity(undefined, options.cwd)
-  const scoped = channel !== "stable" || configIdentity !== defaultIdentity
-  const suffix = createHash("sha256").update(`${channel}\0${configIdentity}`).digest("hex").slice(0, 16)
-  const userDataPath = scoped ? join(options.baseUserDataPath, "scopes", `${channel}-${suffix}`) : options.baseUserDataPath
+  const { scoped, scopeName } = profileScope(profile, configIdentity, defaultIdentity)
+  const userDataPath = scoped ? join(options.baseUserDataPath, "scopes", scopeName) : options.baseUserDataPath
   return {
-    channel,
+    profile,
     configIdentity,
     scoped,
     userDataPath,

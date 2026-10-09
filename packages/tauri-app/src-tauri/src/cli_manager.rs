@@ -1221,6 +1221,11 @@ impl CliProcessManager {
             configure_backend_profile(&mut c, &manager.channel, &manager.config_identity, manager.original_config.as_deref());
             #[cfg(windows)]
             c.env("CODENOMAD_NATIVE_PARENT", "1");
+            // The host's resolved profile wins over any value captured from the user's shell.
+            match crate::data_profile::backend_profile() {
+                Some(profile) => c.env(crate::data_profile::BACKEND_PROFILE_ENVIRONMENT, profile),
+                None => c.env_remove(crate::data_profile::BACKEND_PROFILE_ENVIRONMENT),
+            };
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
                 c.current_dir(cwd);
@@ -1973,15 +1978,14 @@ pub(crate) mod tests {
         for extension in ["json", "yaml"] {
             let original = format!("isolated-profile/custom.{extension}");
             let selected = crate::identity::resolve_selected_config(Some(&original), &cwd, &cwd).unwrap();
-            let scope = crate::identity::resolve_scope(
-                None, Some(&original), "0.20.1-dev-v2", true, &cwd, &cwd, &cwd,
-            );
+            // The dev-v2 data profile (legacy channel alias) is the backend's Mission profile scope.
+            let scope = crate::identity::resolve_scope("dev-v2", Some(&original), &cwd, &cwd, &cwd);
             assert_eq!(std::path::Path::new(&selected), cwd.join(&original));
             assert_ne!(std::path::Path::new(&selected), cwd.join("different-backend-cwd").join(&original));
-            assert_eq!(scope.channel, "dev-v2");
+            assert_eq!(scope.profile, "dev-v2");
             let expected = format!(
                 "{:x}",
-                Sha256::digest(format!("{}\0{}", scope.channel, scope.config_identity))
+                Sha256::digest(format!("{}\0{}", scope.profile, scope.config_identity))
             );
             assert_ne!(
                 expected,
@@ -1993,17 +1997,17 @@ pub(crate) mod tests {
             for _replacement in [false, true] {
                 let mut command = Command::new("node");
                 command.env_remove("CODENOMAD_UPDATE_CHANNEL");
-                configure_backend_profile(&mut command, &scope.channel, &scope.config_identity, Some(&selected));
+                configure_backend_profile(&mut command, &scope.profile, &scope.config_identity, Some(&selected));
                 let env_value = |key| command.get_envs().find(|(name, _)| *name == key).and_then(|(_, value)| value);
                 assert_eq!(env_value("CODENOMAD_UPDATE_CHANNEL"), Some(std::ffi::OsStr::new("dev-v2")));
                 assert_eq!(env_value("CODENOMAD_PROFILE_CONFIG_IDENTITY"), Some(std::ffi::OsStr::new(&scope.config_identity)));
                 assert_eq!(env_value("CLI_CONFIG"), Some(std::ffi::OsStr::new(&selected)));
             }
         }
-        let default = crate::identity::resolve_scope(None, None, "0.20.1-dev-v2", true, &cwd, &cwd, &cwd);
+        let default = crate::identity::resolve_scope("stable", None, &cwd, &cwd, &cwd);
         let mut command = Command::new("node");
         command.env("CLI_CONFIG", "shell-injected-path");
-        configure_backend_profile(&mut command, &default.channel, &default.config_identity, None);
+        configure_backend_profile(&mut command, &default.profile, &default.config_identity, None);
         assert_eq!(command.get_envs().find(|(name, _)| *name == "CLI_CONFIG").and_then(|(_, value)| value), None);
     }
 

@@ -298,6 +298,22 @@ fn saved_history_contains_only_bounded_credential_free_urls_and_native_ids() {
 }
 
 #[test]
+fn browser_tabs_use_one_persistent_profile_separate_from_the_application() {
+    let root = tempfile::tempdir().unwrap();
+    let browser_root = root.path().join("browser");
+    let controller = BrowserController::new(browser_root.clone());
+    assert_eq!(
+        controller.storage_directory(),
+        browser_root.join("shared-v1")
+    );
+    assert_eq!(
+        controller.clone().storage_directory(),
+        controller.storage_directory()
+    );
+    assert_ne!(controller.storage_directory(), root.path());
+}
+
+#[test]
 fn snapshot_url_read_allows_navigation_callback_and_does_not_republish_stale_refs() {
     let (controller, registration) = controller_with_registration();
     let version = controller.page_navigation_version("preview");

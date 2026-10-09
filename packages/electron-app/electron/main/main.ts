@@ -1,9 +1,10 @@
 import "./process-output"
-import { app, BrowserWindow, ipcMain, nativeImage, screen, session, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
@@ -22,27 +23,32 @@ import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
-import { CliProcessManager } from "./process-manager"
+import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, profileDisplayName } from "./data-profile"
+import { LOCK_HEARTBEAT_MS } from "./profile-transition"
+import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
+import { SELECTION_ANSWER_ENVIRONMENT, SELECTION_CLEANUP_ENVIRONMENT, SELECTION_TEMP_PREFIX, sweepSelectionFolders, takeRelaunchHandoff } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
+import { forwardOpenerStartupState, runStartupStateCommandInWindow } from "./opener-startup-state"
+import { resolveProfileRoots } from "./data-profile-cleanup"
+import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
 
-function resolveStoragePaths() {
-  const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
-  if (!app.isPackaged) app.setName("CodeNomad")
+function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const scope = resolveStorageScope({
-    appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
-    cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
+    profileKey, cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
-  // The backend must use the exact desktop profile channel for paused Mission metadata.
-  process.env.CODENOMAD_UPDATE_CHANNEL = scope.channel
-  process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY = scope.configIdentity
+  // The backend must use the exact desktop data profile for paused Mission metadata. It is
+  // handed to the backend command only: in this host CODENOMAD_UPDATE_CHANNEL is a legacy
+  // profile alias that a relaunch would read back as an explicit profile.
+  setBackendProfileScope({ profile: scope.profile, configIdentity: scope.configIdentity })
   const originalConfig = resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
   if (originalConfig) process.env.CLI_CONFIG = originalConfig
   else delete process.env.CLI_CONFIG
@@ -50,7 +56,67 @@ function resolveStoragePaths() {
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
+  // The backend reports the active profile; the default profile is never announced.
+  if (profileKey === DEFAULT_PROFILE_KEY) delete process.env[BACKEND_PROFILE_ENVIRONMENT]
+  else process.env[BACKEND_PROFILE_ENVIRONMENT] = profileDisplayName(profileKey)
   return { scope, browserDataPath, sessionDataPath }
+}
+
+function resolveInitialProfile(baseUserDataPath: string, selectionAnswer: string | undefined): LaunchProfile | undefined {
+  try {
+    return resolveLaunchProfile({
+      environment: process.env, packaged: app.isPackaged, cliConfig: process.env.CLI_CONFIG,
+      cwd: process.cwd(), baseUserDataPath, selectionAnswer,
+    })
+  } catch (error) {
+    // An invalid explicit profile must never silently open another profile.
+    const message = error instanceof InvalidProfileError ? error.message : `Unable to select the CodeNomad data profile: ${error instanceof Error ? error.message : String(error)}`
+    console.error(`[electron-startup] ${message}`)
+    dialog.showErrorBox("CodeNomad cannot start", message)
+    app.exit(1)
+    return undefined
+  }
+}
+
+/**
+ * Several profiles hold restorable state and none was remembered. Chromium storage and the
+ * singleton are fixed before `ready`, so ask from a throwaway profile-free storage location,
+ * record the answer and relaunch into the chosen profile. No profile is opened or written.
+ */
+function runProfileSelection(selection: Extract<LaunchProfile, { kind: "ask" }>) {
+  const temporary = mkdtempSync(join(tmpdir(), SELECTION_TEMP_PREFIX))
+  app.setPath("userData", temporary)
+  app.setPath("sessionData", temporary)
+  const heartbeat = setInterval(() => {
+    selection.lock.heartbeat()
+    // Keeps concurrent launches' age-based sweep away from a question that is still open.
+    try { const time = new Date(); utimesSync(temporary, time, time) } catch {}
+  }, LOCK_HEARTBEAT_MS)
+  void app.whenReady().then(async () => {
+    const content = selectionDialogContent(selection.candidates)
+    const { response } = await dialog.showMessageBox({
+      type: "question", title: content.title, message: content.message, detail: content.detail,
+      buttons: content.buttons, defaultId: 0, cancelId: content.buttons.length, noLink: true,
+    })
+    const key = selectedProfileKey(selection.candidates, response)
+    if (key === undefined) return
+    let remembered = false
+    try {
+      remembered = selection.lock.commit(selection.context, key)
+    } catch (error) {
+      console.error("[electron-startup] failed to remember the profile choice", error)
+    }
+    // An unremembered answer still applies to the relaunch (as in Tauri); the question returns next
+    // time. It travels privately and is consumed at startup, never as the user's CODENOMAD_PROFILE.
+    if (!remembered) process.env[SELECTION_ANSWER_ENVIRONMENT] = profileDisplayName(key)
+    // Chromium may still hold this folder while we exit; the relaunched process removes it.
+    process.env[SELECTION_CLEANUP_ENVIRONMENT] = temporary
+    app.relaunch()
+  }).catch((error) => console.error("[electron-startup] profile selection failed", error)).finally(() => {
+    clearInterval(heartbeat)
+    selection.lock.release()
+    app.exit(0)
+  })
 }
 
 function configureBrowserStorage(browserDataPath: string, sessionDataPath: string) {
@@ -83,16 +149,36 @@ app.commandLine.appendSwitch("remote-debugging-port", "0")
 app.commandLine.appendSwitch("enable-logging")
 process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
 process.setSourceMapsEnabled?.(true)
-const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths()
-const developerNativeIdentity = `electron:${createHash("sha256")
-  .update(`${storageScope.channel}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
-  .digest("hex")
-  .slice(0, 16)}`
-const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
-startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
-  configureBrowserStorage(browserDataPath, sessionDataPath)
-  runPrimary(initialIntent)
-})
+const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
+if (!app.isPackaged) app.setName("CodeNomad")
+let storageScope!: StorageScope
+let sessionDataPath!: string
+let developerNativeIdentity!: string
+// Remove the question folder left by a relaunching predecessor and any older leftovers. The named
+// folder may still be locked for a moment on Windows, so retry once shortly after startup.
+const relaunchHandoff = takeRelaunchHandoff(process.env)
+const selectionCleanup = relaunchHandoff.cleanup
+const sweepSelection = () => sweepSelectionFolders({ temporaryRoot: tmpdir(), named: selectionCleanup })
+sweepSelection()
+if (selectionCleanup) setTimeout(sweepSelection, 10_000).unref()
+const launchProfile = resolveInitialProfile(baseUserDataPath, relaunchHandoff.answer)
+if (launchProfile?.kind === "ask") runProfileSelection(launchProfile)
+else if (launchProfile) startProfile(launchProfile.key)
+
+function startProfile(profileKey: string) {
+  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath } = resolveStoragePaths(baseUserDataPath, profileKey)
+  storageScope = scope
+  sessionDataPath = profileSessionDataPath
+  developerNativeIdentity = `electron:${createHash("sha256")
+    .update(`${storageScope.profile}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
+    .digest("hex")
+    .slice(0, 16)}`
+  const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
+  startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
+    configureBrowserStorage(browserDataPath, sessionDataPath)
+    runPrimary(initialIntent)
+  })
+}
 
 function runPrimary(firstIntent: LaunchIntent) {
   cleanupPackagedChromiumStorage()
@@ -343,12 +429,27 @@ function runPrimary(firstIntent: LaunchIntent) {
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
     browserController,
   })
+  const profileRoots = resolveProfileRoots(baseUserDataPath)
+  setupDataProfileCleanupIPC(ipcMain, {
+    resolveWindow: (sender) => registry.resolve(sender)?.window ?? preferencesWindows.resolve(sender),
+    getAllowedOrigins,
+    roots: () => profileRoots,
+    current: () => ({ key: storageScope.profile, configIdentity: storageScope.configIdentity, defaultIdentity: normalizeConfigIdentity(undefined, process.cwd()) }),
+  })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),
     resolvePreferences: (sender) => preferencesWindows.resolve(sender),
     getAllowedOrigins,
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
+    openerStartupState: async (window, command, epoch) => {
+      const opener = preferencesWindows.opener(window)
+      if (!opener) throw new Error("Preferences window is no longer current")
+      return forwardOpenerStartupState(opener, command, epoch, (openerId, effective) => {
+        const target = registry.get(openerId)?.window
+        return runStartupStateCommandInWindow(target, effective, (url) => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
+      })
+    },
     markReady: (window) => preferencesWindows.markReady(window),
     acceptRequest: async (window, request) => {
       await clientState.setPreferences(request)
@@ -482,13 +583,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false): Promise<void> {
+  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false, openerId?: string): Promise<void> {
     if (resume && clientState.lastPreferences) request = { ...request, section: clientState.lastPreferences.section, scrollTop: clientState.lastPreferences.scrollTop }
     if (toggle && preferencesWindows.current()) {
       preferencesWindows.current()?.close()
       return
     }
-    const reused = preferencesWindows.reuse(request)
+    const reused = preferencesWindows.reuse(request, openerId)
     if (reused) {
       if (!preferencesWindows.isReady(reused)) await clientState.setPreferences(request)
       return
@@ -508,7 +609,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const nativeWindowId = window.id
     const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
-    preferencesWindows.register(window, request)
+    preferencesWindows.register(window, request, openerId)
     const tracker = new WindowStateTracker(window, {
       activeWindowId: "preferences",
       saveWindowState: state => clientState.savePreferencesWindow(state),

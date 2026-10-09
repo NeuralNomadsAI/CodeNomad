@@ -110,12 +110,13 @@ If you want the latest bleeding-edge builds (published as GitHub pre-releases), 
 npx @neuralnomads/codenomad-dev --password <your-password> --launch
 ```
 
-These environment variables control how CodeNomad checks for dev updates:
+Choose which releases are offered in **Settings → Info → Updates → Update feed** (`server.updateFeed` in the CodeNomad config): **Stable releases** or **Previews and stable releases**. Until you choose, builds labelled `-dev-*` (including legacy `-dev-v2-*`) start on the preview feed and other builds on the stable feed. The feed only selects offered releases: changing it never switches windows, drafts, desktop data or the backend, and preview updates open their release page rather than running the stable WinGet installer.
 
 | Env Variable | Description |
 |-------------|-------------|
-| `CODENOMAD_UPDATE_CHANNEL` | Update channel (use `dev` to enable dev build update checks) |
-| `CODENOMAD_GITHUB_REPO` | GitHub repo used for dev release checks (default `NeuralNomadsAI/CodeNomad`) |
+| `CODENOMAD_GITHUB_REPO` | GitHub repo used for preview release checks (default `NeuralNomadsAI/CodeNomad`) |
+
+`CODENOMAD_UPDATE_CHANNEL` no longer affects update checks. Desktop hosts accept it only as a deprecated alias of `CODENOMAD_PROFILE` (see `dev-docs/DESKTOP_DATA_PROFILES.md`). A desktop host sets `CODENOMAD_DESKTOP_PROFILE` on the backend it launches for a non-default data profile; the server only displays it in Settings → Info.
 
 ### HTTP vs HTTPS
 

@@ -6,6 +6,7 @@ import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
+import SessionChildActivity from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -41,7 +42,7 @@ import { MISSION_GROUP_ROW_ID, isMissionGroupOpen, isMissionRootSession, mission
 import { getSessionRootFromMap } from "../stores/session-tree"
 import SessionMissionGroupRow from "./session-mission-group-row"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
+import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -136,6 +137,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+  const descendantActivity = createMemo(() => collectDescendantActivity(sessionStateSessions().get(props.instanceId)))
 
   createEffect(() => {
     const sort = sortBy()
@@ -769,6 +771,9 @@ const SessionList: Component<SessionListProps> = (props) => {
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             <span class="session-item-badges">
+              <Show when={rowProps.hasChildren && !rowProps.expanded && descendantActivity().get(sessionId())}>
+                {(activity) => <SessionChildActivity activity={activity()} />}
+              </Show>
               <Show when={showStatus()}>
                 <span
                   class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}

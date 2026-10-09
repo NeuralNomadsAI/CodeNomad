@@ -44,6 +44,10 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
   } else if (next.logLevel !== undefined) {
     next.logLevel = "DEBUG"
   }
+  // Unknown feeds (including legacy channel names) fall back to the derived default.
+  if (next.updateFeed !== undefined && next.updateFeed !== "stable" && next.updateFeed !== "preview") {
+    delete next.updateFeed
+  }
   if (next.opencodeBinary === "opencode") {
     next.opencodeBinary = "opencode2"
   }

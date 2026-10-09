@@ -5,6 +5,8 @@ mod browser_controller;
 mod cert_manager;
 mod cli_manager;
 mod client_state;
+mod data_profile;
+mod data_profile_cleanup;
 mod developer_mode;
 mod identity;
 mod launch;
@@ -17,6 +19,8 @@ mod native_service_start;
 mod notification_badge;
 mod notification_badge_lifetime;
 mod preferences_window;
+mod profile_selection_dialog;
+mod profile_transition;
 mod shutdown;
 mod view_menu;
 mod window_constraints;
@@ -1693,6 +1697,52 @@ fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalClo
     }
 }
 
+/// Resolves the data profile before the identifier, singleton or WebView storage exists. An
+/// invalid explicit profile fails visibly; a needed question is asked here, synchronously, so no
+/// profile is opened or written before the answer is recorded.
+fn resolve_launch_profile_or_exit(
+    cli_config: Option<&str>,
+    cwd: &std::path::Path,
+    home: &std::path::Path,
+) -> String {
+    let fail = |message: String| -> ! {
+        eprintln!("[startup] {message}");
+        profile_selection_dialog::show_startup_error(&message);
+        std::process::exit(1);
+    };
+    let resolved = identity::resolve_launch_profile(
+        std::env::var(data_profile::PROFILE_ENVIRONMENT).ok().as_deref(),
+        std::env::var(data_profile::LEGACY_CHANNEL_ENVIRONMENT).ok().as_deref(),
+        cli_config,
+        !is_dev_mode(),
+        cwd,
+        home,
+    );
+    match resolved {
+        Ok(identity::LaunchProfile::Ready(profile)) => profile,
+        Ok(identity::LaunchProfile::Ask {
+            candidates,
+            lock,
+            context,
+        }) => {
+            let heartbeat = lock.start_heartbeat();
+            let chosen = profile_selection_dialog::ask(&candidates);
+            drop(heartbeat);
+            let Some(profile) = chosen else {
+                lock.release();
+                std::process::exit(0);
+            };
+            if !lock.commit(&context, &profile) {
+                // The answer still applies to this launch; the question returns next time.
+                eprintln!("[startup] the profile choice could not be remembered");
+            }
+            lock.release();
+            profile
+        }
+        Err(message) => fail(message),
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1703,25 +1753,24 @@ fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
-    let selected_config = std::env::var("CLI_CONFIG").ok();
-    let backend_config = identity::resolve_selected_config(selected_config.as_deref(), &cwd, &home);
+    let cli_config = std::env::var("CLI_CONFIG").ok();
+    let backend_config = identity::resolve_selected_config(cli_config.as_deref(), &cwd, &home);
     // Native listening/certificate readers and every backend spawn must select
     // this same ORIGINAL source, resolved before any startup cwd can change.
+    // Process-wide set_var happens while the process is still single-threaded: before the profile
+    // question may start heartbeat or dialog-toolkit threads. Only the Windows-only WebView2
+    // variables below follow it, where environment access is OS-synchronized.
     if let Some(config) = backend_config.as_deref() {
         std::env::set_var("CLI_CONFIG", config);
     } else {
         std::env::remove_var("CLI_CONFIG");
     }
-    let scope = identity::resolve_scope(
-        std::env::var("CODENOMAD_UPDATE_CHANNEL").ok().as_deref(),
-        selected_config.as_deref(),
-        env!("CARGO_PKG_VERSION"),
-        !is_dev_mode(),
-        &cwd,
-        &home,
-        &local_data,
-    );
     configure_developer_environment();
+    let profile = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
+    let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
+    // The backend reports the active profile; it is applied only to the backend Command (see
+    // cli_manager), never through the process environment.
+    data_profile::set_backend_profile(&profile);
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");
     let executable = std::env::current_exe()
@@ -1793,9 +1842,23 @@ fn main() {
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
+        .manage(data_profile_cleanup::CleanupContext::new(
+            data_profile_cleanup::ProfileRoots {
+                electron_base: identity::electron_user_data_base(&home),
+                webview_root: local_data.join(format!("{}-v2", identity::STABLE_IDENTIFIER)),
+                tauri_data_parent: dirs::data_dir().unwrap_or_else(|| home.clone()),
+                home_client_state: client_state::home_client_state_directory()
+                    .unwrap_or_else(|| home.join(".codenomad").join("client-state")),
+            },
+            data_profile_cleanup::CurrentProfile {
+                key: scope.profile.clone(),
+                config_identity: scope.config_identity.clone(),
+                default_identity: identity::normalize_config_identity(None, &cwd, &home),
+            },
+        ))
         .manage(AppState {
             manager: CliProcessManager::with_profile(
-                setup_scope.channel.clone(),
+                setup_scope.profile.clone(),
                 setup_scope.config_identity.clone(),
                 backend_config.clone(),
             ),
@@ -1910,6 +1973,7 @@ fn main() {
             preferences_window::preferences_get_request,
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
+            preferences_window::preferences_opener_startup_state,
             window_control,
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
@@ -1923,6 +1987,9 @@ fn main() {
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
+            client_state::client_state_startup_command_result,
+            data_profile_cleanup::data_profiles_list_others,
+            data_profile_cleanup::data_profiles_delete_others,
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,

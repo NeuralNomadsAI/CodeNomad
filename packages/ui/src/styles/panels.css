@@ -8,6 +8,7 @@
 @import "./components/session-row-actions.css";
 @import "./components/session-tree.css";
 @import "./components/session-mission-group.css";
+@import "./components/session-child-activity.css";
 @import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";
 @import "./panels/mission-control.css";

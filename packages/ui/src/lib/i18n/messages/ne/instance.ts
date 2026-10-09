@@ -47,6 +47,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "निष्क्रिय",
   "instanceTab.status.ariaLabel": "उदाहरण स्थिति: {status}",
   "instanceTab.actions.close.ariaLabel": "उदाहरण बन्द गर्नुहोस्",
+  "instanceTab.actions.rename": "पुन: नामकरण गर्नुहोस्…",
 
   "instanceShell.leftPanel.sessionsTitle": "सत्रहरू",
   "instanceShell.leftPanel.instanceInfo": "उदाहरण जानकारी",
