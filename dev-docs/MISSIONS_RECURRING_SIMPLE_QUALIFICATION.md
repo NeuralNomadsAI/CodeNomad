@@ -1,6 +1,77 @@
 # Simple recurring Missions — real native qualification
 
-## Result (2026-10-09)
+## Rerun result (2026-10-09, after settlement fixes)
+
+**Journeys A–D pass natively** against the same isolated OpenCode 2.0.26 copy,
+after commits `bdbb35b3` (awaited settlement + revision CAS), `bdb6b80e` and
+`59c7f05c` (event-driven settlement wake) and `702aa3b8` (restart-cut passages
+settle as interrupted). Acceptance of the whole contract remains open for the
+gaps listed below; this is not a claim of full acceptance.
+
+```powershell
+npm run build:missions --workspace packages/server
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> A
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> BCD
+```
+
+The `--bounded`/62-minute modes are gone: every archive must now appear within
+150 s of quiescence (`client.session.wait`), far below the hourly ceiling.
+
+| Journey | Evidence suffix | Result | Coordinator starts | Archive latency |
+| --- | --- | --- | --- | --- |
+| A daily work, backend closed | `z8NPBb` | completed archive, state running, nextDueAt = due + 24 h | **1** | **3.0 s** after quiescence |
+| B restart pending → Resume | `fHv1dw` | `ended-without-report` / `interrupted`, same passage, no continuation | **1** (same message before/after) | settled before first post-Resume read (< 1 s) |
+| C Run now ×2, same schedule | `fHv1dw` | two distinct passages, both completed; exact duplicate request returned the same passage | **1 each** | 2.0 s, 3.1 s |
+| D Pause → Stop | `fHv1dw` | no admission through due + 30 s; Stop terminal, Resume → 503 | **0** | n/a |
+
+Details (full prefix `C:/Users/Admin/AppData/Local/Temp/opencode/recurring-simple-native-`):
+
+- **A** `rcs_7194341d…`: due `1791509340000`, backend/presence closed at
+  `1791509265197`; passage `rcp_c32bcdc1…`, coordinator `ses_05cef120…`, only
+  start `msg_02830109…`; real read → shell → mission_inspect → mission_report.
+  Quiescent `1791509341007`, archive observed `1791509344043` (3 s debounce).
+  `nextDueAt` `1791595740000` = due + 86 400 000. One native root session.
+- **B** `rcs_d0c3f4a1…`: passage `rcp_90305809…`, coordinator `ses_99f9687c…`,
+  start `msg_98704665…`; owned PID `65072` killed mid-turn, replacement `62536`.
+  After restart: Interrupted/service-restart, same pending; 20 s later native
+  active=false, no new provider call (1 total). The DB keeps the coordinator's
+  `time_suspended` claim and no terminal event, as in `f60TKB`. Explicit Resume
+  archived `ended-without-report` with `reason: interrupted`; still exactly one
+  start and one provider call — no continuation was sent.
+- **C** `rcs_a9385e56…` (Play'd, due 6 h away): passages `rcp_68da3978…`
+  (`ses_5b5579c7…`) and `rcp_98a4b70c…` (`ses_1a938bd7…`), each one start and
+  the full tool sequence; history 2, pending null. Replaying the first Run now
+  payload (same requestID/expectedRevision) returned 200 `accepted` with the
+  same passage/message — no second session.
+- **D** `rcs_6f349424…`: as before; no root session after due `1791509520000`.
+
+All recorded PIDs (`48864`, `65072`, `62536`) were absent afterwards and an
+exact executable-path/command-line scan found zero fixture services or Node
+fixture processes.
+
+### Remaining gaps
+
+- Tomorrow's real passage cannot be fast-forwarded natively; the offline day
+  e2e covers the next civil day. Unattended hourly-wake behaviour is unchanged.
+- Restart continuity was exercised only with an owned unmanaged `serve` and a
+  hard kill. Upstream sources sweep orphaned claims only in the managed service
+  at boot; that path (and a resumed claim after archive) is not qualified.
+- Native does not persist event payloads here (the `event` table stays empty),
+  so the observer's `session.execution.failed` lookup cannot see native failures:
+  a failed passage would archive as `ended-without-report`. Not exercised.
+- A Run now on a paused schedule has no Job to settle it until Play/Resume.
+- Descendant/background-family settlement, watched cursors, human Forms and
+  native CAS-conflict/lost-reply journeys remain offline-only.
+
+### Validation
+
+- `npm run typecheck` in packages/server and packages/ui: pass.
+- `recurring-day.e2e.test.ts`: 9/9 (journey A now asserts the archive 5 s after
+  the model finishes, not after the hourly wake).
+- All `src/opencode/missions`, `src/missions/recurrence-*` and recurrence route
+  tests: 320 pass, 1 skipped, 0 fail.
+
+## Previous result (2026-10-09, first run)
 
 **NOT ACCEPTED.** The real OpenCode service performs scheduled useful work with
 the CodeNomad backend and its presence lease closed. Pause/Stop cancellation passes.
@@ -136,7 +207,7 @@ observation boundary. Native DB stores `/`, Location stores `\`; previously a
 settled family falsely appeared moved. The SQL observation regression now stores
 slash-separated paths while the schedule keeps native host paths.
 
-**Unfixed blocker:** during actual settlement publication, the final synchronous
+**Blocker (fixed in `bdbb35b3`, see rerun above):** during actual settlement publication, the final synchronous
 quiescence guard executes SQL with Effect.runSync against the captured observation
 graph. Under the real native transaction this requires asynchronous execution:
 `AsyncFiberError: An asynchronous Effect was executed with Effect.runSync`, then

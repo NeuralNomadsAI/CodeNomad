@@ -1,9 +1,9 @@
 // Real isolated OpenCode + shipped bundle + authenticated production HTTP/HMAC routes.
-// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [A|BCD|ABCD]
+// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [any of A, B, C, D; default ABCD]
 // No installer, default service discovery, shared database/config or pattern kills.
-// Default A and B/C waits include the real hourly Job wake (~62 min). --bounded
-// observes only 30 seconds of settlement: never treat that timeout as hourly qualification.
-// CD tests manual admissions on separate schedules when unresolved settlement blocks reuse.
+// Settlement is event-driven: each archive must follow family quiescence within
+// SETTLE (2.5 min), far below the hourly Job ceiling. Next-day passages cannot be
+// fast-forwarded here; the offline day e2e covers them.
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
@@ -18,7 +18,7 @@ import { OpenCode } from "@opencode/client"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
-assert.match(journeys, /^(A|BCD|CD|D|ABCD)$/, "Journeys: A, BCD, CD, D or ABCD")
+assert.match(journeys, /^A?B?C?D?$/, "Journeys: ordered subset of ABCD")
 const root = await realpath(await mkdtemp(path.join(process.env.LOCALAPPDATA, "Temp/opencode/recurring-simple-native-")))
 const cli = path.join(root, "opencode.exe"), project = path.join(root, "project")
 await copyFile(source, cli)
@@ -178,6 +178,10 @@ async function control(id, action) {
   return http(`/${id}/${action === "run-now" ? "run-now" : "control"}`, {
     requestID: `control_${randomUUID().replaceAll("-", "")}`, expectedRevision: s.revision, ...(action === "run-now" ? {} : { action }) })
 }
+async function runNow(id) {
+  const payload = { requestID: `control_${randomUUID().replaceAll("-", "")}`, expectedRevision: (await snapshot(id)).revision }
+  return { payload, result: await http(`/${id}/run-now`, payload) }
+}
 // Coordinator start messages per passage, read from the isolated native API.
 async function passageStarts(sessionID) {
   const all = (await client.message.list({ sessionID, limit: 100 })).data
@@ -218,10 +222,11 @@ try {
       package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture" }, models: { fixture: {} } } } })
   await writeFile(path.join(env.OPENCODE_CONFIG_DIR, "opencode.json"), "{}\n")
   await start(); await openBackend()
-  // Settlement is observed on the native Job's next wake, at most one hour later
-  // (MISSIONS_RECURRING_SIMPLE.md). The real service clock cannot be compressed.
-  const HOUR_WAKE = process.argv.includes("--bounded") ? 30_000 : 62 * 60_000, SLOW = 5_000
+  // Event-driven settlement: the archive must follow family quiescence well before
+  // the hourly Job ceiling. The real service clock cannot be compressed for tomorrow.
+  const SETTLE = 150_000, SLOW = 1_000
   const nextMinute = lead => Math.ceil((Date.now() + lead) / 60_000) * 60_000
+  const quiet = sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(60_000) })
   if (journeys.includes("A")) {
     stage = "A daily useful work"
     const due = nextMinute(75_000)
@@ -235,19 +240,20 @@ try {
     A.pendingObservedAt = Date.now()
     const sessionID = A.pending.pending.conversationID
     await until(() => done(sessionID), 180_000)
-    A.workDoneAt = Date.now(); A.afterWork = await snapshot(id)
-    A.starts = await passageStarts(sessionID); assert.equal(A.starts.length, 1)
-    A.toolsUsed = evidence.providerCalls.filter(c => c.sessionID === sessionID).map(c => c.name)
-    assert.equal(A.afterWork.latestResult, null, "settlement waits for the Job wake, not a read")
-    await until(async () => (A.settled = await snapshot(id)).history.length === 1, HOUR_WAKE, SLOW)
-    A.settledObservedAt = Date.now()
+    A.workDoneAt = Date.now()
+    await quiet(sessionID); A.quiescentAt = Date.now()
+    stage = "A event-driven archive"
+    await until(async () => (A.settled = await snapshot(id)).history.length === 1, SETTLE, SLOW)
+    A.settledObservedAt = Date.now(); A.archiveLatencyMs = A.settledObservedAt - A.quiescentAt
     assert.equal(A.settled.latestResult.outcome, "completed")
+    assert.equal(A.settled.pending, null)
     assert.equal(A.settled.state, "running", "the same Job stays armed for the next civil day")
     assert.equal(A.settled.nextDueAt, due + 86_400_000)
     A.starts = await passageStarts(sessionID); assert.equal(A.starts.length, 1)
     A.toolsUsed = evidence.providerCalls.filter(c => c.sessionID === sessionID).map(c => c.name)
     A.sessions = await sessions()
     A.result = "passed"
+    if (journeys.length > 1) await openBackend()
   }
   if (journeys.includes("B")) {
     stage = "B restart pending"
@@ -257,69 +263,69 @@ try {
     const B = evidence.journeys.B = { id, before: await snapshot(id) }
     const sessionID = B.before.pending.conversationID
     B.startsBefore = await passageStarts(sessionID)
-    await closeBackend(); await stop(); hold = false; for (const release of releases) release(); releases.clear()
+    await closeBackend(); await stop(); hold = false; held = false; for (const release of releases) release(); releases.clear()
     await start(); B.restartedAt = Date.now()
     B.interrupted = await snapshot(id)
     assert.equal(B.interrupted.state, "interrupted"); assert.equal(B.interrupted.interruptionReason, "service-restart")
     assert.equal(B.interrupted.pending.passageID, B.before.pending.passageID)
-    // Native session resumption is independent of scheduler interruption; observe it before Resume.
+    // Record whether native resumes the cut turn by itself; Resume must not depend on it.
     await delay(20_000)
     B.nativeAfterRestart = { calls: evidence.providerCalls.filter(c => c.sessionID === sessionID).length, done: done(sessionID),
       active: Object.keys(await client.session.active()).includes(sessionID) }
+    assert.equal(B.nativeAfterRestart.active, false)
     await openBackend()
     await control(id, "resume"); B.resumedAt = Date.now()
-    await until(async () => (B.after = await snapshot(id)).history.length === 1, HOUR_WAKE, SLOW)
-    B.settledObservedAt = Date.now()
+    stage = "B interrupted settlement"
+    await until(async () => (B.after = await snapshot(id)).history.length === 1, SETTLE, SLOW)
+    B.settledObservedAt = Date.now(); B.archiveLatencyMs = B.settledObservedAt - B.resumedAt
     assert.equal(B.after.latestResult.passageID, B.before.pending.passageID)
+    assert.equal(B.after.latestResult.outcome, "ended-without-report")
+    assert.equal(B.after.latestResult.reason, "interrupted")
+    assert.equal(B.after.state, "running"); assert.equal(B.after.pending, null)
     B.starts = await passageStarts(sessionID); assert.equal(B.starts.length, 1, "Resume never sends a second coordinator message")
     assert.deepEqual(B.starts.map(m => m.id), B.startsBefore.map(m => m.id))
+    B.callsAfterResume = evidence.providerCalls.filter(c => c.sessionID === sessionID).length
+    assert.equal(B.callsAfterResume, B.nativeAfterRestart.calls, "no continuation turn after Resume")
+    await control(id, "stop")
     B.result = "passed"
-    stage = "C run now"
-    await control(id, "run-now")
-    const C = evidence.journeys.C = { pending: await snapshot(id) }
-    assert.notEqual(C.pending.pending.passageID, B.before.pending.passageID)
-    const sessionC = C.pending.pending.conversationID
-    assert.notEqual(sessionC, sessionID)
-    if (journeys.includes("D")) await journeyD()
-    await until(() => done(sessionC), 180_000)
-    await until(async () => (C.after = await snapshot(id)).history.length === 2, HOUR_WAKE, SLOW)
-    C.settledObservedAt = Date.now()
-    assert.equal(C.after.latestResult.outcome, "completed"); assert.equal(C.after.latestResult.passageID, C.pending.pending.passageID)
-    C.starts = await passageStarts(sessionC); assert.equal(C.starts.length, 1)
-    C.result = "passed"
-  } else if (journeys.includes("C")) {
-    stage = "C distinct Run now admission"
-    const C = evidence.journeys.C = { passages: [] }
+  }
+  if (journeys.includes("C")) {
+    stage = "C repeated Run now on one schedule"
+    const id = await create("Native manual useful work", nextMinute(6 * 3_600_000))
+    await control(id, "play")
+    const C = evidence.journeys.C = { id, passages: [] }
     for (let n = 0; n < 2; n++) {
-      const id = await create(`Native manual useful work ${n + 1}`, nextMinute(6 * 3_600_000))
-      await control(id, "run-now")
+      const { payload } = await runNow(id)
       let pending
       await until(async () => (pending = await snapshot(id)).pending?.conversationID)
       const sessionID = pending.pending.conversationID
-      await until(() => done(sessionID))
-      await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(30_000) })
-      const starts = await passageStarts(sessionID)
-      assert.equal(starts.length, 1)
-      const item = { scheduleID: id, passageID: pending.pending.passageID, sessionID, starts,
+      if (n === 0) {
+        // Exact duplicate request (same requestID/expectedRevision): no second passage.
+        const replay = await bridge.inject({ method: "POST", url: `/api/workspaces/${workspace.id}/missions/recurrence/${id}/run-now`,
+          headers: { cookie: "session=isolated-human" }, payload })
+        C.duplicate = { status: replay.statusCode, body: (() => { try { return replay.json() } catch { return replay.body.slice(0, 200) } })() }
+      }
+      await until(() => done(sessionID), 180_000)
+      await quiet(sessionID); const quiescentAt = Date.now()
+      let after
+      await until(async () => (after = await snapshot(id)).history.length === n + 1, SETTLE, SLOW)
+      const item = { passageID: pending.pending.passageID, sessionID, archiveLatencyMs: Date.now() - quiescentAt,
+        outcome: after.latestResult.outcome, starts: await passageStarts(sessionID),
         tools: evidence.providerCalls.filter(c => c.sessionID === sessionID).map(c => c.name) }
+      assert.equal(after.latestResult.passageID, item.passageID); assert.equal(item.outcome, "completed")
+      assert.equal(item.starts.length, 1)
       C.passages.push(item)
-      // Explicit Pause/Resume reconciles the already finished pending passage immediately;
-      // this is not proof of unattended/hourly settlement and is recorded separately.
-      const state = await snapshot(id)
-      if (state.state === "running") await control(id, "pause")
-      await control(id, "resume")
-      await delay(3_000)
-      item.afterReconciliation = await snapshot(id)
-      item.settled = item.afterReconciliation.history.length === 1
-      await control(id, "stop")
     }
     assert.notEqual(C.passages[0].passageID, C.passages[1].passageID)
     assert.notEqual(C.passages[0].sessionID, C.passages[1].sessionID)
-    C.result = C.passages.every(item => item.settled) ? "passed-distinct-schedules" : "admission-passed-settlement-blocked"
-    if (journeys.includes("D")) await journeyD()
-  } else if (journeys.includes("D")) await journeyD()
-  evidence.outcome = evidence.journeys.C?.result === "admission-passed-settlement-blocked" ? "incomplete" : "passed"
-  if (evidence.outcome === "incomplete") process.exitCode = 2
+    C.rootSessions = (await sessions()).filter(s => !s.parentID).map(s => s.id)
+    assert.equal(C.rootSessions.filter(s => C.passages.some(p => p.sessionID === s)).length, 2)
+    C.final = await snapshot(id)
+    await control(id, "stop")
+    C.result = "passed"
+  }
+  if (journeys.includes("D")) await journeyD()
+  evidence.outcome = "passed"
 } catch (error) {
   evidence.outcome = "failed"; evidence.failedStage = stage; evidence.error = error.message; process.exitCode = 1
   evidence.nativeErrors = output.split("\n").filter(line => /ERROR|WARN|Error:|Cause:|recurrence|codenomad\.missions|job/i.test(line)).slice(-40)

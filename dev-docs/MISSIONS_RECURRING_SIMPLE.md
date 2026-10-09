@@ -108,6 +108,10 @@ Qualify actual capabilities/contracts, not an untested-version allowlist.
 Keep **one native Job per running schedule** in the live OpenCode process.
 It sleeps until `min(nextDueAt, now + 1h)`, then rereads the wall clock and document.
 This hourly ceiling bounds clock-change detection; it is not per-minute polling.
+A native `session.execution.succeeded|failed|interrupted` publication (Bus
+`listen`) also wakes the Job after a 3 s debounce, so settlement follows family
+quiescence in seconds; it is only a wake hint. Without that native contract the
+Job falls back to 30 s → 2 min → 5 min (capped) only while a passage is pending.
 On waking, verify desired running, no conflicting pending passage and a due
 civil day newer than `lastDaily` before attempting the guarded passage start.
 If several days were missed, admit the **latest missed day only**, never a backlog.
