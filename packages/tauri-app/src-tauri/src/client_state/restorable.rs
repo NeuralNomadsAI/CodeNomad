@@ -15,6 +15,7 @@ fn restorable_record(record: &envelope::WindowRecord) -> bool {
     if let Some(keys) = &record.partition_keys {
         return keys.len() > 1;
     }
+    // Legacy monolithic snapshots: sidecar-only tabs are not restorable work, as in the partitioned branch.
     record
         .snapshot
         .as_ref()
@@ -23,7 +24,7 @@ fn restorable_record(record: &envelope::WindowRecord) -> bool {
                 .get("session")?
                 .get("tabs")?
                 .as_array()
-                .map(|tabs| !tabs.is_empty())
+                .map(|tabs| tabs.iter().any(|tab| tab["kind"] == "workspace"))
         })
         .unwrap_or(false)
 }

@@ -163,7 +163,7 @@ fn several_profiles_with_state_ask_once_and_concurrent_launches_wait_for_the_ans
     let waiting = resolve_transition_profile(&sandbox.context, SystemTime::now, |_| {
         waits.set(waits.get() + 1);
         if let Some(lock) = held.take() {
-            lock.commit(&sandbox.context, "dev-v2").unwrap();
+            assert!(lock.commit(&sandbox.context, "dev-v2"));
             lock.release();
         }
     })
@@ -251,6 +251,81 @@ fn a_stale_lock_from_a_crashed_launch_is_taken_over() {
         matches!(result, TransitionResult::Resolved { ref key, reason: Reason::None } if key == "stable")
     );
     assert_eq!(waits.get(), 1);
+}
+
+#[test]
+fn an_unwritable_choices_file_never_prevents_startup() {
+    let sandbox = sandbox();
+    write(&sandbox.scoped_file("dev"), &with_tabs(), SystemTime::now());
+    // A directory in place of choices.json makes the atomic rename fail like EPERM/EBUSY would.
+    fs::create_dir_all(sandbox.directory.join(CHOICES_FILENAME)).unwrap();
+    assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Unremembered));
+    let leftovers = fs::read_dir(&sandbox.directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp") || name == LOCK_FILENAME)
+        .collect::<Vec<_>>();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn an_unusable_selection_directory_or_lock_still_starts_with_the_detected_profile() {
+    let sandbox = sandbox();
+    write(
+        &sandbox.scoped_file("dev-v2"),
+        &with_tabs(),
+        SystemTime::now(),
+    );
+    // A file where the selection directory should be: mkdir and the lock fail without contention.
+    write(&sandbox.directory, "not a directory", SystemTime::now());
+    assert_eq!(sandbox.resolved(), ("dev-v2".into(), Reason::Unremembered));
+    write(
+        &sandbox.context.default_state_files[0],
+        &with_tabs(),
+        SystemTime::now(),
+    );
+    let TransitionResult::Ask { lock, .. } = sandbox.resolve() else {
+        panic!("expected a question");
+    };
+    let heartbeat = lock.start_heartbeat();
+    drop(heartbeat);
+    assert!(!lock.commit(&sandbox.context, "dev-v2"));
+    lock.release();
+    assert_eq!(
+        fs::read_to_string(&sandbox.directory).unwrap(),
+        "not a directory"
+    );
+}
+
+#[test]
+fn choice_keys_fold_unicode_case_on_windows_so_both_hosts_share_a_choice() {
+    for vector in shared_vectors()["choiceKeys"].as_array().unwrap() {
+        let windows = vector["windows"].as_bool().unwrap();
+        let keys = vector["identities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|identity| choice_key_for(identity.as_str().unwrap(), windows))
+            .collect::<Vec<_>>();
+        match vector["key"].as_str() {
+            Some(expected) => assert!(keys.iter().all(|key| key == expected), "{keys:?}"),
+            None => assert_ne!(keys[0], keys[1]),
+        }
+    }
+}
+
+#[test]
+fn dropping_the_heartbeat_joins_its_thread_promptly() {
+    let sandbox = sandbox();
+    fs::create_dir_all(&sandbox.directory).unwrap();
+    let lock = SelectionLock::try_acquire(&sandbox.directory, SystemTime::now())
+        .unwrap()
+        .unwrap();
+    let started = std::time::Instant::now();
+    drop(lock.start_heartbeat());
+    assert!(started.elapsed() < LOCK_HEARTBEAT);
+    lock.release();
 }
 
 #[test]

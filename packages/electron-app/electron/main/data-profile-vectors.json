@@ -52,9 +52,14 @@
     { "name": "restore disabled", "restorable": false, "content": { "version": 3, "activeWindowId": "11111111-2222-4333-8444-555555555555", "windowOrder": ["11111111-2222-4333-8444-555555555555"], "windows": { "11111111-2222-4333-8444-555555555555": { "restoreEnabled": false, "snapshot": { "version": 2, "revision": 1, "savedAt": 1, "layout": {}, "sessionPartition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] }, "partitionProtocolVersion": 1, "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] } } } },
     { "name": "no windows", "restorable": false, "content": { "version": 3, "activeWindowId": "11111111-2222-4333-8444-555555555555", "windowOrder": [], "windows": {} } },
     { "name": "legacy monolithic snapshot with tabs", "restorable": true, "content": { "version": 1, "snapshot": { "session": { "tabs": [{ "kind": "workspace", "folder": "/work" }], "activeTabIndex": 0 } } } },
+    { "name": "legacy monolithic snapshot with only a sidecar tab", "restorable": false, "content": { "version": 1, "snapshot": { "session": { "tabs": [{ "kind": "sidecar", "sidecarId": "notes" }], "activeTabIndex": 0 } } } },
     { "name": "legacy monolithic snapshot without a session", "restorable": false, "content": { "version": 1, "snapshot": { "session": null } } },
     { "name": "future envelope", "restorable": false, "content": { "version": 99, "windows": {} } },
     { "name": "corrupt", "restorable": false, "raw": "{\"version\": 3," }
+  ],
+  "choiceKeys": [
+    { "comment": "Windows: Electron folds the config identity with Unicode lowercase, Tauri with ASCII lowercase. Scope hashes keep that historical divergence; the choices key folds Unicode case on both so the remembered choice is shared.", "identities": ["c:\\users\\\u00e9mile\\.config\\codenomad\\config.yaml", "c:\\users\\\u00c9mile\\.config\\codenomad\\config.yaml"], "windows": true, "key": "6065f53296be20e8c1eb550104f76243ad1645cb34237f28e5d5b20f2e1aa5f0" },
+    { "comment": "Other platforms keep case-sensitive identities: differently cased paths stay distinct.", "identities": ["/home/émile/.config/codenomad/config.yaml", "/home/Émile/.config/codenomad/config.yaml"], "windows": false, "key": null }
   ],
   "explicitProfiles": [
     { "profile": "dev", "channel": "dev-v2", "packaged": true, "key": "dev", "source": "profile" },

@@ -10,7 +10,11 @@ export interface SelectionDialogContent {
   title: string
   message: string
   detail: string
-  /** One button per candidate (most recently used first), then Quit when the platform allows a third button. */
+  /**
+   * One button per candidate (most recently used first), then Quit when a third button is free
+   * (rfd, used by Tauri, allows three). Without Quit, dismissal quits where the platform offers one;
+   * a macOS NSAlert may not, so the user picks a profile there (harmless: nothing is moved).
+   */
   buttons: string[]
 }
 

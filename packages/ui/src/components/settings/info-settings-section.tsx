@@ -153,17 +153,21 @@ export const InfoSettingsSection: Component = () => {
     },
   }))
 
+  // On the preview feed the server already ranked stable releases by publication
+  // order; a SemVer comparison against the stable fallback would offer an older stable.
+  const stableFallback = createMemo(() => meta()?.updateFeed === "preview" ? null : supportInfo())
+
   const latestVersion = createMemo(() => {
     const update = updateInfo()
     if (update?.version) return update.version
-    return supportInfo()?.latestServerVersion ?? null
+    return stableFallback()?.latestServerVersion ?? null
   })
 
   const showDownloadLink = createMemo(() => {
     let url: string | null = null
     const update = updateInfo()
     if (update?.url) url = update.url
-    else if (supportInfo()?.latestServerUrl) url = supportInfo()!.latestServerUrl ?? null
+    else if (stableFallback()?.latestServerUrl) url = stableFallback()!.latestServerUrl ?? null
     if (!url) return { url: null, show: false }
     if (update?.url) return { url, show: true }
     const current = meta()?.serverVersion

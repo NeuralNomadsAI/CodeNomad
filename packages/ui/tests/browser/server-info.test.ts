@@ -117,6 +117,22 @@ test("the update feed is saved as a server preference and only changes the offer
   } finally { await page.close() }
 })
 
+test("the preview feed never offers an older stable release through the SemVer fallback", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  await setup(page, "tauri")
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta"
+      ? { ...baseMeta, serverVersion: "0.20.1-dev-20261009-43165435", updateFeed: "preview", update: null,
+        support: { supported: true, latestServerVersion: "0.20.1", latestServerUrl: "https://example.test/stable" } }
+      : {}) }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (document.getElementById("settings-update-feed") as HTMLSelectElement | null)?.value === "preview")
+    assert.equal(await rowValue(page, "Latest version").innerText(), "—")
+    assert.equal(await page.locator('a[href="https://example.test/stable"]').count(), 0)
+  } finally { await page.close() }
+})
+
 test("the data profile row appears only for an explicit non-default profile", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   await setup(page, "electron")

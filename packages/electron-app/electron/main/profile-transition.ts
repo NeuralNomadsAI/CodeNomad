@@ -54,8 +54,9 @@ function restorableRecord(record: ClientWindowStateRecord): boolean {
   if (!record.restoreEnabled) return false
   // A partitioned root always references its session partition; any further key is a workspace tab.
   if (record.partitionKeys) return record.partitionKeys.length > 1
+  // Legacy monolithic snapshots: sidecar-only tabs are not restorable work, as in the partitioned branch.
   const tabs = (record.snapshot as { session?: { tabs?: unknown } } | undefined)?.session?.tabs
-  return Array.isArray(tabs) && tabs.length > 0
+  return Array.isArray(tabs) && tabs.some((tab) => (tab as { kind?: unknown } | null)?.kind === "workspace")
 }
 
 /** Bounded, read-only check using the regular envelope parser; unsupported files never count. */
@@ -93,7 +94,15 @@ export function detectCandidates(context: TransitionContext): TransitionCandidat
   return candidates.sort((left, right) => right.lastUsed - left.lastUsed)
 }
 
-export const choiceKey = (configIdentity: string) => createHash("sha256").update(configIdentity).digest("hex")
+/**
+ * Key of a remembered choice. Windows config identities are case-insensitive but each host folds
+ * them differently (Electron: Unicode, Tauri: ASCII), and scope hashes must keep that historical
+ * fold. The choices file is new, so its key folds Unicode case on Windows on both hosts (idempotent
+ * over either host's identity) and a choice is shared even for paths such as `C:\Users\Émile`. No
+ * folder depends on this key. Other platforms keep case-sensitive identities.
+ */
+export const choiceKey = (configIdentity: string, platform: NodeJS.Platform = process.platform) =>
+  createHash("sha256").update(platform === "win32" ? configIdentity.toLowerCase() : configIdentity).digest("hex")
 
 type ChoicesFile =
   | { status: "absent" | "corrupt"; choices: Record<string, string> }
@@ -134,7 +143,11 @@ function rememberedKey(directory: string, configIdentity: string): string | unde
   return name === undefined ? undefined : parseProfileName(name)
 }
 
-/** Stores the profile name (never a path); a valid existing choice for this config is never replaced. */
+/**
+ * Stores the profile name (never a path); a valid existing choice for this config is never replaced.
+ * Remembering is best effort: an I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile)
+ * only means the transition runs again next launch, so it never prevents startup.
+ */
 function writeChoice(directory: string, configIdentity: string, key: string): boolean {
   const file = readChoices(directory)
   if (file.status === "future") return false
@@ -153,15 +166,28 @@ function writeChoice(directory: string, configIdentity: string, key: string): bo
     }
     renameSync(temporary, join(directory, CHOICES_FILENAME))
     return true
+  } catch (error) {
+    console.warn("[profile-transition] failed to remember the profile choice", error)
+    return false
   } finally {
-    rmSync(temporary, { force: true })
+    try { rmSync(temporary, { force: true }) } catch {}
   }
 }
 
-/** Cross-process selection lock: exclusive create, kept alive by heartbeats, stolen only when stale. */
+/**
+ * Cross-process selection lock: exclusive create, kept alive by heartbeats, stolen only when stale.
+ * When the lock cannot be used at all (I/O errors other than contention), detection, which is
+ * read-only, proceeds without it: concurrent first launches may then each ask, and the first
+ * remembered answer wins for later launches.
+ */
 export class SelectionLock {
   private released = false
-  private constructor(readonly directory: string, readonly token: string) {}
+  private constructor(readonly directory: string, readonly token: string | undefined) {}
+
+  /** A lock that guards nothing; used only when the lock file itself is unusable. */
+  static unguarded(directory: string): SelectionLock {
+    return new SelectionLock(directory, undefined)
+  }
 
   static tryAcquire(directory: string, now: () => number): SelectionLock | undefined {
     const path = join(directory, LOCK_FILENAME)
@@ -182,6 +208,9 @@ export class SelectionLock {
       throw error
     }
     // Move the stale lock aside atomically; restore it if a fresh holder replaced it meanwhile.
+    // Accepted race (no cross-host primitive closes it): if a third launcher creates a new lock
+    // between our rename and the restoring link, the link fails and two holders may both ask. The
+    // outcome is bounded: the first remembered answer wins, the other applies to its launch only.
     const aside = join(directory, `${LOCK_FILENAME}.stale-${token}`)
     try { renameSync(path, aside) } catch (error) { if (hasCode(error, "ENOENT")) return undefined; throw error }
     try {
@@ -193,7 +222,7 @@ export class SelectionLock {
   }
 
   heartbeat(): void {
-    if (this.released) return
+    if (this.released || this.token === undefined) return
     const time = new Date()
     try { utimesSync(join(this.directory, LOCK_FILENAME), time, time) } catch {}
   }
@@ -201,6 +230,7 @@ export class SelectionLock {
   release(): void {
     if (this.released) return
     this.released = true
+    if (this.token === undefined) return
     const path = join(this.directory, LOCK_FILENAME)
     try {
       if (JSON.parse(readFileSync(path, "utf8")).token === this.token) rmSync(path, { force: true })
@@ -224,10 +254,22 @@ export function resolveTransitionProfile(
   const directory = selectionDirectory(context.userDataBase)
   const remembered = rememberedKey(directory, context.configIdentity)
   if (remembered !== undefined) return { kind: "resolved", key: remembered, reason: "remembered" }
-  mkdirSync(directory, { recursive: true })
+  let lockUsable = true
+  try {
+    mkdirSync(directory, { recursive: true })
+  } catch (error) {
+    console.warn("[profile-transition] selection directory unavailable; continuing without remembering", error)
+    lockUsable = false
+  }
   // Concurrent first launches wait here: only the lock holder detects, asks and records.
   for (;;) {
-    const lock = SelectionLock.tryAcquire(directory, dependencies.now)
+    let lock: SelectionLock | undefined
+    try {
+      lock = lockUsable ? SelectionLock.tryAcquire(directory, dependencies.now) : SelectionLock.unguarded(directory)
+    } catch (error) {
+      console.warn("[profile-transition] selection lock unavailable; continuing unguarded", error)
+      lock = SelectionLock.unguarded(directory)
+    }
     if (!lock) {
       dependencies.sleep(LOCK_POLL_MS)
       const decided = rememberedKey(directory, context.configIdentity)

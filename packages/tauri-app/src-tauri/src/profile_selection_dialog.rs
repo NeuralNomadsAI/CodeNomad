@@ -78,6 +78,9 @@ pub(crate) fn selected_profile_key(
 }
 
 /// Shows the native question synchronously, before the Tauri builder or any profile path exists.
+/// rfd allows three custom buttons, so with three candidates there is no Quit button: dismissal
+/// (`Cancel`) quits on Windows and GTK, while a macOS `NSAlert` offers no dismissal and the user
+/// must pick a profile (harmless: nothing is moved; see dev-docs/DESKTOP_DATA_PROFILES.md).
 pub(crate) fn ask(candidates: &[Candidate]) -> Option<String> {
     let content = selection_dialog_content(candidates);
     let [first, second, third] =

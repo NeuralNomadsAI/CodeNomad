@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session, shel
 import http from "node:http"
 import https from "node:https"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -31,6 +31,7 @@ import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchI
 import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, PROFILE_ENVIRONMENT, profileDisplayName } from "./data-profile"
 import { LOCK_HEARTBEAT_MS } from "./profile-transition"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
+import { SELECTION_CLEANUP_ENVIRONMENT, SELECTION_TEMP_PREFIX, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import { forwardOpenerStartupState, runStartupStateCommandInWindow } from "./opener-startup-state"
@@ -74,10 +75,14 @@ function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefi
  * record the answer and relaunch into the chosen profile. No profile is opened or written.
  */
 function runProfileSelection(selection: Extract<LaunchProfile, { kind: "ask" }>) {
-  const temporary = mkdtempSync(join(tmpdir(), "codenomad-profile-selection-"))
+  const temporary = mkdtempSync(join(tmpdir(), SELECTION_TEMP_PREFIX))
   app.setPath("userData", temporary)
   app.setPath("sessionData", temporary)
-  const heartbeat = setInterval(() => selection.lock.heartbeat(), LOCK_HEARTBEAT_MS)
+  const heartbeat = setInterval(() => {
+    selection.lock.heartbeat()
+    // Keeps concurrent launches' age-based sweep away from a question that is still open.
+    try { const time = new Date(); utimesSync(temporary, time, time) } catch {}
+  }, LOCK_HEARTBEAT_MS)
   void app.whenReady().then(async () => {
     const content = selectionDialogContent(selection.candidates)
     const { response } = await dialog.showMessageBox({
@@ -94,6 +99,8 @@ function runProfileSelection(selection: Extract<LaunchProfile, { kind: "ask" }>)
     }
     // An unremembered answer still applies to the relaunch (as in Tauri); the question returns next time.
     if (!remembered) process.env[PROFILE_ENVIRONMENT] = profileDisplayName(key)
+    // Chromium may still hold this folder while we exit; the relaunched process removes it.
+    process.env[SELECTION_CLEANUP_ENVIRONMENT] = temporary
     app.relaunch()
   }).catch((error) => console.error("[electron-startup] profile selection failed", error)).finally(() => {
     clearInterval(heartbeat)
@@ -137,6 +144,13 @@ if (!app.isPackaged) app.setName("CodeNomad")
 let storageScope!: StorageScope
 let sessionDataPath!: string
 let developerNativeIdentity!: string
+// Remove the question folder left by a relaunching predecessor and any older leftovers. The named
+// folder may still be locked for a moment on Windows, so retry once shortly after startup.
+const selectionCleanup = process.env[SELECTION_CLEANUP_ENVIRONMENT]
+delete process.env[SELECTION_CLEANUP_ENVIRONMENT]
+const sweepSelection = () => sweepSelectionFolders({ temporaryRoot: tmpdir(), named: selectionCleanup })
+sweepSelection()
+if (selectionCleanup) setTimeout(sweepSelection, 10_000).unref()
 const launchProfile = resolveInitialProfile(baseUserDataPath)
 if (launchProfile?.kind === "ask") runProfileSelection(launchProfile)
 else if (launchProfile) startProfile(launchProfile.key)

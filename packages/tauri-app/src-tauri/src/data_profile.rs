@@ -17,6 +17,20 @@ pub(crate) const TRANSITION_PROFILE_KEYS: [&str; 3] = [DEFAULT_PROFILE_KEY, "dev
 
 const MAX_PROFILE_NAME: usize = 64;
 
+/// Profile announced to the backend; set once at startup. Kept out of the process environment so
+/// no `std::env::set_var` runs while the heartbeat or dialog-toolkit threads may be alive.
+static BACKEND_PROFILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+pub(crate) fn set_backend_profile(key: &str) {
+    let announced = (key != DEFAULT_PROFILE_KEY).then(|| profile_display_name(key).to_string());
+    let _ = BACKEND_PROFILE.set(announced);
+}
+
+/// `Some(name)` for a non-default profile; the default profile is never announced.
+pub(crate) fn backend_profile() -> Option<&'static str> {
+    BACKEND_PROFILE.get().and_then(|profile| profile.as_deref())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProfileSource {
     Profile,

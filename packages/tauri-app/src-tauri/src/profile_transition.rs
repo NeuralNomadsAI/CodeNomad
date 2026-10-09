@@ -105,11 +105,25 @@ pub(crate) fn detect_candidates(context: &TransitionContext) -> Vec<Candidate> {
     candidates
 }
 
-pub(crate) fn choice_key(config_identity: &str) -> String {
-    Sha256::digest(config_identity.as_bytes())
+/// Key of a remembered choice. Windows config identities are case-insensitive but each host folds
+/// them differently (Electron: Unicode, Tauri: ASCII), and scope hashes must keep that historical
+/// fold. The choices file is new, so its key folds Unicode case on Windows on both hosts
+/// (idempotent over either host's identity) and a choice is shared even for paths such as
+/// `C:\Users\Émile`. No folder depends on this key. Other platforms stay case-sensitive.
+pub(crate) fn choice_key_for(config_identity: &str, windows: bool) -> String {
+    let identity = if windows {
+        config_identity.to_lowercase()
+    } else {
+        config_identity.to_string()
+    };
+    Sha256::digest(identity.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+pub(crate) fn choice_key(config_identity: &str) -> String {
+    choice_key_for(config_identity, cfg!(windows))
 }
 
 #[derive(Debug, PartialEq)]
@@ -177,7 +191,19 @@ fn remembered_key(directory: &Path, config_identity: &str) -> Option<String> {
 }
 
 /// Stores the profile name (never a path); a valid existing choice for this config is never replaced.
-fn write_choice(directory: &Path, config_identity: &str, key: &str) -> Result<bool, String> {
+/// Remembering is best effort: an I/O failure (antivirus EPERM/EBUSY, full disk, read-only profile)
+/// only means the transition runs again next launch, so it never prevents startup.
+fn write_choice(directory: &Path, config_identity: &str, key: &str) -> bool {
+    match try_write_choice(directory, config_identity, key) {
+        Ok(stored) => stored,
+        Err(error) => {
+            eprintln!("[profile-transition] {error}");
+            false
+        }
+    }
+}
+
+fn try_write_choice(directory: &Path, config_identity: &str, key: &str) -> Result<bool, String> {
     let file = read_choices(directory);
     if file == ChoicesFile::Future {
         return Ok(false);
@@ -214,14 +240,27 @@ fn write_choice(directory: &Path, config_identity: &str, key: &str) -> Result<bo
 }
 
 /// Cross-process selection lock: exclusive create, kept alive by heartbeats, stolen only when stale.
+/// When the lock cannot be used at all (I/O errors other than contention), detection, which is
+/// read-only, proceeds without it: concurrent first launches may then each ask, and the first
+/// remembered answer wins for later launches.
 #[derive(Debug)]
 pub(crate) struct SelectionLock {
     directory: PathBuf,
-    token: String,
+    /// `None` for an unguarded lock that owns no file.
+    token: Option<String>,
     released: bool,
 }
 
 impl SelectionLock {
+    /// A lock that guards nothing; used only when the lock file itself is unusable.
+    fn unguarded(directory: &Path) -> Self {
+        Self {
+            directory: directory.to_path_buf(),
+            token: None,
+            released: false,
+        }
+    }
+
     fn try_acquire(directory: &Path, now: SystemTime) -> Result<Option<Self>, String> {
         let path = directory.join(LOCK_FILENAME);
         let token = uuid::Uuid::new_v4().to_string();
@@ -233,7 +272,7 @@ impl SelectionLock {
                     .map_err(|error| error.to_string())?;
                 return Ok(Some(Self {
                     directory: directory.to_path_buf(),
-                    token,
+                    token: Some(token),
                     released: false,
                 }));
             }
@@ -256,6 +295,9 @@ impl SelectionLock {
             return Ok(None);
         };
         // Move the stale lock aside atomically; restore it if a fresh holder replaced it meanwhile.
+        // Accepted race (no cross-host primitive closes it): if a third launcher creates a new lock
+        // between our rename and the restoring link, the link fails and two holders may both ask.
+        // The outcome is bounded: the first remembered answer wins, the other applies to its launch.
         let aside = directory.join(format!("{LOCK_FILENAME}.stale-{token}"));
         if fs::rename(&path, &aside).is_err() {
             return Ok(None);
@@ -271,25 +313,32 @@ impl SelectionLock {
         self.directory.join(LOCK_FILENAME)
     }
 
-    /// Keeps the lock fresh while a dialog blocks the calling thread; stops when the guard drops.
+    /// Keeps the lock fresh while a dialog blocks the calling thread. Dropping the guard stops and
+    /// joins the thread, so no heartbeat thread outlives the question.
     pub(crate) fn start_heartbeat(&self) -> HeartbeatGuard {
         let stop = Arc::new(AtomicBool::new(false));
-        let path = self.lock_path();
+        let path = self.token.as_ref().map(|_| self.lock_path());
         let thread_stop = Arc::clone(&stop);
-        std::thread::spawn(move || {
+        let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Acquire) {
-                if let Ok(handle) = OpenOptions::new().write(true).open(&path) {
+                if let Some(Ok(handle)) = path
+                    .as_ref()
+                    .map(|path| OpenOptions::new().write(true).open(path))
+                {
                     let _ = handle.set_modified(SystemTime::now());
                 }
-                std::thread::sleep(LOCK_HEARTBEAT);
+                std::thread::park_timeout(LOCK_HEARTBEAT);
             }
         });
-        HeartbeatGuard(stop)
+        HeartbeatGuard {
+            stop,
+            thread: Some(thread),
+        }
     }
 
-    /// Records the user's answer while still holding the lock.
-    pub(crate) fn commit(&self, context: &TransitionContext, key: &str) -> Result<(), String> {
-        write_choice(&self.directory, &context.config_identity, key).map(|_| ())
+    /// Records the user's answer while still holding the lock; false when it could not be remembered.
+    pub(crate) fn commit(&self, context: &TransitionContext, key: &str) -> bool {
+        write_choice(&self.directory, &context.config_identity, key)
     }
 
     pub(crate) fn release(mut self) {
@@ -300,11 +349,14 @@ impl SelectionLock {
         if std::mem::replace(&mut self.released, true) {
             return;
         }
+        let Some(token) = self.token.as_deref() else {
+            return;
+        };
         let path = self.lock_path();
         let owned = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .is_some_and(|value| value["token"].as_str() == Some(self.token.as_str()));
+            .is_some_and(|value| value["token"].as_str() == Some(token));
         if owned {
             let _ = fs::remove_file(path);
         }
@@ -317,11 +369,18 @@ impl Drop for SelectionLock {
     }
 }
 
-pub(crate) struct HeartbeatGuard(Arc<AtomicBool>);
+pub(crate) struct HeartbeatGuard {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
 
 impl Drop for HeartbeatGuard {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Release);
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
+            let _ = thread.join();
+        }
     }
 }
 
@@ -337,11 +396,26 @@ pub(crate) fn resolve_transition_profile(
             reason: Reason::Remembered,
         });
     }
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("failed to create {}: {error}", directory.display()))?;
+    let lock_usable = match fs::create_dir_all(&directory) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "[profile-transition] selection directory unavailable; continuing without remembering: {error}"
+            );
+            false
+        }
+    };
     // Concurrent first launches wait here: only the lock holder detects, asks and records.
     loop {
-        let Some(lock) = SelectionLock::try_acquire(&directory, now())? else {
+        let acquired = if lock_usable {
+            SelectionLock::try_acquire(&directory, now()).unwrap_or_else(|error| {
+                eprintln!("[profile-transition] selection lock unavailable; continuing unguarded: {error}");
+                Some(SelectionLock::unguarded(&directory))
+            })
+        } else {
+            Some(SelectionLock::unguarded(&directory))
+        };
+        let Some(lock) = acquired else {
             sleep(LOCK_POLL);
             if let Some(key) = remembered_key(&directory, &context.config_identity) {
                 return Ok(TransitionResult::Resolved {
@@ -365,7 +439,7 @@ pub(crate) fn resolve_transition_profile(
             .first()
             .map(|candidate| candidate.key.clone())
             .unwrap_or_else(|| DEFAULT_PROFILE_KEY.to_string());
-        let stored = write_choice(&directory, &context.config_identity, &key)?;
+        let stored = write_choice(&directory, &context.config_identity, &key);
         let reason = match (stored, candidates.is_empty()) {
             (false, _) => Reason::Unremembered,
             (true, true) => Reason::None,

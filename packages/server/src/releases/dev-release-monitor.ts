@@ -46,16 +46,26 @@ const publishedOf = (release: GithubReleaseListItem) => Date.parse(release.publi
 /** Preview builds reuse the last stable version plus a `-dev-*` (or legacy
  * `-dev-v2-*`) label, so SemVer alone ranks newer previews below their base
  * release. Offer the newest published release of any kind, newer by
- * publication than the installed release when it is known. */
-export function selectPreviewRelease(list: GithubReleaseListItem[], currentVersion: string): GithubReleaseListItem | null {
+ * publication than the installed release when it is known. The installed
+ * release may be older than the fetched page; `lookupInstalled` then fetches
+ * it by tag. Only builds GitHub does not know fall back to version order. */
+export async function findPreviewRelease(
+  list: GithubReleaseListItem[],
+  currentVersion: string,
+  lookupInstalled: (tag: string) => Promise<GithubReleaseListItem | null> = async () => null,
+): Promise<GithubReleaseListItem | null> {
   const releases = list.filter((release) => release && release.draft !== true && stripTagPrefix(tagOf(release)))
   const latest = releases.reduce<GithubReleaseListItem | null>((best, release) =>
     !best || publishedOf(release) > publishedOf(best) ? release : best, null)
   if (!latest) return null
   const current = stripTagPrefix(currentVersion)
   const latestVersion = stripTagPrefix(tagOf(latest))
-  if (latestVersion === current) return null
-  const installed = releases.find((release) => stripTagPrefix(tagOf(release)) === current)
+  if (!current || latestVersion === current) return null
+  let installed = releases.find((release) => stripTagPrefix(tagOf(release)) === current) ?? null
+  if (!installed) {
+    const found = await lookupInstalled(`v${current}`).catch(() => null)
+    installed = found && found.draft !== true && stripTagPrefix(tagOf(found)) === current && publishedOf(found) ? found : null
+  }
   if (installed) return publishedOf(latest) > publishedOf(installed) ? latest : null
   return compareVersionStrings(latestVersion!, currentVersion) > 0 ? latest : null
 }
@@ -111,20 +121,20 @@ async function fetchLatestPreview(args: {
     throw new Error(`Invalid GitHub repo: ${args.repo}`)
   }
 
+  const headers = { Accept: "application/vnd.github+json", "User-Agent": "CodeNomad-CLI" }
   const apiUrl = `https://api.github.com/repos/${normalizedRepo}/releases?per_page=30`
-  const response = await fetch(apiUrl, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "CodeNomad-CLI",
-    },
-  })
+  const response = await fetch(apiUrl, { headers })
 
   if (!response.ok) {
     throw new Error(`GitHub releases API responded with ${response.status}`)
   }
 
   const list = (await response.json()) as GithubReleaseListItem[]
-  const latest = selectPreviewRelease(Array.isArray(list) ? list : [], args.currentVersion)
+  const lookupInstalled = async (tag: string) => {
+    const installed = await fetch(`https://api.github.com/repos/${normalizedRepo}/releases/tags/${encodeURIComponent(tag)}`, { headers })
+    return installed.ok ? (await installed.json()) as GithubReleaseListItem : null
+  }
+  const latest = await findPreviewRelease(Array.isArray(list) ? list : [], args.currentVersion, lookupInstalled)
   const tag = latest ? tagOf(latest) : ""
   const version = stripTagPrefix(tag)
   if (!latest || !version) return null

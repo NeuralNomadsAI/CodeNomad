@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
 import { profileScope } from "./data-profile"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
+import { SELECTION_TEMP_MAX_AGE_MS, SELECTION_TEMP_PREFIX, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { choiceKey, hasRestorableState, LOCK_STALE_MS, readChoices, resolveTransitionProfile, selectionDirectory, type TransitionContext } from "./profile-transition"
 
 const vectors = JSON.parse(readFileSync(new URL("./data-profile-vectors.json", import.meta.url), "utf8"))
@@ -117,6 +118,65 @@ test("choices are keyed by config identity", (t) => {
   write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey("/other/config.yaml")]: "dev" } }))
   assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "none" })
   assert.deepEqual(Object.values((readChoices(directory) as { choices: Record<string, string> }).choices).sort(), ["default", "dev"])
+})
+
+test("an unwritable choices file never prevents startup: the detected profile is used unremembered", (t) => {
+  const { write, scopedFile, resolve, directory } = sandbox(t)
+  write(scopedFile("dev"), WITH_TABS)
+  // A directory in place of choices.json makes the atomic rename fail like EPERM/EBUSY would.
+  mkdirSync(join(directory, "choices.json"), { recursive: true })
+  assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "unremembered" })
+  assert.equal(readdirSync(directory).filter((entry) => entry.endsWith(".tmp")).length, 0)
+  assert.equal(readdirSync(directory).includes("choices.lock"), false)
+})
+
+test("an unusable selection directory or lock still starts with the detected profile", (t) => {
+  const { write, scopedFile, resolve, context, directory } = sandbox(t)
+  write(scopedFile("dev-v2"), WITH_TABS)
+  // A file where the selection directory should be: mkdir and the lock both fail without EEXIST contention.
+  write(directory, "not a directory")
+  assert.deepEqual(resolve(), { kind: "resolved", key: "dev-v2", reason: "unremembered" })
+  write(context.defaultStateFiles[0]!, WITH_TABS)
+  const asked = resolve()
+  assert.equal(asked.kind, "ask")
+  if (asked.kind !== "ask") return
+  assert.equal(asked.lock.commit(context, "dev-v2"), false)
+  asked.lock.heartbeat()
+  asked.lock.release()
+  assert.equal(readFileSync(directory, "utf8"), "not a directory")
+})
+
+test("choice keys fold Unicode case on Windows so both hosts share a choice", () => {
+  for (const vector of vectors.choiceKeys) {
+    const keys = vector.identities.map((identity: string) => choiceKey(identity, vector.windows ? "win32" : "linux"))
+    if (vector.key) for (const key of keys) assert.equal(key, vector.key)
+    else assert.notEqual(keys[0], keys[1])
+  }
+})
+
+test("question folders are removed by the relaunched process and stale leftovers are swept", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-selection-sweep-"))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const folder = (name: string, age = 0) => {
+    const path = join(root, name)
+    mkdirSync(join(path, "Network"), { recursive: true })
+    writeFileSync(join(path, "Local State"), "{}")
+    const time = (Date.now() - age) / 1000
+    utimesSync(path, time, time)
+    return path
+  }
+  const named = folder(`${SELECTION_TEMP_PREFIX}named`)
+  const fresh = folder(`${SELECTION_TEMP_PREFIX}fresh`)
+  const stale = folder(`${SELECTION_TEMP_PREFIX}stale`, SELECTION_TEMP_MAX_AGE_MS + 60_000)
+  const unrelated = folder("other-stale", SELECTION_TEMP_MAX_AGE_MS + 60_000)
+  const outside = mkdtempSync(join(tmpdir(), SELECTION_TEMP_PREFIX))
+  t.after(() => rmSync(outside, { recursive: true, force: true }))
+  assert.deepEqual(sweepSelectionFolders({ temporaryRoot: root, named }).sort(), [named, stale].sort())
+  assert.deepEqual(readdirSync(root).sort(), [`${SELECTION_TEMP_PREFIX}fresh`, "other-stale"])
+  // A named path outside the temporary root, or without the prefix, is never removed.
+  assert.deepEqual(sweepSelectionFolders({ temporaryRoot: root, named: outside }), [])
+  assert.deepEqual(sweepSelectionFolders({ temporaryRoot: root, named: unrelated }), [])
+  assert.equal(existsSync(outside) && existsSync(fresh) && existsSync(unrelated), true)
 })
 
 test("a stale lock from a crashed launch is taken over", (t) => {

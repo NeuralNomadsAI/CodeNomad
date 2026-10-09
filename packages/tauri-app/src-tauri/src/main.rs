@@ -1731,9 +1731,9 @@ fn resolve_launch_profile_or_exit(
                 lock.release();
                 std::process::exit(0);
             };
-            if let Err(error) = lock.commit(&context, &profile) {
+            if !lock.commit(&context, &profile) {
                 // The answer still applies to this launch; the question returns next time.
-                eprintln!("[startup] {error}");
+                eprintln!("[startup] the profile choice could not be remembered");
             }
             lock.release();
             profile
@@ -1753,19 +1753,15 @@ fn main() {
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
     let cli_config = std::env::var("CLI_CONFIG").ok();
+    // Process-wide set_var happens while the process is still single-threaded: before the profile
+    // question may start heartbeat or dialog-toolkit threads. Only the Windows-only WebView2
+    // variables below follow it, where environment access is OS-synchronized.
+    configure_developer_environment();
     let profile = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
     let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
-    // The backend reports the active profile; the default profile is never announced. This runs
-    // before any thread is spawned.
-    if profile == data_profile::DEFAULT_PROFILE_KEY {
-        std::env::remove_var(data_profile::BACKEND_PROFILE_ENVIRONMENT);
-    } else {
-        std::env::set_var(
-            data_profile::BACKEND_PROFILE_ENVIRONMENT,
-            data_profile::profile_display_name(&profile),
-        );
-    }
-    configure_developer_environment();
+    // The backend reports the active profile; it is applied only to the backend Command (see
+    // cli_manager), never through the process environment.
+    data_profile::set_backend_profile(&profile);
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");
     let executable = std::env::current_exe()
