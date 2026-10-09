@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "सुरु हुँदैछ…",
   "missions.create.startUncertain": "“{title}” बनाइयो, तर यसको सुरुवात पुष्टि भएन। यसको अवस्था जाँच्नुहोस्, अझै पर्खिरहेको छ भने सुरु गर्नुहोस् प्रयोग गर्नुहोस्।",
   "missions.create.playUncertain": "“{title}” बनाइयो, तर प्ले पुष्टि भएन। तालिका जाँच्नुहोस्, अझै रोकिएको छ भने प्ले प्रयोग गर्नुहोस्।",
+  "missions.create.brief.start": "सुरक्षित विवरणबाट सुरु गर्नुहोस्",
+  "missions.create.brief.none": "खाली मिसन",
+  "missions.create.brief.more": "सुरक्षित विवरणका कार्यहरू",
+  "missions.create.brief.saveAs": "विवरणको रूपमा सुरक्षित गर्नुहोस्",
+  "missions.create.brief.cancel": "विवरण सुरक्षित गर्न रद्द गर्नुहोस्",
 } as const

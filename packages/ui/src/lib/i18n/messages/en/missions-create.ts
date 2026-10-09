@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "Starting…",
   "missions.create.startUncertain": "“{title}” was created, but its start was not confirmed. Check its state, then use Start if it is still waiting.",
   "missions.create.playUncertain": "“{title}” was created, but Play was not confirmed. Check the schedule, then use Play if it is still paused.",
+  "missions.create.brief.start": "Start from a brief",
+  "missions.create.brief.none": "Blank mission",
+  "missions.create.brief.more": "Saved brief actions",
+  "missions.create.brief.saveAs": "Save as brief",
+  "missions.create.brief.cancel": "Cancel saving the brief",
 } as const

@@ -14,7 +14,7 @@ import { useConfig } from "../stores/preferences"
 import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
 import type { MissionProfileDefault } from "../lib/mission-defaults"
 import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
-import { MissionModelLibrary } from "./mission-model-library"
+import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { holdRecurrence, uncertainRecurrence } from "../stores/mission-recurrence"
@@ -342,17 +342,14 @@ export function MissionEditor(props: {
     <details class="mission-profile-optional mission-create-options" open={optionsOpen()} onToggle={event => setOptionsOpen(event.currentTarget.open)}>
       <summary>{t("missions.create.options")}</summary>
       {/* Natively hidden while closed so local drafts survive; network demand follows optionsOpen. */}
-      <section class="mission-create-option" aria-label={t("missions.models.title")}>
-        <MissionModelLibrary disabled={locked() || !isActive()} active={() => optionsOpen() && isActive()}
-          draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })}
-          onUse={model => {
-            requestId = crypto.randomUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
-            setObjective(model.objective); setTitleOverride(undefined); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
-            setCustomProfiles(model.profiles !== undefined)
-            setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
-            setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
-          }} />
-      </section>
+      <MissionBriefPicker disabled={locked() || !isActive()} active={() => optionsOpen() && isActive()} value={selectedModel()?.id}
+        onUse={model => {
+          requestId = crypto.randomUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
+          setObjective(model.objective); setTitleOverride(undefined); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+          setCustomProfiles(model.profiles !== undefined)
+          setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
+          setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
+        }} />
       <label>{t("missions.control.template")}
         <select aria-label={t("missions.control.template")} value={template()} disabled={locked()} onChange={e => {
           const next = e.currentTarget.value as MissionMap["template"]
@@ -432,6 +429,10 @@ export function MissionEditor(props: {
       <Show when={uncertain()} fallback={<Show when={error()}><p role="alert">{error()}</p></Show>}><p role="alert">{t("missions.control.creation.uncertain")}</p></Show>
     </div>
     <footer class="window-footer">
+      <Show when={kind === "create"}>
+        <MissionBriefSave disabled={locked() || !isActive()} active={isActive}
+          draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
+      </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
       <Show when={needsSourceLocation() && sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
         onClick={() => setSourceLocationRevision(value => value + 1)}>{t("missions.control.refresh")}</button></Show>

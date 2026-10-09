@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "正在启动…",
   "missions.create.startUncertain": "“{title}”已创建，但启动未得到确认。请检查其状态，如仍在等待，请使用“启动”。",
   "missions.create.playUncertain": "“{title}”已创建，但播放未得到确认。请检查计划，如仍处于暂停状态，请使用“播放”。",
+  "missions.create.brief.start": "从已保存的简述开始",
+  "missions.create.brief.none": "空白任务",
+  "missions.create.brief.more": "已保存简述的操作",
+  "missions.create.brief.saveAs": "另存为简述",
+  "missions.create.brief.cancel": "取消保存简述",
 } as const

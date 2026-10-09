@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "Wird gestartet…",
   "missions.create.startUncertain": "„{title}“ wurde erstellt, aber der Start wurde nicht bestätigt. Prüfen Sie den Status und verwenden Sie Starten, falls sie noch wartet.",
   "missions.create.playUncertain": "„{title}“ wurde erstellt, aber Abspielen wurde nicht bestätigt. Prüfen Sie den Zeitplan und verwenden Sie Abspielen, falls er noch pausiert ist.",
+  "missions.create.brief.start": "Mit einem gespeicherten Auftrag beginnen",
+  "missions.create.brief.none": "Leere Mission",
+  "missions.create.brief.more": "Aktionen für gespeicherte Aufträge",
+  "missions.create.brief.saveAs": "Als Auftrag speichern",
+  "missions.create.brief.cancel": "Speichern des Auftrags abbrechen",
 } as const

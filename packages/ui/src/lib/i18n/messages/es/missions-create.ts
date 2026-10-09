@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "Iniciando…",
   "missions.create.startUncertain": "Se creó «{title}», pero su inicio no se confirmó. Comprueba su estado y usa Iniciar si sigue en espera.",
   "missions.create.playUncertain": "Se creó «{title}», pero Reproducir no se confirmó. Comprueba la programación y usa Reproducir si sigue en pausa.",
+  "missions.create.brief.start": "Empezar desde una descripción",
+  "missions.create.brief.none": "Misión en blanco",
+  "missions.create.brief.more": "Acciones de descripciones guardadas",
+  "missions.create.brief.saveAs": "Guardar como descripción",
+  "missions.create.brief.cancel": "Cancelar el guardado de la descripción",
 } as const

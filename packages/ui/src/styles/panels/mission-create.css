@@ -26,3 +26,17 @@
 .mission-create-option-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
 
 .mission-create .window-footer { flex-wrap: wrap; }
+
+/* Saved briefs: one loading select atop Options, and an inline footer name prompt. */
+.mission-brief-picker { margin-block: var(--space-sm); }
+.mission-brief-picker > label { display: block; margin-block: 0 var(--space-xs); }
+.mission-brief-picker-row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+.mission-editor .mission-brief-picker-row select { flex: 1 1 auto; min-width: 0; }
+.mission-brief-picker-row .action-overflow-trigger {
+  display: inline-flex; flex: none; align-items: center; justify-content: center;
+  min-width: var(--touch-target-size-compact); min-height: var(--touch-target-size-compact);
+  padding-inline: var(--space-xs); color: var(--text-secondary); background: transparent; border-radius: 0;
+}
+.mission-brief-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-inline-end: auto; min-width: 0; }
+.mission-editor .mission-brief-save input { width: 12em; min-width: 0; flex: 1 1 8em; }
+.mission-brief-save > p { flex-basis: 100%; margin: 0; font-size: var(--font-size-xs); }

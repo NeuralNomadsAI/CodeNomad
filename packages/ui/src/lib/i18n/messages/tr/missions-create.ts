@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "Başlatılıyor…",
   "missions.create.startUncertain": "“{title}” oluşturuldu, ancak başlatılması onaylanmadı. Durumunu kontrol edin, hâlâ bekliyorsa Başlat'ı kullanın.",
   "missions.create.playUncertain": "“{title}” oluşturuldu, ancak Oynat onaylanmadı. Zamanlamayı kontrol edin, hâlâ duraklatılmışsa Oynat'ı kullanın.",
+  "missions.create.brief.start": "Kayıtlı bir özetle başla",
+  "missions.create.brief.none": "Boş görev",
+  "missions.create.brief.more": "Kayıtlı özet işlemleri",
+  "missions.create.brief.saveAs": "Özet olarak kaydet",
+  "missions.create.brief.cancel": "Özeti kaydetmeyi iptal et",
 } as const

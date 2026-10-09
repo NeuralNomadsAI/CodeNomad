@@ -30,6 +30,15 @@ const openProfiles = async (page: Page) => { await ensureOptions(page); await pa
 const openModels = ensureOptions
 const toggleOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
 const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create without starting"
+const pickBrief = async (page: Page, id: string) => page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).selectOption(id)
+const nameBrief = async (page: Page, name: string) => {
+  await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).click()
+  await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill(name)
+}
+const briefMenu = async (page: Page, key: string) => {
+  await page.getByRole("button", { name: await text(page, "missions.create.brief.more"), exact: true }).click()
+  await page.getByRole("menuitem", { name: await text(page, key), exact: true }).click()
+}
 const dispatchOwner = (page: Page, owner: Record<string, unknown>) => page.evaluate(async value => {
   const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
   serverEvents.dispatchBatch([{ type: "storage.configChanged", owner: "ui", value }])
@@ -130,13 +139,12 @@ test("saved models store briefs only and manual use creates fresh authority requ
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await ensureOptions(page)
     await openModels(page)
-    await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).selectOption(modelID)
-    await page.getByRole("button", { name: await text(page, "missions.models.use"), exact: true }).click()
+    await pickBrief(page, modelID)
     assert.equal(await page.getByLabel(OBJECTIVE, { exact: true }).inputValue(), model.objective)
-    assert.equal(fixture.creates.length, 0, "Use is not a launch")
-    await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill("Second reusable brief")
+    assert.equal(fixture.creates.length, 0, "loading a brief is not a launch")
+    await nameBrief(page, "Second reusable brief")
     await toggleOptions(page); await toggleOptions(page)
-    assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "Second reusable brief", "collapsing saved briefs never discards its name draft")
+    assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "Second reusable brief", "collapsing Options never discards the brief name draft")
     await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
     await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 2)
     assert.equal(fixture.writes.length, 1)
@@ -265,10 +273,10 @@ test("stale model saves and deletes fail closed without resurrecting another win
     await ensureOptions(page)
     await openModels(page)
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Another brief")
-    await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill("New model")
+    await nameBrief(page, "New model")
     fixture.replace({ settings: { missionModels: [] } })
     await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
-    await page.getByRole("alert").waitFor()
+    await page.getByRole("alert").filter({ hasText: await text(page, "missions.models.error") }).waitFor()
     assert.deepEqual(fixture.bucket().settings.missionModels, [])
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.loaded()), false)
     // Restore from an explicit authoritative read before exercising a separate
@@ -276,9 +284,9 @@ test("stale model saves and deletes fail closed without resurrecting another win
     fixture.replace({ settings: { missionModels: [model] } })
     await page.getByRole("button", { name: await text(page, "missions.models.reload"), exact: true }).click()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
-    await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).selectOption(modelID)
+    await pickBrief(page, modelID)
     fixture.replace({ settings: { missionModels: [] } })
-    await page.getByRole("button", { name: await text(page, "missions.models.remove"), exact: true }).click()
+    await briefMenu(page, "missions.models.remove")
     await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.models.remove"), exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.equal(fixture.writes.length, 0)
@@ -289,7 +297,8 @@ test("stale model saves and deletes fail closed without resurrecting another win
 })
 
 test("explicit defaults reload locks every profile-affecting control until its fenced result settles", async () => {
-  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  const page = await browser.newPage({ locale: "en-US" })
+  const fixture = await setup(page, { missionModels: [{ version: 1, id: modelID, name: "Locked brief", objective: "A task", notes: "", template: "custom" }] })
   let release!: () => void, started!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
   try {
@@ -302,8 +311,8 @@ test("explicit defaults reload locks every profile-affecting control until its f
     await reached
     assert.equal(await page.getByLabel("Playbook", { exact: true }).isDisabled(), true)
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).isDisabled(), true)
-    assert.equal(await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: await text(page, "missions.models.use"), exact: true }).isDisabled(), true)
+    assert.equal(await page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).isDisabled(), true)
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     release()
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
@@ -343,9 +352,8 @@ test("a saved brief manually creates independent fresh requests and explicit rem
     for (let launch = 0; launch < 2; launch++) {
       if (launch) await page.evaluate(() => window.missionDefaultsModels.view("create"))
       await openModels(page)
-      await page.getByLabel(await text(page, "missions.models.select"), { exact: true }).selectOption(modelID)
-      await page.getByRole("button", { name: await text(page, "missions.models.use"), exact: true }).click()
-      assert.equal(fixture.creates.length, launch, "Use never launches automatically")
+      await pickBrief(page, modelID)
+      assert.equal(fixture.creates.length, launch, "loading a brief never launches automatically")
       await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
       await page.locator("form.mission-editor").waitFor({ state: "detached" })
     }
@@ -434,7 +442,7 @@ test("an acknowledged library write with continuously invalidated reads gates cr
     await ensureOptions(page)
     await openModels(page)
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Saved but owner unreadable")
-    await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill("Accepted once")
+    await nameBrief(page, "Accepted once")
     await page.route("**/api/storage/config/ui*", async route => {
       if (route.request().method() === "GET") {
         reads++
@@ -452,7 +460,7 @@ test("an acknowledged library write with continuously invalidated reads gates cr
     assert.equal(reads, 3); assert.equal(fixture.writes.length, 1)
     assert.equal(await page.evaluate(() => window.missionDefaultsModels.loaded()), false)
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
-    assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "", "acknowledged save is not offered as a duplicate retry")
+    assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).count(), 0, "acknowledged save is not offered as a duplicate retry")
     invalidate = false
     await page.getByRole("button", { name: await text(page, "missions.models.reload"), exact: true }).click()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())

@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "Запуск…",
   "missions.create.startUncertain": "«{title}» создана, но её запуск не подтверждён. Проверьте состояние и используйте «Запустить», если она всё ещё ожидает.",
   "missions.create.playUncertain": "«{title}» создана, но воспроизведение не подтверждено. Проверьте расписание и используйте «Воспроизвести», если оно всё ещё приостановлено.",
+  "missions.create.brief.start": "Начать с сохранённого описания",
+  "missions.create.brief.none": "Пустая миссия",
+  "missions.create.brief.more": "Действия с сохранёнными описаниями",
+  "missions.create.brief.saveAs": "Сохранить как описание",
+  "missions.create.brief.cancel": "Отменить сохранение описания",
 } as const

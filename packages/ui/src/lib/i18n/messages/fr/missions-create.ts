@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "Démarrage…",
   "missions.create.startUncertain": "« {title} » a été créée, mais son démarrage n'a pas été confirmé. Vérifiez son état, puis utilisez Démarrer si elle attend toujours.",
   "missions.create.playUncertain": "« {title} » a été créée, mais Lecture n'a pas été confirmé. Vérifiez la planification, puis utilisez Lecture si elle est toujours en pause.",
+  "missions.create.brief.start": "Partir d’une consigne",
+  "missions.create.brief.none": "Mission vierge",
+  "missions.create.brief.more": "Actions des consignes enregistrées",
+  "missions.create.brief.saveAs": "Enregistrer comme consigne",
+  "missions.create.brief.cancel": "Annuler l’enregistrement de la consigne",
 } as const

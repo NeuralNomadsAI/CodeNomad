@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "開始中…",
   "missions.create.startUncertain": "「{title}」は作成されましたが、開始は確認されていません。状態を確認し、まだ待機中なら開始を使ってください。",
   "missions.create.playUncertain": "「{title}」は作成されましたが、再生は確認されていません。スケジュールを確認し、まだ一時停止中なら再生を使ってください。",
+  "missions.create.brief.start": "保存済みの概要から始める",
+  "missions.create.brief.none": "空のミッション",
+  "missions.create.brief.more": "保存済みの概要の操作",
+  "missions.create.brief.saveAs": "概要として保存",
+  "missions.create.brief.cancel": "概要の保存をキャンセル",
 } as const

@@ -15,4 +15,9 @@ export const missionCreateMessages = {
   "missions.create.starting": "מפעיל…",
   "missions.create.startUncertain": "„{title}” נוצרה, אך ההפעלה שלה לא אושרה. בדקו את מצבה והשתמשו בהפעלה אם היא עדיין ממתינה.",
   "missions.create.playUncertain": "„{title}” נוצרה, אך ההפעלה המתוזמנת לא אושרה. בדקו את התזמון והשתמשו בהפעלה אם הוא עדיין מושהה.",
+  "missions.create.brief.start": "להתחיל מתקציר",
+  "missions.create.brief.none": "משימה ריקה",
+  "missions.create.brief.more": "פעולות לתקצירים שמורים",
+  "missions.create.brief.saveAs": "שמירה כתקציר",
+  "missions.create.brief.cancel": "ביטול שמירת התקציר",
 } as const
