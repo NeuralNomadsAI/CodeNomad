@@ -4,8 +4,9 @@ import Fastify from "fastify"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { registerMissionRecurrenceControl } from "./mission-recurrence-control"
 import { execFileSync } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { realpathSync } from "node:fs"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import pino from "pino"
 import { AuthManager } from "../../auth/manager"
@@ -32,7 +33,8 @@ test("auth-disabled sessions cannot Play; missing native graph never activates d
 })
 
 test("real cookie human Play uses exact selected YAML; lost ACK performs one receipt read and never a second control", async () => {
-  const base = await mkdtemp(path.join(process.env.LOCALAPPDATA ?? "C:/Users/Admin/AppData/Local", "Temp", "opencode", "http-play-offline-"))
+  await mkdir(path.join(tmpdir(), "opencode"), { recursive: true })
+  const base = await mkdtemp(path.join(tmpdir(), "opencode", "http-play-offline-"))
   const app = Fastify({ logger: false })
   try {
     execFileSync("git", ["init", "-q", base])

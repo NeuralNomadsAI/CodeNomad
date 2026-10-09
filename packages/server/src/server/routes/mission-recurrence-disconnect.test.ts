@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { realpathSync } from "node:fs"
 import { request as httpRequest } from "node:http"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 import Fastify from "fastify"
@@ -17,7 +18,8 @@ import { canonicalWorktreeIdentity } from "../../workspaces/manager"
 const turn = () => new Promise<void>(resolve => setImmediate(resolve))
 
 for (const neverResolved of [false, true]) test(`HTTP disconnect retains native write permit until ${neverResolved ? "explicit positive exact receipt" : "the original ACK"}`, async () => {
-  const base = await mkdtemp(path.join(process.env.LOCALAPPDATA ?? "C:/Users/Admin/AppData/Local", "Temp", "opencode", "play-disconnect-"))
+  await mkdir(path.join(tmpdir(), "opencode"), { recursive: true })
+  const base = await mkdtemp(path.join(tmpdir(), "opencode", "play-disconnect-"))
   const app = Fastify({ logger: false })
   let ack!: (value: unknown) => void
   const nativeWrite = new Promise<unknown>(resolve => { ack = resolve })

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
@@ -11,7 +13,7 @@ import { clickMissionAction } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
-const screenshotPath = (name: string) => `C:/Users/Admin/AppData/Local/Temp/opencode/${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`
+const screenshotPath = (name: string) => path.join(tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 before(async () => {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,

@@ -1,5 +1,6 @@
 import path from "node:path"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import { recurrenceConfigSchema, type RecurrenceConfig } from "../../missions/recurrence-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
@@ -13,7 +14,9 @@ import { setupMissionsBusiness, type MissionsPluginContext } from "../missions-p
 import { selectNativePassageBusiness, retireNativePassageBusiness } from "./native-passage-business"
 
 export async function passageFixture(business = true) {
-  const root = await mkdtemp(path.join("C:/Users/Admin/AppData/Local/Temp/opencode", "passage-unit-"))
+  const parent = path.join(tmpdir(), "opencode")
+  await mkdir(parent, { recursive: true })
+  const root = await mkdtemp(path.join(parent, "passage-unit-"))
   const configYamlPath = path.join(root, "config.yaml")
   await writeFile(configYamlPath, "server:\n  environmentVariables:\n    PASSAGE_UNIT: frozen\n")
   const values = new Map<string, MissionJsonValue>()

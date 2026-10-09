@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { createHash, createHmac } from "node:crypto"
 import { realpathSync } from "node:fs"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import Fastify from "fastify"
@@ -99,7 +100,9 @@ export class RecurringDayFixture {
       .run(this.key(key), JSON.stringify(value), this.now, this.now)
   }
   private async initialize() {
-    this.root = await mkdtemp("C:/Users/Admin/AppData/Local/Temp/opencode/recurring-day-")
+    const parent = path.join(tmpdir(), "opencode")
+    await mkdir(parent, { recursive: true })
+    this.root = await mkdtemp(path.join(parent, "recurring-day-"))
     process.env.LOCALAPPDATA = this.root // Never discover the person's real bridge registration.
     Date.now = () => this.now
     execFileSync("git", ["init", "-q", this.root])
