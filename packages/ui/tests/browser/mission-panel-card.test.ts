@@ -50,10 +50,12 @@ const active = mission("migrate", { objective: "Migrate the storage layer to the
   tasks: [task("read", "Port the read path", "completed"), task("write", "Port the write path", "queued", ["read"]),
     { ...task("schema", "Review the schema migration", "needs-input", ["read"]), actorSessionId: "ses_worker" }, task("cleanup", "Remove legacy adapters", "blocked", ["write"])],
   history: [{ revision: 2, source: "coordinator", actorSessionId: "ses_migrate", reason: "Split the write path from cleanup", addedTaskKeys: ["cleanup"], retiredTasks: [], dependencyUpdates: [], createdAt: 2 }] })
+// Coherent clock: every run and the next one fall at 08:15 in the schedule's own zone (UTC).
+const nextRun = (() => { const now = Date.now(), at = new Date(now); at.setUTCHours(8, 15, 0, 0); return at.getTime() <= now ? at.getTime() + 24 * hour : at.getTime() })()
 const schedule: RecurrenceSchedule = { id: "rec_review", title: "Daily source review", revision: 2, state: "running", clock: { time: "08:15", zone: "UTC" },
-  nextDueAt: Date.now() + 20 * hour, pending: null, controls: [], actions: ["pause", "stop", "run-now"],
-  history: [{ passageID: "pas_1", dueAt: Date.now() - 28 * hour, settledAt: Date.now() - 27 * hour, outcome: "completed", missionID: "msn_1" },
-    { passageID: "pas_2", dueAt: Date.now() - 4 * hour, settledAt: Date.now() - 3 * hour, outcome: "ended-without-report", missionID: "msn_2" }], latestResult: null }
+  nextDueAt: nextRun, pending: null, controls: [], actions: ["pause", "stop", "run-now"],
+  history: [{ passageID: "pas_1", dueAt: nextRun - 48 * hour, settledAt: nextRun - 47 * hour, outcome: "completed", missionID: "msn_1", conversationID: "ses_run_1" },
+    { passageID: "pas_2", dueAt: nextRun - 24 * hour, settledAt: nextRun - 23 * hour, outcome: "ended-without-report", missionID: "msn_2", conversationID: "ses_run_2" }], latestResult: null }
 schedule.latestResult = schedule.history.at(-1)!
 
 async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSchedule[] = []) {
@@ -66,6 +68,15 @@ async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSch
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) })
     if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_review", passageID: null } })
+    if (path.includes("/passages/")) {
+      // The latest run's archive is unreadable; the earlier one returns its exact journal page.
+      const passageID = path.split("/").at(-1)!, receipt = schedule.history.find(item => item.passageID === passageID)
+      if (!receipt || passageID === "pas_2") return route.fulfill({ status: 503, json: { error: "unavailable" } })
+      const text = "Reviewed 14 merged changes. Two follow-ups were filed for the release checklist."
+      return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID, missionID: receipt.missionID,
+        conversationID: receipt.conversationID, revision: 3, section: 0, sectionCount: 1, sections: [{ index: 0, label: "summary", title: "", raw: false }],
+        page: 0, pageCount: 1, sourceText: text, markdownText: text } })
+    }
     return route.fulfill({ json: {} })
   })
   await page.goto(url)
@@ -105,10 +116,18 @@ test("finished one-time Mission: titled rows, result first, checklist and one co
     assert.equal(await first.getByRole("button", { name: "Read all", exact: true }).getAttribute("aria-pressed"), "true")
     await first.locator(".mission-checklist-task").first().click()
     assert.equal(await page.locator(".mission-reader .window-title").innerText(), "Collect merged changes")
+    const taskReader = page.locator(".mission-task-reader")
+    await taskReader.getByText("Done", { exact: true }).waitFor()
+    assert.doesNotMatch(await taskReader.innerText(), /No result recorded|Unblocks|Blocks /, "a finished task neither apologises nor points at work it already unblocked")
+    await captureMissionView(page, "task-reader")
     assert.equal(await first.locator(".mission-checklist-task").first().getAttribute("aria-pressed"), "true")
     await more.click()
     await first.getByRole("button", { name: "Show dependencies", exact: false }).click()
     await first.locator(".mission-graph").waitFor()
+    assert.equal(await first.locator(".mission-route-task .mission-list-status").allInnerTexts().then(texts => texts.join("")), "", "a finished plan repeats no status words")
+    assert.equal(await first.locator(".mission-route-task").getByRole("button", { name: "Read in chat area" }).count(), 0)
+    await first.locator(".mission-route-task .mission-list-select").nth(1).click()
+    await page.locator(".mission-reader .window-title").getByText("Group by audience", { exact: true }).waitFor()
     await captureMissionView(page, "more-expanded")
     await first.getByRole("button", { name: "More actions", exact: true }).click()
     const items = await page.getByRole("menuitem").allInnerTexts()
@@ -137,6 +156,7 @@ test("active Mission: Needs you appears only for a pending native request; one c
     assert.equal(await row.getByRole("button", { name: "Pause mission", exact: true }).innerText(), "Pause")
     assert.deepEqual(await row.locator(".mission-checklist-word").allInnerTexts(), ["Assigned", "Blocked", "Waiting"])
     assert.match(await row.locator(".mission-result-meta").innerText(), /1 of 4 tasks done/)
+    assert.match(await row.locator(".mission-index-meta").innerText(), /^In progress · /)
     assert.equal(await row.locator("form.mission-guidance textarea").count(), 1)
     assert.equal(await row.getByLabel("Write to the coordinator", { exact: true }).count(), 1)
     await row.getByRole("button", { name: "More actions", exact: true }).click()
@@ -147,31 +167,63 @@ test("active Mission: Needs you appears only for a pending native request; one c
   } finally { await page.close() }
 })
 
-test("recurring schedule card and narrow RTL layout", async () => {
-  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 900 } })
+test("recurring schedule card and readers use the schedule zone, plain run wording and folded identifiers", async () => {
+  // A viewer outside UTC sees every schedule time in UTC, labelled once per time.
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "Europe/Paris", viewport: { width: 1100, height: 900 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
     await open(page, [audit], [schedule])
     const row = rows(page).filter({ hasText: "Daily source review" })
     await row.waitFor()
-    assert.match(await row.locator(".mission-index-title").innerText(), /Daily 8:15|Daily 08:15/)
-    assert.match(await row.locator(".mission-index-meta").innerText(), /^Next: tomorrow/)
+    assert.match(await row.locator(".mission-index-title").innerText(), /Daily 8:15 AM/)
+    assert.match(await row.locator(".mission-index-meta").innerText(), /^Next: (today|tomorrow) 8:15 AM \(UTC\)$/)
     await row.getByRole("button", { name: "Daily source review", exact: true }).click()
     await row.locator(".mission-schedule-detail").waitFor()
-    assert.match(await row.locator(".mission-schedule-when").innerText(), /^Every day at 08:15 · next: tomorrow/)
+    assert.equal(await row.locator(".mission-schedule-when").innerText(), "Every day at 8:15 AM (UTC)", "the card states the rule, not the next run again")
+    assert.equal((await row.innerText()).match(/Next:/g)?.length, 1)
+    assert.match(await row.locator(".mission-result-text").innerText(), /^Last run .* 8:15 AM \(UTC\): Ended without a report$/)
+    assert.doesNotMatch(await page.locator(".mission-control").innerText(), /\(archived\)|pas_|msn_/)
     assert.equal(await row.getByRole("button", { name: "Pause schedule Daily source review", exact: true }).innerText(), "Pause")
     await row.getByRole("button", { name: "More", exact: true }).click()
-    assert.equal(await row.locator(".mission-past-run").count(), 2)
-    await row.locator(".mission-past-run").first().click()
-    await page.locator(".mission-reader").waitFor()
-    assert.equal(await row.locator(".mission-past-run").first().getAttribute("aria-pressed"), "true")
+    assert.deepEqual((await row.locator(".mission-past-run").allInnerTexts()).map(text => text.replace(/^.* · /, "")), ["Ended without a report", "Completed"])
     await captureMissionView(page, "recurring-card")
+
+    // Schedule reader: rule, latest run (its archive fails plainly with Retry), every run, identifiers folded.
+    await row.getByRole("button", { name: "Read all", exact: true }).click()
+    const reader = page.locator(".mission-reader")
+    await reader.getByText("The result of this run couldn't be loaded.", { exact: false }).waitFor()
+    await reader.getByRole("button", { name: "Retry", exact: true }).waitFor()
+    assert.match(await reader.locator(".mission-recurrence-rule").innerText(), /^Every day at 8:15 AM \(UTC\) · Next: /)
+    const visible = await reader.innerText()
+    assert.doesNotMatch(visible, /Refresh mission map|Passage history|Read in chat area|pas_|msn_|archived|stale/)
+    assert.equal(await reader.locator("details.mission-report-technical").getAttribute("open"), null)
+    await captureMissionView(page, "recurring-reader")
+
+    // Passage reader: choosing an earlier run shows its archived result text.
+    await reader.locator(".mission-past-run").nth(1).click()
+    await reader.getByText("Reviewed 14 merged changes.", { exact: false }).waitFor()
+    assert.equal(await reader.locator(".mission-past-run").nth(1).getAttribute("aria-pressed"), "true")
+    assert.equal(await reader.locator("select").count(), 0, "a single-part result needs no section picker")
+    await reader.locator("details.mission-report-technical > summary").click()
+    await reader.locator(".mission-technical").getByText("pas_1", { exact: true }).waitFor()
+    await captureMissionView(page, "passage-reader")
+
     await page.evaluate(() => { (window as any).missionFixture.panelWidth("390px"); document.documentElement.dir = "rtl" })
     await page.setViewportSize({ width: 390, height: 900 })
     assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
     await captureMissionView(page, "narrow-390-rtl")
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a viewer in the schedule's own zone sees no zone label", async () => {
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "UTC", viewport: { width: 1100, height: 900 } })
+  try {
+    await open(page, [], [schedule])
+    const row = rows(page).filter({ hasText: "Daily source review" })
+    await row.waitFor()
+    assert.match(await row.locator(".mission-index-meta").innerText(), /^Next: (today|tomorrow) 8:15 AM$/)
   } finally { await page.close() }
 })
 

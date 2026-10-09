@@ -395,7 +395,7 @@ const MissionIndex: Component<{
       const briefing = createMissionBriefingRequest({ get instanceId() { return props.instanceId }, get mission() { return mission() },
         get active() { return props.active }, get disabled() { return props.messagingDisabled } })
       const state = () => t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
-        ? `missions.control.run.${mission().runState}` : mission().status === "active" ? "missions.tracking.open" : statusKey(mission().status))
+        ? `missions.control.run.${mission().runState}` : mission().status === "active" ? "missionsPanel.state.inProgress" : statusKey(mission().status))
       const menu = (): ActionOverflowMenuItem[] => {
         const recover = selected() ? recovery.action() : undefined
         return [

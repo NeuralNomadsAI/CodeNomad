@@ -957,7 +957,7 @@ test("dependency navigation reveals the linked task and revised plans retain rea
     await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", exact: true }).waitFor()
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Back to chat")
     assert.equal(await page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(el => el === document.activeElement), true)
-    await page.getByRole("button", { name: "Blocks Check the implementation", exact: true }).waitFor()
+    assert.equal(await page.locator(".mission-reader").getByRole("button", { name: /^(Blocks|Unblocks)/ }).count(), 0, "a completed task omits its trivial Unblocks pointer")
     await openMore(page)
     const history = page.locator(".mission-disclosure", { has: page.getByRole("button", { name: "Plan changes", exact: true }) }).last()
     await history.getByRole("button", { name: "Plan changes", exact: true }).click()

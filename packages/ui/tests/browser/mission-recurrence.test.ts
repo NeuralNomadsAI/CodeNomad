@@ -60,7 +60,7 @@ test("browser schedule fixtures satisfy the real snapshot schema and reject cont
 })
 
 test("unified list retains one-time missions, next passage, explicit Resume and confirmed Stop without replay", async () => {
-  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "UTC", viewport: { width: 1200, height: 950 } })
   page.setDefaultTimeout(10_000)
   const errors: string[] = [], posts: any[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -104,12 +104,13 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     const entry = scheduleEntry(page)
     // Running rows show their next run instead of the state word.
     await entry.locator(".mission-index-meta").getByText(/^Next: /).waitFor()
-    assert.equal(await entry.locator(".neutral-badge").innerText(), "Daily 08:15")
+    assert.equal(await entry.locator(".neutral-badge").innerText(), "Daily 8:15 AM")
     await page.getByRole("button", { name: "Daily source review", exact: true }).click()
     assert.equal(await page.getByRole("button", { name: "One-time review", exact: true }).count(), 1)
     assert.equal(await page.getByRole("button", { name: "Daily source review", exact: true }).getAttribute("aria-current"), "true")
     const when = entry.locator(".mission-schedule-detail .mission-schedule-when")
-    assert.match(await when.innerText(), /^Every day at 08:15 · next: /)
+    assert.equal(await when.innerText(), "Every day at 8:15 AM", "the card states the rule; the row alone says when the next run is")
+    assert.equal(await entry.getByText(/^Next: /).count(), 1)
     await captureMissionView(page, "schedule-detail-next-passage")
     for (const state of ["paused", "stopped"] as const) {
       schedule.state = state
@@ -117,7 +118,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
       await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
       const word = state === "paused" ? "Paused" : "Stopped"
       await entry.locator(".mission-index-meta").getByText(word, { exact: true }).waitFor()
-      assert.equal(await when.innerText(), `Every day at 08:15 · ${word}`)
+      assert.equal(await when.innerText(), "Every day at 8:15 AM")
       assert.equal(await page.getByText(/next: |Next: /).count(), 0)
     }
     // Secondary actions live in the overflow menu with their descriptive names; no tooltips or icon buttons.
@@ -165,7 +166,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
 })
 
 test("rows say Next, stuck passages explain their one action, history is plain and one-time controls stay scoped", async () => {
-  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "UTC", viewport: { width: 1200, height: 950 } })
   page.setDefaultTimeout(10_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -219,8 +220,8 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     await page.getByText(/^The last scheduled check failed at Oct 9, 2026/).waitFor()
     await entry.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
     const items = entry.locator("button.mission-past-run")
-    assert.match(await items.nth(0).innerText(), /^Oct 8, 2026, 8:15 AM · Not started: its start message could not be sent$/)
-    assert.match(await items.nth(1).innerText(), /^Oct 7, 2026, 9:00 AM · Completed \(archived\) · Run now$/)
+    assert.match(await items.nth(0).innerText(), /^Oct 8, 2026, 8:15 AM · Not started$/)
+    assert.match(await items.nth(1).innerText(), /^Oct 7, 2026, 9:00 AM · Completed · Run now$/)
     assert.equal(await entry.getByRole("button", { name: "Technical details", exact: true }).count(), 1)
     await entry.getByRole("button", { name: "Technical details", exact: true }).click()
     await entry.locator(".mission-technical").getByText("rec_fixture", { exact: true }).waitFor()

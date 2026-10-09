@@ -193,6 +193,10 @@ details[open] > summary .disclosure-chevron {
   transform: rotate(90deg);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .disclosure-chevron { transition: none; }
+}
+
 /* Focus helpers */
 .focus-ring-accent:focus {
   outline: none;

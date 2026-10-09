@@ -68,23 +68,25 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
     onCleanup(() => { current = false; controller.abort() })
   })
   const selected = () => value()?.sections.find(item => item.index === value()?.section)
-  return <section class="mission-recurrence-result" aria-label={t("missions.recurrence.readResult", { id: props.receipt.passageID })}>
+  return <div class="mission-recurrence-result" data-passage-id={props.receipt.passageID}>
     <Show when={loading()}><p role="status">{t("missions.control.loading")}</p></Show>
-    <Show when={error()}><p role="alert">{t("missions.recurrence.resultUnavailable")}</p>
-      <button type="button" class="window-text-button" onClick={() => setRefresh(value => value + 1)}>{t("missions.control.refresh")}</button>
-    </Show>
+    <Show when={error()}><p role="alert" class="mission-recurrence-failure">{t("missionsPanel.reader.resultFailed")}{" "}
+      <button type="button" class="window-text-button" onClick={() => setRefresh(value => value + 1)}>{t("missionsPanel.reader.retry")}</button>
+    </p></Show>
     <Show when={value()}>{result => <>
-      <div class="window-toolbar">
-        <label>{t("missions.recurrence.section", { section: result().section + 1, total: result().sectionCount })}
+      <Show when={result().sectionCount > 1}><div class="window-toolbar">
+        <label>{t("missionsPanel.reader.part")}{" "}
           <MissionReaderNumber value={result().section + 1} max={result().sectionCount} identity={binding()}
             label={t("missions.recurrence.section", { section: result().section + 1, total: result().sectionCount })}
             onCommit={next => selectSection(next - 1)} />
         </label>
-        <select aria-label={t("missions.recurrence.section", { section: result().section + 1, total: result().sectionCount })}
-          value={result().section} onChange={event => selectSection(Number(event.currentTarget.value))}>
-          <For each={result().sections}>{item => <option value={item.index}>{item.title ? `${item.title} — ` : ""}{t(labels[item.label])}</option>}</For>
-        </select>
-      </div>
+        <label>
+          <select aria-label={t("missions.recurrence.section", { section: result().section + 1, total: result().sectionCount })}
+            value={result().section} onChange={event => selectSection(Number(event.currentTarget.value))}>
+            <For each={result().sections}>{item => <option value={item.index}>{item.title ? `${item.title} - ` : ""}{t(labels[item.label])}</option>}</For>
+          </select>
+        </label>
+      </div></Show>
       <Show when={selected()}>{item => <>
         <Show when={item().title}><h3>{item().title}</h3></Show>
         <MissionReaderSection instanceId={props.instanceId} identity={binding()} label={labels[item().label]} raw={item().raw}
@@ -92,5 +94,5 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
             content: { sourceText: result().sourceText, markdownText: result().markdownText }, onPage: selectPage }} />
       </>}</Show>
     </>}</Show>
-  </section>
+  </div>
 }

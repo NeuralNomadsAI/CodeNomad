@@ -140,7 +140,9 @@ test("dependencies, dependents and replacements navigate reader identity without
     assert.equal(await f.page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(e => e === document.activeElement), true)
     await f.page.getByRole("button", { name: "Replaced by Work title", exact: true }).click()
     assert.equal(await article(f.page, "Task brief").getByRole("spinbutton").inputValue(), "1")
-    await f.page.getByRole("button", { name: "Blocks Later task", exact: true }).click()
+    // The finished task omits the trivial "Unblocks" pointer; the checklist still reaches the follow-up.
+    assert.equal(await f.page.getByRole("button", { name: /^Unblocks/ }).count(), 0)
+    await f.page.locator('.mission-checklist li[data-task-key="after"] .mission-checklist-task').click()
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Later task", exact: true }).waitFor()
     assert.equal(await f.page.locator("#draft").inputValue(), "Preserved draft")
     assert.equal(await f.page.locator("#transcript").evaluate(e => e.scrollTop), 100)

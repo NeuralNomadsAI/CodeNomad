@@ -128,7 +128,7 @@ test("existing mobile project keeps a compact card and exact current results in 
       assert.equal(await page.locator(".mission-control").getByText(text, { exact: true }).filter({ visible: true }).count(), 0)
     assert.equal(await page.locator(".mission-needs").count(), 0)
     assert.equal(await card(page).locator(".mission-more > h3 > .mission-disclosure-trigger").getAttribute("aria-expanded"), "false")
-    assert.match(await row(page).locator(".mission-index-meta").textContent() ?? "", /^Ouverte · /)
+    assert.match(await row(page).locator(".mission-index-meta").textContent() ?? "", /^En cours · /)
     assert.equal(await page.locator(".mission-control-index").getByText("Active", { exact: true }).count(), 0)
     assert.deepEqual(writes, [])
     assert.deepEqual(errors, [])

@@ -41,6 +41,33 @@ function civilDay(at: number, zone: string): number {
   return Date.UTC(part("year"), part("month") - 1, part("day")) / 86_400_000
 }
 
+function zoneOffset(zone: string, at: number): string | undefined {
+  return new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" }).formatToParts(at)
+    .find(part => part.type === "timeZoneName")?.value
+}
+
+/** A schedule zone needs a label only when its rules differ from the viewer's zone. */
+export function missionZoneDiffers(zone: string, userZone = Intl.DateTimeFormat().resolvedOptions().timeZone, at = Date.now()): boolean {
+  if (zone === userZone) return false
+  try { return [at, at + 182 * 86_400_000].some(instant => zoneOffset(zone, instant) !== zoneOffset(userZone, instant)) }
+  catch { return true }
+}
+
+/** Short localized zone name ("UTC", "GMT+2"), falling back to the IANA name. */
+export function missionZoneName(zone: string, locale: string, at = Date.now()): string {
+  try {
+    return new Intl.DateTimeFormat(locale, { timeZone: zone, timeZoneName: "short" }).formatToParts(at)
+      .find(part => part.type === "timeZoneName")?.value ?? zone
+  } catch { return zone }
+}
+
+/** A daily "HH:MM" civil clock formatted like every other schedule time. */
+export function missionClockTime(time: string, locale: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(time)
+  if (!match) return time
+  return new Intl.DateTimeFormat(locale, { timeStyle: "short", timeZone: "UTC" }).format(Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])))
+}
+
 /** "today"/"tomorrow" (or the date) and the time, both in the schedule's zone. */
 export function missionScheduleWhen(at: number, zone: string, locale: string, now = Date.now()): { day: string; time: string } {
   let distance = Number.NaN

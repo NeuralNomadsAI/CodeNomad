@@ -147,7 +147,9 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       await mkdir(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, { recursive: true })
       await page.screenshot({ path: join(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, "current-passage-reader.png"), fullPage: true })
     }
-    await page.locator(".mission-task-dependencies").getByRole("button").click()
+    // A finished task no longer points at work it unblocked; open the unbound follow-up from the checklist.
+    assert.equal(await page.locator(".mission-task-dependencies").getByRole("button", { name: /^Unblocks/ }).count(), 0)
+    await page.locator('.mission-checklist li[data-task-key="second"] .mission-checklist-task').click()
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.").waitFor()
     assert.equal(await page.locator(".mission-reader .mission-inline-session").count(), 0, "unbound task never navigates to coordinator")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
@@ -189,9 +191,9 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     assert.equal(writes.length, 0)
     passageID = null
     await page.evaluate(() => (window as any).passageFixture.settled())
-    await card.locator(".mission-result-text").getByText(/^Last run .*: Completed \(archived\)$/).waitFor()
+    await card.locator(".mission-result-text").getByText(/^Last run .*: Completed$/).waitFor()
     await card.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
-    await card.locator("button.mission-past-run").getByText(/Completed \(archived\)/).waitFor()
+    await card.locator("button.mission-past-run").getByText(/Completed$/).waitFor()
     assert.equal(await page.locator(".mission-route-task").count(), 0, "settlement after the final session event removes former passage Work through native invalidation")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("Objective", { exact: true }).fill("One-shot from recurring")

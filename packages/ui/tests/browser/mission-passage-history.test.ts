@@ -85,14 +85,14 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     assert.equal(await firstEye.count(), 0, "unselected schedules show no card")
     await (await readAll(page, "Daily review first")).click()
     const reader = page.locator(".mission-reader")
-    await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor()
+    await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor({ state: "attached" })
     assert.equal(await reader.locator("li").count(), 30)
-    await reader.getByRole("alert").getByText(/No substitute result was loaded/).waitFor()
+    await reader.getByRole("alert").getByText(/The result of this run couldn.t be loaded\./).waitFor()
     assert.equal(await firstEye.getAttribute("aria-pressed"), "true")
     assert.equal(await secondEye.count(), 0)
     assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 1)
     await (await readAll(page, "Daily review second")).click()
-    await reader.getByText("rcp_rec_second_29", { exact: true }).waitFor()
+    await reader.getByText("rcp_rec_second_29", { exact: true }).waitFor({ state: "attached" })
     assert.equal(await secondEye.getAttribute("aria-pressed"), "true")
     assert.equal(await (await readAll(page, "Daily review first")).getAttribute("aria-pressed"), "false", "only the exact reader target is highlighted")
     await (await readAll(page, "Daily review second")).click()
@@ -150,7 +150,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     assert.equal(await firstEye.count(), 0)
     await page.evaluate(() => window.passageHistory.project("project"))
     await firstEye.waitFor()
-    await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor()
+    await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor({ state: "attached" })
     const beforeStop = reads
     await page.evaluate(async () => {
       const { serverEvents } = await import("/src/lib/server-events.ts")
@@ -235,19 +235,19 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
     holdOld = true
     const old = data.history[0]
     const heldRequest = page.waitForRequest(request => request.url().includes(`/passages/${old.passageID}`))
-    await page.getByRole("button", { name: `Read result for passage ${old.passageID}`, exact: true }).click()
+    await page.locator(`.mission-reader .mission-past-run[data-passage-id="${old.passageID}"]`).click()
     await heldRequest
     const beforeReturn = requests.length
-    await page.getByRole("button", { name: `Read result for passage ${latest.passageID}`, exact: true }).click()
+    await page.locator(`.mission-reader .mission-past-run[data-passage-id="${latest.passageID}"]`).click()
     await result.getByText("BRIEF END", { exact: false }).waitFor()
     await result.getByRole("combobox").selectOption("0")
     await result.getByRole("heading", { name: "Archived summary", exact: true }).waitFor()
     assert.equal(requests.length, beforeReturn, "returning to exact immutable cached pages does not reread the journal")
     heldRelease?.()
-    assert.equal(await result.getAttribute("aria-label"), `Read result for passage ${latest.passageID}`, "late old passage cannot retarget the reader")
+    assert.equal(await result.getAttribute("data-passage-id"), latest.passageID, "late old passage cannot retarget the reader")
     missing = true; holdOld = false
     const absent = data.history[1]
-    await page.getByRole("button", { name: `Read result for passage ${absent.passageID}`, exact: true }).click()
+    await page.locator(`.mission-reader .mission-past-run[data-passage-id="${absent.passageID}"]`).click()
     heldRelease?.()
     await result.getByRole("alert").waitFor()
     assert.equal(await page.locator(".mission-reader").getByText(absent.passageID, { exact: true }).count(), 1, "source failure retains the exact receipt")
@@ -272,7 +272,7 @@ test("late Location response never installs data into a different reader or list
   try {
     await page.goto(url)
     await (await readAll(page, "Daily review old")).click()
-    await page.locator(".mission-reader").getByText("rcp_rec_old_29", { exact: true }).waitFor()
+    await page.locator(".mission-reader").getByText("rcp_rec_old_29", { exact: true }).waitFor({ state: "attached" })
     const secondRead = page.waitForRequest(request => request.url().endsWith("/missions/recurrence"))
     await page.evaluate(() => window.passageHistory.refresh())
     await secondRead
@@ -280,7 +280,7 @@ test("late Location response never installs data into a different reader or list
     await page.getByRole("button", { name: "Daily review new", exact: true }).waitFor()
     release()
     await (await readAll(page, "Daily review new")).click()
-    await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor()
+    await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor({ state: "attached" })
     assert.equal(await page.getByText("rcp_rec_old_29", { exact: true }).count(), 0)
     assert.equal(await page.getByRole("button", { name: "Daily review old", exact: true }).count(), 0)
   } finally { release(); await page.close() }
@@ -323,7 +323,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
     const eye = await readAll(page, "Daily review live")
     await eye.click()
     const reader = page.locator(".mission-reader")
-    await reader.getByText("No archived passages yet.").waitFor()
+    await reader.getByText("No run yet.").waitFor()
     assert.equal(reads, 1, "list and reader share initial visible demand")
     assert.equal(resultReads, 0)
     const beforeProgress = reads

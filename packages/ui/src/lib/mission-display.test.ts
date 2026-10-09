@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { missionDisplayTitle, missionRelativeTime, missionScheduleWhen, missionShortTitle } from "./mission-display"
+import { missionClockTime, missionDisplayTitle, missionRelativeTime, missionScheduleWhen, missionShortTitle, missionZoneDiffers,
+  missionZoneName } from "./mission-display"
 
 test("an explicit title wins over the objective", () => {
   assert.equal(missionDisplayTitle({ title: "  Release  notes ", objective: "Write the notes." }), "Release notes")
@@ -23,4 +24,15 @@ test("relative times and schedule days are localized", () => {
   assert.deepEqual(missionScheduleWhen(Date.UTC(2026, 9, 10, 8, 15), "UTC", "en", now), { day: "tomorrow", time: "8:15 AM" })
   assert.equal(missionScheduleWhen(Date.UTC(2026, 9, 9, 18), "UTC", "en", now).day, "today")
   assert.equal(missionScheduleWhen(Date.UTC(2026, 9, 12, 8), "Not/AZone", "en", now).day.length > 0, true)
+})
+
+test("schedule clocks share the time format and label only a foreign zone", () => {
+  assert.equal(missionClockTime("08:15", "en"), "8:15 AM")
+  assert.equal(missionClockTime("08:15", "fr"), "08:15")
+  assert.equal(missionClockTime("bad", "en"), "bad")
+  assert.equal(missionZoneDiffers("UTC", "UTC"), false)
+  assert.equal(missionZoneDiffers("Etc/UTC", "UTC"), false, "equal rules need no label")
+  assert.equal(missionZoneDiffers("UTC", "Europe/Paris"), true)
+  assert.equal(missionZoneDiffers("Not/AZone", "UTC"), true)
+  assert.equal(missionZoneName("UTC", "en"), "UTC")
 })
