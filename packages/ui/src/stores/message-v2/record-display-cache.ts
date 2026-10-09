@@ -11,6 +11,8 @@ export interface RecordDisplayData {
   hiddenCount: number
   /** Index in `orderedParts` where the omitted parts belong. */
   gapIndex: number
+  /** Index in `record.partIds` of the first omitted part. */
+  hiddenStart: number
 }
 
 interface RecordDisplayCacheEntry {
@@ -98,7 +100,7 @@ export function buildRecordDisplayData(instanceId: string, record: MessageRecord
   const gapIndex = orderedParts.length
   if (hiddenCount > 0) append(record.partIds.slice(-MESSAGE_PART_TAIL_COUNT))
 
-  const data: RecordDisplayData = { orderedParts, hiddenCount, gapIndex }
+  const data: RecordDisplayData = { orderedParts, hiddenCount, gapIndex, hiddenStart: Math.min(headCount, record.partIds.length) }
   recordDisplayCache.set(cacheKey, { revision: record.revision, revealed, data })
   return data
 }

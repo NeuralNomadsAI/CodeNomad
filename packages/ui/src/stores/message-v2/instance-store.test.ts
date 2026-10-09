@@ -50,6 +50,7 @@ it("reveals omitted parts in place and resets with the instance", () => {
   }
   const initial = buildRecordDisplayData("revealed-parts", record)
   assert.equal(initial.hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
+  assert.equal(initial.hiddenStart, MESSAGE_PART_DISPLAY_LIMIT / 2)
 
   revealHiddenRecordParts("revealed-parts", "message")
   const partial = buildRecordDisplayData("revealed-parts", record)

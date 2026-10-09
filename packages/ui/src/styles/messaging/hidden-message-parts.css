@@ -7,10 +7,9 @@
   margin: var(--space-sm) 0;
   padding: var(--space-sm) var(--space-md);
   border: 1px dashed var(--border-base);
-  border-radius: 0;
   background-color: var(--surface-muted);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
 }
 
 .message-hidden-parts-label {

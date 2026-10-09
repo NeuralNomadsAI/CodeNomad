@@ -109,8 +109,12 @@ test("message parts beyond the display limit reveal in place at the omission", {
   assert.deepEqual(revealed, Array.from({ length: 1237 }, (_, index) => `Paragraph ${String(index).padStart(4, "0")}`))
   await block.locator('.tool-call-message[data-part-id="hidden-range-tool"]').waitFor({ state: "attached" })
   await page.waitForFunction(() => document.querySelector("[data-segment-count]")?.getAttribute("data-segment-count") === "3")
-  await page.waitForFunction(() => document.activeElement !== document.body
-    && Boolean(document.activeElement?.closest('.message-stream-block[data-message-id="full-source-message"]')))
+  // Focus lands on the first revealed part, not after text merged into the preceding row.
+  await page.waitForFunction(() => document.activeElement?.closest('.message-stream-block[data-message-id="full-source-message"]')
+    && document.activeElement.closest("[data-part-id]")?.textContent?.includes("Paragraph 0500"))
+  await page.keyboard.press("Tab")
+  assert.equal(await page.evaluate(() => document.querySelector("[tabindex='-1'][data-part-id]")), null,
+    "The temporary programmatic focus target is released on blur")
 }))
 
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {

@@ -476,7 +476,7 @@ type CompactionDisplayItem = {
 }
 
 type SystemDisplayItem = { type: "system"; key: string; part: Extract<ClientPart, { type: "system" }> }
-type HiddenPartsDisplayItem = { type: "hidden-parts"; key: string; messageId: string; count: number }
+type HiddenPartsDisplayItem = { type: "hidden-parts"; key: string; messageId: string; count: number; start: number }
 type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem | HiddenPartsDisplayItem
 
 interface MessageDisplayBlock {
@@ -677,7 +677,10 @@ export default function MessageBlock(props: MessageBlockProps) {
     groupedParts.forEach((group, groupIndex) => {
       if (!group) {
         flushContent()
-        items.push({ type: "hidden-parts", key: `${current.id}:hidden-parts`, messageId: current.id, count: displayData.hiddenCount })
+        items.push({
+          type: "hidden-parts", key: `${current.id}:hidden-parts`, messageId: current.id,
+          count: displayData.hiddenCount, start: displayData.hiddenStart,
+        })
         return
       }
       if (group.kind === "exploration" || group.kind === "shell") {
@@ -847,19 +850,29 @@ export default function MessageBlock(props: MessageBlockProps) {
     return true
   }
 
-  // The placeholder unmounts on reveal; keep keyboard focus where the revealed parts begin.
-  const revealInPlace = (button: HTMLButtonElement, messageId: string) => {
-    const anchor = button.closest(".message-hidden-parts")?.previousElementSibling ?? null
+  // The placeholder unmounts on reveal; move keyboard focus to the first revealed part.
+  const revealInPlace = (button: HTMLButtonElement, item: HiddenPartsDisplayItem) => {
+    const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + MESSAGE_PART_REVEAL_STEP) ?? []
     const hadFocus = document.activeElement === button
-    revealHiddenRecordParts(props.instanceId, messageId)
+    revealHiddenRecordParts(props.instanceId, item.messageId)
     if (!hadFocus) return
     requestAnimationFrame(() => {
+      // A placeholder that stays mounted keeps focus for the next activation.
       if (document.activeElement && document.activeElement !== document.body) return
       const element = blockRef()
       if (!element) return
-      const start = anchor?.isConnected ? anchor.nextElementSibling ?? anchor : element.firstElementChild
-      const target = (start instanceof HTMLElement ? start : element)
-      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1")
+      let target: HTMLElement = element
+      for (const partId of revealedIds) {
+        const found = element.querySelector<HTMLElement>(`[data-part-id="${CSS.escape(partId)}"]`)
+        if (found) {
+          target = found
+          break
+        }
+      }
+      if (!target.hasAttribute("tabindex")) {
+        target.setAttribute("tabindex", "-1")
+        target.addEventListener("blur", () => target.removeAttribute("tabindex"), { once: true })
+      }
       target.focus({ preventScroll: true })
     })
   }
@@ -1029,7 +1042,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                 </Match>
                 <Match when={item().type === "hidden-parts"}>
                   <div class="message-hidden-parts">
-                    <span class="message-hidden-parts-label" role="status">
+                    <span class="message-hidden-parts-label">
                       {t((item() as HiddenPartsDisplayItem).count === 1 ? "messageBlock.hiddenParts.one" : "messageBlock.hiddenParts.other", {
                         count: (item() as HiddenPartsDisplayItem).count,
                       })}
@@ -1037,7 +1050,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     <button
                       type="button"
                       class="button-secondary message-hidden-parts-button"
-                      onClick={(event) => revealInPlace(event.currentTarget, (item() as HiddenPartsDisplayItem).messageId)}
+                      onClick={(event) => revealInPlace(event.currentTarget, item() as HiddenPartsDisplayItem)}
                     >
                       {t("messageBlock.hiddenParts.show", {
                         count: Math.min((item() as HiddenPartsDisplayItem).count, MESSAGE_PART_REVEAL_STEP),
