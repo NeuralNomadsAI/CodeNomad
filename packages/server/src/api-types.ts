@@ -760,6 +760,8 @@ export interface ServerMeta {
   updateFeed?: UpdateFeed
   /** Newest release offered by the preview feed; stable updates use `support`. */
   update?: LatestReleaseInfo | null
+  /** Explicit desktop data profile of the launching host; omitted for the default profile. */
+  desktopProfile?: string
 }
 
 export type {

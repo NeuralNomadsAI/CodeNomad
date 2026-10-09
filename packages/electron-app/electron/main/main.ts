@@ -1,9 +1,10 @@
 import "./process-output"
-import { app, BrowserWindow, ipcMain, nativeImage, screen, session, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
@@ -26,25 +27,78 @@ import { CliProcessManager } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, PROFILE_ENVIRONMENT, profileDisplayName } from "./data-profile"
+import { LOCK_HEARTBEAT_MS } from "./profile-transition"
+import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
 
-function resolveStoragePaths() {
-  const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
-  if (!app.isPackaged) app.setName("CodeNomad")
+function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const scope = resolveStorageScope({
-    appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
-    cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
+    profileKey, cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
   const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
+  // The backend reports the active profile; the default profile is never announced.
+  if (profileKey === DEFAULT_PROFILE_KEY) delete process.env[BACKEND_PROFILE_ENVIRONMENT]
+  else process.env[BACKEND_PROFILE_ENVIRONMENT] = profileDisplayName(profileKey)
   return { scope, browserDataPath, sessionDataPath }
+}
+
+function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefined {
+  try {
+    return resolveLaunchProfile({
+      environment: process.env, packaged: app.isPackaged, cliConfig: process.env.CLI_CONFIG,
+      cwd: process.cwd(), baseUserDataPath,
+    })
+  } catch (error) {
+    // An invalid explicit profile must never silently open another profile.
+    const message = error instanceof InvalidProfileError ? error.message : `Unable to select the CodeNomad data profile: ${error instanceof Error ? error.message : String(error)}`
+    console.error(`[electron-startup] ${message}`)
+    dialog.showErrorBox("CodeNomad cannot start", message)
+    app.exit(1)
+    return undefined
+  }
+}
+
+/**
+ * Several profiles hold restorable state and none was remembered. Chromium storage and the
+ * singleton are fixed before `ready`, so ask from a throwaway profile-free storage location,
+ * record the answer and relaunch into the chosen profile. No profile is opened or written.
+ */
+function runProfileSelection(selection: Extract<LaunchProfile, { kind: "ask" }>) {
+  const temporary = mkdtempSync(join(tmpdir(), "codenomad-profile-selection-"))
+  app.setPath("userData", temporary)
+  app.setPath("sessionData", temporary)
+  const heartbeat = setInterval(() => selection.lock.heartbeat(), LOCK_HEARTBEAT_MS)
+  void app.whenReady().then(async () => {
+    const content = selectionDialogContent(selection.candidates)
+    const { response } = await dialog.showMessageBox({
+      type: "question", title: content.title, message: content.message, detail: content.detail,
+      buttons: content.buttons, defaultId: 0, cancelId: content.buttons.length, noLink: true,
+    })
+    const key = selectedProfileKey(selection.candidates, response)
+    if (key === undefined) return
+    let remembered = false
+    try {
+      remembered = selection.lock.commit(selection.context, key)
+    } catch (error) {
+      console.error("[electron-startup] failed to remember the profile choice", error)
+    }
+    // An unremembered answer still applies to the relaunch (as in Tauri); the question returns next time.
+    if (!remembered) process.env[PROFILE_ENVIRONMENT] = profileDisplayName(key)
+    app.relaunch()
+  }).catch((error) => console.error("[electron-startup] profile selection failed", error)).finally(() => {
+    clearInterval(heartbeat)
+    selection.lock.release()
+    app.exit(0)
+  })
 }
 
 function configureBrowserStorage(browserDataPath: string, sessionDataPath: string) {
@@ -77,16 +131,29 @@ app.commandLine.appendSwitch("remote-debugging-port", "0")
 app.commandLine.appendSwitch("enable-logging")
 process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
 process.setSourceMapsEnabled?.(true)
-const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths()
-const developerNativeIdentity = `electron:${createHash("sha256")
-  .update(`${storageScope.channel}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
-  .digest("hex")
-  .slice(0, 16)}`
-const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
-startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
-  configureBrowserStorage(browserDataPath, sessionDataPath)
-  runPrimary(initialIntent)
-})
+const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
+if (!app.isPackaged) app.setName("CodeNomad")
+let storageScope!: StorageScope
+let sessionDataPath!: string
+let developerNativeIdentity!: string
+const launchProfile = resolveInitialProfile(baseUserDataPath)
+if (launchProfile?.kind === "ask") runProfileSelection(launchProfile)
+else if (launchProfile) startProfile(launchProfile.key)
+
+function startProfile(profileKey: string) {
+  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath } = resolveStoragePaths(baseUserDataPath, profileKey)
+  storageScope = scope
+  sessionDataPath = profileSessionDataPath
+  developerNativeIdentity = `electron:${createHash("sha256")
+    .update(`${storageScope.profile}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
+    .digest("hex")
+    .slice(0, 16)}`
+  const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
+  startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
+    configureBrowserStorage(browserDataPath, sessionDataPath)
+    runPrimary(initialIntent)
+  })
+}
 
 function runPrimary(firstIntent: LaunchIntent) {
   cleanupPackagedChromiumStorage()

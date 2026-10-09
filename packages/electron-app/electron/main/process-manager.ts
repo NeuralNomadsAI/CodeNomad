@@ -23,6 +23,7 @@ import { getUserShellEnv, supportsUserShell } from "./user-shell"
 import { resolveShellEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 import { startNativeService } from "./native-service-start"
+import { BACKEND_PROFILE_ENVIRONMENT } from "./data-profile"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -225,6 +226,10 @@ export class CliProcessManager extends EventEmitter {
     }
     env.ELECTRON_RUN_AS_NODE = "1"
     env.CODENOMAD_NATIVE_PARENT = "1"
+    // The host's resolved profile wins over any value captured from the user's shell.
+    const profile = process.env[BACKEND_PROFILE_ENVIRONMENT]
+    if (profile) env[BACKEND_PROFILE_ENVIRONMENT] = profile
+    else delete env[BACKEND_PROFILE_ENVIRONMENT]
     delete env.npm_config_prefix
     delete env.NPM_CONFIG_PREFIX
 

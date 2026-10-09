@@ -653,6 +653,7 @@ export const settingsMessages = {
   "settings.info.version.ui": "UI संस्करण",
   "settings.info.version.uiSource": "UI स्रोत",
   "settings.info.runtime.type": "क्लाइन्ट रनटाइम",
+  "settings.info.runtime.dataProfile": "डेटा प्रोफाइल",
   "settings.info.runtime.platform": "क्लाइन्ट प्लेटफर्म",
   "settings.info.runtime.os": "क्लाइन्ट अपरेटिङ सिस्टम",
   "settings.info.server.os": "सर्भर अपरेटिङ सिस्टम",

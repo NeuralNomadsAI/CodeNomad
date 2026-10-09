@@ -256,6 +256,14 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-label">{t("settings.info.runtime.type")}</span>
             <span class="settings-info-value">{runtimeEnv.host}</span>
           </div>
+          <Show when={meta()?.desktopProfile}>
+            {(profile) => (
+              <div class="settings-info-row" data-testid="settings-data-profile">
+                <span class="settings-info-label">{t("settings.info.runtime.dataProfile")}</span>
+                <span class="settings-info-value" dir="ltr">{profile()}</span>
+              </div>
+            )}
+          </Show>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.runtime.platform")}</span>
             <span class="settings-info-value">{runtimeEnv.platform}</span>

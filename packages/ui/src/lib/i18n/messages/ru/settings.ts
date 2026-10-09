@@ -654,6 +654,7 @@ export const settingsMessages = {
   "settings.info.version.ui": "Версия UI",
   "settings.info.version.uiSource": "Источник UI",
   "settings.info.runtime.type": "Среда выполнения клиента",
+  "settings.info.runtime.dataProfile": "Профиль данных",
   "settings.info.runtime.platform": "Платформа клиента",
   "settings.info.runtime.os": "Операционная система клиента",
   "settings.info.server.os": "Операционная система сервера",

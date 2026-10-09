@@ -117,6 +117,23 @@ test("the update feed is saved as a server preference and only changes the offer
   } finally { await page.close() }
 })
 
+test("the data profile row appears only for an explicit non-default profile", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  await setup(page, "electron")
+  let desktopProfile: string | undefined
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? { ...baseMeta, desktopProfile } : {}) }))
+  try {
+    await page.goto(url)
+    await rowValue(page, "Server operating system").waitFor()
+    assert.equal(await page.getByTestId("settings-data-profile").count(), 0)
+    desktopProfile = "dev-v2"
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    await page.getByTestId("settings-data-profile").waitFor()
+    assert.equal(await rowValue(page, "Data profile").innerText(), "dev-v2")
+  } finally { await page.close() }
+})
+
 test("older or unreachable servers never borrow the client platform", async () => {
   const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
   await setup(page, "web")

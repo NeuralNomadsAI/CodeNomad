@@ -630,6 +630,7 @@ export const settingsMessages = {
   "settings.info.version.ui": "UI sürümü",
   "settings.info.version.uiSource": "UI kaynağı",
   "settings.info.runtime.type": "İstemci çalışma zamanı",
+  "settings.info.runtime.dataProfile": "Veri profili",
   "settings.info.runtime.platform": "İstemci platformu",
   "settings.info.runtime.os": "İstemci işletim sistemi",
   "settings.info.server.os": "Sunucu işletim sistemi",

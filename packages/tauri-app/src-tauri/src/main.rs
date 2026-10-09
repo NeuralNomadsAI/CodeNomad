@@ -5,6 +5,7 @@ mod browser_controller;
 mod cert_manager;
 mod cli_manager;
 mod client_state;
+mod data_profile;
 mod developer_mode;
 mod identity;
 mod launch;
@@ -17,6 +18,8 @@ mod native_service_start;
 mod notification_badge;
 mod notification_badge_lifetime;
 mod preferences_window;
+mod profile_selection_dialog;
+mod profile_transition;
 mod shutdown;
 mod view_menu;
 mod window_constraints;
@@ -1693,6 +1696,52 @@ fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalClo
     }
 }
 
+/// Resolves the data profile before the identifier, singleton or WebView storage exists. An
+/// invalid explicit profile fails visibly; a needed question is asked here, synchronously, so no
+/// profile is opened or written before the answer is recorded.
+fn resolve_launch_profile_or_exit(
+    cli_config: Option<&str>,
+    cwd: &std::path::Path,
+    home: &std::path::Path,
+) -> String {
+    let fail = |message: String| -> ! {
+        eprintln!("[startup] {message}");
+        profile_selection_dialog::show_startup_error(&message);
+        std::process::exit(1);
+    };
+    let resolved = identity::resolve_launch_profile(
+        std::env::var(data_profile::PROFILE_ENVIRONMENT).ok().as_deref(),
+        std::env::var(data_profile::LEGACY_CHANNEL_ENVIRONMENT).ok().as_deref(),
+        cli_config,
+        !is_dev_mode(),
+        cwd,
+        home,
+    );
+    match resolved {
+        Ok(identity::LaunchProfile::Ready(profile)) => profile,
+        Ok(identity::LaunchProfile::Ask {
+            candidates,
+            lock,
+            context,
+        }) => {
+            let heartbeat = lock.start_heartbeat();
+            let chosen = profile_selection_dialog::ask(&candidates);
+            drop(heartbeat);
+            let Some(profile) = chosen else {
+                lock.release();
+                std::process::exit(0);
+            };
+            if let Err(error) = lock.commit(&context, &profile) {
+                // The answer still applies to this launch; the question returns next time.
+                eprintln!("[startup] {error}");
+            }
+            lock.release();
+            profile
+        }
+        Err(message) => fail(message),
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1703,15 +1752,19 @@ fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
-    let scope = identity::resolve_scope(
-        std::env::var("CODENOMAD_UPDATE_CHANNEL").ok().as_deref(),
-        std::env::var("CLI_CONFIG").ok().as_deref(),
-        env!("CARGO_PKG_VERSION"),
-        !is_dev_mode(),
-        &cwd,
-        &home,
-        &local_data,
-    );
+    let cli_config = std::env::var("CLI_CONFIG").ok();
+    let profile = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
+    let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
+    // The backend reports the active profile; the default profile is never announced. This runs
+    // before any thread is spawned.
+    if profile == data_profile::DEFAULT_PROFILE_KEY {
+        std::env::remove_var(data_profile::BACKEND_PROFILE_ENVIRONMENT);
+    } else {
+        std::env::set_var(
+            data_profile::BACKEND_PROFILE_ENVIRONMENT,
+            data_profile::profile_display_name(&profile),
+        );
+    }
     configure_developer_environment();
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");

@@ -29,6 +29,7 @@ import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { resolveUpdateFeed, startPreviewReleaseMonitor } from "./releases/dev-release-monitor"
+import { readDesktopProfile } from "./desktop-profile"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
@@ -472,8 +473,10 @@ async function main() {
     minServerVersion: uiResolution.minServerVersion,
   }
 
+  serverMeta.desktopProfile = readDesktopProfile(process.env)
+
   // The feed is a saved server preference, independent of the desktop data
-  // profile and of CODENOMAD_UPDATE_CHANNEL, which hosts still read for storage.
+  // profile and of CODENOMAD_UPDATE_CHANNEL, which hosts read only as a deprecated profile alias.
   const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
   const readUpdateFeed = () => resolveUpdateFeed(settings.getOwner("config", "server")?.updateFeed, packageJson.version)
   serverMeta.updateFeed = readUpdateFeed()

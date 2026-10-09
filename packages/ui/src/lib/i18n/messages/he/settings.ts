@@ -654,6 +654,7 @@ export const settingsMessages = {
   "settings.info.version.ui": "גרסת ממשק",
   "settings.info.version.uiSource": "מקור הממשק",
   "settings.info.runtime.type": "סביבת הריצה של הלקוח",
+  "settings.info.runtime.dataProfile": "פרופיל נתונים",
   "settings.info.runtime.platform": "פלטפורמת הלקוח",
   "settings.info.runtime.os": "מערכת ההפעלה של הלקוח",
   "settings.info.server.os": "מערכת ההפעלה של השרת",

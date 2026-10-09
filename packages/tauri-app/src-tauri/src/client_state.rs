@@ -5,6 +5,7 @@ mod envelope;
 mod navigation;
 mod partitions;
 mod process;
+mod restorable;
 mod window;
 mod window_flush;
 mod window_updates;
@@ -22,6 +23,7 @@ pub use commands::{
     client_state_load, client_state_load_partition, client_state_navigation_flushed,
     client_state_renderer_flushed, client_state_save, client_state_set_restore_enabled,
 };
+pub(crate) use restorable::{default_state_files, restorable_state_modified};
 pub(crate) use navigation::{
     before_window_navigation, before_window_navigation_if, NavigationKind,
 };

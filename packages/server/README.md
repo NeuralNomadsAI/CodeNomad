@@ -116,7 +116,7 @@ Choose which releases are offered in **Settings → Info → Updates → Update 
 |-------------|-------------|
 | `CODENOMAD_GITHUB_REPO` | GitHub repo used for preview release checks (default `NeuralNomadsAI/CodeNomad`) |
 
-`CODENOMAD_UPDATE_CHANNEL` no longer affects update checks. Desktop hosts still read it, unchanged, to select their isolated native data scope.
+`CODENOMAD_UPDATE_CHANNEL` no longer affects update checks. Desktop hosts accept it only as a deprecated alias of `CODENOMAD_PROFILE` (see `dev-docs/DESKTOP_DATA_PROFILES.md`). A desktop host sets `CODENOMAD_DESKTOP_PROFILE` on the backend it launches for a non-default data profile; the server only displays it in Settings → Info.
 
 ### HTTP vs HTTPS
 

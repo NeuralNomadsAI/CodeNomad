@@ -654,6 +654,7 @@ export const settingsMessages = {
   "settings.info.version.ui": "UI バージョン",
   "settings.info.version.uiSource": "UI ソース",
   "settings.info.runtime.type": "クライアントのランタイム",
+  "settings.info.runtime.dataProfile": "データプロファイル",
   "settings.info.runtime.platform": "クライアントのプラットフォーム",
   "settings.info.runtime.os": "クライアントのOS",
   "settings.info.server.os": "サーバーのOS",

@@ -654,6 +654,7 @@ export const settingsMessages = {
   "settings.info.version.ui": "UI 版本",
   "settings.info.version.uiSource": "UI 来源",
   "settings.info.runtime.type": "客户端运行时",
+  "settings.info.runtime.dataProfile": "数据配置文件",
   "settings.info.runtime.platform": "客户端平台",
   "settings.info.runtime.os": "客户端操作系统",
   "settings.info.server.os": "服务器操作系统",
