@@ -4,6 +4,7 @@ import { passageFixture } from "./native-passage-test-fixture"
 import { desktopPlugin } from "./desktop-plugin"
 import { retireNativePassageBusiness, prepareNativePassageSession } from "./native-passage-business"
 import { observeNativePassageSettlement } from "./native-recurrence-settlement"
+import { AUTOMATIC_BRIEFINGS, USER_FACING_TEXT } from "../../missions/recipes"
 
 test("desktop registers passage mission tools independently of backend presence; descendants read the isolated map", async () => {
   const f = await passageFixture(false)
@@ -18,6 +19,15 @@ test("desktop registers passage mission tools independently of backend presence;
     const result = JSON.parse((await f.tools.get("inspect")!.execute({}, tool)).content)
     assert.equal(result.mission.id, f.passage.missionID)
     await assert.rejects(f.tools.get("inspect")!.execute({ missionID: "msn_foreign" }, tool), /identity differs/)
+    // The passage coordinator receives the same plain-language report and automatic briefing guidance.
+    const contextEvent = (sessionID: string) => ({ sessionID, system: [] as Array<{ type: string; text: string }>, tools: { mission_briefing: {} } as Record<string, unknown> })
+    const coordinator = contextEvent(f.passage.coordinatorSessionID), descendant = contextEvent(child)
+    await f.hooks.get("context")!(coordinator); await f.hooks.get("context")!(descendant)
+    const system = coordinator.system.map(part => part.text).join("\n")
+    assert.ok(system.includes(USER_FACING_TEXT) && system.includes(AUTOMATIC_BRIEFINGS))
+    assert.match(system, /whenever you start waiting on a human/)
+    assert.ok(coordinator.tools.mission_briefing)
+    assert.equal(descendant.tools.mission_briefing, undefined)
     await f.finish()
     assert.equal((await f.passage.journal.snapshot()).missions[0].status, "completed")
     // Ordinary one-time use still requires the backend-presence registration.

@@ -103,8 +103,18 @@ New current task results since the assessed snapshot are counted; other map
 changes produce a separate stale-map notice, not a fabricated progress delta.
 Sources that later retire remain historical reader targets, never fresh proof.
 The briefing is retained while stale. Terminal mission summaries take precedence.
-Coordinator instructions ask for an initial briefing and a useful final summary,
-not another bilan after each task/tool, a timer or a hidden automatic request.
+Coordinator instructions (2026-10-09) ask for unprompted briefings at business
+milestones: after the initial plan, after each task settlement (completed, failed
+or blocked), when starting to wait on a human and right before the final report.
+These use requestID `auto:<revision>` with the same freshly inspected
+`basedOnRevision`; each publication advances the revision, so the existing
+idempotency/conflict/stale-revision contract applies unchanged and no server
+validation differs. There is still no timer, per-tool briefing or hidden request.
+Report and briefing summaries are written for the human (user's language, 3–5
+plain sentences, outcome first; IDs, tool/fixture names and commands only in
+`evidence`); the final report states delivered/remaining/decision in ≤6 sentences.
+Recurring passage coordinators receive the same guidance through their actor
+context; the frozen passage start text remains the verbatim instructions.
 
 Request admission is visibly distinct from receiving the matching request-ID
 briefing. Pending/uncertain requests survive mission navigation and remount in

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { MissionMap, MissionTask, MissionTemplateId } from "./model"
-import { buildAssignmentPrompt, buildActorContext, getMissionRecipe } from "./recipes"
+import { AUTOMATIC_BRIEFINGS, USER_FACING_TEXT, buildAssignmentPrompt, buildActorContext, getMissionRecipe } from "./recipes"
 
 const task: MissionTask = { id: "task", key: "fix", title: "Fix <bug>", brief: "Only this seam", role: "implementer",
   status: "ready", blockedBy: [], createdAt: 1, updatedAt: 1, outstandingExecution: false,
@@ -60,6 +60,34 @@ test("every coordinator plans all requested workstreams and launches independent
     assert.match(context, /Do not add a dependency just to reuse a session/)
     assert.match(context, /One workstream's missing tool, consent or failure must not park unrelated ready work/)
     assert.match(context, /Never infer idle from a report/)
+  }
+})
+
+test("every coordinator writes plain-language summaries and publishes automatic briefings", () => {
+  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
+    for (const taskMode of ["native", "independent"] as const) {
+      const context = buildActorContext({ ...mission, template, taskMode }, "ses_coordinator")
+      assert.ok(context.includes(USER_FACING_TEXT) && context.includes(AUTOMATIC_BRIEFINGS))
+      assert.match(context, /user's language, in 3-5 short plain sentences, outcome first/)
+      assert.match(context, /Never put session or message IDs, internal tool, fixture/)
+      assert.match(context, /IDs, commands and test output go only in evidence items/)
+      assert.match(context, /publish mission\.briefing on your own, without waiting for a request/)
+      assert.match(context, /once the initial plan is declared/)
+      assert.match(context, /after each mission\.report that settles a task as completed, failed or blocked/)
+      assert.match(context, /whenever you start waiting on a human/)
+      assert.match(context, /right before the final mission\.report/)
+      assert.match(context, /requestID "auto:<revision>" with that same freshly inspected revision as basedOnRevision/)
+      assert.match(context, /exact requestID supplied by the UI/)
+      assert.match(context, /what was delivered, what remains, and what needs a decision, in at most 6 short sentences/)
+      assert.doesNotMatch(context, /never after every tool\/task/)
+    }
+  }
+  const pocock = buildActorContext(mission, "ses_coordinator")
+  assert.match(pocock, /role's structured artifact from the returned evidence/, "Pocock evidence gate survives")
+  assert.match(buildActorContext({ ...mission, template: "wayfinder" }, "ses_coordinator"), /never answer the human side yourself/)
+  for (const prompt of [buildAssignmentPrompt(mission, task), buildAssignmentPrompt(mission, { ...task, executionMode: undefined })]) {
+    assert.match(prompt, /Write the summary for a human reader: plain language/)
+    assert.match(prompt, /put IDs, commands and test output only in evidence/)
   }
 })
 

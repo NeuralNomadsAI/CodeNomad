@@ -83,13 +83,14 @@ export async function passageFixture(business = true) {
   // Manual fixture pending predates explicit Play; make the schedule running
   // using its ordinary store control before reserving in production tests.
   const tools = new Map<string, { execute(input: unknown, context: { sessionID: string; messageID: string; id: string; progress(update: Record<string, unknown>): Promise<void> }): Promise<{ content: string }> }>()
+  const hooks = new Map<string, (event: { sessionID: string; system: Array<{ type: string; text: string }>; tools: Record<string, unknown> }) => unknown>()
   const context = { location, storage: { ...storage, remove: async () => {} }, session: { get: native.get,
-    hook: async () => ({ dispose: async () => {} }) }, tool: { transform: async (callback: (draft: unknown) => void) => {
+    hook: async (name: string, callback: never) => { hooks.set(name, callback); return { dispose: async () => {} } } }, tool: { transform: async (callback: (draft: unknown) => void) => {
       callback({ namespace: () => {}, add: (tool: { name: string }) => tools.set(tool.name, tool as never) })
       return { dispose: async () => {} }
     } } } as unknown as MissionsPluginContext
   const disposeTools = business ? await setupMissionsBusiness(context, id => selectNativePassageBusiness(context, id)) : async () => {}
-  return { root, calendar, passage, storage, observation, sessions, states, input, tools, context,
+  return { root, calendar, passage, storage, observation, sessions, states, input, tools, hooks, context,
     async start() { const ack = await admitNativeRecurrencePassage(await input()); doc = await calendar.recordAdmission(doc.id, ack, 20, () => true); return doc },
     async finish(outcome: "completed" | "failed" = "completed") { return tools.get("report")!.execute({ final: true, outcome, summary: "Finished via real mission tool", evidence: [], next: [] },
       { sessionID: passage.coordinatorSessionID, messageID: "msg_report", id: "call_report", progress: async () => {} }) },
