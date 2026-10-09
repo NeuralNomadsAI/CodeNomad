@@ -241,9 +241,19 @@ test("pending authority normalizes Windows directory keys", async () => {
   addPermissionToQueue("normalized-permission-location", {
     id: "stale", sessionID: "deleted", action: "edit", resources: ["*"], metadata: {},
   }, "C:\\Repo\\")
-  serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: "/workspace", status: "ok", locations: [{ location, permissions: [], forms: [] }] }] })
+  // Like the broker, answer every requested directory: an omitted one is incomplete coverage.
+  const requested: string[] = []
+  serverApi.getPendingRequests = async (_id, directories) => {
+    requested.push(...directories)
+    return { supported: true, directories: directories.map((directory) => ({
+      directory, status: "ok" as const,
+      locations: directory === "C:\\Repo\\" ? [{ location, permissions: [], forms: [] }] : [],
+    })) }
+  }
 
   await syncPendingRequests("normalized-permission-location")
+
+  assert.ok(requested.includes("C:\\Repo\\"))
 
   assert.deepEqual(getPermissionQueue("normalized-permission-location"), [])
 })
