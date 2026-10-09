@@ -27,7 +27,8 @@ export class PassageNotStartedError extends Error {}
 /** Reserve in the calendar BEFORE entering here. Recovery checks both native
  * session and original inbox/message identity first; a missing original message
  * is retried only under the SAME identities (native first admission wins), while
- * dispatch is still allowed. No new IDs and no turn replay. */
+ * dispatch is still allowed and no admission was ever recorded. No new IDs and
+ * no turn replay. */
 export async function admitNativeRecurrencePassage(input: PassageInput) {
   const { document: doc, native, observation, signal } = input
   if (!doc.pending) throw new Error("Passage pending input unavailable")
@@ -50,7 +51,11 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
       || canonicalAuthority(fresh.config) !== canonicalAuthority(doc.config)) throw new Error("Passage dispatch is not running")
     current()
   }
+  // A recorded admission was observed natively once; it is never created or sent
+  // again, even if the start message is later absent (for example pruned history).
+  const admitted = doc.pending.admission !== null && doc.pending.admission !== undefined
   const exists = await observation.exists(request.id)
+  if (!exists && admitted) throw new Error("Admitted passage coordinator unavailable")
   if (!exists) await dispatch()
   const session = exists ? await native.get({ sessionID: request.id }, { signal }) : await native.create(request, { signal }, effectCurrent)
   if (session.id !== request.id || session.parentID || session.projectID !== doc.projectID
@@ -87,8 +92,8 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
           metadata: target.metadata ?? {}, agent: target.agent, model: target.model })
     } })
 
-  const observed = await observation.session(request.id, passage.messageID)
-  if (!observed.messagePresent) {
+  const observed = admitted ? undefined : await observation.session(request.id, passage.messageID)
+  if (observed && !observed.messagePresent) {
     await dispatch()
     // Persist the exact bounded source snapshot before admitting the native
     // message. A crash cannot reread newer source prose under the same identity.

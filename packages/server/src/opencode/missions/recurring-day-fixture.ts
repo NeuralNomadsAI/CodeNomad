@@ -51,6 +51,8 @@ export class RecurringDayFixture {
   /** `before-message`: a transient native admission refusal; nothing is admitted. */
   crash: "after-pending" | "after-create" | "before-message" | "after-message" | undefined
   crashHits = 0
+  /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
+  admissions = 0
   readonly tools = new Map<string, NativeTool>()
   readonly calls: Array<{ name: string; sessionID: string }> = []
   readonly jobs = new Map<string, Job>()
@@ -328,6 +330,8 @@ export class RecurringDayFixture {
     this.db.prepare("INSERT INTO session_v2 VALUES(?,?,?,?,NULL,?,NULL)").run(id, null, "day-test", this.root, "{}")
     this.config.watchedConversationIDs = [id]
   }
+  /** Native history pruning: a delivered message disappears; native admission would accept its ID again. */
+  pruneMessage(id: string) { this.db.prepare("DELETE FROM session_message WHERE id=?").run(id) }
   deleteSession(id: string) {
     this.db.prepare("DELETE FROM fixture_session WHERE id=?").run(id)
     this.db.prepare("DELETE FROM session_v2 WHERE id=?").run(id)
@@ -357,6 +361,7 @@ export class RecurringDayFixture {
     if (this.message(id)) return Schema.decodeUnknownSync(SessionInbox.Info)({ id, sessionID, type, payload, delivery: "queue", time: { created: this.now } })
     const item = Schema.decodeUnknownSync(SessionInbox.Info)({ id, sessionID, type, payload, delivery: "queue", time: { created: this.now } })
     this.db.prepare("INSERT INTO session_inbox VALUES(?,?,?)").run(sessionID, id, JSON.stringify(Schema.encodeSync(SessionInbox.Info)(item)))
+    this.admissions++
     this.event(sessionID, "session.inbox.enqueued.1", { inboxID: id, item: { type, payload } })
     if (this.autoDeliver) this.deliver(sessionID)
     this.fail("after-message")

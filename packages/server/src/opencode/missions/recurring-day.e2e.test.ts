@@ -114,6 +114,24 @@ test("C2. A transient admission failure retries the same identities on a later w
   assert.equal((await f.snapshot()).latestResult?.outcome, "completed")
 })
 
+test("C4. A recorded admission is never re-sent when its start message later disappears natively", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play"); await f.advance(DUE)
+  const pending = (await f.document())!.pending!
+  assert(pending.admission, "admission recorded")
+  assert.equal(f.admissions, 1)
+  f.pruneMessage(pending.passage.messageID)
+  assert.equal(f.starts.length, 0, "the delivered start message is gone from native history")
+  await f.advance(DUE + 3_600_000)
+  assert.equal(f.admissions, 1, "absence after a recorded admission is history, never a resend")
+  await f.model(); await f.advance(DUE + 3_600_000 + 5_000)
+  const settled = await f.snapshot()
+  assert.equal(settled.pending, null, "settles by family quiescence without the pruned message")
+  assert.equal(settled.latestResult?.outcome, "completed")
+  assert.equal(f.admissions, 1)
+  assert.equal(f.coordinators.length, 1)
+})
+
 test("C3. A deleted watched conversation archives failed/not-started and unblocks later days and Run now", async t => {
   const f = await RecurringDayFixture.open(); t.after(() => f.close())
   f.watch("ses_watched_source")

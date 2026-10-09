@@ -163,6 +163,9 @@ deterministic start message exists (delivered or inbox):
   kept, `lastDaily` advances normally and watched cursors do not.
 - Absent for a transient cause: retry admission on a later wake with the **same**
   session and message identities (native first admission wins), never a new one.
+  Retry applies only while no admission was ever recorded. Once recorded, a later
+  native absence of the start message (pruned history) is observed history: the
+  passage settles by family quiescence and the message is never sent again.
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 Manual runs do not masquerade as a different scheduled civil day's completion.
 
