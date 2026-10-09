@@ -1,5 +1,5 @@
 // Real isolated OpenCode + shipped bundle + authenticated production HTTP/HMAC routes.
-// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [any of A, B, C, D; default ABCD]
+// Usage: node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> [any of A, B, C, D, G; default ABCD]
 // No installer, default service discovery, shared database/config or pattern kills.
 // Settlement is event-driven: each archive must follow family quiescence within
 // SETTLE (2.5 min), far below the hourly Job ceiling. Next-day passages cannot be
@@ -18,7 +18,7 @@ import { OpenCode } from "@opencode/client"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
-assert.match(journeys, /^A?B?C?D?$/, "Journeys: ordered subset of ABCD")
+assert.match(journeys, /^A?B?C?D?G?$/, "Journeys: ordered subset of ABCDG")
 const root = await realpath(await mkdtemp(path.join(process.env.LOCALAPPDATA, "Temp/opencode/recurring-simple-native-")))
 const cli = path.join(root, "opencode.exe"), project = path.join(root, "project")
 await copyFile(source, cli)
@@ -325,6 +325,30 @@ try {
     C.result = "passed"
   }
   if (journeys.includes("D")) await journeyD()
+  if (journeys.includes("G")) {
+    // Paused schedule: only the settlement-only observer Job may archive; no Play/Resume.
+    stage = "G paused Run now"
+    const id = await create("Native paused Run now", nextMinute(6 * 3_600_000))
+    const G = evidence.journeys.G = { id, paused: await snapshot(id) }
+    assert.equal(G.paused.state, "paused")
+    const { result } = await runNow(id); G.accepted = result
+    await until(async () => (G.pending = await snapshot(id)).pending?.conversationID)
+    const sessionID = G.pending.pending.conversationID
+    assert.equal(G.pending.state, "paused")
+    await until(() => done(sessionID), 180_000)
+    await quiet(sessionID); G.quiescentAt = Date.now()
+    stage = "G observer archive without Play/Resume"
+    await until(async () => (G.settled = await snapshot(id)).history.length === 1, SETTLE, SLOW)
+    G.settledObservedAt = Date.now(); G.archiveLatencyMs = G.settledObservedAt - G.quiescentAt
+    assert.equal(G.settled.latestResult.passageID, G.pending.pending.passageID)
+    assert.equal(G.settled.latestResult.outcome, "completed")
+    assert.equal(G.settled.pending, null); assert.equal(G.settled.state, "paused", "Run now never plays the schedule")
+    assert.equal(G.settled.nextDueAt, null)
+    G.starts = await passageStarts(sessionID); assert.equal(G.starts.length, 1)
+    G.tools = evidence.providerCalls.filter(c => c.sessionID === sessionID).map(c => c.name)
+    await control(id, "stop")
+    G.result = "passed"
+  }
   evidence.outcome = "passed"
 } catch (error) {
   evidence.outcome = "failed"; evidence.failedStage = stage; evidence.error = error.message; process.exitCode = 1

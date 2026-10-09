@@ -259,7 +259,8 @@ Coverage boundary: the offline `recurring-day.e2e.test.ts` fixture drives the re
 plugin, scheduler, storage and `mission_*` tools, but its scripted model only
 records `read`/`shell` call names; it executes no real shell or backend tool.
 Real shell/backend execution under native permissions is covered only by the
-isolated native qualification fixture (in progress), not by the offline e2e.
+isolated native qualification fixture (`MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md`,
+journeys A–D and G; acceptance remains partial), not by the offline e2e.
 Native tests must use isolated service/database/provider fixtures, never the shared
 daemon or user Mission. No install, daemon mutation or push is authorized by this doc.
 

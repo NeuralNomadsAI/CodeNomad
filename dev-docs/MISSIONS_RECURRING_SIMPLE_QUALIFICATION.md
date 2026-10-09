@@ -1,5 +1,48 @@
 # Simple recurring Missions — real native qualification
 
+## Merged rerun (2026-10-09, integration merge `c3847318`)
+
+The integration review fixes (two-phase UI marks, passage handle eviction, paused
+Run now settlement-only observer Job + Check passage, async control Git reads) were
+merged with the native fixes below. The observer Job shares the daily Job's loop,
+so the same native execution-event wake and pending fallback backoff apply to it.
+Same isolated read-copy of OpenCode 2.0.26; nothing installed. The fixture accepts
+no `--bounded` flag (removed in the previous rerun); journeys are the only argument.
+
+```powershell
+npm run build:missions --workspace packages/server
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> A
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> BCD
+node scripts/test-recurring-simple-native.mjs <absolute-existing-cli> G
+```
+
+| Journey | Evidence suffix | Result | Coordinator starts | Archive latency |
+| --- | --- | --- | --- | --- |
+| A daily work, backend closed | `7nZ0rl` | completed, running, nextDueAt = due + 24 h | **1** | 3.0 s after quiescence |
+| B restart pending → Resume | `ILizfO` | `ended-without-report` / `interrupted`, same passage, 1 provider call total | **1** (same message) | 19 ms after Resume ack |
+| C Run now ×2, same schedule | `ILizfO` | two distinct completed passages; exact duplicate → 200, same passage | **1 each** | 6 ms, 3.1 s |
+| D Pause → Stop | `ILizfO` | no root session after due + 30 s; Resume after Stop → 503 | **0** | n/a |
+| **G paused Run now** | `7lxQU8` | completed archive with schedule still paused, no Play/Resume sent, nextDueAt null | **1** | **3.0 s** after quiescence |
+
+- A `rcs_5fddadb0…` passage `rcp_6589c335…`: read → shell → mission_inspect →
+  mission_report; due `1791514200000`, next `1791600600000`.
+- B `rcs_0c05e9b7…` passage `rcp_23db5731…`; owned PIDs `32904` → `37836`.
+- C `rcs_33c2f5c2…`: `rcp_0b1a2df4…`, `rcp_721fb3e8…`.
+- D `rcs_9069d9f5…`, due `1791514380000`.
+- G `rcs_a1f04be2…` passage `rcp_871a7d90…`: full tool sequence, only the
+  settlement-only observer Job could archive it (the schedule never left paused).
+  This closes the previous gap "Run now on a paused schedule has no Job".
+
+All recorded PIDs (`61000`, `32904`, `37836`, `48052`) stopped through the owned
+child handle; an executable-path/command-line scan afterwards found zero fixture
+services or Node fixture processes. Other remaining gaps below are unchanged.
+
+Merged offline validation: server/UI typecheck and build:missions pass; missions,
+opencode/missions, mission routes and git-process tests 1333 pass / 1 skipped;
+durable-host files individually pass except `human-fences` test 7 (15 s timeout),
+which reproduces identically on the near-base assembly worktree; UI mission-* and
+interruption-dock browser tests 280/280.
+
 ## Rerun result (2026-10-09, after settlement fixes)
 
 **Journeys A–D pass natively** against the same isolated OpenCode 2.0.26 copy,
@@ -59,7 +102,9 @@ fixture processes.
 - Native does not persist event payloads here (the `event` table stays empty),
   so the observer's `session.execution.failed` lookup cannot see native failures:
   a failed passage would archive as `ended-without-report`. Not exercised.
-- A Run now on a paused schedule has no Job to settle it until Play/Resume.
+- ~~A Run now on a paused schedule has no Job to settle it until Play/Resume.~~
+  Fixed by the merged settlement-only observer Job; natively qualified as G above.
+  The post-restart Check passage path is offline-only.
 - Descendant/background-family settlement, watched cursors, human Forms and
   native CAS-conflict/lost-reply journeys remain offline-only.
 
