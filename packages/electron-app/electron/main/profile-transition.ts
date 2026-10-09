@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs"
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs"
 import { join } from "node:path"
 import { parseClientState, type ClientWindowStateRecord } from "./client-state-envelope"
 import { DEFAULT_PROFILE_KEY, parseProfileName, profileDisplayName, profileScope, TRANSITION_PROFILE_KEYS } from "./data-profile"
@@ -142,16 +142,23 @@ export function readChoices(directory: string): ChoicesFile {
  * `scopes/<scope>` under the userData base when they open a scoped profile (Electron's userData,
  * Tauri's client-state). A deleted one is ignored so detection runs again instead of silently
  * opening an empty profile. The default profile always exists.
+ *
+ * Unlike deletion, which never follows links, this check follows a symlink/junction: the hosts open
+ * a relocated profile through it. Only a definite absence counts as deleted (not found, including a
+ * dangling link, or something that is not a folder); an unreadable folder or any other error keeps
+ * the choice.
  */
-export function rememberedProfileExists(key: string, context: Pick<TransitionContext, "configIdentity" | "defaultIdentity" | "userDataBase">): boolean {
+export function rememberedProfileExists(
+  key: string,
+  context: Pick<TransitionContext, "configIdentity" | "defaultIdentity" | "userDataBase">,
+  stat: (path: string) => { isDirectory(): boolean } = statSync,
+): boolean {
   if (key === DEFAULT_PROFILE_KEY) return true
   const scope = profileScope(key, context.configIdentity, context.defaultIdentity)
   if (!scope.scoped) return true
   try {
-    const stats = lstatSync(join(context.userDataBase, "scopes", scope.scopeName))
-    return stats.isDirectory() && !stats.isSymbolicLink()
+    return stat(join(context.userDataBase, "scopes", scope.scopeName)).isDirectory()
   } catch (error) {
-    // Only a definite absence counts as deleted; an unreadable folder keeps the choice.
     return !hasCode(error, "ENOENT") && !hasCode(error, "ENOTDIR")
   }
 }
@@ -176,7 +183,8 @@ function writeChoice(directory: string, context: TransitionContext, key: string)
   const id = choiceKey(context.configIdentity)
   const existing = file.choices[id]
   if (existing !== undefined && rememberedProfileExists(parseProfileName(existing), context)) return false
-  if (Object.keys(file.choices).length >= MAX_CHOICES) return false
+  // Replacing this config's stale entry never grows the file; only a new entry needs room.
+  if (existing === undefined && Object.keys(file.choices).length >= MAX_CHOICES) return false
   try {
     writeChoicesFile(directory, { ...file.choices, [id]: profileDisplayName(key) })
     return true

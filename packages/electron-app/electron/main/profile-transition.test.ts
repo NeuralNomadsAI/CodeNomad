@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
 import { profileScope } from "./data-profile"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
 import { SELECTION_TEMP_MAX_AGE_MS, SELECTION_TEMP_PREFIX, sweepSelectionFolders } from "./profile-selection-cleanup"
-import { choiceKey, hasRestorableState, LOCK_STALE_MS, readChoices, resolveTransitionProfile, selectionDirectory, type TransitionContext } from "./profile-transition"
+import { choiceKey, hasRestorableState, LOCK_STALE_MS, readChoices, rememberedProfileExists, resolveTransitionProfile, selectionDirectory, type TransitionContext } from "./profile-transition"
 
 const vectors = JSON.parse(readFileSync(new URL("./data-profile-vectors.json", import.meta.url), "utf8"))
 const fixture = (name: string) => vectors.stateFixtures.find((entry: { name: string }) => entry.name === name)
@@ -119,6 +119,44 @@ test("a remembered named profile that no longer exists for this config reruns de
   write(scopedFile("dev"), EMPTY)
   write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "dev" } }))
   assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
+})
+
+test("the existence check follows a relocated scope link; a dangling link reruns detection", (t) => {
+  const { write, scopedFile, resolve, context, directory, root } = sandbox(t)
+  const relocated = join(root, "other-disk", "dev")
+  mkdirSync(relocated, { recursive: true })
+  const scopeFolder = dirname(dirname(scopedFile("dev")))
+  mkdirSync(dirname(scopeFolder), { recursive: true })
+  symlinkSync(relocated, scopeFolder, "junction")
+  write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey(context.configIdentity)]: "dev" } }))
+  write(context.defaultStateFiles[0]!, WITH_TABS)
+  assert.deepEqual(resolve(), { kind: "resolved", key: "dev", reason: "remembered" })
+  // The link's target is gone: the profile no longer exists for this config.
+  rmSync(relocated, { recursive: true })
+  assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: "single" })
+})
+
+test("only a definite absence makes a remembered profile missing; unreadable folders keep the choice", () => {
+  const context = { configIdentity: "/c/config.yaml", defaultIdentity: "/c/config.yaml", userDataBase: "/base" }
+  const failing = (code: string) => () => { throw Object.assign(new Error(code), { code }) }
+  for (const code of ["EACCES", "EPERM", "EBUSY", "EIO", "ELOOP"]) assert.equal(rememberedProfileExists("dev", context, failing(code)), true, code)
+  for (const code of ["ENOENT", "ENOTDIR"]) assert.equal(rememberedProfileExists("dev", context, failing(code)), false, code)
+  assert.equal(rememberedProfileExists("dev", context, () => ({ isDirectory: () => false })), false, "not a folder")
+  assert.equal(rememberedProfileExists("dev", context, () => ({ isDirectory: () => true })), true)
+  assert.equal(rememberedProfileExists("stable", context, failing("ENOENT")), true, "the default profile always exists")
+})
+
+test("full choices files follow the shared capacity vectors", (t) => {
+  for (const vector of vectors.choicesCapacity as Array<{ name: string; otherEntries: number; current: string | null; reason: string; stored: string | null }>) {
+    const { write, resolve, context, directory } = sandbox(t)
+    const choices: Record<string, string> = {}
+    for (let index = 0; index < vector.otherEntries; index += 1) choices[choiceKey(`/other/${index}/config.yaml`)] = "dev"
+    if (vector.current) choices[choiceKey(context.configIdentity)] = vector.current
+    write(join(directory, "choices.json"), JSON.stringify({ version: 1, choices }))
+    assert.deepEqual(resolve(), { kind: "resolved", key: "stable", reason: vector.reason }, vector.name)
+    const stored = readChoices(directory) as { choices: Record<string, string> }
+    assert.equal(stored.choices[choiceKey(context.configIdentity)] ?? null, vector.stored, vector.name)
+  }
 })
 
 test("an unknown future choices file is never overwritten", (t) => {

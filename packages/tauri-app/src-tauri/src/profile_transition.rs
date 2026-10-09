@@ -190,7 +190,22 @@ pub(crate) fn read_choices(directory: &Path) -> ChoicesFile {
 /// Tauri's client-state). A deleted one is ignored so detection runs again instead of silently
 /// opening an empty profile. The default profile always exists. Mirrors Electron's
 /// `rememberedProfileExists`.
+///
+/// Unlike deletion, which never follows links, this check follows a symlink/junction: the hosts
+/// open a relocated profile through it. Only a definite absence counts as deleted (not found,
+/// including a dangling link, or something that is not a folder); an unreadable folder or any
+/// other error keeps the choice.
 pub(crate) fn remembered_profile_exists(key: &str, context: &TransitionContext) -> bool {
+    remembered_profile_exists_with(key, context, |path| {
+        fs::metadata(path).map(|metadata| metadata.is_dir())
+    })
+}
+
+pub(crate) fn remembered_profile_exists_with(
+    key: &str,
+    context: &TransitionContext,
+    is_directory: impl Fn(&Path) -> std::io::Result<bool>,
+) -> bool {
     if key == DEFAULT_PROFILE_KEY {
         return true;
     }
@@ -198,10 +213,12 @@ pub(crate) fn remembered_profile_exists(key: &str, context: &TransitionContext) 
     if !scope.scoped {
         return true;
     }
-    match fs::symlink_metadata(context.user_data_base.join("scopes").join(scope.scope_name)) {
-        Ok(metadata) => metadata.is_dir() && !metadata.file_type().is_symlink(),
-        // Only a definite absence counts as deleted; an unreadable folder keeps the choice.
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    match is_directory(&context.user_data_base.join("scopes").join(scope.scope_name)) {
+        Ok(directory) => directory,
+        Err(error) => !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ),
     }
 }
 

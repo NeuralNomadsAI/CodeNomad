@@ -262,6 +262,122 @@ fn a_remembered_named_profile_missing_for_this_config_reruns_detection_and_is_re
     assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Remembered));
 }
 
+fn link_directory(target: &Path, link: &Path) {
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success());
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+#[test]
+fn the_existence_check_follows_a_relocated_scope_link_and_a_dangling_link_reruns_detection() {
+    let sandbox = sandbox();
+    let relocated = sandbox._root.path().join("other-disk").join("dev");
+    fs::create_dir_all(&relocated).unwrap();
+    let scope_folder = sandbox
+        .scoped_file("dev")
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::create_dir_all(scope_folder.parent().unwrap()).unwrap();
+    link_directory(&relocated, &scope_folder);
+    let id = choice_key(&sandbox.context.config_identity);
+    write(
+        &sandbox.directory.join(CHOICES_FILENAME),
+        &json!({ "version": 1, "choices": { id: "dev" } }).to_string(),
+        SystemTime::now(),
+    );
+    write(
+        &sandbox.context.default_state_files[0],
+        &with_tabs(),
+        SystemTime::now(),
+    );
+    assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Remembered));
+    // The link's target is gone: the profile no longer exists for this config.
+    fs::remove_dir_all(&relocated).unwrap();
+    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Single));
+}
+
+#[test]
+fn only_a_definite_absence_makes_a_remembered_profile_missing() {
+    let sandbox = sandbox();
+    let context = &sandbox.context;
+    let failing = |kind: std::io::ErrorKind| {
+        move |_: &Path| -> std::io::Result<bool> { Err(std::io::Error::from(kind)) }
+    };
+    use std::io::ErrorKind::*;
+    for kind in [PermissionDenied, ResourceBusy, Other, Interrupted] {
+        assert!(
+            remembered_profile_exists_with("dev", context, failing(kind)),
+            "{kind:?}"
+        );
+    }
+    for kind in [NotFound, NotADirectory] {
+        assert!(
+            !remembered_profile_exists_with("dev", context, failing(kind)),
+            "{kind:?}"
+        );
+    }
+    assert!(!remembered_profile_exists_with("dev", context, |_| Ok(
+        false
+    )));
+    assert!(remembered_profile_exists_with("dev", context, |_| Ok(true)));
+    assert!(remembered_profile_exists_with(
+        "stable",
+        context,
+        failing(NotFound)
+    ));
+}
+
+#[test]
+fn full_choices_files_follow_the_shared_capacity_vectors() {
+    for vector in shared_vectors()["choicesCapacity"].as_array().unwrap() {
+        let sandbox = sandbox();
+        let name = vector["name"].as_str().unwrap();
+        let mut choices = Map::new();
+        for index in 0..vector["otherEntries"].as_u64().unwrap() {
+            choices.insert(
+                choice_key(&format!("/other/{index}/config.yaml")),
+                Value::String("dev".into()),
+            );
+        }
+        if let Some(current) = vector["current"].as_str() {
+            choices.insert(
+                choice_key(&sandbox.context.config_identity),
+                Value::String(current.into()),
+            );
+        }
+        write(
+            &sandbox.directory.join(CHOICES_FILENAME),
+            &json!({ "version": 1, "choices": choices }).to_string(),
+            SystemTime::now(),
+        );
+        let reason = match vector["reason"].as_str().unwrap() {
+            "none" => Reason::None,
+            "unremembered" => Reason::Unremembered,
+            other => panic!("unexpected reason {other}"),
+        };
+        assert_eq!(sandbox.resolved(), ("stable".into(), reason), "{name}");
+        let stored = match read_choices(&sandbox.directory) {
+            ChoicesFile::Valid(choices) => choices
+                .get(&choice_key(&sandbox.context.config_identity))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            other => panic!("{name}: {other:?}"),
+        };
+        assert_eq!(stored.as_deref(), vector["stored"].as_str(), "{name}");
+    }
+}
+
 #[test]
 fn an_unknown_future_choices_file_is_never_overwritten() {
     let sandbox = sandbox();
