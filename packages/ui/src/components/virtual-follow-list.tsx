@@ -14,6 +14,7 @@ const USER_SCROLL_INTENT_WINDOW_MS = 600
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_FRAMES = 30
+const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
 const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
@@ -35,7 +36,7 @@ export interface VirtualFollowListApi {
     opts?: { block?: ScrollLogicalPosition },
   ) => void
   notifyContentRendered: () => void
-  /** Leaves follow mode and places `target` at `viewportOffset` px below the viewport top. */
+  /** Leaves follow mode and holds `target` at `viewportOffset` px below the viewport top, clamped into view. */
   alignElement: (target: HTMLElement, viewportOffset: number) => void
   setAutoScroll: (enabled: boolean) => void
   getAutoScroll: () => boolean
@@ -615,6 +616,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
     readerSettlement.cancel()
+    cancelElementAlignment()
     const element = scrollElement()
     if (!element) {
       opts?.fallback?.()
@@ -940,6 +942,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     cancelActiveScrollRestore()
     if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
     dispatchFollowEvent({ type: "set-follow", enabled: false })
+    // A keyboard activation can happen off-screen (or mid-layout); always land in view.
+    const offset = Math.min(Math.max(viewportOffset, 0), Math.max(0, element.clientHeight - ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX))
     // The virtualizer's resize jump compensation and late layout (fonts, lazy cards) can
     // move the target after the first correction, so re-measure the target itself over a
     // short window. Any gesture or navigation cancels it via cancelActiveScrollRestore.
@@ -947,7 +951,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const align = () => {
       elementAlignmentFrame = undefined
       if (!target.isConnected || autoScroll()) return
-      const delta = target.getBoundingClientRect().top - element.getBoundingClientRect().top - viewportOffset
+      const delta = target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset
       if (Math.abs(delta) >= 1) {
         markProgrammaticScroll()
         element.scrollTop += delta
@@ -1131,6 +1135,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     readerSettlement.cancel()
+    cancelElementAlignment()
     lastResetKey = nextKey
     invalidateScrollRestore()
     lastHandledExplicitBottomPinToken = null
@@ -1153,6 +1158,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(isActive, (active) => {
     if (!active) {
       readerSettlement.cancel()
+      cancelElementAlignment()
       if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
       pendingExplicitBottomPinFrame = null
       clearExplicitBottomPin()

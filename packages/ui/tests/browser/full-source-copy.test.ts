@@ -184,6 +184,28 @@ test("revealing while following the bottom keeps the revealed parts and focus in
   }), "Focus and the first revealed part stay in view instead of being pushed above by bottom-following")
 }))
 
+test("a keyboard reveal activated off-screen still lands the revealed parts in view", { timeout: 90_000 }, async () => withFixture("parts-long", async page => {
+  const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
+  const button = block.locator(".message-hidden-parts").getByRole("button", { name: "Show 1000 more", exact: true })
+  await button.waitFor()
+  await button.scrollIntoViewIfNeeded()
+  await button.focus()
+  // Scroll away with the wheel while the placeholder keeps focus.
+  await page.mouse.move(500, 400)
+  for (let i = 0; i < 20 && await button.evaluate(element => element.getBoundingClientRect().bottom > 0); i++) {
+    await page.mouse.wheel(0, -1500)
+    await page.waitForTimeout(30)
+  }
+  assert.ok(await button.evaluate(element => element.getBoundingClientRect().bottom <= 0), "The focused placeholder is off-screen")
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(() => document.activeElement?.closest("[data-part-id]")?.textContent?.includes("Paragraph 0500"))
+  await page.waitForTimeout(700)
+  assert.ok(await page.evaluate(() => {
+    const rect = document.activeElement!.getBoundingClientRect()
+    return rect.bottom > 0 && rect.top < innerHeight
+  }), "The reveal point is clamped into the viewport")
+}))
+
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {
   const body = page.locator(".tool-call-error-content")
   await body.waitFor()
