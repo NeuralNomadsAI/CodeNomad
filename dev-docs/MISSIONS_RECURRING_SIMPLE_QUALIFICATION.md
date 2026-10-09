@@ -2,6 +2,23 @@
 
 > PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
 
+## PR candidate rerun (2026-10-09, after scope cleanup and merge with upstream `dev` 43165435)
+
+Same isolated read-copy of OpenCode 2.0.26, rebuilt `build:missions`, journeys
+`A`, `BCD`, `QN` in the foreground. All passed:
+
+| Journey | Evidence suffix | Result |
+| --- | --- | --- |
+| A | `GI9sD9` | completed, archive 3.05 s after quiescence, 1 start, nextDueAt = due + 24 h |
+| B | `37sirt` | `ended-without-report`/`interrupted` 16 ms after Resume, 1 start |
+| C | `37sirt` | two completed passages, duplicate returns the same passage |
+| D | `37sirt` | no root session after due; Resume after Stop → 503 |
+| Q | `q6sq7G` | UI: confirmed/ui mark, completed; ordinary: no mark, gate refusal, ended-without-report |
+| N | `q6sq7G` | ordinary dock reply 204, model saw the answer, no mark |
+
+Owned PIDs `62336`, `63164`, `47724`, `56824` were absent afterwards; a
+path/command-line scan found no fixture processes.
+
 ## Final reference run (2026-10-09, merge `697dc342` + `cf1cf70e`, `6d18639b`)
 
 Merge `697dc342` combines the integration line (not-started archive and
