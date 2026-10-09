@@ -577,6 +577,58 @@ fn the_open_configuration_forgets_its_choice_of_a_profile_deleted_for_it() {
 }
 
 #[test]
+fn a_linked_scope_present_or_dangling_keeps_other_configurations_remembered_name() {
+    for dangling in [false, true] {
+        let fixture = Fixture::populated();
+        let outside = tempfile::tempdir().unwrap();
+        let selection = fixture.roots.electron_base.join("profile-selection");
+        // Another configuration opens `team` through a link; this one deletes its own plain `team`.
+        let linked = fixture.electron_scope("team", "/third/config.yaml");
+        link_directory(outside.path(), &linked);
+        if dangling {
+            fs::remove_dir_all(outside.path()).unwrap();
+        }
+        fixture.file(&fixture.electron_scope("team", CONFIG).join("x"), 1);
+        fs::write(
+            selection.join("choices.json"),
+            serde_json::json!({ "version": 1, "choices": { choice_key("/third/config.yaml"): "team" } }).to_string(),
+        )
+        .unwrap();
+        let requested = vec![
+            format!("scope:{}", fixture.scope_name("team", CONFIG)),
+            format!("scope:{}", fixture.scope_name("team", OTHER_CONFIG)),
+        ];
+        let result = delete_other_profiles(
+            &fixture.roots,
+            &current("dev", CONFIG),
+            &requested,
+            &standard(),
+        );
+        assert!(
+            result
+                .results
+                .iter()
+                .all(|entry| entry.outcome == DeletionOutcome::Deleted),
+            "dangling={dangling}"
+        );
+        assert_eq!(
+            result.choices,
+            ForgetOutcome::Unchanged,
+            "dangling={dangling}"
+        );
+        assert!(fs::read_to_string(selection.join("choices.json"))
+            .unwrap()
+            .contains("team"));
+        // The link itself is never listed as deletable.
+        let listing = list_other_profiles(&fixture.roots, &current("dev", CONFIG), &standard());
+        assert!(!ids(&listing).contains(&format!(
+            "scope:{}",
+            fixture.scope_name("team", "/third/config.yaml")
+        )));
+    }
+}
+
+#[test]
 fn a_profile_opened_mid_deletion_stops_it() {
     let fixture = Fixture::populated();
     fixture.file(

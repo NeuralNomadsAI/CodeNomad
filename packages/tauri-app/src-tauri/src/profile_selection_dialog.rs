@@ -48,7 +48,7 @@ pub(crate) fn selection_dialog_content(candidates: &[Candidate]) -> SelectionDia
         })
         .collect::<Vec<_>>();
     detail.push(String::new());
-    detail.push("Your choice is remembered and updates will not change it. Nothing is moved or deleted: the other profiles stay on disk and remain available with CODENOMAD_PROFILE=<name>. OpenCode sessions are shared by every profile.".to_string());
+    detail.push("CodeNomad remembers your choice when it can, and updates never change a remembered choice. Nothing is moved or deleted: the other profiles stay on disk and remain available with CODENOMAD_PROFILE=<name>. OpenCode sessions are shared by every profile.".to_string());
     let mut buttons = candidates
         .iter()
         .map(|candidate| format!("Use {}", candidate.name))
@@ -132,6 +132,10 @@ mod tests {
         assert_eq!(content.buttons, vec!["Use dev-v2", "Use default", "Quit"]);
         assert!(content.detail.contains("• dev-v2: last used 2026-10-01"));
         assert!(content.detail.contains("• default: last used 2026-09-01"));
+        // Always true, even when the answer can only apply to this launch (same text as Electron).
+        assert!(content.detail.contains(
+            "CodeNomad remembers your choice when it can, and updates never change a remembered choice."
+        ));
         assert_eq!(
             selected_profile_key(&candidates, &content, Some("Use default")).as_deref(),
             Some("stable")

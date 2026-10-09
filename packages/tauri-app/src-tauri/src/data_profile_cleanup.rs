@@ -792,11 +792,24 @@ fn delete_candidate(candidate: &Candidate, dependencies: &Dependencies) -> Profi
     report(outcome, remaining, kept)
 }
 
+/// Profile keys with any scope entry left, for forgetting remembered choices only. Unlike the
+/// deletable listing, a link entry (present or dangling) counts: a configuration may open its
+/// profile through one, so its remembered name must survive.
 fn keys_still_present(roots: &ProfileRoots) -> HashSet<String> {
-    scope_names(&roots.electron_base.join("scopes"))
-        .union(&scope_names(&roots.webview_root.join("scopes")))
-        .filter_map(|name| parse_scope_name(name).map(|(key, _)| key.to_string()))
-        .collect()
+    [
+        roots.electron_base.join("scopes"),
+        roots.webview_root.join("scopes"),
+    ]
+    .iter()
+    .flat_map(|root| {
+        entries(root)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|name| exists(&root.join(name)))
+            .filter_map(|name| parse_scope_name(&name).map(|(key, _)| key.to_string()))
+            .collect::<Vec<_>>()
+    })
+    .collect()
 }
 
 pub(crate) fn delete_other_profiles(

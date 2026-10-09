@@ -27,7 +27,7 @@ export function selectionDialogContent(candidates: readonly TransitionCandidate[
     detail: [
       ...candidates.map((candidate) => `• ${candidate.name}: last used ${isoDate(candidate.lastUsed)}`),
       "",
-      "Your choice is remembered and updates will not change it. Nothing is moved or deleted: the other profiles stay on disk and remain available with CODENOMAD_PROFILE=<name>. OpenCode sessions are shared by every profile.",
+      "CodeNomad remembers your choice when it can, and updates never change a remembered choice. Nothing is moved or deleted: the other profiles stay on disk and remain available with CODENOMAD_PROFILE=<name>. OpenCode sessions are shared by every profile.",
     ].join("\n"),
     buttons: [
       ...candidates.map((candidate) => `Use ${candidate.name}`),

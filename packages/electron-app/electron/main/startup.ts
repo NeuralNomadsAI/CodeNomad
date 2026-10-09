@@ -114,10 +114,16 @@ export function resolveLaunchProfile(options: {
   cliConfig?: string
   cwd: string
   baseUserDataPath: string
+  /** Unremembered answer handed to this relaunch by the asking process (already validated). */
+  selectionAnswer?: string
   transition?: (context: TransitionContext) => TransitionResult
 }): LaunchProfile {
   const explicit = resolveExplicitProfile(options.environment, options.packaged)
   if (explicit) return { kind: "ready", ...explicit }
+  if (options.selectionAnswer) {
+    console.info(`[electron-startup] data profile ${profileDisplayName(options.selectionAnswer)} (unremembered answer)`)
+    return { kind: "ready", key: options.selectionAnswer, source: "transition" }
+  }
   const context: TransitionContext = {
     configIdentity: normalizeConfigIdentity(options.cliConfig, options.cwd),
     defaultIdentity: normalizeConfigIdentity(undefined, options.cwd),

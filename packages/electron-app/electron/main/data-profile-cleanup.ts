@@ -436,9 +436,20 @@ async function deleteCandidate(candidate: Candidate, dependencies: CleanupDepend
   return report(stopped && remaining.length === candidate.targets.length ? stopped : "incomplete", remaining, kept)
 }
 
+/**
+ * Profile keys with any scope entry left, for forgetting remembered choices only. Unlike the
+ * deletable listing, a link entry (present or dangling) counts: a configuration may open its
+ * profile through one, so its remembered name must survive.
+ */
 async function keysStillPresent(roots: ProfileRoots): Promise<Set<string>> {
-  const names = new Set([...await scopeNames(join(roots.electronBase, "scopes")), ...await scopeNames(join(roots.webviewRoot, "scopes"))])
-  return new Set([...names].map((name) => SCOPE_NAME.exec(name)![1]!))
+  const keys = new Set<string>()
+  for (const root of [join(roots.electronBase, "scopes"), join(roots.webviewRoot, "scopes")]) {
+    for (const name of await entries(root) ?? []) {
+      const match = SCOPE_NAME.exec(name)
+      if (match && await exists(join(root, name))) keys.add(match[1]!)
+    }
+  }
+  return keys
 }
 
 export async function deleteOtherProfiles(

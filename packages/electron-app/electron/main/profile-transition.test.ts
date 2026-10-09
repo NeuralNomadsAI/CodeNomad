@@ -78,6 +78,8 @@ test("several profiles with state ask once, most recent first, and remember the 
   const content = selectionDialogContent(asked.candidates)
   assert.deepEqual(content.buttons, ["Use dev-v2", "Use default", "Quit"])
   assert.match(content.detail, /dev-v2: last used 2026-10-01/)
+  // Always true, even when the answer can only apply to this launch (same text as Tauri).
+  assert.ok(content.detail.includes("CodeNomad remembers your choice when it can, and updates never change a remembered choice."))
   assert.equal(selectedProfileKey(asked.candidates, 2), undefined)
   assert.equal(selectedProfileKey(asked.candidates, 1), "stable")
   // While the question is open another first launch waits instead of asking or diverging.

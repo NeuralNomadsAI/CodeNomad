@@ -362,6 +362,32 @@ test("the open configuration forgets its choice of a profile deleted for it, eve
   }
 })
 
+test("a linked scope, present or dangling, keeps other configurations' remembered name", async () => {
+  for (const dangling of [false, true]) {
+    const context = populated()
+    const outside = mkdtempSync(join(tmpdir(), "codenomad-profile-linked-"))
+    try {
+      const selection = join(context.roots.electronBase, "profile-selection")
+      // Another configuration opens `team` through a link; this one deletes its own plain `team`.
+      symlinkSync(outside, join(context.roots.electronBase, "scopes", context.scope("team", "/third/config.yaml").scopeName), "junction")
+      if (dangling) rmSync(outside, { recursive: true })
+      context.file(join(context.roots.electronBase, "scopes", context.scope("team").scopeName, "x"), 1)
+      writeFileSync(join(selection, "choices.json"), JSON.stringify({ version: 1, choices: { [choiceKey("/third/config.yaml")]: "team" } }))
+      const id = `scope:${context.scope("team", OTHER_CONFIG).scopeName}`
+      const result = await deleteOtherProfiles(context.roots, current("dev"), [`scope:${context.scope("team").scopeName}`, id], dependencies())
+      assert.deepEqual(result.results.map((entry) => entry.outcome), ["deleted", "deleted"], `dangling=${dangling}`)
+      assert.equal(result.choices, "unchanged", `dangling=${dangling}`)
+      assert.match(readFileSync(join(selection, "choices.json"), "utf8"), /team/)
+      // The link itself is never listed as deletable.
+      const { profiles } = await listOtherProfiles(context.roots, current("dev"), dependencies())
+      assert.ok(!profiles.some((profile) => profile.id === `scope:${context.scope("team", "/third/config.yaml").scopeName}`))
+    } finally {
+      context.cleanup()
+      rmSync(outside, { recursive: true, force: true })
+    }
+  }
+})
+
 test("only listing identifiers are accepted from the renderer", () => {
   assert.deepEqual(requireProfileIds(["default", "default", `scope:dev-${"a".repeat(16)}`, `orphan:${"b".repeat(16)}`]), ["default", `scope:dev-${"a".repeat(16)}`, `orphan:${"b".repeat(16)}`])
   for (const invalid of [[], ["../x"], [`scope:../dev-${"a".repeat(16)}`], [`scope:C:\\x-${"a".repeat(16)}`], "default", [1]]) {

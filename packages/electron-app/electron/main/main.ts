@@ -28,10 +28,10 @@ import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-regi
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
-import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, PROFILE_ENVIRONMENT, profileDisplayName } from "./data-profile"
+import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, profileDisplayName } from "./data-profile"
 import { LOCK_HEARTBEAT_MS } from "./profile-transition"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
-import { SELECTION_CLEANUP_ENVIRONMENT, SELECTION_TEMP_PREFIX, sweepSelectionFolders } from "./profile-selection-cleanup"
+import { SELECTION_ANSWER_ENVIRONMENT, SELECTION_CLEANUP_ENVIRONMENT, SELECTION_TEMP_PREFIX, sweepSelectionFolders, takeRelaunchHandoff } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import { forwardOpenerStartupState, runStartupStateCommandInWindow } from "./opener-startup-state"
@@ -55,11 +55,11 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   return { scope, browserDataPath, sessionDataPath }
 }
 
-function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefined {
+function resolveInitialProfile(baseUserDataPath: string, selectionAnswer: string | undefined): LaunchProfile | undefined {
   try {
     return resolveLaunchProfile({
       environment: process.env, packaged: app.isPackaged, cliConfig: process.env.CLI_CONFIG,
-      cwd: process.cwd(), baseUserDataPath,
+      cwd: process.cwd(), baseUserDataPath, selectionAnswer,
     })
   } catch (error) {
     // An invalid explicit profile must never silently open another profile.
@@ -99,8 +99,9 @@ function runProfileSelection(selection: Extract<LaunchProfile, { kind: "ask" }>)
     } catch (error) {
       console.error("[electron-startup] failed to remember the profile choice", error)
     }
-    // An unremembered answer still applies to the relaunch (as in Tauri); the question returns next time.
-    if (!remembered) process.env[PROFILE_ENVIRONMENT] = profileDisplayName(key)
+    // An unremembered answer still applies to the relaunch (as in Tauri); the question returns next
+    // time. It travels privately and is consumed at startup, never as the user's CODENOMAD_PROFILE.
+    if (!remembered) process.env[SELECTION_ANSWER_ENVIRONMENT] = profileDisplayName(key)
     // Chromium may still hold this folder while we exit; the relaunched process removes it.
     process.env[SELECTION_CLEANUP_ENVIRONMENT] = temporary
     app.relaunch()
@@ -148,12 +149,12 @@ let sessionDataPath!: string
 let developerNativeIdentity!: string
 // Remove the question folder left by a relaunching predecessor and any older leftovers. The named
 // folder may still be locked for a moment on Windows, so retry once shortly after startup.
-const selectionCleanup = process.env[SELECTION_CLEANUP_ENVIRONMENT]
-delete process.env[SELECTION_CLEANUP_ENVIRONMENT]
+const relaunchHandoff = takeRelaunchHandoff(process.env)
+const selectionCleanup = relaunchHandoff.cleanup
 const sweepSelection = () => sweepSelectionFolders({ temporaryRoot: tmpdir(), named: selectionCleanup })
 sweepSelection()
 if (selectionCleanup) setTimeout(sweepSelection, 10_000).unref()
-const launchProfile = resolveInitialProfile(baseUserDataPath)
+const launchProfile = resolveInitialProfile(baseUserDataPath, relaunchHandoff.answer)
 if (launchProfile?.kind === "ask") runProfileSelection(launchProfile)
 else if (launchProfile) startProfile(launchProfile.key)
 
