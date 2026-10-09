@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "Volver a iniciar sesión en CodeNomad",
   "authRecovery.description": "Tu sesión de CodeNomad ya no es válida. Esto puede ocurrir después de reiniciar el servidor. Inicia sesión de nuevo para reconectarte.",
+  "authRecovery.pairing": "Este dispositivo ya no está vinculado con CodeNomad. En el equipo anfitrión, abre Configuración → Acceso remoto, crea un nuevo enlace de vinculación, ábrelo en este dispositivo y vuelve a comprobar.",
+  "authRecovery.pairingTitle": "Vincular de nuevo este dispositivo",
   "authRecovery.drafts": "Esta página permanece abierta para conservar tus borradores. Tras reconectarte, vuelve a intentar la acción que falló.",
   "authRecovery.username": "Nombre de usuario",
   "authRecovery.password": "Contraseña",

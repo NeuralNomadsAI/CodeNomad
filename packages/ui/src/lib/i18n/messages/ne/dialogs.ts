@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "CodeNomad मा फेरि साइन इन गर्नुहोस्",
   "authRecovery.description": "तपाईंको CodeNomad लगइन अब मान्य छैन। सर्भर पुनः सुरु भएपछि यस्तो हुन सक्छ। पुनः जडान गर्न फेरि साइन इन गर्नुहोस्।",
+  "authRecovery.pairing": "यो उपकरण अब CodeNomad सँग जोडिएको छैन। होस्टमा सेटिङहरू → रिमोट पहुँच खोल्नुहोस्, नयाँ जोडी लिङ्क बनाएर यस उपकरणमा खोल्नुहोस्, अनि फेरि जाँच गर्नुहोस्।",
+  "authRecovery.pairingTitle": "यो उपकरण फेरि जोड्नुहोस्",
   "authRecovery.drafts": "तपाईंका मस्यौदाहरू सुरक्षित राख्न यो पृष्ठ खुला रहन्छ। पुनः जडान भएपछि असफल भएको कार्य फेरि प्रयास गर्नुहोस्।",
   "authRecovery.username": "प्रयोगकर्ता नाम",
   "authRecovery.password": "पासवर्ड",

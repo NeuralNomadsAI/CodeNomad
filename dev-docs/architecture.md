@@ -45,6 +45,9 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/events` and `/api/client-connections/pong`
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
 - `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
+- `/api/remote-control/*`, managed from the host only; `POST /api/remote-control/pair` and `/remote-pair` answer only through Remote Control
+
+Remote Control decrypts tunnelled TLS inside the backend (`@codenomad/remote-tunnel`, bundled into `dist/remote-control/tunnel-runtime.js`) and forwards it to a dedicated loopback ingress. Ingress sockets are classified as remote before parsing, so loopback checks use `isLocalRequest()` rather than peer addresses. `remote-control/gate.ts` admits remote requests before CORS, authentication and routing: exact tunnel `Host`, public `Origin` on mutations, stripped forwarding headers, host-only path denial on the decoded path, then a paired device credential from `devices.ts`.
 
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, validates prompt files, defaults safe requests to the workspace location, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Never trust a browser-supplied worktree path: resolve ownership server-side. Upstream additions require an explicit proxy review and are not available automatically.
 
@@ -73,12 +76,14 @@ Current native events include session lifecycle/output events (`session.created`
 | Browser SSE multiplexing | CodeNomad server |
 | Desktop inspection and CDP feedback | Current CodeNomad desktop host and bundled automation plugin, available at normal startup |
 | Autonomous browser previews | CodeNomad desktop browser controllers and the same bundled automation plugin, independent of Developer Mode |
+| Remote Control transport | OpenTunnel SDK on the device's shared identity; CodeNomad claims its own route and never deletes the identity |
+| Remote Control pairing, devices and admission | CodeNomad server (`packages/server/src/remote-control/`) |
 
 Session Shell and conversation instructions are native features, not plugins. Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows removal. The proxy verifies Shell `cwd` ownership before ID-scoped operations and preserves native output cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin`, server plugin/background-process and per-workspace runtime paths remain deleted and must not be restored; the narrow bundled automation plugin and session-pruning RPC use native V2 discovery and backend presence.
 
 ## Persistence
 
-CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, and `instances/` under `~/.config/codenomad/`. `config.json` is migration input only.
+CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is migration input only.
 
 ## Implementation Map
 

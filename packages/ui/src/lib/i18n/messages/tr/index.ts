@@ -15,6 +15,7 @@ import { missionRecoveryMessages } from "./mission-recovery"
 import { missionConversationMessages } from "./mission-conversations"
 import { permissionReceiptMessages } from "./permission-receipts"
 import { remoteAccessMessages } from "./remoteAccess"
+import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
 import { timeMessages } from "./time"
@@ -37,6 +38,7 @@ export const trMessages = mergeMessageParts(
   missionConversationMessages,
   permissionReceiptMessages,
   remoteAccessMessages,
+  remoteControlMessages,
   sessionMessages,
   settingsMessages,
   timeMessages,

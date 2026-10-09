@@ -72,6 +72,22 @@ test("wrong credentials, offline login and malformed success preserve recovery w
   }
 })
 
+test("an unpaired Remote Control device recovers by pairing, not by password", async () => {
+  let body: Record<string, unknown> = { authenticated: false, pairingRequired: true }
+  const recovery = createAuthRecovery(undefined, async () => Response.json(body))
+  await recovery.check()
+  assert.equal(recovery.required(), true)
+  assert.equal(recovery.pairingRequired(), true)
+  // Pairing again in another tab shares the device cookie.
+  body = { authenticated: true }
+  await recovery.check()
+  assert.equal(recovery.required(), false)
+
+  const local = createAuthRecovery(undefined, async () => Response.json({ authenticated: false }))
+  await local.check()
+  assert.equal(local.pairingRequired(), false)
+})
+
 test("a renewed cookie in another tab restores once without a login POST", async () => {
   let authenticated = false, notifications = 0
   const recovery = createAuthRecovery(undefined, async () => Response.json({ authenticated }))
