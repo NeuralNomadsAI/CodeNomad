@@ -854,8 +854,6 @@ export default function MessageBlock(props: MessageBlockProps) {
   const revealInPlace = (button: HTMLButtonElement, item: HiddenPartsDisplayItem) => {
     const revealCount = Math.min(item.count, MESSAGE_PART_REVEAL_STEP)
     const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + revealCount) ?? []
-    // Rows before the gap keep their DOM nodes; the first new row follows this anchor.
-    const anchor = button.closest(".message-hidden-parts")?.previousElementSibling ?? null
     const hadFocus = document.activeElement === button
     revealHiddenRecordParts(props.instanceId, item.messageId)
     if (!hadFocus) return
@@ -864,13 +862,22 @@ export default function MessageBlock(props: MessageBlockProps) {
       if (document.activeElement && document.activeElement !== document.body) return
       const element = blockRef()
       if (!element) return
-      // Revealed text can merge into the anchor row; collapsed groups render no part elements.
-      // The earliest of the first rendered revealed part and the first new row is the reveal point.
-      const firstPart = revealedIds.reduce<HTMLElement | null>((found, partId) =>
-        found ?? element.querySelector<HTMLElement>(`[data-part-id="${CSS.escape(partId)}"]`), null)
-      const firstRow = anchor ? (anchor.isConnected ? anchor.nextElementSibling : null) : element.firstElementChild
-      const candidates = [firstPart, firstRow].filter((node): node is HTMLElement => node instanceof HTMLElement)
-      const target = candidates.sort((a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)[0] ?? element
+      // Revealed parts may merge into an earlier row or a collapsed group that renders
+      // no member elements; group roots list their members for this lookup.
+      const found = revealedIds.reduce<HTMLElement | null>((match, partId) => {
+        if (match) return match
+        const id = CSS.escape(partId)
+        return element.querySelector<HTMLElement>(`[data-part-id="${id}"], [data-group-part-ids~="${id}"]`)
+      }, null)
+      const groupToggle = found?.matches("[data-group-part-ids]")
+        ? found.querySelector<HTMLElement>(".message-technical-group-toggle")
+        : null
+      // Nothing revealed rendered (hidden tools/thinking): stay at the next placeholder if any.
+      const target = groupToggle ?? found ?? element.querySelector<HTMLElement>(".message-hidden-parts-button") ?? element
+      if (target === groupToggle || target.matches(".message-hidden-parts-button")) {
+        target.focus({ preventScroll: true })
+        return
+      }
       if (!target.hasAttribute("tabindex")) {
         target.setAttribute("tabindex", "-1")
         const release = () => {
@@ -1199,6 +1206,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     <Show when={!singleton()} fallback={<For each={props.tools}>{renderTool}</For>}>
     <div
       class="message-technical-group message-exploration-group"
+      data-group-part-ids={props.tools.map((item) => item.partId).join(" ")}
       data-delete-technical-selected={deleteGroupHovered() || groupTools().some((item) => props.technicalCleanupPartKeys().has(item.key)) ? "true" : undefined}
     >
       <Show when={props.showHeader !== false && props.summaryTools?.length}>
@@ -1626,6 +1634,7 @@ function ReasoningGroupCard(props: {
     <Show when={summaryParts().length > 1} fallback={<For each={props.parts}>{renderCard}</For>}>
     <div
       class="message-technical-group message-reasoning-group"
+      data-group-part-ids={props.parts.map((item) => item.partId).join(" ")}
       data-delete-technical-selected={deleteGroupHovered() || summaryParts().some((item) => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))) ? "true" : undefined}
     >
       <Show when={props.showHeader !== false}>

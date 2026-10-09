@@ -117,21 +117,24 @@ test("message parts beyond the display limit reveal in place at the omission", {
     "The temporary programmatic focus target is released on blur")
 }))
 
-test("revealing into a collapsed tool group focuses the group at the reveal point", { timeout: 90_000 }, async () => withFixture("parts-group", async page => {
-  const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
-  const gap = block.locator(".message-hidden-parts")
-  await gap.waitFor()
-  const button = gap.getByRole("button", { name: "Show 240 more", exact: true })
-  await button.scrollIntoViewIfNeeded()
-  await button.focus()
-  await page.keyboard.press("Enter")
-  await gap.waitFor({ state: "detached" })
-  const group = block.locator(".message-exploration-group")
-  await group.waitFor({ state: "attached" })
-  assert.equal(await block.locator('.tool-call-message[data-part-id="group-read-0"]').count(), 0, "The group starts collapsed")
-  // Its members render no part elements, so focus must not skip past it to Paragraph 0500.
-  await page.waitForFunction(() => document.activeElement?.classList.contains("message-exploration-group"))
-}))
+for (const { scenario, firstRevealed } of [{ scenario: "parts-group", firstRevealed: "group-read-0" }, { scenario: "parts-merge", firstRevealed: "merge-read-1" }]) {
+  test(`${scenario}: revealing into a collapsed tool group focuses its toggle at the reveal point`, { timeout: 90_000 }, async () => withFixture(scenario, async page => {
+    const block = page.locator('.message-stream-block[data-message-id="full-source-message"]')
+    const gap = block.locator(".message-hidden-parts")
+    await gap.waitFor()
+    const button = gap.getByRole("button", { name: "Show 240 more", exact: true })
+    await button.scrollIntoViewIfNeeded()
+    await button.focus()
+    await page.keyboard.press("Enter")
+    await gap.waitFor({ state: "detached" })
+    const group = block.locator(`.message-exploration-group[data-group-part-ids~="${firstRevealed}"]`)
+    await group.waitFor({ state: "attached" })
+    assert.equal(await block.locator(`[data-part-id="${firstRevealed}"]`).count(), 0, "The group starts collapsed")
+    // Its members render no part elements, so focus must not skip past it.
+    await page.waitForFunction((id) => document.activeElement?.matches(".message-technical-group-toggle")
+      && document.activeElement.closest("[data-group-part-ids]")?.getAttribute("data-group-part-ids")?.split(" ").includes(id), firstRevealed)
+  }))
+}
 
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {
   const body = page.locator(".tool-call-error-content")

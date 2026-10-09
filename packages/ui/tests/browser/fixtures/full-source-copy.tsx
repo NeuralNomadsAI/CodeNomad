@@ -42,13 +42,16 @@ const tool = {
 const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },
   state: { status: "completed", input: { filePath: "/fixture/hidden-range.ts" }, metadata: {}, content: [{ type: "text", text: "hidden range" }] } }
 // Consecutive reads at the start of the omitted range form a collapsed exploration group.
-const groupReads = Array.from({ length: 3 }, (_, index) => ({ ...hiddenTool, id: `group-read-${index}`,
-  state: { ...hiddenTool.state, input: { filePath: `/fixture/group-${index}.ts` } } }))
+const reads = (prefix: string) => Array.from({ length: 3 }, (_, index) => ({ ...hiddenTool, id: `${prefix}-read-${index}`,
+  state: { ...hiddenTool.state, input: { filePath: `/fixture/${prefix}-${index}.ts` } } }))
+const groupReads = reads("group")
 // Native API records enter through the real load/normalize/store/display path.
 const message = { id: messageId, type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" },
   time: { created: 1, completed: 2 },
   content: scenario === "parts" ? [...textParts.slice(0, 600), hiddenTool, ...textParts.slice(600)]
     : scenario === "parts-group" ? [...textParts.slice(0, 500), ...groupReads, ...textParts.slice(500)]
+    // The head ends with one read; revealed reads merge into its group.
+    : scenario === "parts-merge" ? [...textParts.slice(0, 499), ...reads("merge"), ...textParts.slice(499)]
     : [tool] }
 const requests: string[] = []
 const client: any = {
