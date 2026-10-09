@@ -21,7 +21,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryMessagePreview from "./history-message-preview"
@@ -152,19 +152,20 @@ export default function MessageSection(props: MessageSectionProps) {
       if (!record) return []
       if (record.role === "user") return [null]
       const display = buildRecordDisplayData(props.instanceId, record)
-      return display.orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part, index) => {
-        // Omitted parts may hold boundaries: never select a cleanup run across them.
-        const gap = display.hiddenCount > 0 && index === display.gapIndex ? [null] : []
+      const projected = display.orderedParts.map<TechnicalCleanupTranscriptItem[]>((part) => {
         const partId = typeof part.id === "string" ? part.id : ""
-        if (!partId) return gap
+        if (!partId) return []
         if (part.type === "tool" || part.type === "reasoning") {
-          return [...gap, { messageId, partId, type: part.type }]
+          return [{ messageId, partId, type: part.type }]
         }
         if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
-          return [...gap, { messageId, partId, type: "boundary" as const }]
+          return [{ messageId, partId, type: "boundary" as const }]
         }
-        return gap
+        return []
       })
+      // Omitted parts may hold boundaries: never select a cleanup run across them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
@@ -329,12 +330,14 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; revealed: number; signature: string; segments: TimelineSegment[] }>()
   const residentTimelineSegments = createMemo(() => {
     sessionRevision()
     const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
+    // Revealing omitted parts changes the rendered window without a record revision.
+    const revealedByMessage = new Map(ids.map((messageId) => [messageId, getRevealedRecordParts(props.instanceId, messageId)]))
 
     return untrack(() => {
       const activeIds = new Set(ids)
@@ -342,16 +345,17 @@ export default function MessageSection(props: MessageSectionProps) {
       for (const messageId of ids) {
         const record = resolvedStore.getMessage(messageId)
         if (!record) continue
+        const revealed = revealedByMessage.get(messageId) ?? 0
         const cached = timelineSegmentCache.get(messageId)
-        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale && cached.revealed === revealed) {
           segments.push(...cached.segments)
           continue
         }
         const signature = getTimelineRecordSignature(record)
-        const current = cached?.signature === signature && cached.locale === activeLocale
+        const current = cached?.signature === signature && cached.locale === activeLocale && cached.revealed === revealed
           ? cached.segments
           : buildTimelineSegments(props.instanceId, record, t)
-        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, revealed, signature, segments: current })
         segments.push(...current)
       }
       for (const messageId of timelineSegmentCache.keys()) {

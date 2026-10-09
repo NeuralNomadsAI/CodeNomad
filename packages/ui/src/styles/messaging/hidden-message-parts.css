@@ -20,7 +20,4 @@
 
 .message-hidden-parts-button {
   min-height: var(--touch-target-size-compact);
-  border-width: 1px;
-  border-style: solid;
-  border-radius: 0;
 }

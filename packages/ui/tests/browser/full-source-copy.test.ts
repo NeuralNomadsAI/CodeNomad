@@ -84,8 +84,11 @@ test("message parts beyond the display limit reveal in place at the omission", {
   assert.equal(rendered.length, 1000)
   assert.ok(rendered.includes("Paragraph 0000") && rendered.includes("Paragraph 1236"))
   assert.ok(!rendered.includes("Paragraph 0618"), "The omitted middle must not render before it is revealed")
-  assert.match((await gap.textContent())!, /237 steps hidden/)
+  assert.match((await gap.textContent())!, /238 items hidden/)
   assert.equal(await block.locator(".tool-call-diagnostic-message").count(), 0, "No copy-only truncation footer remains")
+  assert.equal(await block.locator('.tool-call-message[data-part-id="hidden-range-tool"]').count(), 0)
+  const timeline = page.locator("[data-segment-count]")
+  assert.equal(await timeline.getAttribute("data-segment-count"), "1", "The omitted tool has no timeline marker yet")
 
   // The placeholder sits exactly where the omitted parts belong.
   const order = await block.evaluate((element) => {
@@ -95,13 +98,19 @@ test("message parts beyond the display limit reveal in place at the omission", {
   })
   assert.ok(order.head >= 0 && order.head < order.gap && order.gap < order.tail, JSON.stringify(order))
 
-  const button = gap.getByRole("button", { name: "Show 237 more", exact: true })
+  // Keyboard activation: the placeholder unmounts, so focus must stay in the message.
+  const button = gap.getByRole("button", { name: "Show 238 more", exact: true })
   await button.scrollIntoViewIfNeeded()
-  await button.click()
+  await button.focus()
+  await page.keyboard.press("Enter")
   await gap.waitFor({ state: "detached" })
   const revealed = await paragraphs()
   assert.equal(revealed.length, 1237)
   assert.deepEqual(revealed, Array.from({ length: 1237 }, (_, index) => `Paragraph ${String(index).padStart(4, "0")}`))
+  await block.locator('.tool-call-message[data-part-id="hidden-range-tool"]').waitFor({ state: "attached" })
+  await page.waitForFunction(() => document.querySelector("[data-segment-count]")?.getAttribute("data-segment-count") === "3")
+  await page.waitForFunction(() => document.activeElement !== document.body
+    && Boolean(document.activeElement?.closest('.message-stream-block[data-message-id="full-source-message"]')))
 }))
 
 test("tool-error body copies the complete error beyond the 10000-character preview", { timeout: 45_000 }, async () => withFixture("error", async page => {

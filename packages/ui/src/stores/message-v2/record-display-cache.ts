@@ -34,8 +34,13 @@ function makeCacheKey(instanceId: string, messageId: string) {
   return `${instanceId}:${messageId}`
 }
 
+/** Tracked read; caches derived from the display window must key on it. */
+export function getRevealedRecordParts(instanceId: string, messageId: string): number {
+  return revealedParts[makeCacheKey(instanceId, messageId)] ?? 0
+}
+
 function getDisplayWindow(instanceId: string, record: MessageRecord) {
-  const revealed = revealedParts[makeCacheKey(instanceId, record.id)] ?? 0
+  const revealed = getRevealedRecordParts(instanceId, record.id)
   const headCount = Math.floor(MESSAGE_PART_DISPLAY_LIMIT / 2) + revealed
   const hiddenCount = Math.max(0, record.partIds.length - headCount - MESSAGE_PART_TAIL_COUNT)
   return { revealed, headCount, hiddenCount }

@@ -38,9 +38,13 @@ const tool = {
         metadata: scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
         content: [{ type: "text", text: scenario === "input" ? output : "Tool completed" }] },
 }
+// A tool inside the omitted range proves derived projections follow the reveal.
+const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },
+  state: { status: "completed", input: { filePath: "/fixture/hidden-range.ts" }, metadata: {}, content: [{ type: "text", text: "hidden range" }] } }
 // Native API records enter through the real load/normalize/store/display path.
 const message = { id: messageId, type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" },
-  time: { created: 1, completed: 2 }, content: scenario === "parts" ? textParts : [tool] }
+  time: { created: 1, completed: 2 },
+  content: scenario === "parts" ? [...textParts.slice(0, 600), hiddenTool, ...textParts.slice(600)] : [tool] }
 const requests: string[] = []
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
@@ -55,7 +59,7 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 2 },
 } as any]])))
 setActiveSession(instanceId, sessionId)
-await applyUiSettings({ showMessageTimeline: false, toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
+await applyUiSettings({ showMessageTimeline: scenario === "parts", toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
   diagnosticsExpansion: "collapsed",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: "expanded", other: "expanded" } } })
 await loadMessages(instanceId, sessionId, { force: true })
