@@ -34,7 +34,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 `server/src/remote-control/`:
 
 - `ingress.ts` marks every accepted socket as remote before any request is
-  parsed and routes requests into the same Fastify application. Upgrades are
+  parsed and routes requests into the same Fastify application, with the
+  local listener's timeouts (no request timeout, 72 s keep-alive). Upgrades are
   refused: the remote surface exposes no WebSocket endpoint.
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.

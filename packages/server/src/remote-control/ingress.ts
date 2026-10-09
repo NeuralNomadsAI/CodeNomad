@@ -4,6 +4,10 @@ import { markRemoteSocket } from "./request-origin"
 
 type Router = (request: http.IncomingMessage, response: http.ServerResponse) => void
 
+// The local Fastify listener's timeouts, so long uploads and idle keep-alive
+// connections behave the same remotely (Node's defaults are 300 s and 5 s).
+export const INGRESS_TIMEOUTS = { requestTimeout: 0, headersTimeout: 60_000, keepAliveTimeout: 72_000 } as const
+
 /**
  * Loopback listener receiving only decrypted Remote Control connections. Every
  * accepted socket is classified as remote before any request is parsed, so the
@@ -20,6 +24,7 @@ export class RemoteIngress {
   async start(): Promise<string> {
     if (this.server) return target(this.server)
     const server = http.createServer((request, response) => this.router(request, response))
+    Object.assign(server, INGRESS_TIMEOUTS)
     server.on("connection", (socket: Socket) => {
       markRemoteSocket(socket)
       this.sockets.add(socket)
