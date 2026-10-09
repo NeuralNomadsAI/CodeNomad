@@ -46,6 +46,7 @@ export const instanceMessages = {
   "instanceTab.status.idle": "Boşta",
   "instanceTab.status.ariaLabel": "Instance durumu: {status}",
   "instanceTab.actions.close.ariaLabel": "Instance'ı kapat",
+  "instanceTab.actions.rename": "Yeniden adlandır…",
   "instanceShell.leftPanel.sessionsTitle": "Session'lar",
   "instanceShell.leftPanel.instanceInfo": "Instance Bilgisi",
   "instanceShell.leftDrawer.pin": "Sol çekmeceyi sabitle",

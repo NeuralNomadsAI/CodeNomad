@@ -17,7 +17,8 @@ import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
+import { getExistingInstanceForFolder } from "../stores/instances"
+import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { RemoteServerDialog } from "./remote-server-dialog"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
@@ -41,7 +42,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const {
     recentFolders,
     removeRecentFolder,
-    renameRecentFolderProject,
   } = useConfig()
   const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
   const { t } = useI18n()
@@ -431,8 +431,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (!target || !nextName.trim()) return
     setIsRenamingProject(true)
     try {
-      await renameRecentFolderProject(target.path, nextName)
-      updateProjectNameForFolder(target.path, nextName)
+      await renameProject(target.path, nextName)
       setRenameProjectTarget(null)
     } finally {
       setIsRenamingProject(false)
