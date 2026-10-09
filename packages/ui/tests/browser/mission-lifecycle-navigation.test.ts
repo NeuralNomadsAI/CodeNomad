@@ -45,11 +45,38 @@ function mission(id = "one"): MissionMap {
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
   (window as any).missionVisibility[method](arg), { method, arg })
 const tick = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-const retry = (page: Page) => page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true })
-const pause = (page: Page) => page.getByRole("button", { name: "Pause mission", exact: true })
-const select = (page: Page, id: string) => page.getByRole("button", { name: `Navigation ${id}`, exact: true }).click()
+const row = (page: Page, id = "one") => page.locator(".mission-control-index > li.mission-index-entry")
+  .filter({ has: page.getByRole("button", { name: `Navigation ${id}`, exact: true }) }).locator(".mission-index-row")
+const pause = (page: Page, id = "one") => row(page, id).getByRole("button", { name: "Pause mission", exact: true })
+// An unresolved request replaces the primary Pause with a status check.
+const check = (page: Page, id = "one") => row(page, id).getByRole("button", { name: "Check control status", exact: true })
+// An in-flight exact intent shows only a busy, disabled status check.
+const inFlight = async (page: Page, id = "one") => await pause(page, id).count() === 0 && await check(page, id).isDisabled()
+const admissible = async (page: Page, id = "one") => await pause(page, id).count() === 1 && await pause(page, id).isEnabled()
+async function menu(page: Page, id = "one") {
+  await row(page, id).getByRole("button", { name: "More actions", exact: true }).click()
+  const items = page.getByRole("menuitem"); await items.first().waitFor()
+  const result = await Promise.all((await items.all()).map(async item => ({ label: (await item.innerText()).trim(),
+    enabled: await item.getAttribute("aria-disabled") !== "true" })))
+  await page.keyboard.press("Escape"); await items.first().waitFor({ state: "detached" })
+  return result
+}
+const retryItem = async (page: Page, id = "one") => (await menu(page, id)).find(item => item.label === "Retry last action")
+const retryCount = async (page: Page, id = "one") => await retryItem(page, id) ? 1 : 0
+async function retry(page: Page, id = "one") {
+  // Menu actions launch after the menu closes; wait for the actual dispatch.
+  const sent = page.waitForRequest(request => request.url().endsWith("/control"))
+  await row(page, id).getByRole("button", { name: "More actions", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Retry last action", exact: true }).click()
+  await sent
+}
+async function remount(page: Page) {
+  await call(page, "mount", false); await row(page).waitFor({ state: "detached" })
+  await call(page, "mount", true); await row(page).waitFor()
+  await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready"); await tick(page)
+}
 async function settle(page: Page) {
-  await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready" && !document.querySelector('.mission-lifecycle [role="status"]'))
+  await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready" && !document.querySelector('.mission-index-feedback [role="status"]'))
 }
 async function open(page: Page) {
   await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
@@ -75,7 +102,7 @@ test("certified rejection while hidden releases only its owned intent; reactivat
     const readsWhileHidden = reads - before
     assert.equal(readsWhileHidden, 0); assert.deepEqual(await call(page, "demanded"), [])
     await call(page, "activate", true); await settle(page)
-    assert.equal(await retry(page).count(), 0); assert.equal(calls.length, 1)
+    assert.equal(await retryCount(page), 0); assert.equal(calls.length, 1)
     assert.equal(await page.evaluate(() => (window as any).missionVisibility.state().missions[0].revision), 2)
     await pause(page).click(); await settle(page)
     assert.deepEqual(calls.map(input => input.expectedRevision), [1, 2]); assert.notEqual(calls[0].requestId, calls[1].requestId)
@@ -95,13 +122,13 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
       return route.fulfill({ status: 409, json: {} })
     })
     await open(page); await pause(page).click(); await settle(page)
-    await select(page, "two"); await select(page, "one"); await settle(page)
-    assert.equal(await retry(page).count(), 1); assert.equal(await pause(page).isDisabled(), true)
+    await remount(page); await settle(page)
+    assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).isEnabled(), true)
     const refreshed = page.waitForResponse(value => value.url().endsWith("/missions"))
     await call(page, "event", "session.status"); await refreshed; await settle(page)
     await call(page, "activate", false); await call(page, "activate", true); await settle(page)
     assert.equal(calls.length, 1, "navigation and reconnect reads cannot dispatch")
-    await retry(page).click(); await settle(page)
+    await retry(page); await settle(page)
     assert.equal(calls.length, 2); assert.deepEqual(calls[1], calls[0])
     console.info("REMOUNT uncertain exact wire", JSON.stringify(calls))
   } finally { await page.close() }
@@ -121,14 +148,17 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
           : outcome === "unknown" ? route.fulfill({ status: 409, json: {} })
           : route.fulfill({ json: { mission: outcome === "foreign-ack" ? mission("foreign") : current } })
       })
-      await open(page); await pause(page).click(); await sent; await select(page, "two"); await settle(page)
+      // Rows survive selection; unmounting the panel disposes the dispatching row.
+      await open(page); await pause(page).click(); await sent; await remount(page)
+      await row(page, "two").getByRole("button", { name: "Navigation two", exact: true }).click(); await tick(page)
+      assert.equal(await inFlight(page), true, "the remounted row observes the in-flight exact intent")
       const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
       release(); await response; await tick(page)
-      assert.equal(reads, before); assert.equal(await retry(page).count(), 0); assert.equal(await pause(page).isEnabled(), true)
-      await select(page, "one"); await settle(page)
+      assert.equal(reads, before); assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
+      await row(page).getByRole("button", { name: "Navigation one", exact: true }).click(); await settle(page)
       const unresolved = outcome === "unknown" || outcome === "foreign-ack"
-      assert.equal(await retry(page).count(), unresolved ? 1 : 0)
-      assert.equal(await pause(page).isDisabled(), unresolved)
+      assert.equal(await retryCount(page), unresolved ? 1 : 0)
+      assert.equal(await admissible(page), !unresolved); assert.equal(await check(page).count(), unresolved ? 1 : 0)
       assert.equal(calls.length, 1)
       console.info("DISPOSED exact bookkeeping", outcome, JSON.stringify(calls))
     } finally { release(); await page.close() }
@@ -160,14 +190,14 @@ test("directory/project source ABA retains original uncertainty; stale completio
         updateInstance("mission-visibility", { folder: directory, metadata: { project: { id: projectID } as any } })
       }, { directory, projectID })
       await tick(page)
-      if (directory === "/source-b") { assert.equal(await retry(page).count(), 0); assert.equal(await pause(page).isEnabled(), true) }
+      if (directory === "/source-b") { assert.equal(await retryCount(page), 0); assert.equal(await admissible(page), true) }
     }
-    assert.equal(await pause(page).isDisabled(), true, "source A still owns its in-flight operation after ABA")
+    assert.equal(await inFlight(page), true, "source A still owns its in-flight operation after ABA")
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
     assert.equal(reads, before, "old component epoch cannot refresh after source ABA")
-    assert.equal(await retry(page).count(), 1); assert.equal(await pause(page).isDisabled(), true)
-    await retry(page).click(); await settle(page)
+    assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
+    await retry(page); await settle(page)
     assert.deepEqual(calls[1], calls[0]); console.info("SOURCE ABA exact wire", JSON.stringify(calls))
   } finally { release(); await page.close() }
 })
@@ -191,15 +221,15 @@ test("window capacity fails closed without eviction; exact release enables admis
       return { filled: records.filter(Boolean).length, available: store.available(), overflow: Boolean(store.reserve("overflow", "fixture", { action: "pause", expectedRevision: 1, requestId: "overflow" })) }
     })
     assert.deepEqual(count, { filled: 63, available: false, overflow: false })
-    await select(page, "two"); assert.equal(await pause(page).isDisabled(), true)
-    await select(page, "one"); assert.equal(await retry(page).isEnabled(), true)
-    await retry(page).click(); await settle(page); assert.deepEqual(calls[1], calls[0])
+    assert.equal(await pause(page, "two").isDisabled(), true)
+    assert.equal((await retryItem(page))?.enabled, true)
+    await retry(page); await settle(page); assert.deepEqual(calls[1], calls[0])
     await page.evaluate(async () => {
       const { missionLifecycleIntents: store }: IntentModule = await import("/src/stores/mission-lifecycle-intents" + ".ts")
       store.finish((window as any).capacityRecords[0], "rejected")
     })
-    await select(page, "two"); assert.equal(await pause(page).isEnabled(), true)
-    await select(page, "one"); assert.equal(await retry(page).count(), 1); assert.equal(await pause(page).isDisabled(), true)
+    await tick(page); assert.equal(await admissible(page, "two"), true)
+    assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
     assert.equal(calls.length, 2); console.info("CAPACITY no eviction wire", JSON.stringify(calls))
   } finally { await page.close() }
 })
@@ -224,8 +254,8 @@ test("authoritative operation replacement wins over a late rejected local intent
     await call(page, "event", "session.status"); await snapshot; await tick(page)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
-    assert.equal(reads, before); assert.equal(await retry(page).count(), 1)
-    await retry(page).click(); await settle(page)
+    assert.equal(reads, before); assert.equal(await retryCount(page), 1)
+    await retry(page); await settle(page)
     assert.equal(calls.length, 2)
     assert.deepEqual(calls[1], { action: "stop", expectedRevision: 9, requestId: "durable-replacement" })
     console.info("AUTHORITATIVE replacement wire", JSON.stringify(calls))
@@ -252,10 +282,10 @@ test("same-project metadata hydration cannot enable fresh admission or erase the
       const { updateInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
       updateInstance("mission-visibility", { metadata: { project: { id: "fixture" } as any } })
     })
-    await select(page, "two"); await select(page, "one"); await settle(page)
-    assert.equal(await pause(page).isDisabled(), true); assert.equal(await retry(page).count(), 1)
+    await remount(page); await settle(page)
+    assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1); assert.equal(await retryCount(page), 1)
     assert.equal(calls.length, 1)
-    await retry(page).click(); await settle(page)
+    await retry(page); await settle(page)
     assert.deepEqual(calls[1], calls[0]); console.info("HYDRATION exact wire", JSON.stringify(calls))
   } finally { await page.close() }
 })

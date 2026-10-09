@@ -44,7 +44,7 @@ async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement =
     return route.fulfill({ status: response.statusCode, json: response.json() })
   })
   await page.goto(url)
-  await clickMissionAction(page.locator(".mission-control-index .mission-list-item").first(), "Delete mission")
+  await clickMissionAction(page.locator(".mission-control-index .mission-index-entry").first(), "Delete…")
   await page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" }).check()
   return { page, requests }
 }

@@ -27,6 +27,8 @@ before(async () => {
 after(async () => { await browser?.close(); await server?.close() })
 
 const NOW = Date.parse("2026-10-05T15:30:00+02:00")
+const TITLE = "Livrer CodeNomad pour Android et iOS"
+const REQUEST = "Demander un point"
 function mobileMission(id = "A"): MissionMap {
   const report = (key: string, summary: string, outcome: MissionReport["outcome"] = "completed", next: string[] = []): MissionReport => ({
     id: `report-${id}-${key}`, taskKey: key, sessionId: `ses_${id}`, outcome, summary, evidence: ["Source conservée et vérifiable."], next, createdAt: NOW + 10,
@@ -41,7 +43,7 @@ function mobileMission(id = "A"): MissionMap {
   const tasks = [task("xcode", "iOS — vérifier Xcode", xcode), task("android-boot", "Android — préparer l’essai", android),
     { ...task("old-xcode", "Ancienne tentative Xcode", old, "withdrawn"), replacedByTaskKey: "xcode" },
     { ...task("compile-ios", "iOS — compiler l’application", xcode, "blocked"), report: undefined, blockedBy: ["xcode"] }]
-  return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: id === "A" ? "Livrer CodeNomad pour Android et iOS" : "Mission distincte",
+  return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: id === "A" ? TITLE : "Mission distincte", template: "custom",
     coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [{ sessionId: `ses_${id}`, kind: "coordinator", title: "Coordinateur mobile",
       managed: false, roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }],
     tasks, reports: [xcode, android, old], frontier: [], claims: [], revision: 4, createdAt: NOW, updatedAt: NOW + 10, history: [], historyTruncated: false }
@@ -70,16 +72,37 @@ async function setup(locale = "fr-FR") {
     return route.fulfill({ json: pathname.includes("/instance/") ? [] : {} })
   })
   await page.goto(url, { timeout: 60000 })
-  await page.getByRole("button", { name: values[0].objective, exact: true }).click()
+  await page.getByRole("button", { name: TITLE, exact: true }).click()
+  await card(page).waitFor()
   const refresh = async () => {
     const response = page.waitForResponse(response => response.url().endsWith("/missions"))
-    await page.getByRole("button", { name: locale.startsWith("fr") ? "Actualiser la carte de mission" : "Refresh mission map", exact: true }).click()
+    await page.getByRole("button", { name: /^(Actualiser la carte de mission|Refresh mission map)$/ }).click()
     await response
   }
   return { page, values, writes, errors, refresh }
 }
-const briefing = (page: Page) => page.getByRole("region", { name: "Bilan du projet", exact: true })
+const row = (page: Page, title = TITLE) => page.locator("li.mission-index-entry").filter({ has: page.getByRole("button", { name: title, exact: true }) })
+const card = (page: Page) => page.locator("li.mission-index-entry-selected > div.mission-card")
+const result = (page: Page) => card(page).locator("section.mission-result")
+const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
+const readAll = (page: Page) => result(page).getByRole("button", { name: "Tout lire", exact: true })
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))
+async function openMenu(page: Page, title = TITLE) {
+  await row(page, title).getByRole("button", { name: "Plus d’actions", exact: true }).click()
+  await page.getByRole("menu").waitFor()
+}
+/** The briefing request lives in the row menu; unavailable items are hidden, never disabled. */
+async function requestUpdate(page: Page) {
+  await openMenu(page)
+  await page.getByRole("menuitem", { name: REQUEST, exact: true }).click()
+}
+async function canRequest(page: Page): Promise<boolean> {
+  await openMenu(page)
+  const count = await page.getByRole("menuitem", { name: REQUEST, exact: true }).count()
+  await page.keyboard.press("Escape")
+  await page.getByRole("menu").waitFor({ state: "hidden" })
+  return count === 1
+}
 function publish(value: MissionMap, requestID: string) {
   value.briefing = { id: `briefing-${value.id}-${requestID}`, requestID, basedOnRevision: value.revision, basedOnUpdatedAt: value.updatedAt,
     createdAt: value.updatedAt + 1000, summary: "Les outils sont préparés, mais aucune application Android ou iOS n’est encore prête à tester.",
@@ -89,27 +112,33 @@ function publish(value: MissionMap, requestID: string) {
   value.revision++; value.updatedAt = value.briefing.createdAt
 }
 
-test("existing mobile project keeps a compact panel and exact current results in its central reader, not an invented product percentage", async () => {
+test("existing mobile project keeps a compact card and exact current results in its central reader, not an invented product percentage", async () => {
   const { page, writes, errors } = await setup()
   try {
-    await briefing(page).getByText(/Pas encore de bilan du projet/).waitFor()
-    const progress = page.locator(".mission-progress")
-    assert.equal(await progress.getByText("Le démarrage Android attend la quantité de mémoire requise.", { exact: true }).count(), 0)
-    await page.locator(".mission-flow").getByText("iOS — compiler l’application", { exact: true }).waitFor()
-    await progress.getByText(/Aucune activité observée/).waitFor()
-    assert.equal(await progress.getByText("Ancien obstacle : Xcode absent.", { exact: true }).count(), 0)
-    assert.equal(await page.locator(".mission-attention-list").count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Détails techniques", exact: true }).getAttribute("aria-expanded"), "false")
+    assert.equal(await result(page).locator(".mission-result-text").textContent(), TITLE)
+    await result(page).getByText("1 tâches terminées sur 3", { exact: true }).waitFor()
+    assert.equal(await result(page).getByText(/%/).count(), 0)
+    assert.equal(await result(page).getByText(/Point du coordinateur/).count(), 0)
+    const checklist = card(page).getByRole("region", { name: "Tâches", exact: true })
+    assert.equal(await checklist.locator("li[data-task-key]").count(), 3)
+    assert.equal(await checklist.locator('[data-task-key="compile-ios"] .mission-checklist-word').textContent(), "En attente")
+    assert.equal(await checklist.locator('[data-task-key="android-boot"] .mission-checklist-word').textContent(), "Bloquée")
+    assert.equal(await checklist.getByText("Ancienne tentative Xcode", { exact: true }).count(), 0)
+    for (const text of ["Le démarrage Android attend la quantité de mémoire requise.", "Ancien obstacle : Xcode absent."])
+      assert.equal(await page.locator(".mission-control").getByText(text, { exact: true }).filter({ visible: true }).count(), 0)
+    assert.equal(await page.locator(".mission-needs").count(), 0)
+    assert.equal(await card(page).locator(".mission-more > h3 > .mission-disclosure-trigger").getAttribute("aria-expanded"), "false")
+    assert.match(await row(page).locator(".mission-index-meta").textContent() ?? "", /^Ouverte · /)
     assert.equal(await page.locator(".mission-control-index").getByText("Active", { exact: true }).count(), 0)
     assert.deepEqual(writes, [])
     assert.deepEqual(errors, [])
-    const overview = page.locator('.mission-control-index .mission-list-item').filter({ has: page.getByRole("button", { name: "Livrer CodeNomad pour Android et iOS", exact: true }) })
-      .getByRole("button", { name: "Lire dans la zone de chat", exact: true })
-    await overview.click()
+    await readAll(page).click()
+    assert.equal(await readAll(page).getAttribute("aria-pressed"), "true")
     await page.locator(".mission-reader").getByText("Le démarrage Android attend la quantité de mémoire requise.", { exact: true }).waitFor()
     await page.locator(".mission-reader").getByText("Xcode a été vérifié. Cela ne constitue pas une application iOS compilée.", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByText("Ancien obstacle : Xcode absent.", { exact: true }).count(), 0)
-    await overview.click()
+    await readAll(page).click()
+    assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.setViewportSize({ width: 390, height: 900 })
     await page.locator("#root > div").evaluate(element => { (element as HTMLElement).style.gridTemplateColumns = "0 minmax(0,1fr)" })
     await page.locator("aside").evaluate(element => { element.scrollTop = 0 })
@@ -117,33 +146,35 @@ test("existing mobile project keeps a compact panel and exact current results in
   } finally { await page.close() }
 })
 
-test("one click prepares the briefing request, preserves conversation/profile/drafts and waits for the exact returned briefing", async () => {
+test("one menu click prepares the briefing request, preserves conversation/profile/drafts and waits for the exact returned briefing", async () => {
   const { page, values, writes, errors, refresh } = await setup()
   try {
-    await page.getByRole("button", { name: "Donner une orientation", exact: true }).click()
-    await page.getByLabel("Votre consigne", { exact: true }).fill("Brouillon à conserver")
-    await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).click()
-    await briefing(page).getByText(/Demande envoyée/).waitFor()
+    const draft = card(page).locator("form.mission-guidance").getByLabel("Écrire au coordinateur", { exact: true })
+    await draft.fill("Brouillon à conserver")
+    await requestUpdate(page)
+    await feedback(page).getByText(/Demande envoyée/).waitFor()
     assert.equal(prompts(writes).length, 1)
     const sent = prompts(writes)[0]
     assert.match(sent.path, /\/ses_A\/prompt$/)
     assert.equal(sent.body.delivery, "steer")
     assert.match(sent.body.text, /Response language: fr/)
     const requestID = /Request ID: ([^\n]+)/.exec(sent.body.text)![1]
-    assert.equal(await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).isDisabled(), true)
+    assert.equal(await canRequest(page), false)
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
-    assert.equal(await page.getByLabel("Votre consigne", { exact: true }).inputValue(), "Brouillon à conserver")
+    assert.equal(await draft.inputValue(), "Brouillon à conserver")
     assert.ok(!writes.some(write => /\/missions(?:\/|$)|\/session\/[^/]+\/(agent|model)$/.test(write.path)))
     publish(values[0], "another-request"); await refresh()
-    await briefing(page).getByRole("button", { name: "Bilan du projet", exact: true }).waitFor()
-    assert.equal(await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).isDisabled(), true)
+    await result(page).getByText(/Point du coordinateur/).waitFor()
+    await feedback(page).getByText(/Demande envoyée/).waitFor()
+    assert.equal(await canRequest(page), false)
     publish(values[0], requestID); await refresh()
-    await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).waitFor()
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".mission-briefing header button")!.disabled)
-    assert.equal(await briefing(page).getByText(/Demande envoyée/).count(), 0)
-    await briefing(page).getByRole("button", { name: "Bilan du projet", exact: true }).click()
+    await feedback(page).waitFor({ state: "detached" })
+    assert.equal(await canRequest(page), true)
+    await readAll(page).click()
+    await page.locator(".mission-reader").getByText(values[0].briefing!.summary, { exact: true }).waitFor()
     await page.locator(".mission-reader").getByRole("button", { name: "iOS — vérifier Xcode", exact: true }).click()
     await page.locator(".mission-reader").getByText("Source conservée et vérifiable.", { exact: true }).waitFor()
+    assert.equal(prompts(writes).length, 1)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -153,17 +184,18 @@ test("unconfirmed briefing admission survives navigation and remount without aut
   let attempts = 0
   try {
     await page.route("**/session/ses_A/prompt", route => { attempts++; return route.fulfill({ status: 503, json: { error: "lost acknowledgement" } }) })
-    await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).click()
-    await briefing(page).getByRole("alert").waitFor()
+    await requestUpdate(page)
+    await feedback(page).getByRole("alert").waitFor()
     await page.getByRole("button", { name: "Mission distincte", exact: true }).click()
-    await page.getByRole("button", { name: "Livrer CodeNomad pour Android et iOS", exact: true }).click()
+    await page.getByRole("button", { name: TITLE, exact: true }).click()
     await page.evaluate(() => { window.missionNavigation.mount(false); window.missionNavigation.mount(true) })
-    await page.getByRole("button", { name: "Livrer CodeNomad pour Android et iOS", exact: true }).click()
+    await page.getByRole("button", { name: TITLE, exact: true }).click()
     await refresh()
-    await briefing(page).getByRole("alert").waitFor()
-    assert.equal(await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).isDisabled(), true)
+    await feedback(page).getByRole("alert").waitFor()
+    assert.equal(await canRequest(page), false)
     page.once("dialog", dialog => dialog.dismiss())
-    await briefing(page).getByRole("button", { name: "Faire une nouvelle demande distincte", exact: true }).click()
+    await feedback(page).getByRole("button", { name: "Faire une nouvelle demande distincte", exact: true }).click()
+    await feedback(page).getByRole("alert").waitFor()
     assert.equal(attempts, 1)
     assert.equal(prompts(writes).length, 0, "overridden failed endpoint counted separately")
   } finally { await page.close() }
@@ -173,34 +205,30 @@ test("a freshly paused mission fences the request without resuming or sending it
   const { page, values, writes } = await setup()
   try {
     values[0].runState = "paused"
-    await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).click()
-    await briefing(page).getByRole("alert").waitFor()
+    await requestUpdate(page)
+    await feedback(page).getByRole("alert").waitFor()
     assert.equal(prompts(writes).length, 0)
     assert.ok(!writes.some(write => write.path.includes("/missions/")))
   } finally { await page.close() }
 })
 
-test("optional explanation stays separate from direction and briefing refresh, with its own draft and exact coordinator link", async () => {
+test("a question written to the coordinator stays separate from the briefing request and its exact coordinator link", async () => {
   const { page, writes, values, errors } = await setup()
   try {
-    await page.getByRole("button", { name: "Donner une orientation", exact: true }).click()
-    await page.getByLabel("Votre consigne", { exact: true }).fill("Une orientation conservée")
-    const toggle = page.getByRole("button", { name: "Poser une question", exact: true })
-    assert.equal(await toggle.getAttribute("aria-expanded"), "false")
-    await toggle.click()
-    const form = page.locator(".mission-question")
+    const form = card(page).locator("form.mission-guidance")
     assert.equal(await form.getByRole("combobox").count(), 0)
-    await form.getByLabel("Votre question", { exact: true }).fill("Pourquoi iOS n’est-il pas encore testable ?")
-    await form.getByRole("button", { name: "Envoyer au coordinateur", exact: true }).click()
-    await form.getByText(/Question envoyée/).waitFor()
+    await form.getByLabel("Écrire au coordinateur", { exact: true }).fill("Pourquoi iOS n’est-il pas encore testable ?")
+    await form.getByRole("button", { name: "Envoyer", exact: true }).click()
+    await form.getByText("Envoyée dans la conversation du coordinateur. L’envoi ne confirme pas sa prise en compte.", { exact: true }).waitFor()
     assert.equal(prompts(writes).length, 1)
-    assert.match(prompts(writes)[0].body.text, /explanation request\. Mission ID: A/)
-    assert.match(prompts(writes)[0].body.text, /not a direction to change priorities/)
-    assert.match(prompts(writes)[0].body.text, /Pourquoi iOS n’est-il pas encore testable/)
-    assert.equal(await page.getByLabel("Votre consigne", { exact: true }).inputValue(), "Une orientation conservée")
+    assert.equal(prompts(writes)[0].body.text, "Pourquoi iOS n’est-il pas encore testable ?")
+    assert.doesNotMatch(prompts(writes)[0].body.text, /Request ID:/)
     assert.equal(values[0].briefing, undefined)
+    assert.equal(await feedback(page).count(), 0, "a question is not a pending briefing request")
+    assert.equal(await canRequest(page), true)
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
-    await form.getByRole("button", { name: "Ouvrir le coordinateur", exact: true }).click()
+    await openMenu(page)
+    await page.getByRole("menuitem", { name: "Ouvrir la conversation", exact: true }).click()
     await page.waitForFunction(() => window.missionNavigation.snapshot().selectedSession === "ses_A")
     assert.ok(!writes.some(write => write.path.includes("/missions/")))
     assert.deepEqual(errors, [])
@@ -211,8 +239,9 @@ test("dated briefing stays distinct from observed activity, signals new evidence
   const { page, values, refresh, errors } = await setup()
   try {
     publish(values[0], "initial"); await refresh()
-    await briefing(page).getByRole("button", { name: "Bilan du projet", exact: true }).waitFor()
-    assert.equal(await briefing(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0)
+    await result(page).getByText(/Point du coordinateur/).waitFor()
+    assert.equal(await result(page).locator(".mission-result-text").textContent(), values[0].briefing!.summary)
+    assert.equal(await result(page).locator(".mission-briefing-stale").count(), 0)
     for (const width of [440, 280, 390]) {
       await page.setViewportSize({ width: width === 390 ? 390 : 1280, height: 900 })
       await page.locator("#root > div").evaluate((element, width) => { (element as HTMLElement).style.gridTemplateColumns = width === 390 ? "0 minmax(0,1fr)" : `minmax(0,1fr) ${width}px` }, width)
@@ -225,10 +254,10 @@ test("dated briefing stays distinct from observed activity, signals new evidence
     values[0].reports.push(values[0].tasks[0].report!)
     values[0].revision++; values[0].updatedAt = values[0].tasks[0].report!.createdAt
     await refresh()
-    await briefing(page).getByText("1 nouveau résultat depuis ce bilan. Demandez une évaluation actualisée.", { exact: true }).waitFor()
+    await result(page).locator(".mission-briefing-stale").getByText("1 nouveau résultat depuis ce bilan. Demandez une évaluation actualisée.", { exact: true }).waitFor()
     await page.setViewportSize({ width: 1280, height: 900 })
     await page.locator("#root > div").evaluate(element => { (element as HTMLElement).style.gridTemplateColumns = "minmax(0,1fr) 440px" })
-    const eye = briefing(page).getByRole("button", { name: "Bilan du projet", exact: true })
+    const eye = readAll(page)
     await eye.click()
     assert.equal(await eye.getAttribute("aria-pressed"), "true")
     await page.locator(".mission-reader").getByText(values[0].briefing!.summary, { exact: true }).waitFor()
@@ -249,21 +278,24 @@ test("dated briefing stays distinct from observed activity, signals new evidence
 test("seen exact response remains acknowledged when a later briefing supersedes it, while a terminal summary takes precedence", async () => {
   const { page, values, writes, refresh } = await setup()
   try {
-    await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).click()
-    await briefing(page).getByText(/Demande envoyée/).waitFor()
+    await requestUpdate(page)
+    await feedback(page).getByText(/Demande envoyée/).waitFor()
     const requestID = /Request ID: ([^\n]+)/.exec(prompts(writes)[0].body.text)![1]
     publish(values[0], requestID); await refresh()
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".mission-briefing header button")!.disabled)
+    await feedback(page).waitFor({ state: "detached" })
     publish(values[0], "subsequent"); await refresh()
-    assert.equal(await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).isDisabled(), false)
+    assert.equal(await feedback(page).count(), 0)
+    assert.equal(await canRequest(page), true)
     values[0].status = "completed"
     values[0].summary = "Résultat final : préparation validée ; aucune application livrée dans cette mission limitée."
     values[0].revision++; await refresh()
-    const eye = briefing(page).getByRole("button", { name: "Bilan du projet", exact: true })
-    await eye.click()
+    await result(page).locator(".mission-result-text").getByText(values[0].summary, { exact: true }).waitFor()
+    assert.equal(await result(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0)
+    assert.equal(await result(page).getByText(/Point du coordinateur/).count(), 0)
+    await readAll(page).click()
     await page.locator(".mission-reader").getByText(values[0].summary, { exact: true }).waitFor()
-    assert.equal(await briefing(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0)
-    assert.equal(await briefing(page).getByRole("button", { name: "Faire le point", exact: true }).count(), 0)
+    assert.equal(await row(page).locator("button.mission-index-primary").count(), 0)
+    assert.equal(await canRequest(page), false)
     assert.equal(prompts(writes).length, 1)
   } finally { await page.close() }
 })
@@ -286,13 +318,12 @@ test("an early A briefing and late admission acknowledgements never attach A's r
       await (index ? holdB : holdA)
       return route.fulfill({ json: { data: { id: body.id } } })
     })
-    const ask = briefing(page).getByRole("button", { name: "Faire le point", exact: true })
-    await ask.click(); await startedA
+    await requestUpdate(page); await startedA
     assert.equal(sent.length, 1)
     const idA = /Request ID: ([^\n]+)/.exec(sent[0].text)![1]
     publish(values[0], idA); await refresh()
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".mission-briefing .window-text-button")!.disabled)
-    await ask.click()
+    await feedback(page).waitFor({ state: "detached" })
+    await requestUpdate(page)
     const idB = (await request())!.requestID
     assert.notEqual(idB, idA)
     const postB = page.waitForRequest(request => request.url().endsWith("/prompt"))
@@ -301,15 +332,16 @@ test("an early A briefing and late admission acknowledgements never attach A's r
     assert.equal(/Request ID: ([^\n]+)/.exec(sent[1].text)![1], idB)
     assert.equal((await request())?.requestID, idB)
     assert.equal((await request())?.briefingId, undefined)
-    assert.equal(await ask.isDisabled(), true)
+    assert.equal(await canRequest(page), false)
     releaseB()
-    await briefing(page).getByText(/Demande envoyée/).waitFor()
+    await feedback(page).getByText(/Demande envoyée/).waitFor()
     assert.equal((await request())?.requestID, idB)
     assert.equal((await request())?.briefingId, undefined)
-    assert.equal(await ask.isDisabled(), true)
+    assert.equal(await canRequest(page), false)
     publish(values[0], idB); await refresh()
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".mission-briefing .window-text-button")!.disabled)
+    await feedback(page).waitFor({ state: "detached" })
     assert.equal((await request())?.briefingId, values[0].briefing!.id)
+    assert.equal(await canRequest(page), true)
     assert.equal(sent.length, 2, "neither result causes an automatic replay")
     assert.deepEqual(errors, [])
   } finally { releaseA(); releaseB(); await page.close() }

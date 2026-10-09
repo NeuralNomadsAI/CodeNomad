@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { readFile } from "node:fs/promises"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -46,6 +46,17 @@ const schedule = (id: string): MissionRecurrenceSnapshot["schedules"][number] =>
     nextDueAt: null, actions: [], controls: [], pending: { passageID: "rcp_pending", status: "uncertain" }, latestResult: history.at(-1)!, history }
 }
 
+function scheduleEntry(page: Page, title: string) {
+  return page.locator("li.mission-index-entry", { has: page.getByRole("button", { name: title, exact: true }) })
+}
+/** The schedule card's overview eye ("Read all"), selecting the schedule row first when needed. */
+async function readAll(page: Page, title: string) {
+  const eye = scheduleEntry(page, title).locator(".mission-result-read")
+  if (!await eye.isVisible()) await page.getByRole("button", { name: title, exact: true }).click()
+  await eye.waitFor()
+  return eye
+}
+
 test("native reference history uses the shared reader, exact eyes, visible cache demand and no mutation/transcript reads", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 390, height: 800 } })
   let snapshot: MissionRecurrenceSnapshot = { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [schedule("rec_first"), { ...schedule("rec_second"), pending: null }] }
@@ -66,25 +77,27 @@ test("native reference history uses the shared reader, exact eyes, visible cache
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    const firstEye = page.getByRole("button", { name: "Read passage history for Daily review first" })
-    const secondEye = page.getByRole("button", { name: "Read passage history for Daily review second" })
-    await firstEye.waitFor()
-    assert.equal(await page.getByRole("button", { name: "Daily review first", exact: true }).count(), 1)
-    await firstEye.click()
+    const firstRow = page.getByRole("button", { name: "Daily review first", exact: true })
+    const firstEye = scheduleEntry(page, "Daily review first").locator(".mission-result-read")
+    const secondEye = scheduleEntry(page, "Daily review second").locator(".mission-result-read")
+    await firstRow.waitFor()
+    assert.equal(await firstRow.count(), 1)
+    assert.equal(await firstEye.count(), 0, "unselected schedules show no card")
+    await (await readAll(page, "Daily review first")).click()
     const reader = page.locator(".mission-reader")
     await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor()
     assert.equal(await reader.locator("li").count(), 30)
     await reader.getByRole("alert").getByText(/No substitute result was loaded/).waitFor()
     assert.equal(await firstEye.getAttribute("aria-pressed"), "true")
-    assert.equal(await secondEye.getAttribute("aria-pressed"), "false")
+    assert.equal(await secondEye.count(), 0)
     assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 1)
-    await secondEye.click()
+    await (await readAll(page, "Daily review second")).click()
     await reader.getByText("rcp_rec_second_29", { exact: true }).waitFor()
-    assert.equal(await firstEye.getAttribute("aria-pressed"), "false")
     assert.equal(await secondEye.getAttribute("aria-pressed"), "true")
-    await secondEye.click()
-    assert.equal(await reader.count(), 0)
-    await firstEye.click()
+    assert.equal(await (await readAll(page, "Daily review first")).getAttribute("aria-pressed"), "false", "only the exact reader target is highlighted")
+    await (await readAll(page, "Daily review second")).click()
+    assert.equal(await reader.count(), 0, "a second click on the exact target closes the reader")
+    await (await readAll(page, "Daily review first")).click()
     await reader.getByRole("button", { name: "Back to chat" }).click()
     assert.equal(await firstEye.getAttribute("aria-pressed"), "false")
     const beforeEye = reads
@@ -125,7 +138,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
     await captureMissionView(page, "archive-reader-390-rtl")
     const geometry = await firstEye.evaluate(node => {
-      const row = node.closest(".mission-list-item")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
+      const row = node.closest(".mission-index-entry")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
       return { rowLeft: row.left, rowRight: row.right, eyeLeft: eye.left, eyeRight: eye.right, radius: getComputedStyle(node).borderRadius }
     })
     assert.ok(geometry.eyeLeft >= geometry.rowLeft && geometry.eyeRight <= geometry.rowRight)
@@ -133,7 +146,8 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => window.passageHistory.project("foreign"))
     await reader.getByText("This mission content is no longer available.").waitFor()
     assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 0)
-    assert.equal(await firstEye.count(), 0, "foreign project response cannot populate the original list")
+    assert.equal(await firstRow.count(), 0, "foreign project response cannot populate the original list")
+    assert.equal(await firstEye.count(), 0)
     await page.evaluate(() => window.passageHistory.project("project"))
     await firstEye.waitFor()
     await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor()
@@ -143,7 +157,8 @@ test("native reference history uses the shared reader, exact eyes, visible cache
       ;(serverEvents as unknown as { dispatchBatch(events: unknown[]): void }).dispatchBatch([{ type: "workspace.stopped", workspaceId: "fixture" }])
     })
     await reader.getByText("This mission content is no longer available.").waitFor()
-    assert.equal(await firstEye.count(), 0, "workspace teardown revokes the previous cache")
+    assert.equal(await firstRow.count(), 0, "workspace teardown revokes the previous cache")
+    assert.equal(await firstEye.count(), 0)
     assert.equal(reads, beforeStop, "teardown does not start a read or rearm a passage")
     assert.deepEqual(unexpected, [])
     assert.deepEqual(errors, [])
@@ -187,7 +202,7 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Read passage history for Daily review long" }).click()
+    await (await readAll(page, "Daily review long")).click()
     const result = page.locator(".mission-recurrence-result")
     await result.getByRole("heading", { name: "Archived summary", exact: true }).waitFor()
     assert.equal(requests.length, 1, "opening loads one page of one archived source, not every report or the transcript")
@@ -256,18 +271,18 @@ test("late Location response never installs data into a different reader or list
   })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Read passage history for Daily review old" }).click()
+    await (await readAll(page, "Daily review old")).click()
     await page.locator(".mission-reader").getByText("rcp_rec_old_29", { exact: true }).waitFor()
     const secondRead = page.waitForRequest(request => request.url().endsWith("/missions/recurrence"))
     await page.evaluate(() => window.passageHistory.refresh())
     await secondRead
     await page.evaluate(() => window.passageHistory.directory("/other"))
-    await page.getByRole("button", { name: "Read passage history for Daily review new" }).waitFor()
+    await page.getByRole("button", { name: "Daily review new", exact: true }).waitFor()
     release()
-    await page.getByRole("button", { name: "Read passage history for Daily review new" }).click()
+    await (await readAll(page, "Daily review new")).click()
     await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor()
     assert.equal(await page.getByText("rcp_rec_old_29", { exact: true }).count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Read passage history for Daily review old" }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Daily review old", exact: true }).count(), 0)
   } finally { release(); await page.close() }
 })
 
@@ -305,7 +320,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    const eye = page.getByRole("button", { name: "Read passage history for Daily review live", exact: true })
+    const eye = await readAll(page, "Daily review live")
     await eye.click()
     const reader = page.locator(".mission-reader")
     await reader.getByText("No archived passages yet.").waitFor()
@@ -394,7 +409,7 @@ test("numeric reader drafts commit on Enter/blur without losing keyboard focus d
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Read passage history for Daily review keyboard", exact: true }).click()
+    await (await readAll(page, "Daily review keyboard")).click()
     const result = page.locator(".mission-recurrence-result")
     await result.getByText("Verified artifact section 1, page 1", { exact: true }).waitFor()
     const sectionInput = result.getByRole("spinbutton").nth(0), pageInput = result.getByRole("spinbutton").nth(1)

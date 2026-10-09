@@ -7,7 +7,7 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { initializeClientState } from "../../../src/stores/client-state"
 import { addInstance, updateInstance } from "../../../src/stores/instances"
-import { missionProjectView } from "../../../src/stores/mission-view-state"
+import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { serverEvents } from "../../../src/lib/server-events"
 import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
 import { MISSION_RECURRENCE_CHANGED_EVENT } from "../../../../server/src/missions/recurrence-events"
@@ -39,6 +39,8 @@ function Fixture() {
   return <div style={{ display: "flex", "flex-wrap": "wrap", gap: "8px" }}>
     <aside class="mission-control" style={{ width: "280px" }}>
       <MissionRecurrenceList instanceId="fixture" projectID={projectID()} scope={scope()} active={active} refresh={refresh()}
+        selectedSchedule={missionProjectView(scope()).selectedRecurrence}
+        onSelect={id => updateMissionProjectView(scope(), { selectedRecurrence: id === missionProjectView(scope()).selectedRecurrence ? undefined : id })}
         onRead={restoreChat => { if (restoreChat) setStatus(false) }} />
     </aside>
     <main class="mission-transcript-surface" style={{ width: "390px", height: "500px", flex: "none" }}>

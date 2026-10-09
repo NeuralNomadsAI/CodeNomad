@@ -1,5 +1,6 @@
-import { createSignal } from "solid-js"
+import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
+import AlertDialog from "../../../src/components/alert-dialog"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
@@ -18,8 +19,11 @@ const instance: Instance = { id: "mission-visibility", folder: "/fixture", port:
 function Fixture() {
   const { t } = useI18n()
   const [active, setActive] = createSignal(false)
+  const [mounted, setMounted] = createSignal(true)
   ;(window as any).missionVisibility = {
     activate: setActive,
+    // Rows persist across selection; unmounting is what disposes them.
+    mount: setMounted,
     demanded: () => missionStore.demandedInstanceIds(),
     state: () => missionStore.state(instance.id),
     event: (type: string) => (serverEvents as any).dispatchBatch([
@@ -27,10 +31,12 @@ function Fixture() {
     ]),
   }
   return <div style={{ width: "390px", height: "850px", display: active() ? "block" : "none" }}>
-    <RightPanel isActive={active} t={t} instanceId={instance.id} instance={instance}
+    <Show when={mounted()}><RightPanel isActive={active} t={t} instanceId={instance.id} instance={instance}
       activeSessionId={() => null} activeSession={() => null} isPhoneLayout={() => false}
       rightDrawerWidth={() => 390} rightDrawerWidthInitialized={() => true}
-      onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
+      onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} /></Show>
+    {/* App-level host for Stop… confirmations, as in App.tsx. */}
+    <AlertDialog />
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

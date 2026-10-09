@@ -27,6 +27,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+const SENT = "Sent to the coordinator conversation. Being sent does not confirm it has been acted on."
 function mission(id: string): MissionMap {
   const report = { id: `report-${id}`, taskKey: "xcode", sessionId: `ses_${id}`, outcome: "blocked" as const,
     summary: "Full Xcode is missing.", evidence: ["Read-only inventory"], next: ["Install Xcode"], createdAt: 1 }
@@ -37,7 +38,7 @@ function mission(id: string): MissionMap {
       { ...task, id: `retired-${id}`, key: "old-apk", title: "Old cancelled build", status: "withdrawn", replacedByTaskKey: "xcode" }],
     reports: [report], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
-async function setup() {
+async function setup(prepare?: (values: MissionMap[]) => void) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   page.setDefaultTimeout(15_000)
   const writes: Array<{ path: string; body: any }> = [], errors: string[] = []
@@ -45,6 +46,7 @@ async function setup() {
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   const values = [mission("A"), mission("B")]
+  prepare?.(values)
   await page.route("**/api/**", async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname
     if (request.method() !== "GET") writes.push({ path: pathname, body: request.postData() ? request.postDataJSON() : undefined })
@@ -59,14 +61,25 @@ async function setup() {
     return route.fulfill({ json: pathname.includes("/instance/") ? [] : {} })
   })
   await page.goto(url, { timeout: 60_000 })
-  await page.getByRole("button", { name: "Objective A", exact: true }).click()
+  await select(page, "Objective A")
   return { page, values, writes, errors }
 }
-async function guidance(page: Page) {
-  const trigger = page.getByRole("button", { name: "Give direction", exact: true })
-  if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click()
-  return page.locator(".mission-guidance:not(.mission-question)")
+const row = (page: Page, title: string) => page.locator("li.mission-index-entry").filter({ has: page.getByRole("button", { name: title, exact: true }) })
+const card = (page: Page) => page.locator("li.mission-index-entry-selected > div.mission-card")
+/** Selecting a row is idempotent here: the selected card follows the row. */
+async function select(page: Page, title: string) {
+  await page.getByRole("button", { name: title, exact: true }).click()
+  await page.locator("li.mission-index-entry-selected").filter({ has: page.getByRole("button", { name: title, exact: true }) }).locator("div.mission-card").waitFor()
 }
+/** The single "Write to the coordinator" field is always visible in the selected running card. */
+async function guidance(page: Page) {
+  const form = card(page).locator("form.mission-guidance")
+  await form.waitFor()
+  return form
+}
+const field = (page: Page) => card(page).getByLabel("Write to the coordinator", { exact: true })
+const send = (page: Page) => card(page).locator("form.mission-guidance").getByRole("button", { name: "Send", exact: true })
+
 for (const mode of ["direction", "briefing"] as const) {
   test(`${mode} preparation survives session.status display revalidation without replay or profile changes`, async () => {
     const { page, writes, values, errors } = await setup()
@@ -79,9 +92,11 @@ for (const mode of ["direction", "briefing"] as const) {
         return route.fulfill({ json: { data: { id: "ses_A", projectID: "project", title: "A", slug: "A", version: "1",
           agent: "build", model: { id: "native", providerID: "native" }, location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
       })
-      const form = mode === "direction" ? await guidance(page) : page.locator(".mission-briefing")
-      if (mode === "direction") await form.getByLabel("Your instruction", { exact: true }).fill("Keep this admitted direction through display refresh")
-      await form.getByRole("button", { name: mode === "direction" ? "Send to coordinator" : "Make a status check", exact: true }).click()
+      const form = mode === "direction" ? await guidance(page) : card(page).locator(".mission-briefing-feedback")
+      if (mode === "direction") {
+        await field(page).fill("Keep this admitted direction through display refresh")
+        await send(page).click()
+      } else await clickMissionAction(row(page, "Objective A"), "Request an update")
       await hydrationReached
       await page.route("**/api/workspaces/fixture/missions", async route => {
         displayStarted(); await displayHold
@@ -99,7 +114,7 @@ for (const mode of ["direction", "briefing"] as const) {
         return missionStore.state("fixture").status === "ready"
       })
       releaseHydration()
-      await form.getByText(mode === "direction" ? "Sent to the coordinator conversation. Being sent does not confirm it has been acted on."
+      await form.getByText(mode === "direction" ? SENT
         : "Request sent. Waiting for the coordinator to publish the briefing; sending is not a response.", { exact: true }).waitFor()
       assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 1)
       assert.ok(!writes.some(write => /\/session\/[^/]+\/(agent|model)$|\/missions(?:\/|$)/.test(write.path)))
@@ -108,24 +123,25 @@ for (const mode of ["direction", "briefing"] as const) {
     } finally { releaseHydration(); releaseDisplay(); await page.close() }
   })
 }
-test("orientation starts collapsed and an explicit task direction reaches only its coordinator", async () => {
+test("one visible coordinator field without modes or task selects sends only the written text to its own coordinator", async () => {
   const { page, writes, values, errors } = await setup()
   try {
-    const trigger = page.getByRole("button", { name: "Give direction", exact: true })
-    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
-    assert.equal(await page.locator(".mission-guidance:not(.mission-question)").isVisible(), false)
+    for (const removed of ["Give direction", "Ask a question"])
+      assert.equal(await page.getByRole("button", { name: removed, exact: true }).count(), 0)
     const form = await guidance(page)
-    assert.equal(await form.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "")
-    assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "")
-    await form.getByRole("combobox", { name: /^Direction type\b/ }).selectOption("alternative")
-    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("task-A")
-    await form.getByLabel("Your instruction", { exact: true }).fill("Use Windows verification while Xcode is unavailable.")
-    await form.getByRole("button", { name: "Send to coordinator", exact: true }).click()
-    await form.getByText("Sent to the coordinator conversation. Being sent does not confirm it has been acted on.", { exact: true }).waitFor()
+    assert.equal(await form.isVisible(), true)
+    assert.equal(await form.getByRole("combobox").count(), 0)
+    assert.equal(await form.locator("textarea").count(), 1)
+    assert.equal(await field(page).getAttribute("placeholder"), "Ask a question or give a direction")
+    assert.equal(await form.locator("p").count(), 0, "no status line while drafting")
+    assert.equal(await send(page).isDisabled(), true)
+    await field(page).fill("Use Windows verification while Xcode is unavailable.")
+    await send(page).click()
+    await form.getByText(SENT, { exact: true }).waitFor()
     const prompts = writes.filter(write => write.path.endsWith("/prompt"))
     assert.equal(prompts.length, 1)
     assert.match(prompts[0].path, /\/session\/ses_A\/prompt$/)
-    assert.equal(prompts[0].body.text, "Alternative approach\n\nTask: Check Xcode (xcode)\n\nUse Windows verification while Xcode is unavailable.")
+    assert.equal(prompts[0].body.text, "Use Windows verification while Xcode is unavailable.")
     assert.equal(prompts[0].body.delivery, "steer")
     assert.equal(values[0].notes, "opaque-machine-notes")
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
@@ -133,60 +149,28 @@ test("orientation starts collapsed and an explicit task direction reaches only i
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
-test("task context remains visibly selected when returning to an independent mission draft", async () => {
-  const { page, writes } = await setup()
-  try {
-    const form = await guidance(page)
-    await form.getByRole("combobox", { name: /^Direction type\b/ }).selectOption("alternative")
-    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("task-A")
-    await form.getByLabel("Your instruction", { exact: true }).fill("Keep A's selected task context.")
-    await page.getByRole("button", { name: "Objective B", exact: true }).click()
-    const other = await guidance(page)
-    assert.equal(await other.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "")
-    assert.equal(await other.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "")
-    await page.getByRole("button", { name: "Objective A", exact: true }).click()
-    assert.equal(await form.getByLabel("Your instruction", { exact: true }).inputValue(), "Keep A's selected task context.")
-    assert.equal(await form.getByRole("combobox", { name: /^Direction type\b/ }).inputValue(), "alternative")
-    await page.screenshot({ path: screenshotPath("mission-guidance-task-context-restored"), fullPage: true })
-    assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "task-A", "the visible selection must match the task context that would actually be sent")
-    assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0)
-  } finally { await page.close() }
-})
-test("a removed task keeps its direction draft but cannot silently send as mission-wide guidance", async () => {
-  const { page, values, writes } = await setup()
-  try {
-    const form = await guidance(page)
-    await form.getByRole("combobox", { name: /^Direction type\b/ }).selectOption("constraint")
-    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("task-A")
-    await form.getByLabel("Your instruction", { exact: true }).fill("Do not install system software.")
-    values[0].tasks = values[0].tasks.filter(task => task.id !== "task-A")
-    values[0].revision++
-    const refreshed = page.waitForResponse(response => response.url().endsWith("/missions"))
-    await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await refreshed
-    await form.getByRole("option", { name: "Task no longer available", exact: true }).waitFor({ state: "attached" })
-    assert.equal(await form.getByRole("combobox", { name: /^Regarding\b/ }).inputValue(), "task-A")
-    assert.equal(await form.getByLabel("Your instruction", { exact: true }).inputValue(), "Do not install system software.")
-    assert.equal(await form.getByRole("button", { name: "Send to coordinator", exact: true }).isDisabled(), true)
-    assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0)
-    await form.getByRole("combobox", { name: /^Regarding\b/ }).selectOption("")
-    assert.equal(await form.getByRole("button", { name: "Send to coordinator", exact: true }).isDisabled(), false)
-    assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0, "changing context never submits automatically")
-  } finally { await page.close() }
-})
 test("returned blockages are results, not native questions or generic coordinator links", async () => {
-  const { page, errors } = await setup()
+  // A dependency on the retired attempt keeps it reachable through "Show dependencies".
+  const { page, errors } = await setup(values => { values[0].tasks[1].blockedBy = ["xcode"] })
   try {
-    assert.equal(await page.getByRole("button", { name: "Your response is needed", exact: true }).count(), 0)
-    const progress = page.getByRole("region", { name: "Activity and remaining work", exact: true })
-    await progress.getByText("0 tasks completed · 1 task remaining", { exact: true }).waitFor()
-    assert.equal(await progress.getByText("Old cancelled build", { exact: true }).count(), 0)
+    assert.equal(await page.locator(".mission-needs").count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Answer", exact: true }).count(), 0)
+    const checklist = card(page).getByRole("region", { name: "Tasks", exact: true })
+    assert.equal(await checklist.locator("h3 small").textContent(), "0/1")
+    assert.equal(await checklist.locator("li[data-task-key]").count(), 1)
+    assert.equal(await checklist.locator('[data-task-key="xcode"] .mission-checklist-word').textContent(), "Blocked")
+    assert.equal(await checklist.getByText("Old cancelled build", { exact: true }).count(), 0)
     assert.equal(await page.locator(".mission-control").getByText("Full Xcode is missing.", { exact: true }).filter({ visible: true }).count(), 0)
-    await page.locator('[data-task-key="xcode"] .mission-list-item').getByRole("button", { name: "Check Xcode", exact: true }).click()
+    const task = checklist.getByRole("button", { name: /^Check Xcode/ })
+    await task.click()
+    assert.equal(await task.getAttribute("aria-pressed"), "true")
     await page.locator(".mission-reader").getByText("Full Xcode is missing.", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByRole("button", { name: "Open coordinator", exact: true }).count(), 0)
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
-    const retired = page.locator('[data-task-key="old-apk"] .mission-list-item')
+    assert.equal(await task.getAttribute("aria-pressed"), "false")
+    await card(page).locator(".mission-more > h3 > .mission-disclosure-trigger").click()
+    await card(page).getByRole("button", { name: /^Show dependencies/ }).click()
+    const retired = card(page).locator('[data-task-key="old-apk"] .mission-list-item')
     assert.equal(await retired.getByRole("button", { name: "Open coordinator", exact: true }).count(), 0)
     await clickMissionAction(retired, "Read in chat area")
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
@@ -198,9 +182,9 @@ test("instructions send exact text to the coordinator without selecting it, swit
   const { page, writes, values, errors } = await setup()
   try {
     const form = await guidance(page)
-    await form.getByLabel("Your instruction", { exact: true }).fill("Prioritize Android tests; keep iOS preparation independent.")
-    await form.getByRole("button", { name: "Send to coordinator", exact: true }).click()
-    await form.getByText("Sent to the coordinator conversation. Being sent does not confirm it has been acted on.", { exact: true }).waitFor()
+    await field(page).fill("Prioritize Android tests; keep iOS preparation independent.")
+    await send(page).click()
+    await form.getByText(SENT, { exact: true }).waitFor()
     const prompts = writes.filter(write => write.path.endsWith("/prompt"))
     assert.equal(prompts.length, 1)
     assert.match(prompts[0].path, /\/session\/ses_A\/prompt$/)
@@ -208,7 +192,7 @@ test("instructions send exact text to the coordinator without selecting it, swit
     assert.equal(prompts[0].body.delivery, "steer")
     assert.ok(!writes.some(write => /\/session\/[^/]+\/(agent|model)$|\/missions(?:\/|$)/.test(write.path)))
     assert.equal(values[0].notes, "opaque-machine-notes")
-    assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "")
+    assert.equal(await field(page).inputValue(), "")
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
     await page.screenshot({ path: screenshotPath("mission-guidance-browser"), fullPage: true })
     assert.deepEqual(errors, [])
@@ -217,27 +201,28 @@ test("instructions send exact text to the coordinator without selecting it, swit
 test("drafts survive mission switches/remount and uncertain admission is never replayed", async () => {
   const { page, writes } = await setup()
   try {
-    let form = await guidance(page)
-    await form.getByLabel("Your instruction", { exact: true }).fill("Instruction for A")
-    await page.getByRole("button", { name: "Objective B", exact: true }).click()
-    form = await guidance(page)
-    assert.equal(await form.getByLabel("Your instruction", { exact: true }).inputValue(), "")
-    await form.getByLabel("Your instruction", { exact: true }).fill("Instruction for B")
-    await page.getByRole("button", { name: "Objective A", exact: true }).click()
-    assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "Instruction for A")
+    await guidance(page)
+    await field(page).fill("Instruction for A")
+    await select(page, "Objective B")
+    await guidance(page)
+    assert.equal(await field(page).inputValue(), "")
+    await field(page).fill("Instruction for B")
+    await select(page, "Objective A")
+    assert.equal(await field(page).inputValue(), "Instruction for A")
     let attempts = 0
     await page.route("**/session/ses_A/prompt", route => { attempts++; return route.fulfill({ status: 503, json: { error: "Lost acknowledgement" } }) })
-    await page.getByRole("button", { name: "Send to coordinator", exact: true }).click()
-    await page.locator(".mission-guidance [role=alert]").waitFor()
+    await send(page).click()
+    await card(page).locator(".mission-guidance [role=alert]").waitFor()
     assert.equal(attempts, 1)
-    assert.equal(await page.getByRole("button", { name: "Send to coordinator", exact: true }).isDisabled(), true)
+    assert.equal(await send(page).isDisabled(), true)
+    assert.equal(await card(page).getByRole("button", { name: "Discard this draft and start a new instruction", exact: true }).isVisible(), true)
     await page.evaluate(() => { window.missionNavigation.mount(false); window.missionNavigation.mount(true) })
     // The existing panel may follow the active B conversation on remount;
     // returning to A must still preserve its independent uncertain send.
-    await page.getByRole("button", { name: "Objective A", exact: true }).click()
+    await select(page, "Objective A")
     await guidance(page)
-    assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "Instruction for A")
-    assert.equal(await page.getByRole("button", { name: "Send to coordinator", exact: true }).isDisabled(), true)
+    assert.equal(await field(page).inputValue(), "Instruction for A")
+    assert.equal(await send(page).isDisabled(), true)
     assert.equal(attempts, 1)
     assert.equal(writes.filter(write => /\/session\/[^/]+\/(agent|model)$/.test(write.path)).length, 0)
   } finally { await page.close() }
@@ -246,12 +231,12 @@ test("fresh paused mission fences a send before prompt admission", async () => {
   const { page, values, writes } = await setup()
   try {
     const form = await guidance(page)
-    await form.getByLabel("Your instruction", { exact: true }).fill("Preserve the draft")
+    await field(page).fill("Preserve the draft")
     values[0].runState = "paused"
-    await form.getByRole("button", { name: "Send to coordinator", exact: true }).click()
+    await send(page).click()
     await form.getByRole("alert").waitFor()
     assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0)
-    assert.equal(await form.getByLabel("Your instruction", { exact: true }).inputValue(), "Preserve the draft")
+    assert.equal(await field(page).inputValue(), "Preserve the draft")
   } finally { await page.close() }
 })
 test("a confirmed send after navigation settles only its original mission draft", async () => {
@@ -261,24 +246,24 @@ test("a confirmed send after navigation settles only its original mission draft"
   const requested = new Promise<void>(resolve => { reached = resolve })
   try {
     await guidance(page)
-    await page.getByLabel("Your instruction", { exact: true }).fill("A instruction")
+    await field(page).fill("A instruction")
     await page.route("**/session/ses_A/prompt", async route => {
       reached(); await held
       await route.fulfill({ json: { data: { id: route.request().postDataJSON().id } } })
     })
-    await page.getByRole("button", { name: "Send to coordinator", exact: true }).click()
+    await send(page).click()
     await requested
-    await page.getByRole("button", { name: "Objective B", exact: true }).click()
+    await select(page, "Objective B")
     await guidance(page)
-    await page.getByLabel("Your instruction", { exact: true }).fill("Unsent B instruction")
+    await field(page).fill("Unsent B instruction")
     release()
-    await page.getByRole("button", { name: "Objective A", exact: true }).click()
+    await select(page, "Objective A")
     await guidance(page)
-    await page.getByText("Sent to the coordinator conversation. Being sent does not confirm it has been acted on.", { exact: true }).waitFor()
-    assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "")
-    await page.getByRole("button", { name: "Objective B", exact: true }).click()
+    await card(page).getByText(SENT, { exact: true }).waitFor()
+    assert.equal(await field(page).inputValue(), "")
+    await select(page, "Objective B")
     await guidance(page)
-    assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "Unsent B instruction")
+    assert.equal(await field(page).inputValue(), "Unsent B instruction")
   } finally { release(); await page.close() }
 })
 for (const transition of ["selection", "selection-aba", "inactive-aba", "directory-aba", "project-aba", "instance-aba", "remount"] as const) {
@@ -289,17 +274,17 @@ for (const transition of ["selection", "selection-aba", "inactive-aba", "directo
     const requested = new Promise<void>(resolve => { reached = resolve })
     try {
       await guidance(page)
-      await page.getByLabel("Your instruction", { exact: true }).fill("Original A instruction")
+      await field(page).fill("Original A instruction")
       await page.route("**/instance/api/session/ses_A", async route => {
         reached(); await held
         await route.fulfill({ json: { data: { id: "ses_A", projectID: "project", title: "A", slug: "A", version: "1",
           location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
       })
-      await page.getByRole("button", { name: "Send to coordinator", exact: true }).click()
+      await send(page).click()
       await requested
       if (transition.startsWith("selection")) {
-        await page.getByRole("button", { name: "Objective B", exact: true }).click()
-        if (transition.endsWith("aba")) await page.getByRole("button", { name: "Objective A", exact: true }).click()
+        await select(page, "Objective B")
+        if (transition.endsWith("aba")) await select(page, "Objective A")
       } else if (transition === "inactive-aba") {
         await page.evaluate(() => window.missionNavigation.activate(false))
         await page.evaluate(() => window.missionNavigation.activate(true))
@@ -317,26 +302,24 @@ for (const transition of ["selection", "selection-aba", "inactive-aba", "directo
         await page.evaluate(() => window.missionNavigation.mount(true))
       }
       release()
-      await page.getByRole("button", { name: "Objective A", exact: true }).click()
+      await select(page, "Objective A")
       await guidance(page)
-      await page.locator(".mission-guidance [role=alert]").waitFor()
-      assert.equal(await page.getByLabel("Your instruction", { exact: true }).inputValue(), "Original A instruction")
+      await card(page).locator(".mission-guidance [role=alert]").waitFor()
+      assert.equal(await field(page).inputValue(), "Original A instruction")
       assert.equal(writes.filter(write => write.path.endsWith("/prompt")).length, 0)
       assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
     } finally { release(); await page.close() }
   })
 }
-test("narrow coordinator instructions keep context, input and send action within the panel", async () => {
+test("narrow coordinator instructions keep input and send action within the panel", async () => {
   const { page, errors } = await setup()
   try {
-    await guidance(page)
+    const form = await guidance(page)
     await page.evaluate(() => { document.querySelector<HTMLElement>("#root > div")!.style.gridTemplateColumns = "minmax(0, 1fr) 280px" })
-    const form = page.locator(".mission-guidance:not(.mission-question)")
-    await form.getByLabel("Your instruction", { exact: true }).fill("A long draft ".repeat(120))
+    await field(page).fill("A long draft ".repeat(120))
     const bounds = await form.boundingBox()
     assert.ok(bounds)
-    for (const element of [form.locator("textarea"), form.getByRole("button", { name: "Send to coordinator", exact: true }),
-      ...await form.locator("select").all()]) {
+    for (const element of [form.locator("textarea"), send(page)]) {
       const box = await element.boundingBox()
       assert.ok(box && box.x >= bounds.x && box.x + box.width <= bounds.x + bounds.width + 1)
     }

@@ -97,7 +97,7 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         await page.goto(url)
         await page.getByRole("button", { name: "Objective one", exact: true }).click()
         if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-        else await clickMissionAction(page.locator(".mission-control-index .mission-list-item-selected"), "Edit mission")
+        else await clickMissionAction(page.locator(".mission-control-index li.mission-index-entry-selected > .mission-index-row"), "Edit")
         await page.getByLabel("Objective", { exact: true }).fill("Original draft")
         await page.getByRole("button", { name: "Save", exact: true }).click()
         await reached.promise
@@ -110,7 +110,7 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         if (change === "inactive") await page.evaluate(() => window.missionEditorLifetime.activate(true))
         await page.evaluate(() => window.missionEditorLifetime.invalidate())
         await page.getByRole("button", { name: "Saved result", exact: true }).waitFor()
-        assert.match(await page.locator(".mission-control-index .mission-list-item-selected").innerText(), /Objective two/)
+        assert.match(await page.locator(".mission-control-index li.mission-index-entry-selected .mission-index-title").innerText(), /^Objective two$/)
         if (change === "new-editor") {
           assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), "Newer editor draft")
           assert.equal(await page.getByRole("alert").count(), 0)
@@ -139,7 +139,7 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
     await page.goto(url)
     await page.getByRole("button", { name: "Objective two", exact: true }).click()
     if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    else await clickMissionAction(page.locator(".mission-control-index .mission-list-item").filter({ has: page.getByRole("button", { name: "Objective one", exact: true }) }), "Edit mission")
+    else await clickMissionAction(page.locator(".mission-control-index .mission-index-row").filter({ has: page.getByRole("button", { name: "Objective one", exact: true }) }), "Edit")
     await page.getByLabel("Objective", { exact: true }).fill("Current")
     // Browsing before Save is not a late gesture: Save captures its own origin.
     await page.getByRole("button", { name: "Objective one", exact: true }).click()
@@ -147,7 +147,7 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
     assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), false)
     const before = (await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).length
     await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.locator(".mission-control-index .mission-list-item-selected", { hasText: "Saved result" }).waitFor()
+    await page.locator(".mission-control-index li.mission-index-entry-selected .mission-index-title", { hasText: "Saved result" }).waitFor()
     assert.equal(await page.locator("form.mission-editor").count(), 0); assert.equal(writes, 1)
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).slice(before).filter(id => id === (method === "POST" ? "saved" : "one")).length, 1)
     assert.deepEqual(errors, [])
@@ -207,7 +207,7 @@ for (const method of ["POST", "PATCH"] as const) test(`late ${method} rejection 
     })
     await page.goto(url)
     if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    else await clickMissionAction(page.locator(".mission-control-index .mission-list-item-selected"), "Edit mission")
+    else await clickMissionAction(page.locator(".mission-control-index li.mission-index-entry-selected > .mission-index-row"), "Edit")
     await page.getByLabel("Objective", { exact: true }).fill("Original rejected draft")
     await page.getByRole("button", { name: "Save", exact: true }).click()
     await reached.promise
