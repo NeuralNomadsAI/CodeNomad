@@ -9,7 +9,11 @@ export const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
 
 // Numbers are legacy pixel heights, converted once the composer is measured.
 type PromptInputHeight = number | { ratio: number } | null
-const [promptInputHeight, setPromptInputHeightValue] = createSignal<PromptInputHeight>(null)
+
+// Each instance keeps its own height, like the side drawers. The stored value
+// is only the starting height for instances that have not chosen one yet.
+const [heights, setHeights] = createSignal<ReadonlyMap<string, PromptInputHeight>>(new Map())
+let defaultHeight: PromptInputHeight = null
 let initialized = false
 
 export function parsePromptInputHeight(value: string | null): PromptInputHeight {
@@ -22,26 +26,34 @@ export function parsePromptInputHeight(value: string | null): PromptInputHeight 
   return height > 0 && height <= MAX_STORED_HEIGHT ? height : null
 }
 
+/** Pins the instance's height so later changes in other instances never move it. */
 export function initializePromptInputHeight(
+  instanceId: string,
   read: (key: string) => string | null = readClientLayoutValue,
 ): void {
-  if (initialized) return
-  initialized = true
-  setPromptInputHeightValue(parsePromptInputHeight(read(STORAGE_KEY)))
+  if (!initialized) {
+    initialized = true
+    defaultHeight = parsePromptInputHeight(read(STORAGE_KEY))
+  }
+  if (!heights().has(instanceId)) setPromptInputHeight(instanceId, defaultHeight)
 }
 
-export function setPromptInputHeight(value: PromptInputHeight): void {
-  initialized = true
-  setPromptInputHeightValue(value)
+export function promptInputHeight(instanceId: string): PromptInputHeight {
+  const current = heights()
+  return current.has(instanceId) ? current.get(instanceId)! : defaultHeight
+}
+
+export function setPromptInputHeight(instanceId: string, value: PromptInputHeight): void {
+  setHeights((previous) => new Map(previous).set(instanceId, value))
 }
 
 export function persistPromptInputHeight(
-  value: PromptInputHeight = promptInputHeight(),
+  instanceId: string,
+  value: PromptInputHeight = promptInputHeight(instanceId),
   write: (key: string, value: string) => void = writeClientLayoutValue,
 ): void {
-  setPromptInputHeight(value)
+  setPromptInputHeight(instanceId, value)
+  defaultHeight = value
   write(STORAGE_KEY, value === null ? AUTO_HEIGHT
     : typeof value === "number" ? String(Math.round(value)) : `ratio:${value.ratio}`)
 }
-
-export { promptInputHeight }

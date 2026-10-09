@@ -139,6 +139,6 @@ bootStage("preferences-after")
   setIdle: () => setSessionStatus(id, sessionId, "idle", { force: true }),
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,
-  promptHeight: promptInputHeight,
+  promptHeight: () => promptInputHeight(id),
 }
 bootStage("published")
