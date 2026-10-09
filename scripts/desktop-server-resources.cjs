@@ -2,7 +2,6 @@ const fs = require("fs")
 const os = require("os")
 const path = require("path")
 const { spawnSync } = require("child_process")
-const { prepareNativeHostResources, stageNativeHostResources, verifyStagedNativeHostResources } = require("./native-host-resources.cjs")
 
 const excludedDistRoots = new Set(["codenomad-server", "opencode-config", "opencode-config-template", "opencode-config.js"])
 const npmTargets = {
@@ -68,9 +67,6 @@ function stagePackagedServer(options) {
   const npmTarget = resolveNpmTarget(options.target || env.CODENOMAD_NODE_TARGET)
   const lockPath = path.join(workspaceRoot, "package-lock.json")
   validateServerProductionLock(JSON.parse(fs.readFileSync(lockPath, "utf8")))
-  // Shared by both hosts. Windows requires exact production artifacts BEFORE npm
-  // or destination replacement. Other platforms record explicit unavailability.
-  const nativeHost = prepareNativeHostResources({ workspaceRoot, serverRoot, target: npmTarget.target })
 
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-server-"))
   const stagedServerRoot = path.join(stagingRoot, "packages", "server")
@@ -112,7 +108,6 @@ function stagePackagedServer(options) {
     for (const artifact of ["public", "dist"]) {
       fs.cpSync(path.join(serverRoot, artifact), path.join(stagedServerRoot, artifact), { recursive: true })
     }
-    stageNativeHostResources(nativeHost, stagedServerRoot)
     return { stagingRoot, stagedServerRoot, target: npmTarget.target }
   } catch (error) {
     fs.rmSync(stagingRoot, { recursive: true, force: true })
@@ -123,8 +118,6 @@ function stagePackagedServer(options) {
 function copyPackagedServerResources(options) {
   const { serverRoot, serverDest, log = () => {} } = options
 
-  verifyStagedNativeHostResources(serverRoot)
-
   fs.rmSync(serverDest, { recursive: true, force: true })
   fs.mkdirSync(serverDest, { recursive: true })
 
@@ -132,8 +125,6 @@ function copyPackagedServerResources(options) {
   copyRequiredArtifact(serverRoot, serverDest, "public", log)
   copyRequiredArtifact(serverRoot, serverDest, "node_modules", log)
   copyServerDist(serverRoot, serverDest, log)
-  copyRequiredArtifact(serverRoot, serverDest, "native-host", log)
-  verifyStagedNativeHostResources(serverDest)
   stripNodeModuleBins(path.join(serverDest, "node_modules"), log)
   pruneKnownServerDependencies(path.join(serverDest, "node_modules"), log)
 }

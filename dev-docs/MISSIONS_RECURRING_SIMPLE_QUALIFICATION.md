@@ -1,5 +1,7 @@
 # Simple recurring Missions — real native qualification
 
+> PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
+
 ## Final reference run (2026-10-09, merge `697dc342` + `cf1cf70e`, `6d18639b`)
 
 Merge `697dc342` combines the integration line (not-started archive and

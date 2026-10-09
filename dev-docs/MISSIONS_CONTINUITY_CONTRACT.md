@@ -2,6 +2,8 @@
 
 # Missions : contrat de continuité et d'autorisation
 
+> PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
+
 Étude initiale : 2026-10-01. État réconcilié : 2026-10-08. Contrat cible,
 **partiellement implémenté, non qualifié pour activation desktop**. L'état des
 preuves et des gates est consigné dans `MISSIONS_REFACTOR_VALIDATION.md`.

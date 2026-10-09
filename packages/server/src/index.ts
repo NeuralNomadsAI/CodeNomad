@@ -44,10 +44,6 @@ import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
-import { NativeBootstrap } from "./auth/native-bootstrap"
-import { installBackendHostLifetime, type BackendChannelGuard } from "./host-lifetime/backend"
-import { BootstrapProofs } from "./host-lifetime/bootstrap"
-import { HostError } from "./host-lifetime/protocol"
 
 const require = createRequire(import.meta.url)
 
@@ -301,23 +297,8 @@ export function programHasArg(argv: string[], flag: string): boolean {
   return argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))
 }
 
-export const HOST_BACKEND_ENTRY_VERSION = 1
-export interface BackendMainDependencies {
-  // Narrow seam for isolated full-server fixtures. Default production startup
-  // retains the existing lazy native service; no daemon discovery at readiness.
-  sharedService?: ConstructorParameters<typeof WorkspaceManager>[0]["sharedService"]
-}
-let backendMain: Promise<void> | undefined
-/** Explicit import entry with one startup per process, including direct CLI use. */
-export function runBackendMain(argv = process.argv.slice(2), dependencies: BackendMainDependencies = {}): Promise<void> {
-  return backendMain ??= main(argv, dependencies)
-}
-async function main(argv: string[], dependencies: BackendMainDependencies) {
-  const options = parseCliOptions(argv)
-  const persistentChild = process.env.CODENOMAD_HOST_CHILD === "1"
-  if (persistentChild && (!process.send || !process.connected || process.env.CODENOMAD_NATIVE_PARENT !== "1"
-    || options.dangerouslySkipAuth || !options.generateToken || options.upgrade !== undefined))
-    throw new HostError("persistent-backend-auth-required")
+async function main() {
+  const options = parseCliOptions(process.argv.slice(2))
   if (options.upgrade !== undefined) {
     const version = typeof options.upgrade === "string" ? options.upgrade : undefined
     process.exitCode = await runCliUpgrade(version)
@@ -376,7 +357,7 @@ async function main(argv: string[], dependencies: BackendMainDependencies) {
     logger.child({ component: "auth" }),
   )
 
-  if (options.generateToken && !options.dangerouslySkipAuth && !persistentChild) {
+  if (options.generateToken && !options.dangerouslySkipAuth) {
     const token = authManager.issueBootstrapToken()
     if (token) {
       console.log(`${BOOTSTRAP_TOKEN_STDOUT_PREFIX}${token}`)
@@ -425,7 +406,6 @@ async function main(argv: string[], dependencies: BackendMainDependencies) {
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
-    sharedService: dependencies.sharedService,
     prepareDesktopPlugins,
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
@@ -462,7 +442,7 @@ async function main(argv: string[], dependencies: BackendMainDependencies) {
   })
 
   const uiDirEnvOverride = Boolean(process.env.CLI_UI_DIR)
-  const uiDirCliOverride = programHasArg(argv, "--ui-dir")
+  const uiDirCliOverride = programHasArg(process.argv.slice(2), "--ui-dir")
   const uiOverrideIsExplicit = uiDirEnvOverride || uiDirCliOverride
   const uiDirOverride = uiOverrideIsExplicit ? options.uiStaticDir : undefined
 
@@ -512,8 +492,8 @@ async function main(argv: string[], dependencies: BackendMainDependencies) {
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
-  const httpsPortExplicit = programHasArg(argv, "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
-  const httpPortExplicit = programHasArg(argv, "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
+  const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
+  const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
   const httpsBindPort = httpsPortExplicit ? options.httpsPort : 0
   const httpBindPort = httpPortExplicit ? options.httpPort : 0
@@ -680,16 +660,12 @@ async function main(argv: string[], dependencies: BackendMainDependencies) {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
 
-  let hostLifetime: BackendChannelGuard | undefined
   const shutdown = createServerShutdownHandler({
     logger,
     holdAfterFailure: () => new Promise<void>(() => { setInterval(() => undefined, 60_000) }),
     setExitCode: (code) => {
       process.stdin.destroy()
       process.exitCode = code
-      // Incomplete cleanup deliberately holds the backend under containment.
-      // Keep its manager-loss guard live until cleanup is actually complete.
-      if (code === 0) hostLifetime?.close()
     },
     shutdown: () =>
       orchestrateServerShutdown(
@@ -727,23 +703,12 @@ async function main(argv: string[], dependencies: BackendMainDependencies) {
       ),
   })
 
-  const requestShutdown = (signal: ServerShutdownTrigger) => { hostLifetime?.beginShutdown(); return shutdown(signal) }
-  installShutdownSignalHandlers(process, requestShutdown)
-  // Persistent attach uses ONLY authenticated child IPC. Legacy managed parents
-  // retain their existing one-shot line protocol and standalone behavior.
-  const nativeBootstrap = new NativeBootstrap(nativeParent.available && !persistentChild, () => authManager.issueBootstrapToken(), process.stdout)
-  installShutdownStdinHandler(process.stdin, requestShutdown, (line) => nativeParent.handleLine(line) || nativeBootstrap.handleLine(line))
-  if (persistentChild) {
-    if (!httpStart || httpBindHost !== "127.0.0.1" || !authManager.isAuthEnabled() || !authManager.isTokenBootstrapEnabled())
-      throw new HostError("persistent-backend-readiness-required")
-    hostLifetime = installBackendHostLifetime(new BootstrapProofs(authManager), `http://127.0.0.1:${httpStart.port}`)
-  }
+  installShutdownSignalHandlers(process, shutdown)
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {
-  // Persistent children must use the guarded wrapper, not legacy direct entries.
-  if (process.env.CODENOMAD_HOST_CHILD === "1") process.exit(1)
-  runBackendMain().catch((error) => {
+  main().catch((error) => {
     const logger = createLogger({ component: "app" })
     logger.error({ err: error }, "CLI server crashed")
     process.exit(1)

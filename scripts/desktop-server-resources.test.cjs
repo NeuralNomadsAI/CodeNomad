@@ -6,8 +6,6 @@ const test = require("node:test")
 const { resolveNpmTarget, validateServerProductionLock } = require("./desktop-server-resources.cjs")
 const { resolveEsbuildExecutable } = require("../packages/tauri-app/scripts/prebuild.js")
 const { copyPackagedServerResources } = require("./desktop-server-resources.cjs")
-const { prepareNativeHostResources, stageNativeHostResources } = require("./native-host-resources.cjs")
-const tempBase = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA, "Temp", "opencode") : os.tmpdir()
 
 test("maps every supported desktop target to npm OS and CPU", () => {
   assert.deepEqual(resolveNpmTarget("darwin-x64"), { target: "darwin-x64", os: "darwin", cpu: "x64" })
@@ -40,7 +38,7 @@ test("rejects an unpinned production dependency despite an otherwise valid lock"
 })
 
 test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {
-  const root = fs.mkdtempSync(path.join(tempBase, "codenomad-esbuild-"))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-esbuild-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const esbuildRoot = path.join(root, "node_modules", "esbuild")
   const platformRoot = path.join(esbuildRoot, "node_modules", "@esbuild", "darwin-arm64")
@@ -61,19 +59,17 @@ test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {
   })
 })
 
-for (const feature of ["automation", "missions"]) test(`both desktop resource layouts retain a self-contained ${feature} bundle`, async (t) => {
-  const root = fs.mkdtempSync(path.join(tempBase, `codenomad-${feature}-resources-`))
+test("both desktop resource layouts retain a self-contained unified automation bundle", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-automation-resources-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const serverRoot = path.join(root, "source")
   for (const name of ["public", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
   fs.writeFileSync(path.join(serverRoot, "package.json"), JSON.stringify({ type: "module" }))
-  const relative = path.join("dist", "plugins", feature, "plugin.mjs")
+  const relative = path.join("dist", "plugins", "automation", "plugin.mjs")
   await require("esbuild").build({
-    entryPoints: [path.join(__dirname, `../packages/server/src/opencode/${feature}/desktop-plugin.ts`)],
+    entryPoints: [path.join(__dirname, "../packages/server/src/opencode/automation/desktop-plugin.ts")],
     outfile: path.join(serverRoot, relative), bundle: true, platform: "node", format: "esm", target: "node22",
   })
-  // The bundle test does not pretend to contain qualified Windows artifacts.
-  stageNativeHostResources(prepareNativeHostResources({ workspaceRoot: root, serverRoot, target: "linux-x64" }), serverRoot)
   for (const host of ["electron", "tauri"]) {
     const serverDest = path.join(root, host, "server")
     copyPackagedServerResources({ serverRoot, serverDest })
@@ -81,8 +77,8 @@ for (const feature of ["automation", "missions"]) test(`both desktop resource la
     assert.deepEqual(fs.readFileSync(target), fs.readFileSync(path.join(serverRoot, relative)))
     const { desktopPlugin } = await import(require("node:url").pathToFileURL(target).href)
     const plugin = desktopPlugin(path.join(root, "absent-presence"))
-    assert.equal(plugin.id, `codenomad.${feature}`)
-    const cleanup = await plugin.setup({ location: { project: { id: "isolated-resource-fixture" }, directory: root } })
+    assert.equal(plugin.id, "codenomad.automation")
+    const cleanup = await plugin.setup({})
     await cleanup()
   }
 })

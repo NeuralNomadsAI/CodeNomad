@@ -10,7 +10,7 @@ import type { AutonomousProfileSource } from "../../opencode/missions/autonomous
 import { rejectAuthority, type AuthorityBinding } from "../authority-protocol"
 import { physical } from "./private-files"
 import type { HostAuthorityDescriptor } from "./model"
-import type { CanonicalMissionRoots } from "../durable-host/roots"
+import type { CanonicalMissionRoots } from "../mission-roots"
 
 /** Call only inside authenticated Play's owned project/family fence. Bind the
  * returned source in that one signed Play, never a browser/RPC path option. */

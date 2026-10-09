@@ -424,15 +424,6 @@ jobs:
       - name: Test Windows server spawn behavior
         run: node --import tsx --test packages/server/src/workspaces/__tests__/spawn.test.ts
 
-      - name: Qualify the compiled Windows native loader
-        shell: pwsh
-        run: |
-          cargo build --locked --manifest-path packages/native-host-lifetime/Cargo.toml --lib
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Copy-Item packages/native-host-lifetime/target/debug/codenomad_native_host_lifetime.dll packages/native-host-lifetime/target/debug/codenomad_native_host_lifetime.node
-          node --import tsx --test packages/server/src/host-lifetime/native-binding-positive.qualification.ts
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
       - name: Prepare Tauri test resources
         run: >-
           npm run dev:prep --workspace @codenomad/tauri-app &&

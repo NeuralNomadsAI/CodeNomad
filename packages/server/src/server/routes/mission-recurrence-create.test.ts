@@ -19,7 +19,7 @@ import { canonicalWorktreeIdentity } from "../../workspaces/manager"
 import { missionProfileRoles } from "../../missions/playbook-profiles"
 import { resolveStandingProfileSource } from "../../missions/host-authority/profile-source"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../missions/lifecycle-input"
-import { CanonicalMissionRoots } from "../../missions/durable-host/roots"
+import { CanonicalMissionRoots } from "../../missions/mission-roots"
 import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 
 const profile = { agent: "agent", model: { providerID: "provider", id: "model" } }

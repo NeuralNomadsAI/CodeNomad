@@ -7,8 +7,15 @@ import { MISSION_AUTHORITY_STORAGE_PREFIX, NativeMissionAuthorityStore } from ".
 import { authoritySignerDigest, authoritySigningBytes, MISSION_AUTHORITY_POLICY, type AuthorityIntent, type ProvisionedAuthoritySigner } from "./authority-protocol"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
 import { MISSION_SCHEMA_VERSION, type MissionCreatedEvent, type MissionJsonValue } from "./model"
-import { syntheticAcknowledgement } from "./durable-host/test-fixture"
 import { controlResumeAdmissionID } from "./receipt-identity"
+import type { SessionInboxSynthetic, SessionSyntheticInput } from "@opencode/client"
+
+function syntheticAcknowledgement(input: SessionSyntheticInput): SessionInboxSynthetic {
+  if (!input.id || !input.delivery) throw new Error("Fixture requires explicit synthetic ID and delivery")
+  return { id: input.id, sessionID: input.sessionID, type: "synthetic", delivery: input.delivery, time: { created: 100 },
+    payload: { text: input.text, ...(input.description != null ? { description: input.description } : {}),
+      ...(input.metadata !== undefined ? { metadata: structuredClone(input.metadata) } : {}) } }
+}
 
 // Preserve serialized bytes, including whitespace, rather than normalizing seeds.
 class SharedStorage implements MissionStorage {

@@ -1,12 +1,12 @@
 import { realpath } from "node:fs/promises"
 import path from "node:path"
-import type { WorkspaceManager } from "../../workspaces/manager"
-import { readFamilyAuthorityIdentity, type FamilyAuthorityClaim } from "../../workspaces/family-authority-claim"
-import { resolveRepoRoot } from "../../workspaces/git-worktrees"
-import { canonicalAuthority, rejectAuthority, type AuthorityRoot } from "../authority-protocol"
-import { assertSynchronousAuthorityGuard } from "../authority-synchronous"
-import type { MissionLocation } from "../model"
-import type { ServiceConnection } from "../../workspaces/opencode-service"
+import type { WorkspaceManager } from "../workspaces/manager"
+import { readFamilyAuthorityIdentity, type FamilyAuthorityClaim } from "../workspaces/family-authority-claim"
+import { resolveRepoRoot } from "../workspaces/git-worktrees"
+import { canonicalAuthority, rejectAuthority, type AuthorityRoot } from "./authority-protocol"
+import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
+import type { MissionLocation } from "./model"
+import type { ServiceConnection } from "../workspaces/opencode-service"
 
 export type RootManager = Pick<WorkspaceManager, "getSharedServiceConnection" | "getExistingSharedServiceConnection" | "ownsLocation" | "getHostPathForServicePath">
 export interface HeldFamilyClaim { readonly family: string; readonly claim: FamilyAuthorityClaim }

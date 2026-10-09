@@ -290,7 +290,7 @@ The authenticated owning backend checks native activity, inbox, descendant inven
 
 ### Refactor qualification status
 
-The independent-of-desktop target and private proof artifacts are documented in `MISSIONS_CONTINUITY_CONTRACT.md`; the continuity, authority and host spikes are preserved on `preserve/missions-full-20261009`. They are not proof of a shipped persistent authorization backend or secure migration. The current product still follows backend presence; native trust provisioning, known-writer exclusion, service-owned due work, packaged parity and final Gatekeeper acceptance remain open. Electron/Tauri persistent-backend detach/reattach is separate, retained research. Interrupting a parent alone cannot prevent a native background child's late notification from waking it.
+The independent-of-desktop target and private proof artifacts are documented in `MISSIONS_CONTINUITY_CONTRACT.md`; the continuity, authority and host spikes are preserved on `preserve/missions-full-20261009`. They are not proof of a shipped persistent authorization backend or secure migration. The current product still follows backend presence; native trust provisioning, known-writer exclusion, service-owned due work, packaged parity and final Gatekeeper acceptance remain open. Electron/Tauri persistent-backend detach/reattach is separate research on the local branch `experiment/host-lifetime-foundation-20261009`. Interrupting a parent alone cannot prevent a native background child's late notification from waking it.
 
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads a snapshot after reconnect because native event subscriptions are live-only.
 

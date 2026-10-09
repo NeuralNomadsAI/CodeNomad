@@ -1,5 +1,7 @@
 # Native-first Missions: assembled-product acceptance
 
+> PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
+
 > Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
 
 ## Current status — 2026-10-07

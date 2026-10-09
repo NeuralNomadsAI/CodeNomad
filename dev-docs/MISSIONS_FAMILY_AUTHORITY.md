@@ -1,5 +1,7 @@
 # Physical family authority claim
 
+> PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
+
 `packages/server/src/workspaces/family-authority-claim.ts` supplies a conservative
 cross-process claim for the physical Git common directory. It is implemented and
 unit-qualified. The unactivated canonical durable-host composition now consumes
