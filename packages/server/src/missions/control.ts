@@ -24,7 +24,7 @@ import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
-import { MissionControlError, MissionCreateNoEffectError } from "./control-error"
+import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
@@ -118,14 +118,18 @@ export class MissionControl {
     catch (error) { throw bound ? error : unavailable() }
     const session = await this.ownedSession(sessionID)
     this.assertActive()
-    const receipt = await this.options.humanGate({ ...provenance, projectID: mission.projectID,
-      directory: session.location.directory, delegationToolName: "subagent", ...(assignmentPrompt === undefined ? {} : { assignmentPrompt }) })
+    let receipt: import("./human-answer").HumanDecisionMark
+    // The native gate refuses an answer without a confirmed UI mark; tell the model why
+    // rather than surfacing the gate's opaque wrapper error.
+    try { receipt = await this.options.humanGate({ ...provenance, projectID: mission.projectID,
+      directory: session.location.directory, delegationToolName: "subagent", ...(assignmentPrompt === undefined ? {} : { assignmentPrompt }) }) }
+    catch (error) { this.assertActive(); throw humanDecisionRequired(error) }
     this.assertActive()
     const tool = receipt.form.metadata?.tool as { messageID?: unknown; id?: unknown } | undefined
     if (receipt.via !== "ui" || receipt.sessionID !== sessionID
       || receipt.formID !== provenance.formID || tool?.messageID !== provenance.messageID
       || tool?.id !== provenance.toolCallID || !isDeepStrictEqual(receipt.answer[provenance.fieldKey], provenance.answer))
-      throw new MissionControlError("Exact native human-decision receipt unavailable", "policy-unqualified")
+      throw humanDecisionRequired()
     return receipt
   }
 

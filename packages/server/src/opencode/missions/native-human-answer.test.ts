@@ -167,8 +167,10 @@ test("Wayfinder without a published binding accepts only the exact fresh assignm
   const f = await fixture()
   try {
     f.db.exec("DELETE FROM event")
+    // Same Effect.tryPromise wrapping as the passage Job's production gate.
     const control = new MissionControl({ storage: f.storage, project: { id: "project", canonical: f.directory, location: { directory: f.directory } },
-      sessions: { get: f.nativeGet, create: async () => { throw new Error("No ghost root") }, prompt: async () => {}, synthetic: async () => {} }, humanGate: request => f.native.verify(request) })
+      sessions: { get: f.nativeGet, create: async () => { throw new Error("No ghost root") }, prompt: async () => {}, synthetic: async () => {} },
+      humanGate: request => Effect.runPromise(Effect.tryPromise(() => f.native.verify(request))) })
     const made = await control.create({ requestID: "wayfinder-unbound", objective: "Choose the seam", template: "wayfinder", coordinatorSessionID: "ses_root" })
     f.decision.contract.missionID = made.mission.id
     // Simple native passages publish no task.native-bound event: only the declaration exists.
@@ -182,7 +184,10 @@ test("Wayfinder without a published binding accepts only the exact fresh assignm
     const report = (nativeCall = provenance.nativeCall) => ({ missionID: mission.id, taskKey: "decision", outcome: "completed" as const, summary: "Human chose the seam",
       evidence: [], next: [], final: false, artifact: { kind: "decision", question, answer, provenance: { ...provenance, nativeCall } } })
     delegate({ agent: "worker", description: "Decision", prompt: assignment })
-    await assert.rejects(control.report("ses_root", report()), "no UI mark yet")
+    // Without a UI mark the model gets an actionable refusal, not the opaque Effect wrapper.
+    await assert.rejects(control.report("ses_root", report()), (error: Error) =>
+      /^Human decision required: the user must answer this question from the CodeNomad interface\./.test(error.message)
+      && !error.message.includes("Effect.tryPromise"), "no UI mark yet")
     assert.equal((await f.submit()).statusCode, 200)
     delegate({ agent: "worker", description: "Decision", prompt: "Unrelated work" })
     await assert.rejects(control.report("ses_root", report()), /not this assignment/)
