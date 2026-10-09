@@ -1,9 +1,5 @@
-/* Trailing collapsible group of Mission roots in the session list. The toggle
-   reuses session row geometry; its members use the shared tree indentation. */
-.session-mission-group {
-  border-top: 1px solid var(--border-base);
-}
-
+/* Leading single-row collapsible group of Mission roots in the session list.
+   The toggle reuses session row geometry; members use the shared tree indent. */
 .session-mission-group-toggle {
   cursor: pointer;
   border-radius: 0;

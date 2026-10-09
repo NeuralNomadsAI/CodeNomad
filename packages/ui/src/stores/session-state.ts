@@ -1064,11 +1064,11 @@ function getVisibleSessionIds(instanceId: string): string[] {
   if (threads.length === 0) return []
 
   const expanded = expandedSessions().get(instanceId)
-  // Mirrors the left list: Mission roots follow ordinary families, inside their
+  // Mirrors the left list: Mission roots precede ordinary families, inside their
   // collapsible group, so keyboard navigation never visits hidden rows.
   const { ordinary, missions } = partitionMissionThreads(threads)
   const ids = collectVisibleSessionIds(ordinary, expanded)
-  return isMissionGroupOpen(instanceId) ? [...ids, ...collectVisibleSessionIds(missions, expanded)] : ids
+  return isMissionGroupOpen(instanceId) ? [...collectVisibleSessionIds(missions, expanded), ...ids] : ids
 }
 
 /** Opens the left-list Missions group and the coordinator/native ancestors that

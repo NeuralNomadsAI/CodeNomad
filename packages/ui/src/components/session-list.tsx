@@ -255,7 +255,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
   })
 
-  // Normal browsing gathers Mission roots into one trailing group; search/filter
+  // Normal browsing gathers Mission roots into one leading group; search/filter
   // mode stays flat and marks Mission results with a badge instead.
   const missionPartition = createMemo(() => props.enableFilterBar
     ? { ordinary: filteredThreads(), missions: [] }
@@ -276,9 +276,9 @@ const SessionList: Component<SessionListProps> = (props) => {
       ids.push(row.sessionId)
       rowsById.set(row.sessionId, row)
     }
-    rows.forEach(append)
     if (missions.length) ids.push(MISSION_GROUP_ROW_ID)
     missionRows.forEach(append)
+    rows.forEach(append)
     return { ids, rowsById, indexById, missions }
   })
   const keptMountedIndexes = createMemo(() => {

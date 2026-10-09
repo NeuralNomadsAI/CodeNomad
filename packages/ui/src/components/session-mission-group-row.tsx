@@ -12,7 +12,7 @@ interface SessionMissionGroupRowProps {
   onToggle: () => void
 }
 
-/** One collapsible row gathering every Mission root at the end of the list. Its
+/** One collapsible row gathering every Mission root at the top of the list. Its
  * aggregate badge keeps waiting input or running work visible while collapsed. */
 const SessionMissionGroupRow: Component<SessionMissionGroupRowProps> = (props) => {
   const { t } = useI18n()

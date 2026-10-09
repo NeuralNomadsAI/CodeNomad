@@ -54,7 +54,7 @@ async function capture(page: Page, name: string) {
   if (captures) await page.locator(".session-list-container").screenshot({ path: path.join(captures, `${name}.png`) })
 }
 
-test("Mission roots gather in one collapsed trailing group that surfaces attention and reveals navigation", async () => {
+test("Mission roots gather in one collapsed leading group that surfaces attention and reveals navigation", async () => {
   const page = await browser.newPage({ viewport: { width: 480, height: 700 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -66,6 +66,15 @@ test("Mission roots gather in one collapsed trailing group that surfaces attenti
     assert.equal(await page.locator(".session-mission-group-count").innerText(), "3")
     assert.equal(await page.locator("[data-mission-group-activity]").count(), 0)
     assert.deepEqual(await fixture(page, "visible()"), ["user-a"], "keyboard order skips hidden Mission rows")
+    const layout = await page.evaluate(() => {
+      const list = document.querySelector(".session-list")!.getBoundingClientRect()
+      const toggle = document.querySelector("[data-mission-group-row]")!.getBoundingClientRect()
+      const user = document.querySelector('[data-session-id="user-a"]')!.getBoundingClientRect()
+      return { listTop: list.top, toggleTop: toggle.top, toggleHeight: toggle.height, userTop: user.top, userHeight: user.height }
+    })
+    assert.ok(Math.abs(layout.toggleTop - layout.listTop) < 1, "group is the first row, visible without scrolling")
+    assert.ok(layout.toggleTop < layout.userTop, "group precedes the user's own conversations")
+    assert.ok(Math.abs(layout.toggleHeight - layout.userHeight) <= 1, `compact single row (${layout.toggleHeight} vs ${layout.userHeight})`)
     await capture(page, "collapsed")
 
     await fixture(page, `patch("task-child", { pendingPermission: true })`)
@@ -78,12 +87,13 @@ test("Mission roots gather in one collapsed trailing group that surfaces attenti
 
     await group.click()
     assert.equal(await group.getAttribute("aria-expanded"), "true")
-    assert.deepEqual(await rows(page), ["user-a", "coord", "coord2", "orphan-task"])
+    assert.deepEqual(await rows(page), ["coord", "coord2", "orphan-task", "user-a"])
+    assert.deepEqual(await fixture(page, "visible()"), ["coord", "coord2", "orphan-task", "user-a"], "keyboard order starts with the group")
     await page.locator('[data-session-id="orphan-task"] .session-item-title').waitFor({ state: "visible" })
     assert.equal(await page.locator('[data-session-id="coord"] .session-item-title').innerText(), "Livrer une application")
     assert.equal(await page.locator('[data-session-id="orphan-task"] .session-item-title').innerText(), "reviewer: Orphaned task")
     await page.locator('[data-session-id="coord"] .session-item-expander').click()
-    assert.deepEqual(await rows(page), ["user-a", "coord", "task", "coord2", "orphan-task"], "task roots nest under their coordinator")
+    assert.deepEqual(await rows(page), ["coord", "task", "coord2", "orphan-task", "user-a"], "task roots nest under their coordinator")
     const indent = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"]`).evaluate(el => parseFloat(getComputedStyle(el).paddingInlineStart))
     assert.ok(await indent("task") > await indent("coord"))
     assert.ok(await indent("coord") > await indent("user-a"))
@@ -105,7 +115,7 @@ test("Mission roots gather in one collapsed trailing group that surfaces attenti
     await fixture(page, `setActive("task-child")`)
     await page.locator('[data-session-id="task-child"].session-item-active').waitFor()
     assert.equal(await group.getAttribute("aria-expanded"), "true", "navigation auto-expands the group")
-    assert.deepEqual((await rows(page)).slice(1, 4), ["coord", "task", "task-child"])
+    assert.deepEqual((await rows(page)).slice(0, 3), ["coord", "task", "task-child"])
     await capture(page, "revealed")
 
     await fixture(page, "setSearchMode(true)")
