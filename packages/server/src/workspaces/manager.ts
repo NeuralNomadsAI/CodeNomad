@@ -352,7 +352,10 @@ export class WorkspaceManager {
     const record = this.workspaces.get(id)
     const location = this.getServiceLocation(id)
     if (!record || !location) throw new Error("Workspace has no native location")
-    const client = purpose === "event"
+    // An adapter without connection lifecycle (no acquire/observation) only wraps an
+    // already-connected client, so its client cannot start or provision OpenCode.
+    const lifecycle = Boolean(this.sharedService.acquire || this.sharedService.existingConnection)
+    const client = purpose === "event" && lifecycle
       ? this.getExistingSharedServiceConnection(id)?.client
       : await this.getSharedServiceClient()
     if (!client) throw new Error("OpenCode has no existing connection")
