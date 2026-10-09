@@ -44,19 +44,17 @@ export const MissionAttention: Component<{
   return (
     <Show when={items().length > 0}>
       <section class="mission-needs" aria-label={t("missionsPanel.needsYou")}>
-        <h3><MessageCircleQuestion class="h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.needsYou")}</span>
-          <span class="badge-shape neutral-badge mission-attention-count">{items().length}</span></h3>
         <ul class="mission-attention-list">
           <For each={[...rows().keys()]}>
-            {key => <Show when={rows().get(key)}>{item =>
-              <li class="mission-needs-item" data-kind={item().kind}>
-                <div class="mission-needs-copy">
-                  <strong>{item().title}</strong>
-                  <span>{t(`missionsPanel.needs.${item().kind}`, { actor: actorTitle(item().actorSessionId ?? item().sessionId!) })}
-                    <Show when={item().kind === "form" && item().questions}>{" · "}{t("missions.control.attention.questions", { count: item().questions! })}</Show>
-                  </span>
-                  <Show when={item().resources?.length}><code>{item().resources!.join(" · ")}</code></Show>
-                </div>
+            {key => <Show when={rows().get(key)}>{item => {
+              // One line: who asks stays in the tooltip/description, the question opens in the dock.
+              const detail = () => [t(`missionsPanel.needs.${item().kind}`, { actor: actorTitle(item().actorSessionId ?? item().sessionId!) }),
+                ...(item().kind === "form" && item().questions ? [t("missions.control.attention.questions", { count: item().questions! })] : []),
+                ...(item().resources?.length ? [item().resources!.join(" · ")] : [])].join(" · ")
+              return <li class="mission-needs-item" data-kind={item().kind}>
+                <MessageCircleQuestion class="h-3.5 w-3.5 mission-needs-icon" aria-hidden="true" />
+                <span class="mission-needs-title" title={`${item().title} · ${detail()}`}>{item().title}</span>
+                <span class="sr-only">{detail()}</span>
                 <button type="button" class="window-text-button mission-needs-answer"
                   aria-description={t("missions.control.attention.openActor", { actor: actorTitle(item().sessionId!) })}
                   onClick={() => {
@@ -65,7 +63,7 @@ export const MissionAttention: Component<{
                       { kind: current.kind, id: current.id.slice(current.kind.length + 1) })
                   }}>{t("missionsPanel.answer")}</button>
               </li>
-            }</Show>}
+            }}</Show>}
           </For>
         </ul>
       </section>

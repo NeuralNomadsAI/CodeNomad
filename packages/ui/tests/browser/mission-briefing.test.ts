@@ -82,10 +82,12 @@ async function setup(locale = "fr-FR") {
   return { page, values, writes, errors, refresh }
 }
 const row = (page: Page, title = TITLE) => page.locator("li.mission-index-entry").filter({ has: page.getByRole("button", { name: title, exact: true }) })
-const card = (page: Page) => page.locator("li.mission-index-entry-selected > div.mission-card")
-const result = (page: Page) => card(page).locator("section.mission-result")
-const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
-const readAll = (page: Page) => result(page).getByRole("button", { name: "Tout lire", exact: true })
+// The selected Mission's detail is a separate section below the list; request
+// feedback stays under its row and all prose opens in the central reader.
+const card = (page: Page) => page.locator("section.mission-detail")
+const feedback = (page: Page) => row(page).locator(".mission-briefing-feedback")
+const readAll = (page: Page) => card(page).locator(".mission-overview-toggle")
+const reader = (page: Page) => page.locator(".mission-reader")
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))
 async function openMenu(page: Page, title = TITLE) {
   await row(page, title).getByRole("button", { name: "Plus d’actions", exact: true }).click()
@@ -112,22 +114,20 @@ function publish(value: MissionMap, requestID: string) {
   value.revision++; value.updatedAt = value.briefing.createdAt
 }
 
-test("existing mobile project keeps a compact card and exact current results in its central reader, not an invented product percentage", async () => {
+test("existing mobile project keeps a prose-free detail and exact current results in its central reader, not an invented product percentage", async () => {
   const { page, writes, errors } = await setup()
   try {
-    assert.equal(await result(page).locator(".mission-result-text").textContent(), TITLE)
-    await result(page).getByText("1 tâches terminées sur 3", { exact: true }).waitFor()
-    assert.equal(await result(page).getByText(/%/).count(), 0)
-    assert.equal(await result(page).getByText(/Point du coordinateur/).count(), 0)
-    const checklist = card(page).getByRole("region", { name: "Tâches", exact: true })
-    assert.equal(await checklist.locator("li[data-task-key]").count(), 3)
-    assert.equal(await checklist.locator('[data-task-key="compile-ios"] .mission-checklist-word').textContent(), "En attente")
-    assert.equal(await checklist.locator('[data-task-key="android-boot"] .mission-checklist-word').textContent(), "Bloquée")
-    assert.equal(await checklist.getByText("Ancienne tentative Xcode", { exact: true }).count(), 0)
+    // The panel shows no summary, count or percentage; only the Overview eye and the task tree.
+    assert.equal(await card(page).locator("p, .mission-result-text, .mission-more").count(), 0)
+    assert.equal(await card(page).getByText(/%|Point du coordinateur|tâches terminées/).count(), 0)
+    const tree = card(page).getByRole("region", { name: "Tâches", exact: true })
+    assert.deepEqual(await tree.locator("li[data-task-key]").evaluateAll(rows => rows.map(row => [(row as HTMLElement).dataset.taskKey, (row as HTMLElement).dataset.state])),
+      [["xcode", "done"], ["android-boot", "blocked"], ["old-xcode", "retired"], ["compile-ios", "waiting"]])
+    assert.equal(await tree.locator('[data-task-key="compile-ios"] .sr-only').textContent(), "En attente")
+    assert.equal(await tree.locator('[data-task-key="android-boot"] .sr-only').textContent(), "Bloquée")
     for (const text of ["Le démarrage Android attend la quantité de mémoire requise.", "Ancien obstacle : Xcode absent."])
       assert.equal(await page.locator(".mission-control").getByText(text, { exact: true }).filter({ visible: true }).count(), 0)
     assert.equal(await page.locator(".mission-needs").count(), 0)
-    assert.equal(await card(page).locator(".mission-more > h3 > .mission-disclosure-trigger").getAttribute("aria-expanded"), "false")
     assert.match(await row(page).locator(".mission-index-meta").textContent() ?? "", /^En cours · /)
     assert.equal(await page.locator(".mission-control-index").getByText("Active", { exact: true }).count(), 0)
     assert.deepEqual(writes, [])
@@ -146,11 +146,9 @@ test("existing mobile project keeps a compact card and exact current results in 
   } finally { await page.close() }
 })
 
-test("one menu click prepares the briefing request, preserves conversation/profile/drafts and waits for the exact returned briefing", async () => {
+test("one menu click prepares the briefing request, preserves conversation/profile and waits for the exact returned briefing", async () => {
   const { page, values, writes, errors, refresh } = await setup()
   try {
-    const draft = card(page).locator("form.mission-guidance").getByLabel("Écrire au coordinateur", { exact: true })
-    await draft.fill("Brouillon à conserver")
     await requestUpdate(page)
     await feedback(page).getByText(/Demande envoyée/).waitFor()
     assert.equal(prompts(writes).length, 1)
@@ -161,10 +159,8 @@ test("one menu click prepares the briefing request, preserves conversation/profi
     const requestID = /Request ID: ([^\n]+)/.exec(sent.body.text)![1]
     assert.equal(await canRequest(page), false)
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
-    assert.equal(await draft.inputValue(), "Brouillon à conserver")
     assert.ok(!writes.some(write => /\/missions(?:\/|$)|\/session\/[^/]+\/(agent|model)$/.test(write.path)))
     publish(values[0], "another-request"); await refresh()
-    await result(page).getByText(/Point du coordinateur/).waitFor()
     await feedback(page).getByText(/Demande envoyée/).waitFor()
     assert.equal(await canRequest(page), false)
     publish(values[0], requestID); await refresh()
@@ -204,27 +200,25 @@ test("unconfirmed briefing admission survives navigation and remount without aut
 test("a freshly paused mission fences the request without resuming or sending it", async () => {
   const { page, values, writes } = await setup()
   try {
+    // Pause lands after the menu offered the request: admission's fresh read must fence it.
+    await openMenu(page)
+    const item = page.getByRole("menuitem", { name: REQUEST, exact: true })
+    await item.waitFor()
     values[0].runState = "paused"
-    await requestUpdate(page)
+    await item.click()
     await feedback(page).getByRole("alert").waitFor()
     assert.equal(prompts(writes).length, 0)
     assert.ok(!writes.some(write => write.path.includes("/missions/")))
   } finally { await page.close() }
 })
 
-test("a question written to the coordinator stays separate from the briefing request and its exact coordinator link", async () => {
+test("the panel has no coordinator field; Open conversation in the row menu reaches the exact coordinator without a request", async () => {
   const { page, writes, values, errors } = await setup()
   try {
-    const form = card(page).locator("form.mission-guidance")
-    assert.equal(await form.getByRole("combobox").count(), 0)
-    await form.getByLabel("Écrire au coordinateur", { exact: true }).fill("Pourquoi iOS n’est-il pas encore testable ?")
-    await form.getByRole("button", { name: "Envoyer", exact: true }).click()
-    await form.getByText("Envoyée dans la conversation du coordinateur. L’envoi ne confirme pas sa prise en compte.", { exact: true }).waitFor()
-    assert.equal(prompts(writes).length, 1)
-    assert.equal(prompts(writes)[0].body.text, "Pourquoi iOS n’est-il pas encore testable ?")
-    assert.doesNotMatch(prompts(writes)[0].body.text, /Request ID:/)
+    assert.equal(await page.locator(".mission-control").locator("form.mission-guidance, textarea").count(), 0)
+    assert.equal(prompts(writes).length, 0)
     assert.equal(values[0].briefing, undefined)
-    assert.equal(await feedback(page).count(), 0, "a question is not a pending briefing request")
+    assert.equal(await feedback(page).count(), 0)
     assert.equal(await canRequest(page), true)
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
     await openMenu(page)
@@ -239,9 +233,11 @@ test("dated briefing stays distinct from observed activity, signals new evidence
   const { page, values, refresh, errors } = await setup()
   try {
     publish(values[0], "initial"); await refresh()
-    await result(page).getByText(/Point du coordinateur/).waitFor()
-    assert.equal(await result(page).locator(".mission-result-text").textContent(), values[0].briefing!.summary)
-    assert.equal(await result(page).locator(".mission-briefing-stale").count(), 0)
+    await readAll(page).click()
+    await reader(page).getByText(values[0].briefing!.summary, { exact: true }).waitFor()
+    assert.equal(await card(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0, "the briefing is read centrally")
+    assert.equal(await reader(page).locator(".mission-briefing-stale").count(), 0)
+    await readAll(page).click()
     for (const width of [440, 280, 390]) {
       await page.setViewportSize({ width: width === 390 ? 390 : 1280, height: 900 })
       await page.locator("#root > div").evaluate((element, width) => { (element as HTMLElement).style.gridTemplateColumns = width === 390 ? "0 minmax(0,1fr)" : `minmax(0,1fr) ${width}px` }, width)
@@ -254,13 +250,14 @@ test("dated briefing stays distinct from observed activity, signals new evidence
     values[0].reports.push(values[0].tasks[0].report!)
     values[0].revision++; values[0].updatedAt = values[0].tasks[0].report!.createdAt
     await refresh()
-    await result(page).locator(".mission-briefing-stale").getByText("1 nouveau résultat depuis ce bilan. Demandez une évaluation actualisée.", { exact: true }).waitFor()
     await page.setViewportSize({ width: 1280, height: 900 })
     await page.locator("#root > div").evaluate(element => { (element as HTMLElement).style.gridTemplateColumns = "minmax(0,1fr) 440px" })
     const eye = readAll(page)
     await eye.click()
     assert.equal(await eye.getAttribute("aria-pressed"), "true")
     await page.locator(".mission-reader").getByText(values[0].briefing!.summary, { exact: true }).waitFor()
+    // New evidence since the dated briefing is signalled where the briefing is read.
+    await reader(page).locator(".mission-briefing-stale").waitFor()
     assert.equal(await page.locator(".mission-reader").getByRole("heading", { name: "Travail annoncé dans ce bilan", exact: true }).count(), 0)
     await eye.click()
     assert.equal(await eye.getAttribute("aria-pressed"), "false")
@@ -289,11 +286,11 @@ test("seen exact response remains acknowledged when a later briefing supersedes 
     values[0].status = "completed"
     values[0].summary = "Résultat final : préparation validée ; aucune application livrée dans cette mission limitée."
     values[0].revision++; await refresh()
-    await result(page).locator(".mission-result-text").getByText(values[0].summary, { exact: true }).waitFor()
-    assert.equal(await result(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0)
-    assert.equal(await result(page).getByText(/Point du coordinateur/).count(), 0)
+    await row(page).locator(".mission-index-meta").getByText(/^Terminée|^Terminé/).waitFor()
+    assert.equal(await card(page).getByText(values[0].summary, { exact: true }).count(), 0, "the result is read centrally")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText(values[0].summary, { exact: true }).waitFor()
+    assert.equal(await reader(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0, "a terminal summary takes precedence")
     assert.equal(await row(page).locator("button.mission-index-primary").count(), 0)
     assert.equal(await canRequest(page), false)
     assert.equal(prompts(writes).length, 1)

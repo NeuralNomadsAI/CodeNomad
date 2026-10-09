@@ -210,7 +210,7 @@ for (const method of ["POST", "PATCH"] as const) test(`late ${method} rejection 
     })
     await page.goto(url)
     if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    else await clickMissionAction(page.locator(".mission-control-index li.mission-index-entry-selected > .mission-index-row"), "Edit")
+    else await clickMissionAction(page.locator(".mission-control-index li.mission-index-entry > .mission-index-row").first(), "Edit")
     await page.locator("form.mission-editor textarea").first().fill("Original rejected draft")
     await page.locator("form.mission-editor button[type=submit]").first().click()
     await reached.promise

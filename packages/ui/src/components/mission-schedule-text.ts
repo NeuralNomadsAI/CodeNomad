@@ -16,7 +16,6 @@ export function missionScheduleText(t: Translate, locale: () => string) {
     return zoned(schedule, text, at)
   }
   return {
-    clock: (schedule: RecurrenceSchedule) => missionClockTime(schedule.clock.time, locale()),
     every: (schedule: RecurrenceSchedule) => t("missionsPanel.schedule.every", { time: zoned(schedule, missionClockTime(schedule.clock.time, locale())) }),
     next: (schedule: RecurrenceSchedule) => schedule.state === "running" && schedule.nextDueAt !== null
       ? t("missionsPanel.schedule.nextRow", { when: zoned(schedule, t("missionsPanel.schedule.when",

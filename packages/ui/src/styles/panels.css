@@ -16,7 +16,7 @@
 @import "./panels/mission-schedule.css";
 @import "./panels/mission-list-item.css";
 @import "./panels/mission-index-row.css";
-@import "./panels/mission-card.css";
+@import "./panels/mission-detail.css";
 @import "./panels/mission-overview.css";
 @import "./panels/mission-route.css";
 @import "./panels/mission-graph.css";
@@ -24,7 +24,6 @@
 @import "./panels/mission-activity.css";
 @import "./panels/mission-disclosure.css";
 @import "./panels/mission-attention.css";
-@import "./panels/mission-guidance.css";
 @import "./panels/mission-progress.css";
 @import "./panels/mission-briefing.css";
 @import "./panels/mission-execution.css";

@@ -14,9 +14,13 @@ export function orderMissionTasks(tasks: MissionTask[]): MissionTask[] {
   return ordered
 }
 
-/** Measured dependency rail: compact shared rows retain their exact anchors on resize. */
+/** Rail width, matched by `.mission-flow-linked` row padding in mission-graph.css. */
+const MISSION_GRAPH_WIDTH = 30
+
+/** Measured dependency rail: each edge leaves its source row's status icon and
+ * enters its dependent's, so the icons are the graph's nodes. */
 export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListElement }) {
-  const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number; status: string }>>([])
+  const [points, setPoints] = createSignal<Array<{ key: string; y: number }>>([])
   const [height, setHeight] = createSignal(0)
   createEffect(() => {
     const tasks = props.tasks
@@ -26,10 +30,10 @@ export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListEleme
       const scale = list.offsetHeight ? bounds.height / list.offsetHeight : 1
       const rows = new Map([...list.children].map(row => [(row as HTMLElement).dataset.taskKey, row]))
       setPoints(tasks.flatMap(task => {
-        const heading = rows.get(task.key)?.querySelector(".mission-list-item") ?? rows.get(task.key)?.querySelector("h3")
-        if (!heading) return []
-        const box = heading.getBoundingClientRect()
-        return [{ key: task.key, x: 38, y: (box.top - bounds.top + box.height / 2) / scale, status: task.status }]
+        const anchor = rows.get(task.key)?.querySelector("[data-graph-anchor]")
+        if (!anchor) return []
+        const box = anchor.getBoundingClientRect()
+        return [{ key: task.key, y: (box.top - bounds.top + box.height / 2) / scale }]
       }))
       setHeight(list.offsetHeight)
     }
@@ -50,21 +54,19 @@ export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListEleme
     const lanes = new Map<string, number>()
     for (const source of sources) {
       const last = Math.max(...links.filter(link => link.from.key === source.key).map(link => link.to.y))
-      const free = ends.findIndex(end => end < source.y)
+      // A lane ending at this very row belongs to an edge into this source: chains stay on one straight rail.
+      const free = ends.findIndex(end => end <= source.y)
       const lane = free < 0 ? ends.length : free
       ends[lane] = last
       lanes.set(source.key, lane)
     }
-    // Buses stay to the side of the nodes: an edge must not visually connect
+    // Buses stay to the side of the rows: an edge must not visually connect
     // an unrelated intermediate task just because it occupies the same depth.
-    return links.map(link => ({ ...link, lane: 5 + lanes.get(link.from.key)! * Math.min(8, 24 / Math.max(1, ends.length - 1)) }))
+    return links.map(link => ({ ...link, lane: 4 + lanes.get(link.from.key)! * Math.min(6, 20 / Math.max(1, ends.length - 1)) }))
   }
-  return <svg class="mission-graph" width="46" height={height()} aria-hidden="true">
+  const x = MISSION_GRAPH_WIDTH
+  return <svg class="mission-graph" width={x} height={height()} aria-hidden="true">
     <For each={edges()}>{edge => <path data-from={edge.from.key} data-to={edge.to.key}
-      d={`M ${edge.from.x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${edge.to.x}`} />}</For>
-    <For each={points()}>{point => <g data-status={point.status}>
-      <path class="mission-graph-tick" d={`M ${point.x} ${point.y} H 46`} />
-      <rect x={point.x - 3} y={point.y - 3} width="6" height="6" />
-    </g>}</For>
+      d={`M ${x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${x}`} />}</For>
   </svg>
 }

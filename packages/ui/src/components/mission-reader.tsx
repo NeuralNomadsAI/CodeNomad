@@ -24,6 +24,7 @@ import { useMissionRecurrence } from "../stores/mission-recurrence"
 import { MissionRecurrenceReader } from "./mission-recurrence-reader"
 import type { MissionMarkdownPage } from "../lib/mission-markdown-pages"
 import { MissionReaderNumber } from "./mission-reader-number"
+import { MissionOverviewDetails } from "./mission-overview-details"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -288,6 +289,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           activity={activity()?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state}
           recurrence={target()?.recurrence} />
       </Show>
+      <Show when={target()?.kind === "overview" && mission()}>{value =>
+        <MissionOverviewDetails instanceId={props.instanceId} scope={props.scope} mission={value()} recurrence={target()?.recurrence} />}</Show>
       <Show when={target()?.kind === "report" && report()}>{value =>
         <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
           <MissionReportNotification report={value()} />

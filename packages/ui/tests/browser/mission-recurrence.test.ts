@@ -104,13 +104,19 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     const entry = scheduleEntry(page)
     // Running rows show their next run instead of the state word.
     await entry.locator(".mission-index-meta").getByText(/^Next: /).waitFor()
-    assert.equal(await entry.locator(".neutral-badge").innerText(), "Daily 8:15 AM")
+    // Line 2: a small Daily badge (its rule on hover) beside the next run.
+    const badge = entry.locator(".mission-index-meta .neutral-badge")
+    assert.equal(await badge.innerText(), "Daily")
+    assert.equal(await badge.getAttribute("title"), "Every day at 8:15 AM")
+    // The open conversation is the one-time coordinator, so that row (only) is selected with its detail.
+    assert.equal(await page.locator("section.mission-detail").getAttribute("aria-label"), "One-time review")
     await page.getByRole("button", { name: "Daily source review", exact: true }).click()
     assert.equal(await page.getByRole("button", { name: "One-time review", exact: true }).count(), 1)
     assert.equal(await page.getByRole("button", { name: "Daily source review", exact: true }).getAttribute("aria-current"), "true")
-    const when = entry.locator(".mission-schedule-detail .mission-schedule-when")
-    assert.equal(await when.innerText(), "Every day at 8:15 AM", "the card states the rule; the row alone says when the next run is")
-    assert.equal(await entry.getByText(/^Next: /).count(), 1)
+    const detail = page.locator("section.mission-detail")
+    await detail.waitFor()
+    assert.equal(await entry.locator("section.mission-detail").count(), 0, "the detail is a separate section, not inside the row")
+    assert.equal(await page.getByText(/^Next: /).count(), 1, "the row alone says when the next run is")
     await captureMissionView(page, "schedule-detail-next-passage")
     for (const state of ["paused", "stopped"] as const) {
       schedule.state = state
@@ -118,7 +124,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
       await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
       const word = state === "paused" ? "Paused" : "Stopped"
       await entry.locator(".mission-index-meta").getByText(word, { exact: true }).waitFor()
-      assert.equal(await when.innerText(), "Every day at 8:15 AM")
+      assert.equal(await badge.getAttribute("title"), "Every day at 8:15 AM")
       assert.equal(await page.getByText(/next: |Next: /).count(), 0)
     }
     // Secondary actions live in the overflow menu with their descriptive names; no tooltips or icon buttons.
@@ -126,7 +132,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     assert.equal(await entry.locator(".mission-index-row button").count(), 3, "select, one primary and More actions")
     schedule.state = "interrupted"; schedule.interruptionReason = "service-restart"; schedule.pending!.status = "uncertain"
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await entry.locator(".mission-schedule-notice").getByText(/OpenCode restarted/).waitFor()
+    await detail.locator(".mission-schedule-notice").getByText(/OpenCode restarted/).waitFor()
     assert.equal(await page.getByText(/next: |Next: /).count(), 0, "stale due dates stay hidden outside running state")
     assert.equal(await page.getByText("Passage pending; outcome unconfirmed", { exact: true }).count(), 0)
     assert.equal(await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).innerText(), "Resume")
@@ -152,10 +158,10 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     assert.deepEqual(Object.keys(posts[0].body).sort(), ["action", "directory", "expectedRevision", "requestID", "scheduleID"])
     await check.click()
     await page.getByRole("button", { name: "Resume schedule Daily source review", exact: true }).waitFor({ state: "visible" })
-    // Without an admitted passage card, the schedule card keeps the last result and past runs under More.
-    assert.match(await entry.locator(".mission-result-text").innerText(), /^Last run Oct 8, 2026, 8:15 AM: Completed/)
-    await entry.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
-    assert.match(await entry.locator("button.mission-past-run").innerText(), /^Oct 8, 2026, 8:15 AM · Completed/)
+    // Without an admitted passage, the detail lists past runs directly; no result prose or More.
+    assert.equal(await detail.locator(".mission-result-text, .mission-more").count(), 0)
+    assert.equal(await detail.locator(".mission-overview-toggle").count(), 1)
+    assert.match(await detail.locator("button.mission-past-run").innerText(), /^Oct 8, 2026, 8:15 AM · Completed/)
     await captureMissionView(page, "schedule-history")
     await page.setViewportSize({ width: 390, height: 850 })
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
@@ -195,36 +201,31 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     const entry = scheduleEntry(page), once = scheduleEntry(page, "One-time review")
     await entry.locator(".mission-index-meta").getByText(/^Next: /).waitFor()
     assert.equal(await page.locator(".mission-control-index").getByText(/^Running/).count(), 0, "a running row shows its next run, not its state")
-    // The selected one-time Mission owns its controls and card inside its own list entry, before the schedules.
+    // Each row owns its own primary control; the open coordinator conversation selects its Mission.
     await once.locator(".mission-index-meta").getByText(/^Prepared · /).waitFor()
     assert.equal(await once.getByRole("button", { name: "Start mission", exact: true }).innerText(), "Start")
-    const card = page.locator("li.mission-index-entry-selected > div.mission-card")
-    assert.equal(await card.count(), 1)
-    await card.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
-    await card.getByRole("button", { name: "Technical details", exact: true }).click()
-    await card.getByText("Agents and models", { exact: false }).first().waitFor()
-    const scoped = await page.locator(".mission-control-index").evaluate(index => {
+    assert.equal(await entry.getByRole("button", { name: "Start mission", exact: true }).count(), 0)
+    const detail = page.locator("section.mission-detail")
+    await detail.waitFor()
+    assert.equal(await once.locator(".mission-index-select").getAttribute("aria-current"), "true")
+    const scoped = await page.locator(".mission-control").evaluate(panel => {
+      const index = panel.querySelector(".mission-control-index")!, detail = panel.querySelector("section.mission-detail")!
       const entries = [...index.querySelectorAll(":scope > li.mission-index-entry")]
-      const selected = index.querySelector(":scope > li.mission-index-entry-selected")!
-      return entries.indexOf(selected) === 0 && entries.length === 2
-        && Boolean(selected.querySelector(".mission-card")) && !entries[1]!.querySelector(".mission-card")
-        && !entries[1]!.querySelector("button[aria-label='Start mission']")
+      return entries.length === 2 && !index.contains(detail)
+        && Boolean(index.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
-    assert.equal(scoped, true)
+    assert.equal(scoped, true, "the selected one-time detail follows the whole list")
+    assert.equal(await detail.getByRole("button", { name: "Technical details", exact: true }).count(), 0, "identifiers live in readers")
     await captureMissionView(page, "one-time-scoped")
     await page.getByRole("button", { name: schedule.title, exact: true }).click()
-    await entry.locator(".mission-card .mission-schedule-detail").waitFor()
-    assert.equal(await once.locator(".mission-card").count(), 0, "one-time controls never appear under a recurring row")
-    assert.equal(await entry.getByRole("button", { name: "Start mission", exact: true }).count(), 0)
-    await entry.locator(".mission-schedule-notice").getByText("This passage has not started yet. It is retried automatically under the same identity.", { exact: true }).waitFor()
+    await page.locator("section.mission-detail.mission-schedule-detail").waitFor()
+    assert.equal(await detail.count(), 1, "one detail at a time")
+    await detail.locator(".mission-schedule-notice").getByText("This passage has not started yet. It is retried automatically under the same identity.", { exact: true }).waitFor()
     await page.getByText(/^The last scheduled check failed at Oct 9, 2026/).waitFor()
-    await entry.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
-    const items = entry.locator("button.mission-past-run")
+    const items = detail.locator("button.mission-past-run")
     assert.match(await items.nth(0).innerText(), /^Oct 8, 2026, 8:15 AM · Not started$/)
     assert.match(await items.nth(1).innerText(), /^Oct 7, 2026, 9:00 AM · Completed · Run now$/)
-    assert.equal(await entry.getByRole("button", { name: "Technical details", exact: true }).count(), 1)
-    await entry.getByRole("button", { name: "Technical details", exact: true }).click()
-    await entry.locator(".mission-technical").getByText("rec_fixture", { exact: true }).waitFor()
+    assert.equal(await detail.getByRole("button", { name: "Technical details", exact: true }).count(), 0)
     await captureMissionView(page, "stuck-passage-history")
     // Without a live observer the sentence names the one action that reconciles it.
     schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined

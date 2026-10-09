@@ -1,0 +1,51 @@
+/* Selected Mission detail, a separate section below the list: Needs you,
+   the Overview toggle, the dependency task tree and (recurring) past runs. */
+.mission-detail { display: grid; gap: var(--space-xs); min-width: 0; padding-block: var(--space-sm); font-size: var(--font-size-sm); overflow-wrap: anywhere; border-block-end: 1px solid var(--border-base); }
+.mission-detail p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-detail-header { display: flex; align-items: center; min-width: 0; }
+.mission-overview-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: var(--font-size-xs); }
+
+.mission-needs { display: grid; padding-inline-start: var(--space-xs); border-inline-start: 2px solid var(--status-warning); }
+.mission-needs-item { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; min-height: var(--touch-target-size-compact); }
+.mission-needs-icon { flex: 0 0 auto; color: var(--status-warning); }
+.mission-needs-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mission-needs-answer { flex: 0 0 auto; font-size: var(--font-size-xs); border: 1px solid var(--border-base); }
+
+.mission-tree-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-tree-task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--touch-target-size-compact);
+  padding-inline: var(--space-xs);
+  color: var(--text-primary);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.mission-tree-task:hover { background: var(--surface-hover-overlay); }
+.mission-tree-task:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-tree-mark { display: inline-flex; flex: 0 0 auto; color: var(--text-muted); }
+.mission-tree-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mission-tree-node[data-state="done"] .mission-tree-mark { color: var(--status-success); }
+.mission-tree-node[data-state="active"] .mission-tree-mark { color: var(--accent-primary); }
+.mission-tree-node:is([data-state="input"], [data-state="blocked"]) .mission-tree-mark { color: var(--status-warning); }
+.mission-tree-node[data-state="failed"] .mission-tree-mark { color: var(--status-error); }
+.mission-tree-node[data-state="retired"] .mission-tree-task { color: var(--text-muted); }
+.mission-tree-node[data-state="retired"] .mission-tree-title { text-decoration: line-through; }
+.mission-tree-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); padding-inline-start: calc(var(--space-xs) + 18px); font-size: var(--font-size-xs); }
+
+.mission-past-runs ol { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-past-run { width: 100%; min-height: var(--touch-target-size-compact); padding-inline: var(--space-xs); color: var(--text-primary); text-align: start; font-size: var(--font-size-xs); background: transparent; border: 0; border-radius: 0; }
+.mission-past-run:hover { background: var(--surface-hover-overlay); }
+
+/* Identifiers folded at the bottom of central readers. */
+.mission-technical { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-xs) var(--space-sm); margin: 0; font-size: var(--font-size-xs); }
+.mission-technical dt { color: var(--text-secondary); }
+.mission-technical dd { margin: 0; overflow-wrap: anywhere; }
+.mission-reader-links { display: grid; gap: var(--space-xs); margin: 0; padding: 0; list-style: none; }
+.mission-reader-links li { display: grid; justify-items: start; }
+.mission-reader-links small { color: var(--text-secondary); font-size: var(--font-size-xs); }

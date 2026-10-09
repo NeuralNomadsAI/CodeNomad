@@ -9,7 +9,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { clickMissionAction } from "./mission-actions"
+import { clickMissionAction, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-cross-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -74,10 +74,8 @@ async function setup(missing = false) {
 const row = (page: Page, id: string) => page.locator(".mission-control-index > li.mission-index-entry").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
 async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
   if (origin === "actor") return clickMissionAction(row(page, id).locator(".mission-index-row"), "Open conversation")
-  // The overview reader belongs to the selected Mission's card ("Read all").
-  const select = row(page, id).getByRole("button", { name: `Objective ${id}`, exact: true })
-  if (await select.getAttribute("aria-current") !== "true") await select.click()
-  await row(page, id).locator(".mission-card .mission-result-read").click()
+  // The overview reader belongs to the selected Mission's detail ("Overview").
+  await toggleMissionOverview(row(page, id))
 }
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }

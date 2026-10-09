@@ -7,7 +7,7 @@ import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { cleanupBackend } from "./fixtures/mission-cleanup-backend"
-import { clickMissionAction } from "./mission-actions"
+import { clickMissionAction, toggleMissionOverview } from "./mission-actions"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -28,7 +28,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
-async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement = false) {
+async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement = false, target?: string) {
   const page = await browser.newPage({ locale: "en-US" })
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: 'electron', __CODENOMAD_WINDOW_CONTEXT__: 'local', electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
@@ -44,14 +44,19 @@ async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement =
     return route.fulfill({ status: response.statusCode, json: response.json() })
   })
   await page.goto(url)
-  await clickMissionAction(page.locator(".mission-control-index .mission-index-entry").first(), "Delete…")
+  const entries = page.locator(".mission-control-index .mission-index-entry")
+  await clickMissionAction(target ? entries.filter({ hasText: target }) : entries.first(), "Delete…")
   await page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" }).check()
   return { page, requests }
 }
 const submit = (page: Page) => page.locator("form.mission-editor").getByRole("button", { name: "Delete mission", exact: true }).click()
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+// Settled cleanup history is folded at the bottom of a remaining Mission's
+// central overview reader; only pending retries stay in the panel.
 async function openCleanupHistory(page: Page) {
-  const history = page.getByRole("button", { name: "Conversation cleanup history", exact: true })
+  if (!await page.locator(".mission-reader").count())
+    await toggleMissionOverview(page.locator(".mission-control-index .mission-index-entry").filter({ hasText: "Private cleanup keeper" }))
+  const history = page.locator(".mission-reader").getByRole("button", { name: "Conversation cleanup history", exact: true })
   if (await history.getAttribute("aria-expanded") !== "true") await history.click()
   assert.equal(await history.getAttribute("aria-expanded"), "true")
   assert.equal(await page.locator(".mission-cleanup .mission-disclosure-trigger").count(), 1, "no nested cleanup disclosure")
@@ -60,7 +65,8 @@ async function openCleanupHistory(page: Page) {
 test("committed partial cleanup survives cancel, remount and reconnect with the exact original request", async () => {
   const f = cleanupBackend(), mission = await f.create("remount", 2), actors = mission.actors.filter(actor => actor.kind === "specialist")
   f.failing.add(actors[0].sessionId)
-  const { page, requests } = await setup(f)
+  await f.create("keeper")
+  const { page, requests } = await setup(f, false, "Private cleanup remount")
   try {
     await fixture(page, "seedCoordinators", [mission.coordinatorSessionId, ...actors.map(actor => actor.sessionId)])
     await submit(page)
@@ -77,9 +83,11 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
     await page.locator(".mission-cleanup").getByText("1 removed · 0 kept · 1 pending", { exact: true }).waitFor()
     await page.reload() // new component/native-window attachment, authoritative snapshot only
     await page.locator(".mission-cleanup").getByText("1 removed · 0 kept · 1 pending", { exact: true }).waitFor()
-    assert.equal((await f.control.snapshot()).missions.length, 0)
+    assert.deepEqual((await f.control.snapshot()).missions.map(item => item.objective), ["Private cleanup keeper"])
     f.failing.clear()
-    await clickMissionAction(page.locator(".mission-cleanup .mission-list-item"), "Try again")
+    await clickMissionAction(page.locator(".mission-control .mission-cleanup .mission-list-item"), "Try again")
+    // Settled, the receipt leaves the panel for the overview reader's history.
+    await page.locator(".mission-control .mission-cleanup").waitFor({ state: "detached" })
     await openCleanupHistory(page)
     await page.locator(".mission-cleanup").getByText("2 removed · 0 kept · 0 pending", { exact: true }).waitFor()
     assert.equal(requests.length, 2); assert.deepEqual(requests[0].input, requests[1].input)
@@ -105,12 +113,12 @@ test("a lost successful HTTP acknowledgement settles by reading receipts without
 test("child-bearing specialists remain intact and expose the durable retention reason", async () => {
   const f = cleanupBackend(), mission = await f.create("children"), actor = mission.actors.find(actor => actor.kind === "specialist")!
   f.children.add(actor.sessionId)
-  const { page, requests } = await setup(f)
+  await f.create("keeper")
+  const { page, requests } = await setup(f, false, "Private cleanup children")
   try {
     await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
-    assert.equal(await page.getByRole("button", { name: "Conversation cleanup history", exact: true }).getAttribute("aria-expanded"), "false")
-    assert.equal(await page.getByRole("button", { name: "Conversation cleanup", exact: true }).count(), 0,
-      "finished cleanup details are initially hidden inside history")
+    await page.locator(".mission-control-index .mission-index-entry").filter({ hasText: "Private cleanup children" }).waitFor({ state: "detached" })
+    assert.equal(await page.locator(".mission-control .mission-cleanup").count(), 0, "settled cleanup history stays out of the panel")
     await openCleanupHistory(page)
     await page.getByText("0 removed · 1 kept · 0 pending", { exact: true }).waitFor()
     await page.getByText("Kept because the conversation has child conversations.", { exact: true }).waitFor()

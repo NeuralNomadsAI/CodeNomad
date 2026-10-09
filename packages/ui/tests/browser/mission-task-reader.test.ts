@@ -64,10 +64,10 @@ async function setup(value = mission()) {
       : new URL(route.request().url()).pathname.endsWith("/shell") ? { location: { directory: "/fixture" }, data: [] } : {} })
   })
   await page.goto(url, { timeout: 30000 })
-  await checklistTask(page).waitFor()
+  await treeTask(page).waitFor()
   return { page, errors, mutations, requests, replace: (next: MissionMap) => { current = next } }
 }
-const checklistTask = (page: Page, key = "work") => page.locator(`.mission-checklist li[data-task-key="${key}"] > button.mission-checklist-task`)
+const treeTask = (page: Page, key = "work") => page.locator(`.mission-tree li[data-task-key="${key}"] > button.mission-tree-task`)
 const show = (page: Page, id = "task") => page.evaluate(id => (window as any).taskReader.show(id), id)
 const article = (page: Page, label: string) => page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: label, exact: true }) })
 const disclosure = (page: Page, label: string) => page.locator(".mission-task-reader > details").filter({ has: page.locator("summary").filter({ hasText: new RegExp(`^${label}$`) }) })
@@ -84,26 +84,29 @@ async function tails(surface: Locator, proof: string) {
   assert((await surface.locator(".markdown-body, pre").first().textContent())!.length <= 9001)
 }
 
-test("checklist rows and compact dependency rows hold one line; the toggled reader owns all detail and measured graph", async () => {
+test("the task tree is the single task view: one-line icon+title nodes, measured dependency edges, the reader owns detail", async () => {
   const f = await setup()
   try {
-    const task = checklistTask(f.page)
-    assert.equal(await f.page.locator(".mission-checklist li[data-task-key]").count(), 2, "withdrawn and replaced tasks leave the checklist")
-    assert.equal(await f.page.locator('.mission-checklist li[data-task-key="before"]').count(), 0)
-    assert.equal(await f.page.locator('.mission-checklist li[data-task-key="work"]').locator("summary, details, .mission-execution, .mission-task-dependencies, p").count(), 0)
-    assert(!(await task.innerText()).includes("BRIEF"))
+    const task = treeTask(f.page)
+    assert.deepEqual(await f.page.locator(".mission-tree li[data-task-key]").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)),
+      ["before", "work", "after"], "retired work stays in the dependency tree, in topological order")
+    assert.equal(await f.page.locator('.mission-tree li[data-task-key="before"]').getAttribute("data-state"), "retired")
+    assert.equal(await f.page.locator('.mission-tree li[data-task-key="work"]').getAttribute("data-state"), "done")
+    assert.equal(await f.page.locator(".mission-checklist, .mission-route-list, .mission-disclosure").count(), 0, "no duplicate checklist or Work list")
+    const row = f.page.locator('.mission-tree li[data-task-key="work"]')
+    assert.equal(await row.locator("summary, details, .mission-execution, .mission-task-dependencies, p").count(), 0)
+    assert.equal(await row.locator(".mission-tree-mark svg").count(), 1, "the status is an icon")
+    assert.deepEqual(await task.locator(":scope > :not(.sr-only):not(.mission-tree-mark)").allInnerTexts(), ["Work title"],
+      "no visible status word or eye beside the title")
+    assert.equal(await row.locator(".sr-only").textContent(), "Done", "the status word stays available to assistive technology")
+    assert.equal(await task.evaluate(element => element.getBoundingClientRect().height <= 40), true, "one line")
     assert.equal(await task.getAttribute("aria-pressed"), "false")
     await task.click()
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Work title", exact: true }).waitFor()
     assert.equal(await task.getAttribute("aria-pressed"), "true")
-    const dependencies = f.page.locator(".mission-disclosure-trigger", { hasText: "Show dependencies" })
-    assert.equal(await dependencies.getAttribute("aria-expanded"), "false", "the dependency view starts collapsed")
-    await dependencies.click()
-    const row = f.page.locator('.mission-route-task[data-task-key="work"]')
-    await row.waitFor()
-    assert.equal(await row.locator("summary, details, .mission-execution, .mission-task-dependencies, p").count(), 0)
-    assert.equal(await row.locator(".mission-list-feedback").count(), 0, "no empty second-line feedback beneath compact tasks")
-    assert(!(await row.innerText()).includes("BRIEF"))
+    // Edges leave and enter the measured status icons.
+    const [mark, edge] = await Promise.all([row.locator(".mission-tree-mark").boundingBox(), f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').boundingBox()])
+    assert(mark && edge && Math.abs(edge.y + edge.height - (mark.y + mark.height / 2)) <= 2, "the edge ends at the dependent's icon")
     assert.equal(await f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').count(), 1)
     assert.equal(await f.page.locator('.mission-graph path[data-from="work"][data-to="after"]').count(), 1)
     const reader = f.page.locator(".mission-reader")
@@ -140,9 +143,9 @@ test("dependencies, dependents and replacements navigate reader identity without
     assert.equal(await f.page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(e => e === document.activeElement), true)
     await f.page.getByRole("button", { name: "Replaced by Work title", exact: true }).click()
     assert.equal(await article(f.page, "Task brief").getByRole("spinbutton").inputValue(), "1")
-    // The finished task omits the trivial "Unblocks" pointer; the checklist still reaches the follow-up.
+    // The finished task omits the trivial "Unblocks" pointer; the tree still reaches the follow-up.
     assert.equal(await f.page.getByRole("button", { name: /^Unblocks/ }).count(), 0)
-    await f.page.locator('.mission-checklist li[data-task-key="after"] .mission-checklist-task').click()
+    await f.page.locator('.mission-tree li[data-task-key="after"] .mission-tree-task').click()
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Later task", exact: true }).waitFor()
     assert.equal(await f.page.locator("#draft").inputValue(), "Preserved draft")
     assert.equal(await f.page.locator("#transcript").evaluate(e => e.scrollTop), 100)
@@ -177,10 +180,10 @@ test("current task result does not promote a late return, but retains its native
   } finally { await f.page.close() }
 })
 
-test("reader task navigation fences delayed copy feedback across ABA identities and restores checklist focus on close", async () => {
+test("reader task navigation fences delayed copy feedback across ABA identities and restores tree focus on close", async () => {
   const f = await setup()
   try {
-    const eye = checklistTask(f.page)
+    const eye = treeTask(f.page)
     await eye.click()
     await expand(f.page, "Task brief")
     await f.page.evaluate(() => { (navigator.clipboard as any).writeText = () => new Promise(resolve => { (window as any).releaseCopy = resolve }) })

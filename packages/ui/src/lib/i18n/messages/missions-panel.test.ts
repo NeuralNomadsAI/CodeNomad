@@ -26,8 +26,8 @@ test("every Missions panel key exists in all ten locales with the English placeh
 })
 
 test("panel components reference only declared Missions panel keys", () => {
-  const files = ["instance/shell/right-panel/tabs/MissionControl.tsx", "mission-index-row.tsx", "mission-result.tsx", "mission-task-checklist.tsx",
-    "mission-tracking.tsx", "mission-attention.tsx", "mission-guidance.tsx", "mission-lifecycle-controls.tsx", "mission-recurrence-list.tsx", "mission-work.tsx"]
+  const files = ["instance/shell/right-panel/tabs/MissionControl.tsx", "mission-index-row.tsx", "mission-task-tree.tsx",
+    "mission-tracking.tsx", "mission-attention.tsx", "mission-lifecycle-controls.tsx", "mission-recurrence-list.tsx", "mission-overview-details.tsx"]
   for (const file of files) {
     const source = readFileSync(new URL(`../../../components/${file}`, import.meta.url), "utf8")
     for (const match of source.matchAll(/["`](missionsPanel\.[\w.-]+?)(\$\{[^}]+\})?["`]/g)) {
@@ -36,6 +36,6 @@ test("panel components reference only declared Missions panel keys", () => {
       else assert.ok(Object.prototype.hasOwnProperty.call(en, key), `${file}: ${key} is missing`)
     }
   }
-  for (const word of ["active", "assigned", "ready", "waiting", "blocked", "failed", "done"]) assert.ok(`missionsPanel.task.${word}` in en)
+  for (const word of ["done", "active", "input", "assigned", "ready", "waiting", "blocked", "failed", "retired"]) assert.ok(`missionsPanel.task.${word}` in en)
   for (const action of ["pause", "resume"]) assert.ok(`missionsPanel.action.${action}` in en)
 })

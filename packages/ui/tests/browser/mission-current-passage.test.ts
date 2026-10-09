@@ -41,7 +41,7 @@ const mission: MissionMap = { version: 1, id: "msn_passage", projectID: "project
   ], reports: [], briefing: { version: 1, id: "brf_current", requestID: "briefing_request", assessedRevision: 3, createdAt: 3, summary: "Exact passage briefing",
     achieved: [{ text: "Reviewed", taskKeys: ["first"] }], ongoing: [], obstacles: [], next: [{ text: "Continue", taskKeys: ["second"] }] } as never }
 
-test("actual MissionControl reuses current Work, briefing, attention, ancestry and central exact-source reader", async () => {
+test("actual MissionControl reuses the current task tree and attention, with briefing and identifiers in the central exact-source reader", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } }), errors: string[] = [], writes: string[] = []
   page.setDefaultTimeout(8_000)
   let reads = 0, fail = false, passageID: string | null = "pas_current", observed = true, ordinary: MissionMap | undefined
@@ -97,26 +97,22 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await page.getByRole("button", { name: "Daily commit review", exact: true }).click()
     const entry = page.locator("li.mission-index-entry", { has: page.getByRole("button", { name: "Daily commit review", exact: true }) })
-    const card = entry.locator(".mission-card")
-    await card.locator(".mission-checklist").getByText("Review commits", { exact: true }).waitFor()
+    const card = page.locator("section.mission-detail")
+    await card.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
     assert.equal(reads, 1)
-    assert.equal(await card.locator(".mission-result-text").innerText(), "Exact passage briefing")
-    assert.match(await card.locator(".mission-result-meta").innerText(), /1 of 2 tasks done[\s\S]*Coordinator update/)
+    assert.equal(await entry.locator("section.mission-detail").count(), 0, "the detail is a separate section below the list")
+    assert(!(await card.innerText()).includes("Exact passage briefing"), "briefing prose belongs to the central reader")
     assert.equal(await card.locator(".mission-needs").getByText("Real child request", { exact: true }).count(), 1)
     assert.equal(await page.getByRole("button", { name: /^(Start|Pause|Resume|Stop|Send|Request an update)/ }).count(), 0, "isolated read never opens ordinary mutations")
-    assert.equal(await card.locator("form.mission-guidance").count(), 0)
+    assert.equal(await card.locator("form, textarea").count(), 0, "no coordinator field in the panel")
     assert.equal(await entry.locator(".mission-index-primary").count(), 0)
     assert.equal(await entry.getByRole("button", { name: "More actions", exact: true }).count(), 0)
     const order = await card.evaluate(node => {
-      const request = node.querySelector(".mission-needs")!, tasks = node.querySelector(".mission-checklist")!
+      const request = node.querySelector(".mission-needs")!, tasks = node.querySelector(".mission-tree")!
       return Boolean(request.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
     assert.equal(order, true, "human requests precede the tasks")
-    const more = card.locator(".mission-more > h3 > .mission-disclosure-trigger").first()
-    await more.click()
-    assert.equal(await card.getByRole("button", { name: "Technical details", exact: true }).count(), 1,
-      "the schedule view merges its technical identity into the passage's single Technical details")
-    await more.click()
+    assert.equal(await card.getByRole("button", { name: /Technical details|More|Conversations/ }).count(), 0, "no secondary disclosures in the panel")
     await captureMissionView(page, "current-tracking-desktop")
     if (process.env.CODENOMAD_MISSION_VIEW_EVIDENCE) {
       await page.setViewportSize({ width: 390, height: 850 })
@@ -125,9 +121,10 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       await page.evaluate(() => { document.documentElement.dir = "ltr" })
       await page.setViewportSize({ width: 1200, height: 950 })
     }
-    await card.getByRole("button", { name: "Read all", exact: true }).click()
+    const overview = card.getByRole("button", { name: "Overview", exact: true })
+    await overview.click()
     await page.locator(".mission-reader").getByText("Exact passage briefing", { exact: true }).waitFor()
-    assert.equal(await card.getByRole("button", { name: "Read all", exact: true }).getAttribute("aria-pressed"), "true")
+    assert.equal(await overview.getAttribute("aria-pressed"), "true")
     assert.equal(reads, 1, "reader joins the existing visible snapshot demand")
     await page.locator(".mission-briefing-sources").getByRole("button", { name: "Review commits" }).click()
     await page.locator(".mission-reader").getByText("Exact isolated result", { exact: true }).waitFor()
@@ -147,37 +144,38 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
       await mkdir(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, { recursive: true })
       await page.screenshot({ path: join(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, "current-passage-reader.png"), fullPage: true })
     }
-    // A finished task no longer points at work it unblocked; open the unbound follow-up from the checklist.
+    // A finished task no longer points at work it unblocked; open the unbound follow-up from the tree.
     assert.equal(await page.locator(".mission-task-dependencies").getByRole("button", { name: /^Unblocks/ }).count(), 0)
-    await page.locator('.mission-checklist li[data-task-key="second"] .mission-checklist-task').click()
+    await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.").waitFor()
     assert.equal(await page.locator(".mission-reader .mission-inline-session").count(), 0, "unbound task never navigates to coordinator")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
     const savedBriefing = mission.briefing
     mission.briefing = undefined
+    const withoutBriefing = page.waitForResponse(response => response.url().endsWith("/rec_current/current"))
     await page.evaluate(() => (window as any).passageFixture.invalidate())
-    await card.locator(".mission-result-text").getByText("Finite recurring review", { exact: true }).waitFor()
-    await card.getByRole("button", { name: "Read all", exact: true }).click()
+    await withoutBriefing
+    // Let the refreshed snapshot reach Solid before the reader chooses its sections.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await overview.click()
     await page.locator(".mission-reader").getByText("Finite recurring review", { exact: true }).waitFor()
+    // Identifiers are folded at the bottom of the overview reader, including the schedule's.
+    await page.locator(".mission-reader details.mission-report-technical > summary").filter({ hasText: "Technical details" }).click()
+    await page.locator(".mission-reader .mission-technical").getByText("rec_current", { exact: true }).waitFor()
     await captureMissionView(page, "current-no-briefing-overview")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
     mission.briefing = savedBriefing
     await page.evaluate(() => (window as any).passageFixture.invalidate())
-    await more.click()
-    await card.getByRole("button", { name: "Show dependencies", exact: true }).click()
-    await card.locator('.mission-route-task[data-task-key="first"]').getByRole("button", { name: "Open Exact task actor" }).click()
+    await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
+    await page.locator(".mission-reader").getByRole("button", { name: "Open Exact task actor" }).click()
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts")).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))
-    assert.deepEqual(nativeReads, [], "current passage Work reuses only the exact loaded task actor and native parent")
-    await page.getByRole("button", { name: "Technical details", exact: true }).first().click()
-    await page.getByText("rec_current", { exact: true }).waitFor()
-    await page.getByRole("button", { name: /Conversations/ }).click()
-    await page.getByText("ses_child", { exact: true }).first().waitFor()
+    assert.deepEqual(nativeReads, [], "current passage task navigation reuses only the exact loaded task actor and native parent")
     fail = true
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.getByText(/last confirmed snapshot/).waitFor()
-    assert.equal(await card.locator(".mission-checklist").getByText("Review commits", { exact: true }).count(), 1, "failed refresh preserves map")
-    assert.equal(await card.locator('.mission-route-task[data-task-key="first"]').count(), 1)
+    assert.equal(await card.locator(".mission-tree").getByText("Review commits", { exact: true }).count(), 1, "failed refresh preserves map")
+    assert.equal(await card.locator('.mission-tree li[data-task-key="first"]').count(), 1)
     await page.evaluate(() => (window as any).passageFixture.activate(false))
     const beforeHidden = reads
     await page.evaluate(() => (window as any).passageFixture.invalidate())
@@ -187,14 +185,11 @@ test("actual MissionControl reuses current Work, briefing, attention, ancestry a
     await page.evaluate(() => (window as any).passageFixture.activate(true))
     await page.waitForResponse(response => response.url().endsWith("/rec_current/current"))
     assert.ok(reads > beforeHidden)
-    await page.getByText("Native family unknown; only declared actors are shown.", { exact: true }).waitFor()
     assert.equal(writes.length, 0)
     passageID = null
     await page.evaluate(() => (window as any).passageFixture.settled())
-    await card.locator(".mission-result-text").getByText(/^Last run .*: Completed$/).waitFor()
-    await card.locator(".mission-more > h3 > .mission-disclosure-trigger").click()
     await card.locator("button.mission-past-run").getByText(/Completed$/).waitFor()
-    assert.equal(await page.locator(".mission-route-task").count(), 0, "settlement after the final session event removes former passage Work through native invalidation")
+    assert.equal(await page.locator(".mission-tree").count(), 0, "settlement after the final session event removes the former passage tree through native invalidation")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("What should the mission do?", { exact: true }).fill("One-shot from recurring")
     await page.getByRole("button", { name: "Create without starting", exact: true }).click()

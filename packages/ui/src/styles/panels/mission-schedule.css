@@ -1,14 +1,4 @@
-/* Recurring schedule card: clock line, one-sentence notice, then the shared
-   Result/Tasks/More grammar of the current passage or latest run. */
-.mission-schedule-detail {
-  container: mission-schedule / inline-size;
-  display: grid;
-  gap: var(--space-sm);
-  min-width: 0;
-  font-size: var(--font-size-sm);
-  overflow-wrap: anywhere;
-}
-.mission-schedule-detail > p { margin: 0; color: var(--text-secondary); }
-.mission-schedule-detail > p.mission-control-stale { color: var(--status-warning); }
-.mission-schedule-when { font-size: var(--font-size-xs); }
+/* Selected schedule detail (a `.mission-detail`): its one-sentence stuck/failure
+   notices precede the current passage tree and the compact past-run list. */
+.mission-schedule-detail > p.mission-control-stale { margin: 0; color: var(--status-warning); }
 .mission-schedule-detail > .mission-schedule-notice { padding: var(--space-xs) var(--space-sm); color: var(--text-primary); background: var(--status-starting-bg); border-inline-start: 2px solid var(--status-warning); }

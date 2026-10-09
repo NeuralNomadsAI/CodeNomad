@@ -189,23 +189,15 @@ test("overflow recovery preserves pending/error feedback, never auto-replays, an
   } finally { release(); await page.close() }
 })
 
-test("history and cleanup preserve top-level disclosures while sharing item chrome", async () => {
+test("cleanup preserves its top-level disclosure while sharing item chrome", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
     await prepare(page)
-    for (const feature of ["history", "cleanup"]) {
-      const section = page.locator(`[data-fixture="${feature}"]`)
-      await section.locator(".mission-disclosure-trigger").click()
-      await section.locator(".mission-list-item").waitFor()
-      assert.equal(await section.locator(".mission-disclosure-trigger").count(), 1)
-      assert.equal(await section.locator(".mission-list-text").count(), 1)
-    }
-    const history = page.locator('[data-fixture="history"]')
-    if (await history.locator(".mission-list-item").evaluate(e => e.classList.contains("mission-list-item-overflow"))) {
-      await history.locator(".action-overflow-trigger").click()
-      await page.getByRole("menuitem").click()
-    } else await history.locator(".mission-list-preview button").click()
-    await page.waitForFunction(() => document.querySelector('[data-fixture="count"]')?.textContent === "1")
+    const section = page.locator('[data-fixture="cleanup"]')
+    await section.locator(".mission-disclosure-trigger").click()
+    await section.locator(".mission-list-item").waitFor()
+    assert.equal(await section.locator(".mission-disclosure-trigger").count(), 1)
+    assert.equal(await section.locator(".mission-list-text").count(), 1)
   } finally { await page.close() }
 })
 

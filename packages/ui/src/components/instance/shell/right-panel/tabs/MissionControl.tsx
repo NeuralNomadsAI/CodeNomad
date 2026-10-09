@@ -56,6 +56,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), state().projectID]), () => props.isActive?.() ?? true)
   let intent = 0
   const selectMission = (id: string) => { intent++; updateMissionProjectView(scope(), { selected: id, selectedRecurrence: undefined }) }
+  // A second click on the selected row clears the selection and its detail.
+  const toggleMission = (id: string) => {
+    if (!selectedSchedule() && selectedMissionId() === id) { intent++; updateMissionProjectView(scope(), { selected: undefined }) }
+    else selectMission(id)
+  }
   const openEditor = (action: MissionEditorAction) => {
     intent++
     setEditor({ ...action, current: captureView() })
@@ -103,14 +108,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const relation = JSON.stringify([activeSession, related?.id])
     const changed = relation !== previousRelated
     previousRelated = relation
-    if (current && available.some(value => value.id === current) && (!related || !changed)) return
-    setSelectedMissionId((related ?? available.find((mission) => mission.status === "active") ?? available[0]).id)
+    // Only arriving in a Mission's conversation selects it; nothing is selected by default.
+    if (!related || !changed || related.id === current) return
+    setSelectedMissionId(related.id)
   })
 
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
     directory: scope, scheduleID: selectedSchedule, active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
   const mission = createMemo(() => selectedSchedule() ? currentPassage.snapshot()?.mission
-    : missions().find((candidate) => candidate.id === selectedMissionId()) ?? missions()[0])
+    : missions().find((candidate) => candidate.id === selectedMissionId()))
   const observedActivity = () => selectedSchedule() ? currentPassage.snapshot()?.activity : state().activity
   const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
     const current = currentPassage.snapshot()
@@ -211,23 +217,19 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       if (queue.some(item => item.id === request.id && item.sessionID === id)) focusInterruption(origin.instanceId, id, request.id, request.kind)
     })
   }
-  // Pending cleanups need an explicit retry and stay visible; settled history
-  // belongs to the selected card's More.
+  // Pending cleanups need an explicit retry and stay in the panel; settled
+  // history belongs to the overview reader.
   const cleanupPending = () => (state().cleanups ?? []).some(item => item.pending > 0)
-  const cleanupPanel = () => <MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
-    disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
-    refresh={() => missionStore.refresh(props.instanceId)} />
-  const tracking = (more?: () => JSX.Element) => <>
+  const detailId = createUniqueId()
+  const tracking = () => <>
     <Show when={selectedSchedule()}>
       <Show when={currentPassage.loading() && !currentPassage.snapshot()}><p role="status">{props.t("missions.control.loading")}</p></Show>
       <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
     </Show>
     <Show when={mission()}>{selected => <MissionTracking
-      instanceId={props.instanceId} mission={selected()} activity={observedActivity()} activeSessionId={props.activeSessionId()}
-      active={props.isActive?.() ?? true} disabled={Boolean(editor())} messagingDisabled={messagingDisabled() || Boolean(selectedSchedule())}
+      instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
+      active={props.isActive?.() ?? true} disabled={Boolean(editor())}
       readOnly={Boolean(selectedSchedule())} reading={isReading} read={target => void read(target)}
-      details={selectedSchedule() ? <><dt>{props.t("missionsPanel.technical.schedule")}</dt><dd><bdi>{selectedSchedule()}</bdi></dd></> : undefined}
-      more={more?.() ?? <Show when={!cleanupPending()}>{cleanupPanel()}</Show>}
       refresh={() => missionStore.refresh(props.instanceId)} onOpenActor={onOpenActor} />}</Show>
   </>
   return (
@@ -291,13 +293,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <MissionRecurrenceList instanceId={props.instanceId} scope={scope()} projectID={projectID()} active={() => props.isActive?.() ?? true}
         refresh={recurrenceRefresh()} onRead={props.onRevealConversation} selectedSchedule={selectedSchedule()} onSelect={id => {
           intent++; updateMissionProjectView(scope(), { selectedRecurrence: id === selectedSchedule() ? undefined : id })
-        }} tracking={more => tracking(more)} hasTracking={Boolean(mission())}>
+        }} tracking={tracking()} hasTracking={Boolean(mission())} detailId={detailId}>
         <MissionIndex
           missions={missions()}
           selectedId={selectedSchedule() ? "" : mission()?.id ?? ""}
           instanceId={props.instanceId}
           active={props.isActive?.() ?? true}
-          onSelect={selectMission}
+          onSelect={toggleMission}
+          detailId={detailId}
           disabled={Boolean(editor())}
           messagingDisabled={messagingDisabled()}
           onEdit={value => openEditor({ kind: "edit", mission: value })}
@@ -312,9 +315,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             get disabled() { return Boolean(editor()) || !(props.isActive?.() ?? true) },
             onAdmitted: () => missionStore.refresh(props.instanceId),
           })}
-          card={tracking()}
         />
       </MissionRecurrenceList>
+
+      {/* Nothing below the list until a Mission is selected; its detail is a separate section. */}
+      <Show when={!selectedSchedule() && mission()}>{selected =>
+        <section id={detailId} class="mission-detail" aria-label={missionDisplayTitle(selected())}>{tracking()}</section>}</Show>
 
       <Show when={!selectedSchedule()}><Switch>
         <Match when={state().status === "loading" && missions().length === 0}>
@@ -347,7 +353,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         </Match>
       </Switch></Show>
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
-      <Show when={cleanupPending() || (missions().length === 0 && !selectedSchedule())}>{cleanupPanel()}</Show>
+      <Show when={cleanupPending()}><MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
+        disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
+        refresh={() => missionStore.refresh(props.instanceId)} /></Show>
     </section>
   )
 }
@@ -381,7 +389,7 @@ const MissionIndex: Component<{
   onDelete: (mission: MissionMap) => void
   onOpenCoordinator: (mission: MissionMap) => void
   recovery: (mission: () => MissionMap) => ReturnType<typeof createMissionRecoveryAction>
-  card: JSX.Element
+  detailId: string
 }> = (props) => {
   const { t, locale } = useI18n()
   return <For each={props.missions.map(mission => mission.id)}>
@@ -408,14 +416,12 @@ const MissionIndex: Component<{
           { key: "delete", label: t("missionsPanel.action.delete"), disabled: props.disabled, onSelect: () => props.onDelete(mission()) },
         ]
       }
-      return <MissionIndexRow title={missionDisplayTitle(mission())} cardId={`mission-card-${id}`} selected={selected()}
+      return <MissionIndexRow title={missionDisplayTitle(mission())} detailId={props.detailId} selected={selected()}
         onSelect={() => props.onSelect(id)} statusKind={mission().status === "active" ? mission().runState ?? "active" : mission().status}
         meta={<><span>{state()}</span>{" · "}<time dateTime={new Date(mission().updatedAt).toISOString()}
-          title={new Date(mission().updatedAt).toLocaleString(locale())}>{missionRelativeTime(mission().updatedAt, locale())}</time></>}
+          title={new Date(mission().updatedAt).toLocaleString(locale())}><bdi>{missionRelativeTime(mission().updatedAt, locale())}</bdi></time></>}
         primary={lifecycle.primary()} menu={menu()}
-        feedback={<>{lifecycle.feedback}<Show when={selected()}>{recovery.feedback}</Show></>}>
-        {props.card}
-      </MissionIndexRow>
+        feedback={<>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator(mission()))}<Show when={selected()}>{recovery.feedback}</Show></>} />
     }}
   </For>
 }

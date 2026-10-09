@@ -184,13 +184,18 @@ async function expand(page: Page, id: string) {
   const button = page.locator(`.session-sidebar [data-session-id="ses_${id}"] .session-item-expander`)
   if (await button.getAttribute("aria-expanded") !== "true") await button.click()
 }
-async function conversations(page: Page) {
-  const details = page.locator(".mission-index-entry-selected .mission-card .mission-more > h3 > .mission-disclosure-trigger")
-  if (await details.getAttribute("aria-expanded") !== "true") await details.click()
-  assert.equal(await details.getAttribute("aria-expanded"), "true")
-  const button = page.locator(".mission-disclosure-trigger").filter({ hasText: /Conversations|שיחות/ }).first()
-  if (await button.getAttribute("aria-expanded") !== "true") await button.click()
-  assert.equal(await button.getAttribute("aria-expanded"), "true")
+/** Raise a native Form on the ordinary child conversation and answer it from "Needs you",
+ * the panel's remaining route into an ordinary descendant conversation. */
+async function refreshMap(page: Page) {
+  const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+  await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
+  await response
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+}
+async function answerChild(page: Page) {
+  await page.evaluate(() => window.missionNativeFamily.emit({ type: "form.created", id: "event-child-form", created: 1, location: { directory: "/fixture" },
+    data: { form: { id: "child-form", sessionID: "ses_child", title: "Child form", fields: [] } } }))
+  await answer(page.locator(".mission-attention-list"), "Child form").click()
 }
 
 test("production SessionList/SessionView select recursive children, steer/queue only that child and preserve coordinator/sibling drafts", { timeout: 60000 }, async () => {
@@ -217,14 +222,7 @@ test("production SessionList/SessionView select recursive children, steer/queue 
     assert.deepEqual(prompts.map(item => [(item.body as { text: string }).text, (item.body as { delivery: string }).delivery]), [["Child steer only", "steer"], ["Child queue only", "queue"]])
     assert.equal((prompts[1].body as { resume: boolean }).resume, false)
     assert(requests.filter(item => item.method !== "GET" && item.path.includes("/session/")).every(item => item.path.includes("/session/ses_grandchild/")))
-    await conversations(page)
-    assert.equal(await page.locator('[data-family-kind="ordinary"]').count(), 2)
-    assert.equal(await page.locator('[data-family-kind="ordinary"] .mission-activity-assignment').count(), 0)
-    assert.equal(await page.locator('[data-family-kind="ordinary"][data-session-id="ses_grandchild"]').getAttribute("data-native-parent-id"), "ses_child")
-    assert.equal(await page.locator('[data-family-kind="ordinary"][data-session-id="ses_grandchild"]').getAttribute("data-declared-actor-id"), "ses_actor")
-    assert(await page.locator('[data-family-kind="ordinary"] .mission-activity-copy').first().evaluate(element => element.getBoundingClientRect().width > 100))
-    await page.screenshot({ path: path.join(output, "ordinary-descendants.png"), fullPage: true })
-    await page.locator('[data-family-kind="ordinary"][data-session-id="ses_child"] > .mission-activity-actor').getByRole("button").click()
+    await select(page, "child")
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_child")
     await select(page, "A"); assert.equal(await composer(page).inputValue(), "Coordinator A draft")
     await select(page, "B"); assert.equal(await composer(page).inputValue(), "Sibling B draft")
@@ -234,109 +232,6 @@ test("production SessionList/SessionView select recursive children, steer/queue 
 
 /** The "Needs you" item's Answer action, whose description names the target conversation. */
 const answer = (attention: Locator, text: string) => attention.locator("li.mission-needs-item", { hasText: text }).locator("button.mission-needs-answer")
-const conversationRow = (page: Page, id: string) => page.locator(`.mission-conversation-node[data-session-id="ses_${id}"] > .mission-activity-actor`)
-async function assertConversationGeometry(page: Page, rtl: boolean) {
-  const geometry = await page.locator(".mission-activity-list").evaluate(list => {
-    const nodes = [...list.querySelectorAll<HTMLElement>(".mission-conversation-node")]
-    return nodes.map(node => {
-      const row = node.querySelector<HTMLElement>(":scope > .mission-activity-actor")!
-      const text = row.querySelector<HTMLElement>(".mission-list-text")!, status = row.querySelector<HTMLElement>(".mission-list-footer")!
-      const parent = node.parentElement!.closest<HTMLElement>(".mission-conversation-node")
-      const r = row.getBoundingClientRect(), t = text.getBoundingClientRect(), s = status.getBoundingClientRect()
-      return { id: node.dataset.sessionId, parent: parent?.dataset.sessionId, x: r.x, right: r.right, width: r.width,
-        y: r.y, bottom: r.bottom, textBottom: t.bottom, statusY: s.y, radius: getComputedStyle(row.querySelector(".mission-list-item")!).borderRadius,
-        overflow: row.scrollWidth > row.clientWidth + 1 }
-    })
-  })
-  assert.deepEqual(geometry.map(row => row.id), ["ses_A", "ses_actor", "ses_child", "ses_grandchild", "ses_third", "ses_fourth", "ses_fifth", "ses_independent"])
-  assert.equal(geometry.length, 8)
-  assert.equal(geometry[0].parent, undefined); assert.equal(geometry.at(-1)!.parent, undefined)
-  for (let index = 1; index < 7; index++) {
-    const row = geometry[index], parent = geometry[index - 1]
-    assert.equal(row.parent, parent.id, "semantic nested list matches native ancestry")
-    assert(rtl ? row.right < parent.right : row.x > parent.x, "logical indentation follows native parent")
-    assert(row.y >= parent.bottom - 1, "children follow their parent's row")
-    assert(row.width > 100, "deep conversations remain usable without a display depth ceiling")
-  }
-  for (const row of geometry) {
-    assert.equal(row.radius, "0px"); assert.equal(row.overflow, false)
-    assert(row.statusY >= row.textBottom - 1, "status/actions occupy the third line")
-  }
-  return geometry
-}
-
-test("Conversations shows distinct native hierarchy and independent roots; descendant events update only exact honest status", { timeout: 60000 }, async () => {
-  const ctx = await setup("conversations-hierarchy", false, true), { page } = ctx
-  try {
-    await select(page, "A"); await conversations(page)
-    assert.equal(await page.locator('.mission-disclosure-trigger').filter({ hasText: "Conversations" }).locator("small").innerText(), "8")
-    const geometry = await assertConversationGeometry(page, false)
-    await writeFile(path.join(output, "conversations-hierarchy.geometry.json"), JSON.stringify(geometry, null, 2))
-    assert.match(await conversationRow(page, "A").innerText(), /Family observation: Running/)
-    const focused = conversationRow(page, "child").getByRole("button", { name: "Open Conversation child", exact: true })
-    const retained = await focused.elementHandle()
-    assert(retained)
-    await focused.focus()
-    const revalidated = page.waitForResponse(response => response.url().endsWith("/missions"))
-    await page.evaluate(() => window.missionNativeFamily.emit({ id: "declared-child-idle", created: 2, type: "session.status", location: { directory: "/fixture" },
-      data: { sessionID: "ses_actor", status: { type: "idle" } } } satisfies V2Event))
-    await revalidated
-    await conversationRow(page, "actor").locator('[data-state="idle"]').waitFor()
-    assert.equal(await retained.evaluate(button => button.isConnected && document.activeElement === button), true,
-      "fresh family snapshots preserve the exact conversation action and keyboard focus")
-    assert.equal(await conversationRow(page, "actor").getByText("Family observation: Running", { exact: true }).count(), 0)
-    await page.evaluate(() => window.missionNativeFamily.emit({ id: "exact-idle", created: 2, type: "session.status", location: { directory: "/fixture" },
-      data: { sessionID: "ses_child", status: { type: "idle" } } } satisfies V2Event))
-    await conversationRow(page, "child").locator('[data-state="idle"]').waitFor()
-    assert.equal(await conversationRow(page, "child").getByText("Idle", { exact: true }).count(), 1)
-    assert.equal(await conversationRow(page, "child").getByText("Running", { exact: true }).count(), 0)
-    await page.evaluate(() => window.missionNativeFamily.statusKnown("ses_child", false))
-    await conversationRow(page, "child").locator('[data-state="unknown"]').waitFor()
-    await page.evaluate(() => window.missionNativeFamily.emit({ id: "exact-running", created: 3, type: "session.status", location: { directory: "/fixture" },
-      data: { sessionID: "ses_fifth", status: { type: "running" } } } satisfies V2Event))
-    await conversationRow(page, "fifth").locator('[data-state="running"]').waitFor()
-    assert.equal(await conversationRow(page, "child").locator('[data-state="unknown"]').count(), 1)
-    await page.evaluate(() => window.missionNativeFamily.ask())
-    await conversationRow(page, "grandchild").locator('[data-state="form"]').waitFor()
-    await page.evaluate(() => window.missionNativeFamily.askPermission())
-    await conversationRow(page, "grandchild").locator('[data-state="permission"]').waitFor()
-    await conversationRow(page, "fifth").getByRole("button", { name: "Open Conversation fifth", exact: true }).click()
-    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_fifth")
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).root, "ses_A")
-    await conversationRow(page, "independent").getByRole("button", { name: "Open Declared independent", exact: true }).click()
-    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_independent")
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).root, "ses_independent")
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, "A")
-    await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
-  } finally { await ctx.save(); ctx.release(); await page.close() }
-})
-
-test("390px RTL touch Conversations retains recursive geometry, semantic ancestry and exact child navigation", { timeout: 60000 }, async () => {
-  const ctx = await setup("conversations-rtl-touch", true, true), { page } = ctx
-  try {
-    await page.waitForFunction(() => document.documentElement.dir === "rtl")
-    await page.locator(".session-header-drawer-toggle--left button:visible").tap()
-    await select(page, "A")
-    await page.locator('.session-sidebar-header-actions:visible button').last().tap()
-    await page.locator(".session-header-drawer-toggle--right button:visible").tap()
-    await conversations(page)
-    assert.equal(await page.locator('.mission-disclosure-trigger').filter({ hasText: "שיחות" }).locator("small").innerText(), "8")
-    const geometry = await assertConversationGeometry(page, true)
-    await writeFile(path.join(output, "conversations-rtl-touch.geometry.json"), JSON.stringify(geometry, null, 2))
-    await conversationRow(page, "fifth").scrollIntoViewIfNeeded()
-    await writeFile(path.join(output, "conversations-rtl-touch.actions.json"), JSON.stringify(await conversationRow(page, "fifth").evaluate(row => ({
-      html: row.outerHTML, ancestors: [...function* () { let node: Element | null = row; while (node) { yield { tag: node.tagName, classes: node.className, hidden: node.getAttribute("aria-hidden"), inert: node.hasAttribute("inert") }; node = node.parentElement } }()],
-    })), null, 2))
-    const button = conversationRow(page, "fifth").getByRole("button")
-    const box = await button.boundingBox(); assert(box && box.width >= 24 && box.height >= 24)
-    await button.tap()
-    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_fifth")
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).root, "ses_A")
-    assert.equal(await page.locator('.mission-activity-list [role="tree"]').count(), 0)
-    await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
-  } finally { await ctx.save(); ctx.release(); await page.close() }
-})
-
 // Observation, not a substitute composer implementation: read production DOM
 // after fonts and viewport measurements remain stable for eight animation frames.
 async function captureComposer(page: Page, name: string, sessionId: string) {
@@ -505,8 +400,8 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     const replies = requests.filter(item => item.path.includes("/form/") && item.method !== "GET")
     assert.equal(replies.length, 1); assert(replies[0].path.includes("/session/ses_grandchild/"))
     await page.evaluate(() => window.missionNativeFamily.askPermission())
-    await attention.getByText("safe-fixture.txt", { exact: true }).waitFor()
-    assert.equal(await attention.getByText("global-fixture.txt", { exact: true }).count(), 0)
+    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
+    assert.equal(await attention.locator("li.mission-needs-item", { hasText: "global-fixture.txt" }).count(), 0)
     // Upstream's dock retains its selected request instead of automatically
     // selecting a newly enqueued permission. Target the exact attention action.
     const permissionAnswer = answer(attention, "safe-fixture.txt")
@@ -517,14 +412,10 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     const permissionReceipt = page.waitForResponse(response => response.url().includes("child-permission") && response.request().method() !== "GET")
     await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).click()
     assert.equal((await permissionReceipt).status(), 204)
-    await attention.getByText("safe-fixture.txt", { exact: true }).waitFor({ state: "detached" })
+    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor({ state: "detached" })
     const permissionReplies = requests.filter(item => item.path.includes("child-permission") && item.method !== "GET")
     assert.equal(permissionReplies.length, 1); assert(permissionReplies[0].path.includes("/session/ses_grandchild/"))
-    await conversations(page); assert.equal(await page.locator('[data-family-kind="ordinary"]').count(), 2)
-    ctx.unknown(); await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await page.getByText("Native family unknown; only declared actors are shown.", { exact: true }).waitFor()
-    assert.equal(await page.locator('[data-family-kind="ordinary"]').count(), 0)
-    assert.equal(await page.locator(".mission-activity-actor").count(), 2)
+    ctx.unknown(); await refreshMap(page)
     await select(page, "B"); await select(page, "grandchild")
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, "B", "local ancestry does not replace an unknown family observation")
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
@@ -544,7 +435,7 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".session-header-drawer-toggle--right button:visible").tap()
     const attention = page.locator(".mission-attention-list")
-    await attention.getByText("safe-fixture.txt", { exact: true }).waitFor()
+    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
     const permissionAnswer = answer(attention, "safe-fixture.txt")
     assert.equal(await page.locator(".mission-attention-list li.mission-needs-item").count(), 1, "the uncorrelated global permission stays out of Needs you")
     await permissionAnswer.tap()
@@ -560,9 +451,9 @@ test("390px RTL Attention selects the exact same-active-child permission before 
 test("deferred ordinary-child navigation cannot overwrite a newer sibling selection", { timeout: 60000 }, async () => {
   const ctx = await setup("deferred-child"), { page } = ctx
   try {
-    await select(page, "A"); await conversations(page)
+    await select(page, "A")
     await page.evaluate(() => window.missionNativeFamily.coldChild()); ctx.defer()
-    await page.locator('[data-family-kind="ordinary"][data-session-id="ses_child"] > .mission-activity-actor').getByRole("button").click()
+    await answerChild(page)
     await ctx.arrival
     await select(page, "B"); await composer(page).fill("New sibling draft")
     ctx.release()
@@ -580,11 +471,10 @@ test("deferred ordinary-child navigation cannot overwrite a newer sibling select
 test("family observation loss fences an awaited ordinary-child navigation without an error or draft mutation", { timeout: 60000 }, async () => {
   const ctx = await setup("membership-loss"), { page } = ctx
   try {
-    await select(page, "A"); await composer(page).fill("Keep A during membership loss"); await conversations(page)
+    await select(page, "A"); await composer(page).fill("Keep A during membership loss")
     await page.evaluate(() => window.missionNativeFamily.coldChild()); ctx.defer()
-    await page.locator('[data-family-kind="ordinary"][data-session-id="ses_child"] > .mission-activity-actor').getByRole("button").click(); await ctx.arrival
-    ctx.unknown(); await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await page.getByText("Native family unknown; only declared actors are shown.", { exact: true }).waitFor()
+    await answerChild(page); await ctx.arrival
+    ctx.unknown(); await refreshMap(page)
     ctx.release(); await ctx.completion
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_A")
@@ -606,23 +496,20 @@ test("real dispatcher refreshes bounded family observations on birth, fork, move
   }
   const count = () => requests.filter(item => item.path.endsWith("/missions")).length
   try {
-    await select(page, "A"); await conversations(page)
+    await select(page, "A")
     ctx.setFamily({ state: "observed", members: [...observedFamily.members,
       { sessionId: sessionID, parentSessionId: "ses_actor", actorSessionId: "ses_actor", kind: "ordinary" }] })
     const before = count()
     await emit({ ...base, type: "session.created", data: { sessionID, parentID: "ses_actor", projectID: "project", location, slug: "born", title: "Conversation born", version: "1" } })
-    await page.locator('[data-family-kind="ordinary"][data-session-id="ses_born"]').waitFor()
     ctx.setFamily({ state: "observed", members: [...observedFamily.members,
       { sessionId: sessionID, parentSessionId: "ses_actor", actorSessionId: "ses_actor", kind: "ordinary" },
       { sessionId: "ses_fork", parentSessionId: "ses_actor", actorSessionId: "ses_actor", kind: "ordinary" }] })
     await emit({ ...base, type: "session.forked", durable: { ...base.durable, aggregateID: "ses_fork", version: 2 },
       data: { sessionID: "ses_fork", parentID: "ses_actor", boundary: { type: "through", messageID: "msg_boundary" } } })
-    await page.locator('[data-family-kind="ordinary"][data-session-id="ses_fork"]').waitFor()
     await emit({ ...base, type: "session.compaction.started", data: { sessionID, reason: "manual", recent: "" } })
     await emit({ ...base, type: "session.compaction.ended", data: { sessionID, reason: "manual", recent: "", text: "bounded" } })
     ctx.unknown()
     await emit({ ...base, type: "session.moved", data: { sessionID, projectID: "project", location: { directory: "/moved" } } })
-    await page.getByText("Native family unknown; only declared actors are shown.", { exact: true }).waitFor()
     ctx.setFamily(observedFamily)
     await emit({ ...base, type: "session.deleted", durable: { ...base.durable, version: 2 }, data: { sessionID } })
     assert.equal(count() - before, 6, "one coalesced display read per separated boundary")

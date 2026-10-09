@@ -49,9 +49,13 @@ const schedule = (id: string): MissionRecurrenceSnapshot["schedules"][number] =>
 function scheduleEntry(page: Page, title: string) {
   return page.locator("li.mission-index-entry", { has: page.getByRole("button", { name: title, exact: true }) })
 }
-/** The schedule card's overview eye ("Read all"), selecting the schedule row first when needed. */
+/** The schedule's detail section (separate from its row) and its Overview eye. */
+function overviewEye(page: Page, title: string) {
+  return page.locator(`section.mission-detail[aria-label="${title}"] .mission-overview-toggle`)
+}
+/** The selected schedule detail's Overview eye, selecting the schedule row first when needed. */
 async function readAll(page: Page, title: string) {
-  const eye = scheduleEntry(page, title).locator(".mission-result-read")
+  const eye = overviewEye(page, title)
   if (!await eye.isVisible()) await page.getByRole("button", { name: title, exact: true }).click()
   await eye.waitFor()
   return eye
@@ -78,8 +82,8 @@ test("native reference history uses the shared reader, exact eyes, visible cache
   try {
     await page.goto(url)
     const firstRow = page.getByRole("button", { name: "Daily review first", exact: true })
-    const firstEye = scheduleEntry(page, "Daily review first").locator(".mission-result-read")
-    const secondEye = scheduleEntry(page, "Daily review second").locator(".mission-result-read")
+    const firstEye = overviewEye(page, "Daily review first")
+    const secondEye = overviewEye(page, "Daily review second")
     await firstRow.waitFor()
     assert.equal(await firstRow.count(), 1)
     assert.equal(await firstEye.count(), 0, "unselected schedules show no card")
@@ -138,7 +142,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
     await captureMissionView(page, "archive-reader-390-rtl")
     const geometry = await firstEye.evaluate(node => {
-      const row = node.closest(".mission-index-entry")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
+      const row = node.closest(".mission-detail")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
       return { rowLeft: row.left, rowRight: row.right, eyeLeft: eye.left, eyeRight: eye.right, radius: getComputedStyle(node).borderRadius }
     })
     assert.ok(geometry.eyeLeft >= geometry.rowLeft && geometry.eyeRight <= geometry.rowRight)

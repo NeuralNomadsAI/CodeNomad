@@ -3,7 +3,6 @@ import { render } from "solid-js/web"
 import { ArrowUpRight, Eye, Minus, Pencil, RefreshCw } from "lucide-solid"
 import { MissionListItem } from "../../../src/components/mission-list-item"
 import { createMissionRecoveryAction } from "../../../src/components/mission-recovery-button"
-import { MissionHistory } from "../../../src/components/mission-history"
 import { MissionCleanupPanel } from "../../../src/components/mission-cleanup"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
@@ -64,7 +63,6 @@ function Fixture() {
     <button type="button" data-fixture="reader-focus">Reader focus target</button>
     <div data-fixture="recovery" style={{ width: `${Math.min(width(), 180)}px` }}><MissionListItem text="Recovery fixture" status="Running"
       actions={recovery.action() ? [recovery.action()!] : []}>{recovery.feedback}</MissionListItem></div>
-    <div data-fixture="history" style={{ width: "220px" }}><MissionHistory mission={mission} onRead={selected} /></div>
     <div data-fixture="cleanup" style={{ width: "220px" }}><MissionCleanupPanel instanceId="fixture" disabled={false} active
       cleanups={[{ deletionID: "deletion", missionID: mission.id, objective: "Cleanup objective that has a long description", removed: 1, retained: 1,
         pending: 0, reasons: ["coordinator"], requestID: "request", expectedRevision: 1, deleteManagedSessions: true } as any]}
