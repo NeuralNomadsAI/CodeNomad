@@ -5,7 +5,9 @@ import type { MissionStorage } from "../../missions/journal"
 import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "../../missions/recurrence-runner"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
-import { admitNativeRecurrencePassage } from "./native-recurrence-admission"
+import { admitNativeRecurrencePassage, PassageNotStartedError } from "./native-recurrence-admission"
+import { recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
+import { stableToken } from "../../missions/journal"
 import { observeNativePassageSettlement } from "./native-recurrence-settlement"
 import { settleNativePassageBusiness } from "./native-passage-business"
 import { acquireMissionNativeService } from "./native-service-adapter"
@@ -75,8 +77,19 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         if (!placement.profileSource) throw new Error("Recurrence profile source unavailable")
         return admitNativeRecurrencePassage({ document: structuredClone(document), storage, native, observation,
           profile: placement.profileSource, signal, current, read: () => source.read(scheduleID),
-          humanGate, now, reconcileOnly: !!doc?.pending && !placement.manual })
+          humanGate, now })
       },
+    }
+    /** Deterministic only: the failure is a not-started classification or the
+     * schedule no longer allows dispatch, and the original message is natively absent. */
+    const unstartable = async (pending: RecurrenceDocument, error: unknown) => {
+      const fresh = await source.read(scheduleID)
+      if (!fresh?.pending || fresh.revision !== pending.revision || fresh.pending.admission) return false
+      if (!(error instanceof PassageNotStartedError) && recurrenceDispatchAllowed(fresh)) return false
+      const passage = fresh.pending.passage
+      current()
+      return !(await observation.exists(passage.coordinatorSessionID))
+        || !(await observation.session(passage.coordinatorSessionID, passage.messageID)).messagePresent
     }
     const doc = yield* Effect.promise(() => source.read(scheduleID))
     if (!doc) return "idle" as NativePassageWake
@@ -93,7 +106,19 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         // Admission checks the original inbox/message first and does not resend.
         const pending = await source.read(scheduleID)
         if (!pending?.pending) return "settled"
-        const ack = await admission.admit(pending, async () => current)
+        let ack: Awaited<ReturnType<typeof admission.admit>>
+        try { ack = await admission.admit(pending, async () => current) }
+        catch (error) {
+          if (pending.pending.admission || !await unstartable(pending, error)) throw error
+          // Exact native absence of the original start message and no way to build or
+          // dispatch it: archive failed/not-started. Nothing was sent, so nothing can
+          // replay; the coordinator session stays as-is and cursors do not advance.
+          const passage = pending.pending.passage
+          await source.finish(scheduleID, { passageID: passage.id, messageID: passage.messageID,
+            missionID: `msn_${stableToken(`${pending.projectID}\0${passage.id}`, 24)}`, conversationID: passage.coordinatorSessionID,
+            outcome: "failed", reason: "not-started", artifactMessageIDs: [], cursors: [] }, now(), current, pending.revision)
+          return "settled"
+        }
         if (!pending.pending.admission) await source.recordAdmission(scheduleID, ack, now(), current)
         const fresh = await source.read(scheduleID)
         if (!fresh?.pending) return "settled"

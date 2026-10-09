@@ -302,7 +302,7 @@ export class RecurringDayFixture {
     this.db.prepare("INSERT INTO event_sequence VALUES(?,?,NULL) ON CONFLICT(aggregate_id) DO UPDATE SET seq=excluded.seq").run(sessionID, seq)
   }
   get sessions(): SessionInfo[] { return this.db.prepare("SELECT info FROM fixture_session").all().map(row => Schema.decodeUnknownSync(Session.Info)(JSON.parse(String(row.info)))) }
-  get coordinators() { return this.sessions.filter(s => !s.parentID) }
+  get coordinators() { return this.sessions.filter(s => !s.parentID && !(this.config.watchedConversationIDs as string[]).includes(s.id)) }
   get starts(): MessageInfo[] { return this.db.prepare("SELECT data FROM session_message WHERE type IN ('user','synthetic')").all().map(row => Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data)))) }
   private session(id: string): SessionInfo {
     const row = this.db.prepare("SELECT info FROM fixture_session WHERE id=?").get(id)
@@ -315,6 +315,19 @@ export class RecurringDayFixture {
   }
   private messages(id: string): MessageInfo[] {
     return this.db.prepare("SELECT data FROM session_message WHERE session_id=? ORDER BY seq").all(id).map(row => Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data))))
+  }
+  /** An ordinary user conversation to watch; created before any passage exists. */
+  watch(id: string) {
+    const info = Schema.decodeUnknownSync(Session.Info)({ id, title: "Watched", location: { directory: this.root }, projectID: "day-test",
+      agent: "worker", model: { providerID: "fake", id: "offline" },
+      time: { created: this.now, updated: this.now }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
+    this.db.prepare("INSERT INTO fixture_session VALUES(?,?,0)").run(id, JSON.stringify(Schema.encodeSync(Session.Info)(info)))
+    this.db.prepare("INSERT INTO session_v2 VALUES(?,?,?,?,NULL,?,NULL)").run(id, null, "day-test", this.root, "{}")
+    this.config.watchedConversationIDs = [id]
+  }
+  deleteSession(id: string) {
+    this.db.prepare("DELETE FROM fixture_session WHERE id=?").run(id)
+    this.db.prepare("DELETE FROM session_v2 WHERE id=?").run(id)
   }
   private createSession(input: Record<string, unknown>) {
     assert.equal(typeof input.id, "string", "passage caller reserves the native session ID before create")

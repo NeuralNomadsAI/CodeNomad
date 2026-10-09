@@ -18,14 +18,20 @@ export type PassageInput = {
   observation: NativePassageObservation; profile: AutonomousProfileSource; signal: AbortSignal
   current(): true; read(): Promise<RecurrenceDocument | undefined>; humanGate?: NativeHumanAnswerGate
   now?: () => number
-  reconcileOnly?: boolean
 }
 
+/** Deterministic: the original start input can never be built (watched source
+ * deleted/moved, capacity). Thrown only before the start message is admitted. */
+export class PassageNotStartedError extends Error {}
+
 /** Reserve in the calendar BEFORE entering here. Recovery checks both native
- * session and original inbox/message identity. No new IDs and no turn replay. */
+ * session and original inbox/message identity first; a missing original message
+ * is retried only under the SAME identities (native first admission wins), while
+ * dispatch is still allowed. No new IDs and no turn replay. */
 export async function admitNativeRecurrencePassage(input: PassageInput) {
   const { document: doc, native, observation, signal } = input
-  if (!doc.pending || !recurrenceInputBudget(doc.config).sufficient) throw new Error("Passage pending input unavailable")
+  if (!doc.pending) throw new Error("Passage pending input unavailable")
+  if (!recurrenceInputBudget(doc.config).sufficient) throw new PassageNotStartedError("Passage input capacity")
   const current = (): true => { signal.throwIfAborted(); input.current(); return native.assertCurrent() }
   const effectCurrent = (): true => { current(); return observation.assertScheduleCurrent(doc, true) }
   current()
@@ -45,8 +51,6 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
     current()
   }
   const exists = await observation.exists(request.id)
-  if (input.reconcileOnly && (!exists || !(await observation.session(request.id, passage.messageID)).messagePresent))
-    throw new Error("Passage original admission unavailable; reconciliation cannot resend")
   if (!exists) await dispatch()
   const session = exists ? await native.get({ sessionID: request.id }, { signal }) : await native.create(request, { signal }, effectCurrent)
   if (session.id !== request.id || session.parentID || session.projectID !== doc.projectID
@@ -94,11 +98,12 @@ export async function admitNativeRecurrencePassage(input: PassageInput) {
       const sources: PassageSource[] = []
       for (const conversationID of doc.config.watchedConversationIDs) {
         current()
+        if (!(await observation.exists(conversationID))) throw new PassageNotStartedError("Watched source deleted")
         const source = await native.get({ sessionID: conversationID }, { signal })
         const cursor = doc.cursors.find(item => item.conversationID === conversationID)
         if (source.projectID !== doc.projectID || !doc.config.roots.some(root => root.directory === source.location.directory)
           || cursor?.locationDigest !== undefined && cursor.locationDigest !== recurrenceSourceLocationDigest(source.location))
-          throw new Error("Watched source moved")
+          throw new PassageNotStartedError("Watched source moved")
         const messages = await native.sourceMessages({ sessionID: conversationID, ...source.location,
           afterMessageID: cursor?.messageID ?? null, limit: 32,
           contextLimit: recurrenceSourceContextLimit(doc.config, sources.map(source => source.messages)) }, { signal }, current, current)

@@ -71,7 +71,7 @@ test("B. Restart pending: Interrupted, explicit Resume reconciles without anothe
   assert.equal(f.coordinators.length, 2)
 })
 
-test("C. Crash boundaries: pending CAS, native create and admission reconcile without replay", async t => {
+test("C. Crash boundaries: pending CAS, native create and admission reconcile under the original identities only", async t => {
   for (const point of ["after-pending", "after-create", "after-message"] as const) {
     await t.test(point, async () => {
       const f = await RecurringDayFixture.open()
@@ -82,23 +82,57 @@ test("C. Crash boundaries: pending CAS, native create and admission reconcile wi
         assert.equal(f.crashHits, 1, "failpoint must actually run")
         const before = await f.document()
         assert(before?.pending, "write-ahead pending survives failure")
-        const sessions = f.coordinators.map(s => s.id), messages = f.starts.map(m => m.id)
-        assert.equal(sessions.length, point === "after-pending" ? 0 : 1)
-        assert.equal(messages.length, point === "after-message" ? 1 : 0)
+        const passage = before.pending.passage
+        assert.equal(f.coordinators.length, point === "after-pending" ? 0 : 1)
+        assert.equal(f.starts.length, point === "after-message" ? 1 : 0)
         await f.restart(); await f.control("resume")
         await f.advance(DUE + 3_600_000)
-        assert.deepEqual(f.coordinators.map(s => s.id), sessions, "Resume is reconcile-only, even with native absence")
-        assert.deepEqual(f.starts.map(m => m.id), messages, "no resend on Resume")
-        assert(f.starts.length <= 1)
-        if (point === "after-message") {
-          await f.model(); await f.advance(DUE + 2 * 3_600_000)
-          assert.equal((await f.snapshot()).latestResult?.outcome, "completed")
-        } else {
-          assert((await f.snapshot()).pending, "incomplete native effects stay held, not automatically replayed")
-        }
+        // Resume never invents a new identity: the original session/message is admitted
+        // at most once (native first admission wins), never a second coordinator message.
+        assert.deepEqual(f.coordinators.map(s => s.id), [passage.coordinatorSessionID])
+        assert.deepEqual(f.starts.map(m => m.id), [passage.messageID], "one original start message, no resend")
+        await f.model(); await f.advance(DUE + 2 * 3_600_000)
+        assert.equal((await f.snapshot()).latestResult?.outcome, "completed")
+        assert.equal(f.starts.length, 1)
       } finally { await f.close() }
     })
   }
+})
+
+test("C2. A transient admission failure retries the same identities on a later wake, without Resume", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  await f.create(); await f.control("play")
+  f.crash = "after-create"
+  await f.advance(DUE)
+  const passage = (await f.document())!.pending!.passage
+  assert.equal(f.starts.length, 0)
+  assert.equal((await f.snapshot()).state, "running", "a failed admission does not end the Job")
+  await f.advance(DUE + 3_600_000)
+  assert.deepEqual(f.coordinators.map(s => s.id), [passage.coordinatorSessionID])
+  assert.deepEqual(f.starts.map(m => m.id), [passage.messageID])
+  await f.model(); await f.advance(DUE + 2 * 3_600_000)
+  assert.equal((await f.snapshot()).latestResult?.outcome, "completed")
+})
+
+test("C3. A deleted watched conversation archives failed/not-started and unblocks later days and Run now", async t => {
+  const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  f.watch("ses_watched_source")
+  await f.create(); await f.control("play")
+  f.deleteSession("ses_watched_source")
+  await f.advance(DUE)
+  assert.equal(f.starts.length, 0, "no start message can be built")
+  await f.advance(DUE + 3_600_000)
+  const archived = await f.snapshot()
+  assert.equal(archived.pending, null, "a stuck passage no longer blocks the schedule")
+  assert.equal(archived.latestResult?.outcome, "failed")
+  assert.equal((archived.latestResult as { reason?: string }).reason, "not-started")
+  assert.equal(f.coordinators.length, 1, "the coordinator session is kept as-is")
+  const doc = (await f.document())!
+  assert.equal(doc.lastDaily?.at, DUE, "the scheduled day is settled normally")
+  assert.deepEqual(doc.cursors, [], "cursors never advance for an unstarted passage")
+  assert(archived.actions.includes("run-now"))
+  assert.equal(archived.nextDueAt, DUE + DAY)
+  assert.equal(f.starts.length, 0)
 })
 
 test("D. Run now has distinct IDs and leaves the daily civil-day schedule untouched", async t => {

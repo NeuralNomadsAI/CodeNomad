@@ -151,6 +151,18 @@ Never resend under a new identity or infer missing work from a lost RPC reply.
 Resume is allowed when a passage is pending, but it is **reconcile-only** for that
 passage: no second coordinator message. Unknown native coverage leaves pending
 uncertain and blocks a further passage. No expiry converts unknown into safe replay.
+
+An unadmitted pending passage is reconciled by reading natively whether its
+deterministic start message exists (delivered or inbox):
+
+- Present: record the admission and continue observing.
+- Absent, and the start input can never be built (watched conversation deleted or
+  moved, input capacity) or the schedule no longer allows dispatch: archive
+  `failed` with reason `not-started`. This is the only archive without an
+  admission; nothing was sent, so nothing can replay. The coordinator session is
+  kept, `lastDaily` advances normally and watched cursors do not.
+- Absent for a transient cause: retry admission on a later wake with the **same**
+  session and message identities (native first admission wins), never a new one.
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 Manual runs do not masquerade as a different scheduled civil day's completion.
 

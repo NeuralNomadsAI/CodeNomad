@@ -209,13 +209,19 @@ export class NativeMissionRecurrenceStore {
 
   /** Caller supplies fresh native terminal evidence, not model prose, observed at
    * `expectedRevision`. Any later document change is a conflict: re-observe.
-   * Unknown admissions first need exact recordAdmission reconciliation. */
+   * Unknown admissions first need exact recordAdmission reconciliation. The only
+   * unadmitted archive is `failed`/`not-started`: the caller observed that the
+   * original start message is absent and cannot be built, so nothing can replay. */
   finish(id: string, input: RecurrenceResult, now: number, current: () => true, expectedRevision?: number): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       const doc = await this.required(id), result = recurrenceResultSchema.parse(JSON.parse(canonicalAuthority(input)))
       if (expectedRevision !== undefined && doc.revision !== expectedRevision) throw new Error("Recurrence revision conflict")
-      const pending = this.exactPending(doc, result), admission = pending.admission
-      if (!admission || result.missionID !== admission.missionID || result.conversationID !== admission.conversationID
+      const pending = this.exactPending(doc, result)
+      const notStarted = result.reason === "not-started"
+      const admission = notStarted ? { missionID: `msn_${stableToken(`${this.projectID}\0${pending.passage.id}`, 24)}`,
+        conversationID: pending.passage.coordinatorSessionID } : pending.admission
+      if (!admission || notStarted && (pending.admission || result.outcome !== "failed" || result.cursors.length)
+        || result.missionID !== admission.missionID || result.conversationID !== admission.conversationID
         || result.cursors.some(cursor => !doc.config.watchedConversationIDs.includes(cursor.conversationID))) throw new Error("Recurrence result conflict")
       this.settle(doc, result, now)
       if (result.outcome === "completed")
