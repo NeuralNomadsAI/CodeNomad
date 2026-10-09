@@ -8,7 +8,6 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance, addPermissionToQueue, removePermissionFromQueue } from "../../../src/stores/instances"
 import { setSessions } from "../../../src/stores/session-state"
 import type { PermissionRequest } from "../../../src/types/permission"
-import { setSessions } from "../../../src/stores/session-state"
 import "../../../src/index.css"
 
 const instanceId = "permission-fallback"
