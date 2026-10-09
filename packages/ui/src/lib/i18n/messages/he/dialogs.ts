@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "התחברות מחדש ל-CodeNomad",
   "authRecovery.description": "ההתחברות שלך ל-CodeNomad אינה תקפה עוד. זה יכול לקרות לאחר הפעלה מחדש של השרת. יש להתחבר שוב כדי לחדש את החיבור.",
+  "authRecovery.pairing": "המכשיר הזה כבר אינו מצומד ל-CodeNomad. במחשב המארח, יש לפתוח הגדרות ← גישה מרחוק, ליצור קישור צימוד חדש ולפתוח אותו במכשיר הזה, ואז לבדוק שוב.",
+  "authRecovery.pairingTitle": "יש לצמד מחדש את המכשיר הזה",
   "authRecovery.drafts": "הדף נשאר פתוח כדי לשמור על הטיוטות שלך. לאחר החיבור מחדש, יש לנסות שוב את הפעולה שנכשלה.",
   "authRecovery.username": "שם משתמש",
   "authRecovery.password": "סיסמה",

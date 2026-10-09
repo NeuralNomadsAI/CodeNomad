@@ -9,7 +9,8 @@
       "packages/server",
       "packages/ui",
       "packages/electron-app",
-      "packages/tauri-app"
+      "packages/tauri-app",
+      "packages/remote-tunnel"
     ]
   },
   "scripts": {
@@ -21,7 +22,7 @@
     "build:ui": "npm run build --workspace @codenomad/ui",
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
-    "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
+    "typecheck": "npm run typecheck --workspace @codenomad/remote-tunnel && npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
     "bumpVersion": "node ./scripts/bump-version.js"
   },
   "dependencies": {

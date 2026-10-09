@@ -3,6 +3,7 @@
  * For now this only wires the typed modules together; actual command handling comes later.
  */
 import { Command, InvalidArgumentError, Option } from "commander"
+import type { IncomingMessage, ServerResponse } from "http"
 import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
@@ -44,6 +45,8 @@ import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
+import { RemoteDeviceRegistry } from "./remote-control/devices"
+import { RemoteControlManager } from "./remote-control/manager"
 
 const require = createRequire(import.meta.url)
 
@@ -490,6 +493,14 @@ async function main() {
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
+  // Decrypted Remote Control requests enter the same application as local ones.
+  let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
+  const remoteControlManager = new RemoteControlManager({
+    registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
+    router: () => remoteControlRouter,
+    tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
+    logger: logger.child({ component: "remote-control" }),
+  })
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
@@ -525,6 +536,7 @@ async function main() {
         authManager,
         clientConnectionManager,
         remoteProxySessionManager,
+        remoteControlManager,
         yoloManager,
         permissionReceipts,
         panelExtensions,
@@ -555,6 +567,7 @@ async function main() {
         authManager,
         clientConnectionManager,
         remoteProxySessionManager,
+        remoteControlManager,
         yoloManager,
         permissionReceipts,
         panelExtensions,
@@ -568,6 +581,8 @@ async function main() {
 
   if (httpServer) servers.push(httpServer)
   if (httpsServer) servers.push(httpsServer)
+  const routingApp = servers[0]?.instance
+  remoteControlRouter = routingApp ? (request, response) => routingApp.routing(request, response) : null
 
   const [httpStart, httpsStart] = await Promise.all([
     httpServer ? httpServer.start() : Promise.resolve(null),
@@ -672,6 +687,7 @@ async function main() {
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
+          stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
             instanceEventBridge.shutdown()
             yoloManager.stop()
