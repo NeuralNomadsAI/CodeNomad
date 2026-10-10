@@ -5,6 +5,7 @@ import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionTaskMode } from "../lib/mission-defaults"
 import { useI18n } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
+import { runtimeEnv } from "../lib/runtime-env"
 import { instances } from "../stores/instances"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -38,7 +39,9 @@ export function MissionProfileControls(props: {
     const key = identity(), instanceId = props.instanceId
     const client = instanceClient()
     const generation = getOpenCodeInstanceGeneration(instanceId)
-    if (!demanded() || !client) return
+    // The separate Preferences window has no instance store; it reads through
+    // the same root proxy as its Providers section.
+    if (!demanded() || !instanceId || (!client && runtimeEnv.windowContext !== "preferences")) return
     const location = createRequestLocation(props.directory), controller = new AbortController()
     let alive = true
     const current = () => alive && demanded() && identity() === key && instances().get(instanceId)?.client === client

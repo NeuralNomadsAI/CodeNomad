@@ -11,8 +11,9 @@ export interface MissionReaderTarget {
   instanceId?: string
   projectID?: string
 }
-/** `listExpanded`: the picker's inline list, opened and closed only by its chevron. */
-interface ProjectView { selected?: string; selectedRecurrence?: string; reader?: MissionReaderTarget; listExpanded?: boolean }
+/** `listExpanded`: the picker's inline list, opened and closed only by its chevron.
+ * `tasksCollapsed`: the selected Mission's task tree, expanded unless collapsed. */
+interface ProjectView { selected?: string; selectedRecurrence?: string; reader?: MissionReaderTarget; listExpanded?: boolean; tasksCollapsed?: boolean }
 const [version, setVersion] = createSignal(0)
 const projects = new Map<string, ProjectView>()
 const disclosures = new Map<string, Map<string, boolean>>()
@@ -41,6 +42,7 @@ export function missionProjectView(scope: string): ProjectView {
       if (typeof stored.selected === "string") value.selected = stored.selected
       if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
       if (stored.listExpanded === true) value.listExpanded = true
+      if (stored.tasksCollapsed === true) value.tasksCollapsed = true
       const r = stored.reader
       if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence"].includes(r.kind)
         && (r.itemId === undefined || typeof r.itemId === "string")
@@ -55,7 +57,7 @@ export function updateMissionProjectView(scope: string, patch: Partial<ProjectVi
   const previous = missionProjectView(scope)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
-    && previous.listExpanded === value.listExpanded) return
+    && previous.listExpanded === value.listExpanded && previous.tasksCollapsed === value.tasksCollapsed) return
   projects.set(projectKey(scope), value)
   writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
   setVersion(v => v + 1)

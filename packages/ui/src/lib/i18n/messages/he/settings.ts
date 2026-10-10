@@ -242,6 +242,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "קובצי הגדרות",
   "settings.nav.info": "מידע",
+  "settings.nav.missions": "משימות",
   "settings.scope.device": "מכשיר זה",
   "settings.scope.server": "הגדרת שרת",
   "settings.common.enabled": "מופעל",

@@ -20,6 +20,7 @@ const SECTIONS: &[&str] = &[
     "remote",
     "opencode",
     "providers",
+    "missions",
     "sidecars",
     "config-files",
     "advanced",

@@ -234,6 +234,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "Yapılandırma Dosyaları",
   "settings.nav.info": "Bilgi",
+  "settings.nav.missions": "Görevler",
   "settings.scope.device": "Bu cihaz",
   "settings.scope.server": "Sunucu ayarı",
   "settings.common.enabled": "Etkin",

@@ -21,7 +21,7 @@ describe("Native Preferences section parity", () => {
     const settings = sourceSections("../stores/settings-screen.ts", /export type SettingsSectionId =([\s\S]*?)(?=\nconst |\nexport )/)
     const expected = [...PREFERENCES_SECTIONS].sort()
     assert.ok(expected.includes(providersSection))
-    assert.ok(!renderer.includes("missions") && !settings.includes("missions"), "Mission preferences belong inside Missions")
+    assert.ok(expected.includes("missions") && renderer.includes("missions") && settings.includes("missions"), "Mission preferences are a Settings section")
     for (const [name, sections] of Object.entries({ renderer, tauri, settings })) {
       assert.equal(new Set(sections).size, sections.length, `${name} has no duplicate sections`)
       assert.deepEqual(sections.sort(), expected, `${name} matches Electron`)
@@ -53,8 +53,10 @@ describe("Native Preferences section parity", () => {
     })
   })
 
-  it("does not broaden the native allowlist to arbitrary Mission-like sections", () => {
-    for (const section of ["missions", "mission", "Missions", "missions/admin", "workspace", ""]) {
+  it("accepts the exact Missions section but no Mission-like variants", () => {
+    assert.equal(requirePreferencesSection("missions"), "missions")
+    assert.deepEqual(normalizeNativePreferencesRequest("missions"), { section: "missions" })
+    for (const section of ["mission", "Missions", "missions/admin", "workspace", ""]) {
       assert.throws(() => requirePreferencesSection(section), /Invalid preferences section/)
       assert.equal(normalizeNativePreferencesRequest(section), null)
       assert.equal(normalizeNativePreferencesRequest({ section }), null)

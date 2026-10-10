@@ -16,9 +16,6 @@
 }
 
 .mission-control-actions { display: flex; align-items: center; gap: 2px; }
-.mission-control-preferences { margin-block-end: var(--space-sm); padding: 0 var(--space-sm) var(--space-sm); border: 1px solid var(--border-base); }
-.mission-control-preferences:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
-.mission-control-preferences > .window-header { padding-inline: 0; font-size: var(--font-size-sm); }
 
 .mission-control-icon-button {
   display: inline-flex;

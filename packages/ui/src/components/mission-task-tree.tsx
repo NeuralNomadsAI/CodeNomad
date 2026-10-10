@@ -1,8 +1,10 @@
-import { For, Show, createMemo } from "solid-js"
+import { For, Show, createMemo, createUniqueId } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { AlertTriangle, ArrowUpRight, Check, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
+import { AlertTriangle, ArrowUpRight, Check, ChevronRight, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
 import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
+import { instances } from "../stores/instances"
+import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
 
@@ -39,7 +41,17 @@ export function MissionTaskTree(props: {
   let list!: HTMLUListElement
   const ordered = createMemo(() => orderMissionTasks(props.mission.tasks))
   const linked = () => props.mission.tasks.some(task => task.blockedBy.length)
-  return <section class="mission-tree" aria-label={t("missionsPanel.tasks")}>
+  const id = `mission-tree-${createUniqueId()}`
+  // Per project, like the picker list: the folder scope survives instance restarts.
+  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const open = () => missionProjectView(scope()).tasksCollapsed !== true
+  return <section class="mission-tree mission-disclosure">
+    <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
+      onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>
+      <ChevronRight class="disclosure-chevron h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.tasks")}</span>
+      <small>{ordered().length}</small>
+    </button></h3>
+    <div id={id} hidden={!open()}>
     <Show when={ordered().length} fallback={<p class="mission-control-empty-line">{t(props.mission.runState === "prepared"
       ? "missions.progress.prepared" : "missions.progress.noPlan")}</p>}>
       <div class="mission-flow" classList={{ "mission-flow-linked": linked() }}>
@@ -76,5 +88,6 @@ export function MissionTaskTree(props: {
         <Show when={linked()}><MissionGraph tasks={ordered()} list={list} /></Show>
       </div>
     </Show>
+    </div>
   </section>
 }

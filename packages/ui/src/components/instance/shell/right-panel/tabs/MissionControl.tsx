@@ -9,7 +9,7 @@ import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
 import { getSessionPreview, showSessionChatFor } from "../../../../../stores/session-previews"
-import { forgetMissionView, missionDisclosureOpen, setMissionDisclosureOpen, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
+import { forgetMissionView, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
@@ -19,7 +19,7 @@ import { MissionSelectedActions } from "../../../../mission-selected-actions"
 import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
 import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
-import { MissionPreferences } from "../../../../mission-preferences"
+import { openSettings } from "../../../../../stores/settings-screen"
 import { createMissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { missionDerivedSessionIncludes, missionDerivedTaskSession } from "../../../../../stores/mission-task-sessions"
@@ -61,18 +61,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     setEditor({ ...action, current: captureView() })
   }
   const closeEditor = () => { intent++; setEditor(undefined) }
-  const preferencesScope = () => `preferences:${scope()}`
-  const preferencesId = createUniqueId()
-  const preferencesOpen = () => missionDisclosureOpen(preferencesScope(), "preferences", false)
-  const preferencesActive = () => (props.isActive?.() ?? true) && preferencesOpen()
-  let preferencesSection: HTMLElement | undefined
-  const openPreferences = () => {
-    setMissionDisclosureOpen(preferencesScope(), "preferences", true)
-    queueMicrotask(() => {
-      preferencesSection?.scrollIntoView({ block: "nearest" })
-      preferencesSection?.focus({ preventScroll: true })
-    })
-  }
+  const openPreferences = () => void openSettings("missions")
 
   const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
     preview: getSessionPreview(props.activeSessionId() ?? "", scope()), reader: missionProjectView(scope()).reader })
@@ -275,9 +264,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           onEdit={() => { const value = selectedOneTime(); if (value) openEditor({ kind: "edit", mission: value }) }}
           onDelete={() => { const value = selectedOneTime(); if (value) openEditor({ kind: "delete", mission: value }) }}
           trailing={<>
-          <button type="button" class="mission-control-icon-button icon-toggle" aria-label={props.t("missions.preferences.title")}
-            title={props.t("missions.preferences.title")} aria-expanded={preferencesOpen()} aria-controls={preferencesOpen() ? preferencesId : undefined}
-            onClick={() => setMissionDisclosureOpen(preferencesScope(), "preferences", !preferencesOpen())}>
+          <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.preferences.title")}
+            title={props.t("missions.preferences.title")} onClick={openPreferences}>
             <Settings class="h-4 w-4" aria-hidden="true" />
           </button>
           <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.control.refresh")}
@@ -289,13 +277,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           </button>
         </>} />
       </header>
-      <Show when={preferencesOpen()}>
-        <section ref={preferencesSection} id={preferencesId} class="mission-control-preferences" tabIndex={-1}
-          aria-label={props.t("missions.preferences.title")}>
-          <header class="window-header"><h3 class="window-title" title={props.t("missions.defaults.hint")}>{props.t("missions.preferences.title")}</h3></header>
-          <MissionPreferences instanceId={props.instanceId} directory={directory()} active={preferencesActive} />
-        </section>
-      </Show>
       <Show when={navigationError()}><p class="mission-control-stale" role="alert">{props.t("sessionList.reload.error")}</p></Show>
       <Show when={editor()} keyed>{action => {
         let completionCurrent: () => boolean = () => false

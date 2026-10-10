@@ -2,6 +2,10 @@
    the dependency rail and the conversation shortcut, carries the attenuated,
    rollover and selected states. The flow spans the panel edge to edge. */
 .mission-control .mission-flow { margin-inline: calc(-1 * var(--space-sm)); }
+/* The flow is the scroll container, so the absolute dependency overlay scrolls
+   with the rows it measures (mission-graph.css keeps it position: relative). */
+.mission-tree .mission-flow { max-height: min(24rem, 50vh); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.mission-tree > h3 .mission-disclosure-trigger > small { font-variant-numeric: tabular-nums; }
 .mission-control .mission-flow .mission-graph { inset-inline-start: var(--space-sm); }
 .mission-tree-list { display: grid; margin: 0; padding: 0; list-style: none; }
 .mission-tree-node {

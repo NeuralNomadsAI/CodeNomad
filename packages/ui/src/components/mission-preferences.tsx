@@ -80,7 +80,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
       profiles={entry()?.profiles} disabled={disabled()} onChange={change} />}</Show>
       <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"}
         taskMode={exception() ? missionTaskModeFor(draft(), exception()!) : globalMissionTaskMode(draft())}
-        profiles={entry()?.profiles} disabled={disabled()} active={props.active}
+        profiles={entry()?.profiles} disabled={disabled() || !props.instanceId} active={props.active}
         onChange={profiles => change(exception() ? preserveNativeDefaultOverrides(entry()?.profiles, profiles) : profiles)} />
     <div class="window-actions mission-preferences-actions"><button type="button" class="window-action button-primary" disabled={disabled() || !dirty()} onClick={() => void save()}>
       {t(pending() ? "missions.control.mutation.pending" : "missions.control.save")}</button>
