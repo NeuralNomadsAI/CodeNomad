@@ -104,3 +104,42 @@ test("a codeless server failure stays an exact uncertain hold without a resend",
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
+
+test("a newer editor whose adopted pending hold becomes uncertain keeps its unsent draft with truthful wording", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  let release!: () => void
+  const reply = new Promise<void>(resolve => { release = resolve })
+  try {
+    const fixture = await setup(page, async route => {
+      await reply
+      return route.fulfill({ status: 409, json: { error: "Mission creation settlement is unknown", code: "creation-uncertain" } })
+    })
+    await fixture.objective.fill("First pending create")
+    await submitReady(page)
+    await fixture.submit.click()
+    await page.waitForFunction(() => document.querySelector('form.mission-editor button[type="submit"]')?.textContent !== "Create")
+    await fixture.form.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await fixture.objective.fill("Newer unsent draft")
+    await submitReady(page)
+    await fixture.submit.click()
+    release()
+    const alert = page.getByRole("alert").filter({ hasText: "Another creation request from this window is unconfirmed" })
+    await alert.waitFor()
+    assert.match(await alert.innerText(), /draft shown here was not sent/)
+    assert.doesNotMatch(await alert.innerText(), /exactly as sent/)
+    assert.equal(await fixture.objective.inputValue(), "Newer unsent draft", "the unsent draft is not replaced or misattributed")
+    assert.equal(await fixture.submit.isDisabled(), true)
+    assert.equal(await fixture.form.getByRole("button", { name: "Save as brief", exact: true }).isDisabled(), false, "the unsent draft can still be kept as a brief")
+    assert.equal((await page.evaluate(() => window.missionEditorLifetime.held()))?.objective, "First pending create")
+    await page.waitForTimeout(200)
+    assert.equal(fixture.attempts.length, 1, "the newer draft was never sent")
+
+    // Reopening shows the held original with the sender's wording.
+    await fixture.form.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    assert.equal(await fixture.objective.inputValue(), "First pending create")
+    await page.getByRole("alert").filter({ hasText: "keeps the request exactly as sent" }).waitFor()
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
+})

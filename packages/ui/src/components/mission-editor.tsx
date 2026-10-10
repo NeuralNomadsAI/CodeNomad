@@ -102,6 +102,11 @@ export function MissionEditor(props: {
   const creationHold = () => kind === "create" && adopted() ? missionCreationHold(identity()) : undefined
   const creationPending = () => creationHold()?.state === "pending"
   const uncertain = () => recurrenceUncertain() || creationHold()?.state === "uncertain"
+  // The request whose exact draft this editor shows. An adopted hold from another
+  // editor leaves this draft unsent; its wording must not claim otherwise.
+  const [shownRequestId, setShownRequestId] = createSignal(held?.requestId)
+  const otherUncertain = () => !recurrenceUncertain() && creationHold()?.state === "uncertain"
+    && creationHold()!.operation.requestId !== shownRequestId()
   const busy = () => pending() || uncertain() || creationPending()
   const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
   const [deleteAttempted, setDeleteAttempted] = createSignal(false)
@@ -229,6 +234,7 @@ export function MissionEditor(props: {
         setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
         setTaskMode(existingHold.taskMode); setCustomTaskMode(true)
         setSelectedModel(submittedMissionModel(existingHold.requestId))
+        setShownRequestId(existingHold.requestId)
       }
       setAdopted(true); return
     }
@@ -248,6 +254,7 @@ export function MissionEditor(props: {
     const modelIdentity = selectedModel()
     if (kind === "create") {
       if (!holdMissionCreation(origin, creation)) { setAdopted(true); return }
+      setShownRequestId(creation.requestId)
       setAdopted(true)
     }
     setPending(true)
@@ -431,11 +438,12 @@ export function MissionEditor(props: {
           <textarea maxLength={20_000} value={notes()} disabled={pending()} onInput={e => setNotes(e.currentTarget.value)} />
         </label>
       </Show>}>{createBody()}</Show>
-      <Show when={uncertain()} fallback={<Show when={error()}><p role="alert">{error()}</p></Show>}><p role="alert">{t("missions.control.creation.uncertain")}</p></Show>
+      <Show when={uncertain()} fallback={<Show when={error()}><p role="alert">{error()}</p></Show>}><p role="alert">{t(otherUncertain() ? "missions.control.creation.uncertainOther" : "missions.control.creation.uncertain")}</p></Show>
     </div>
     <footer class="window-footer">
       <Show when={kind === "create"}>
-        <MissionBriefSave disabled={locked() || !isActive()} active={isActive}
+        {/* An unsent draft beside another request's hold may still be kept as a brief. */}
+        <MissionBriefSave disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
