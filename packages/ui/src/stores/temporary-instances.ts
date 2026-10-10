@@ -1,4 +1,3 @@
-import { createMemo, createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -26,41 +25,13 @@ function showFailure(titleKey: string, error: unknown) {
   })
 }
 
-/** Every folder the server still treats as temporary, open in a tab or not. */
-const [temporaryFolders, setTemporaryFolders] = createSignal<string[]>([])
-let foldersRequested = false
-
-function applyTemporaryFolders(folders: string[]) {
-  setTemporaryFolders(folders)
-  // A kept folder leaves the registry; every window drops its temporary mark.
-  const registered = new Set(folders)
+// A kept folder leaves the registry; every window drops its temporary mark.
+serverEvents.on("workspace.temporaryChanged", (event) => {
+  if (event.type !== "workspace.temporaryChanged") return
+  const registered = new Set(event.folders)
   for (const instance of instances().values()) {
     if (instance.temporary && !registered.has(instance.folder)) updateInstance(instance.id, { temporary: false })
   }
-}
-
-serverEvents.on("workspace.temporaryChanged", (event) => {
-  if (event.type === "workspace.temporaryChanged") applyTemporaryFolders(event.folders)
-})
-
-export function ensureTemporaryFoldersLoaded(): void {
-  if (foldersRequested) return
-  foldersRequested = true
-  serverApi.listTemporaryFolders()
-    .then(({ folders }) => applyTemporaryFolders(folders))
-    .catch((error) => {
-      foldersRequested = false
-      log.warn("Failed to list temporary folders", error)
-    })
-}
-
-/**
- * Temporary folders no tab shows, e.g. after a stop, a disconnection or a
- * partly failed discard. The home page offers to resume them.
- */
-export const leftoverTemporaryFolders = createMemo(() => {
-  const open = new Set(Array.from(instances().values(), (instance) => instance.folder))
-  return temporaryFolders().filter((folder) => !open.has(folder))
 })
 
 function temporaryName(date: Date): string {
@@ -68,16 +39,11 @@ function temporaryName(date: Date): string {
   return tGlobal("temporaryInstance.name", { time })
 }
 
-/** Folder names start with their UTC creation stamp, `YYYYMMDD-HHMMSS-<id>`. */
-export function temporaryFolderLabel(folder: string): string {
-  const name = folder.split(/[\\/]/).pop() ?? folder
-  const match = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-/.exec(name)
-  if (!match) return name
-  const [, year, month, day, hour, minute, second] = match
-  return temporaryName(new Date(Date.UTC(+year, +month - 1, +day, +hour, +minute, +second)))
-}
-
-/** Opens a new tab on an empty CodeNomad-managed folder, outside the recent projects. */
+/**
+ * Opens a new tab on an empty CodeNomad-managed folder, outside the recent
+ * projects. Like any project tab it is saved with the app state and restored
+ * on restart, still marked temporary.
+ */
 export async function openTemporaryInstance(): Promise<string> {
   const { path } = await serverApi.createTemporaryFolder()
   try {
@@ -88,12 +54,6 @@ export async function openTemporaryInstance(): Promise<string> {
     await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
     throw error
   }
-}
-
-/** Reopens a leftover temporary folder; closing it asks to keep or discard again. */
-export async function resumeTemporaryInstance(folder: string): Promise<string> {
-  const { instanceId } = await createInstance(folder, temporaryFolderLabel(folder))
-  return instanceId
 }
 
 // Another window kept the folder and this one missed the event.

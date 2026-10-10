@@ -246,7 +246,8 @@ export class TemporaryWorkspaces {
       } finally {
         release()
       }
-      // A failed removal stays registered; the home page lists it for another discard.
+      // A failed removal stays registered but no longer has a tab; it can only be
+      // reopened by browsing to the folder, then kept or discarded again.
       await this.options.registry.delete(workspace.path)
       this.changed()
     })

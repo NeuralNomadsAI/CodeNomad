@@ -27,8 +27,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.button": "Cloner un depot Git",
   "folderSelection.temporary.button": "Nouvelle instance temporaire",
   "folderSelection.temporary.description": "Démarrer dans un dossier vide géré par CodeNomad ; à la fermeture de l'onglet, vous pourrez le garder ou le jeter",
-  "folderSelection.temporary.resume": "Reprendre {name}",
-  "folderSelection.temporary.resumeDescription": "Rouvrir cette instance temporaire restante pour la garder ou la jeter",
   "folderSelection.clone.destination.title": "Choisir la destination du clone",
   "folderSelection.clone.destination.description": "Selectionnez le dossier ou le depot doit etre clone.",
   "folderSelection.clone.dialog.title": "Cloner un depot Git",
@@ -43,8 +41,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.clone": "Cloner",
   "folderSelection.clone.dialog.cloning": "Clonage...",
   "folderSelection.clone.dialog.errorRequired": "L'URL du depot et le dossier de destination sont requis.",
-  "folderSelection.actions.title": "Ouvrir un dossier ou se connecter à un serveur",
-  "folderSelection.actions.subtitle": "Ouvrez un dossier local ou connectez-vous à un serveur CodeNomad",
   "folderSelection.actions.connectButton": "Se connecter au serveur CodeNomad",
 
   "folderSelection.advancedSettings": "Paramètres avancés",
