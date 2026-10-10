@@ -12,8 +12,15 @@
 .mission-control > .mission-detail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .mission-control > .mission-detail > * { flex-shrink: 0; }
 .mission-control > .mission-detail > .mission-tree { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 8rem; }
+/* Collapsed, the group is only its heading and reserves no task room. */
+.mission-control > .mission-detail > .mission-tree:has(> div[hidden]) { min-height: 0; }
 .mission-control .mission-tree > div:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .mission-control .mission-tree .mission-flow { flex: 1 1 auto; min-height: 0; }
+/* Short layouts (mission-task-scroll.ts): when the rest of the panel leaves no room
+   for the group's minimum, the panel scrolls everything and the flow keeps its
+   natural height, so nothing is clipped and scrollers never nest. */
+.mission-control:has(> .mission-detail > .mission-tree[data-scroller="panel"]) > .mission-detail { flex-shrink: 0; }
+.mission-control .mission-tree[data-scroller="panel"] .mission-flow { overflow: clip visible; overscroll-behavior: auto; }
 /* Separates the task group from the selected mission's toolbar above it. */
 .mission-control .mission-tree { border-top: 1px solid var(--border-base); padding-top: var(--space-xs); }
 .mission-tree > h3 .mission-disclosure-trigger > small { font-variant-numeric: tabular-nums; }
