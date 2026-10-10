@@ -17,6 +17,8 @@ import { sessions, setSessions } from "./session-state"
 import { createClientSession } from "../types/session"
 import { reloadWorktrees } from "./worktrees"
 import { sseManager } from "../lib/sse-manager"
+import { getToastHistory } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 
 const permission = (id: string): PermissionRequest => ({ id, sessionID: "background", action: "read", resources: ["file"] })
 const form = (id: string, sessionID = "global") => ({
@@ -193,6 +195,36 @@ test("known permission/Form authority and active sessions cannot be excluded as 
     assert.equal(getFormQueue(h.id)[0], draft)
     assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known"])
     assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
+test("the recovery warning needs consecutive incomplete attempts and a success re-arms it", async () => {
+  const h = harness()
+  const warnings = () => getToastHistory().filter((item) => item.message === tGlobal("interruption.recoveryIncomplete")).length
+  try {
+    const before = warnings()
+    const fail = async () => {
+      serverApi.getPendingRequests = async () => { throw new Error("Temporary transport failure") }
+      await assert.rejects(syncPendingRequests(h.id))
+    }
+    const succeed = async () => {
+      serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })) })
+      await syncPendingRequests(h.id)
+    }
+    await fail()
+    assert.equal(incompletePendingRecovery().has(h.id), true, "Incomplete state is immediate even without a warning")
+    assert.equal(warnings(), before, "One transient failure does not warn")
+    await succeed()
+    await fail()
+    assert.equal(warnings(), before, "Alternating success/failure never warns")
+    await fail()
+    assert.equal(warnings(), before + 1)
+    await fail()
+    assert.equal(warnings(), before + 1, "A persistent failure warns once")
+    await succeed()
+    await fail()
+    await fail()
+    assert.equal(warnings(), before + 2, "A new persistent failure after recovery warns again")
   } finally { h.cleanup() }
 })
 
