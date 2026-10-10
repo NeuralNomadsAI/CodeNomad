@@ -4,7 +4,6 @@ import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
 import { scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
-import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
@@ -118,14 +117,11 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.enabled(),
     reconcile: () => heldIntent() ? check() : Promise.resolve(),
     resend: () => retryCapable() ? act(heldIntent()!.action, true) : Promise.resolve() }
-  const menu = (): ActionOverflowMenuItem[] => [
-    ...props.schedule.actions.filter(action => action !== primaryAction() && action !== "stop" && !heldIntent()).map(action => ({
-      key: action, label: label(action), description: description(action), disabled: !capable(action),
-      onSelect: () => action === "stop" ? stop() : act(action),
-    })),
-  ]
+  // Always present for schedules, disabled while unavailable or a request is held.
+  const runNow = (): MissionPrimaryAction => ({ key: "run-now", label: label("run-now"), ariaLabel: description("run-now"),
+    disabled: !capable("run-now"), onSelect: () => act("run-now") })
   const feedback = <Show when={heldIntent()}><small role="status">{t("missions.recurrence.uncertain")}</small></Show>
-  return { primary, stop: stopAction, menu, retry, feedback }
+  return { primary, stop: stopAction, runNow, retry, feedback }
 }
 
 /** Recurring schedules: picker entries for the shared mission list, and the
@@ -198,7 +194,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
           reading={props.passage ? props.passage.reading : reading(schedule().id)}
           onToggleReader={() => props.passage ? props.passage.onToggle() : read(schedule().id)}
           primary={controls.primary()} stop={controls.stop()} onOpenConversation={props.passage?.onOpenConversation}
-          items={controls.menu()} feedback={controls.feedback} />
+          runNow={controls.runNow()} feedback={controls.feedback} />
         <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
         <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
           {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
