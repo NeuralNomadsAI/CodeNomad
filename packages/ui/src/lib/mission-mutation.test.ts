@@ -9,6 +9,9 @@ test("Mission mutation classification distinguishes held creation, capacity, sco
   assert.equal(key(409, "creation-uncertain"), "missions.control.creation.uncertain")
   assert.equal(key(503, "creation-capacity"), "missions.control.creation.capacity")
   assert.equal(key(409, "creation-conflict"), "missions.control.creation.scopeConflict")
+  assert.equal(key(503, "creation-unavailable"), "missions.control.creation.unavailable")
+  assert.equal(key(409, "creation-worktree-deleting"), "missions.control.creation.worktreeDeleting")
+  assert.equal(key(409, "mission-limit"), "missions.control.creation.limit")
   assert.equal(key(409, "revision-conflict"), "missions.control.mutation.conflict")
   assert.equal(key(409, "request-conflict"), "missions.control.mutation.requestConflict")
   assert.equal(key(403, undefined), "missions.control.mutation.forbidden")
@@ -22,6 +25,7 @@ test("Mission mutation classification distinguishes held creation, capacity, sco
 test("only a received reviewed rejection is a definitive creation outcome; transport, decode and unknown statuses stay uncertain", () => {
   const create = (status: number, code?: ConstructorParameters<typeof MissionMutationError>[2]) => new MissionMutationError(status, "create", code)
   for (const error of [create(400), create(401), create(403), create(404), create(409, "creation-conflict"), create(503, "creation-capacity"),
+    create(503, "creation-unavailable"), create(409, "creation-worktree-deleting"), create(409, "mission-limit"),
     create(409, "revision-conflict"), create(409, "request-conflict")]) assert.equal(isDefinitiveCreationRejection(error), true, `${error.status} ${error.code}`)
   for (const error of [new TypeError("fetch failed"), new SyntaxError("truncated JSON"), create(409, "creation-uncertain"), create(409),
     create(500), create(502), create(503), create(504), new MissionMutationError(400, "edit"), new Error("private"), undefined]) {
@@ -50,6 +54,10 @@ test("only allowlisted codes survive, and edit cannot manufacture a creation hol
   }
   assert.equal(missionMutationCode({ code: "creation-uncertain", error: "private text" }, "create"), "creation-uncertain")
   assert.equal(missionMutationCode({ code: "creation-uncertain" }, "edit"), undefined)
+  for (const code of ["creation-unavailable", "creation-worktree-deleting", "mission-limit"]) {
+    assert.equal(missionMutationCode({ code }, "create"), code)
+    assert.equal(missionMutationCode({ code }, "edit"), undefined)
+  }
   assert.equal(missionMutationCode({ code: "revision-conflict" }, "edit"), "revision-conflict")
 })
 

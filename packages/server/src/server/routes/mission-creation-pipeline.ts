@@ -100,6 +100,7 @@ export async function prepareMissionCreation(input: {
   })
   let disposed = false
   let executing = false
+  let dispatched = false
   const release = () => { if (!disposed) { disposed = true; admission.release() } }
   const dispose = () => { if (!executing) release() }
   const assertCurrent = async () => {
@@ -108,6 +109,8 @@ export async function prepareMissionCreation(input: {
   }
   return {
     missionID, sessionID, creationMessageID, request: structuredClone(nativeInput), dispose,
+    /** False until the native create is attempted: any earlier failure proves no effect. */
+    get dispatched() { return dispatched },
     /** Internal protected composition may supply a fresh exact passage fence.
      * This is NOT a standing grant: recurrence never exposes execute until its
      * real protected grant and native first-effect enforcement are qualified. */
@@ -125,6 +128,7 @@ export async function prepareMissionCreation(input: {
           const result: unknown = current()
           return (result === undefined ? true : result) as true
         }, "policy-unqualified")
+        dispatched = true
         admission.dispatched()
         // No cancellation race or signal after dispatch: transport rejection is
         // not a no-effect receipt. The original physical permit remains parked.

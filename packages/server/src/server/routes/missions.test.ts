@@ -68,7 +68,8 @@ function manager(options: {
   return { calls, value: value as never }
 }
 
-function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean } = {}) {
+function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean
+  pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const workspace = { id: "workspace-1" }
   const value = {
@@ -80,20 +81,23 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
     },
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
-    getSharedServiceConnection: async () => ({ client: await value.getSharedServiceClient(), assertCurrent() {} }),
+    getSharedServiceConnection: async () => options.noConnection ? undefined : ({ client: await value.getSharedServiceClient(), assertCurrent() {} }),
     getSharedServiceClient: async () => ({
-      location: { get: async ({ location }: { location: { directory: string } }) => ({
-        directory: location.directory, project: { id: "project-1" },
-      }) },
+      location: { get: async ({ location }: { location: { directory: string } }) => {
+        if (options.locationError) throw options.locationError
+        return { directory: location.directory, project: { id: "project-1" } }
+      } },
       session: { get: async ({ sessionID }: { sessionID: string }) => ({
         id: sessionID, projectID: "project-1", location: { directory: "/owned/repo" },
       }) },
-      plugin: { list: async ({ location }: { location: { directory: string } }) => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }], location }) },
+      plugin: { list: async ({ location }: { location: { directory: string } }) => ({
+        data: [{ id: "codenomad.missions", state: { status: options.pluginInactive ? "failed" : "active" } }], location }) },
       rpc: (definition: { id: string }) => {
         calls.push({ method: "rpc", value: definition.id })
         return {
           create: async (input: any, rpcOptions: unknown) => {
             calls.push({ method: "create", value: { input, rpcOptions } })
+            if (options.createError) throw options.createError
             const id = `msn_${stableToken(`project-1\0${input.requestID}`, 24)}`
             const sessionID = input.coordinatorSessionID ?? `ses_${stableToken(`${id}\0coordinator`, 26)}`
             return { mission: { id, projectID: "project-1", coordinatorSessionId: sessionID,
@@ -381,4 +385,40 @@ test("creation forwards both task policies; dropping independent mode retains an
       payload: { objective: "Invalid policy", template: "custom", requestId: "bad-mode", taskMode } })).statusCode, 400)
   }
   assert.equal(fake.calls.length, 0)
+})
+
+test("creation refusals before the native create carry no-effect codes; dispatched failures stay uncertain", async t => {
+  const create = async (options: Parameters<typeof mutationManager>[0], fence: WorktreeDeletionFence | null = new WorktreeDeletionFence()) => {
+    const fake = mutationManager(options), app = Fastify({ logger: false })
+    t.after(() => app.close())
+    registerMissionRoutes(app, { workspaceManager: fake.value, ...(fence ? { worktreeDeletionFence: fence } : {}) })
+    const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
+      payload: { objective: "Refusal", template: "custom", requestId: "refusal-1" } })
+    return { status: response.statusCode, body: response.json(), creates: fake.calls.filter(call => call.method === "create").length }
+  }
+  for (const [label, result] of [
+    ["missing fence", await create({}, null)],
+    ["inactive plugin", await create({ pluginInactive: true })],
+    ["no connection", await create({ noConnection: true })],
+    ["pre-dispatch transport failure", await create({ locationError: new Error("private socket failure") })],
+  ] as const) {
+    assert.deepEqual({ status: result.status, code: result.body.code, creates: result.creates },
+      { status: 503, code: "creation-unavailable", creates: 0 }, label)
+    assert.ok(!JSON.stringify(result.body).includes("private"), label)
+  }
+
+  const fence = new WorktreeDeletionFence()
+  let release!: () => void
+  const deletion = fence.run("/owned/repo", ["/owned/repo"], () => new Promise<void>(resolve => { release = resolve }))
+  await new Promise(resolve => setImmediate(resolve))
+  try {
+    assert.deepEqual(await create({}, fence), { status: 409, body: { error: "Worktree deletion is in progress", code: "creation-worktree-deleting" }, creates: 0 })
+  } finally { release(); await deletion }
+
+  // Once the native create was attempted, nothing proves the absence of an effect.
+  const dispatched = await create({ createError: new Error("socket closed after write") })
+  assert.deepEqual({ status: dispatched.status, code: dispatched.body.code, creates: dispatched.creates },
+    { status: 409, code: "creation-uncertain", creates: 1 })
+  // Ordinary validation refusals remain reviewed codeless statuses.
+  assert.equal((await create({ owns: false })).status, 403)
 })

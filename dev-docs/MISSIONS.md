@@ -441,6 +441,16 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
 - Existing root actors may be reused, but an actor cannot join two active missions.
 - Dependency tasks are mapped as blocked and are never auto-dispatched.
 - Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. The Debugging playbook's completed-role evidence gates still apply; retirement cannot satisfy a gate.
+- One-time creation refusals that provably happen before the native create is
+  attempted carry no-effect codes (`creation-unavailable` 503,
+  `creation-worktree-deleting` 409, plus the existing capacity/scope codes and a
+  receipt-backed native `mission-limit`): the UI keeps the draft and re-enables
+  Create. Every later failure stays an exact `creation-uncertain`/codeless hold.
+  Known limit: that UI hold lives in window memory only and there is no exact
+  creation-status endpoint, so an uncertain create keeps Create blocked for that
+  project scope until the window reloads (the backend permit and deletion block
+  remain until native settlement). Reloading does not prove the original create
+  failed; check the mission list before creating again.
 
 ## Included playbooks
 

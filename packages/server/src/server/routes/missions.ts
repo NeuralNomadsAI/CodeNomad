@@ -103,19 +103,29 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
 
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply) => {
     const lifetime = requestAdmission(request, reply)
+    let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
     try {
       lifetime.signal.throwIfAborted()
-      const creation = await prepareMissionCreation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
+      creation = await prepareMissionCreation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
         workspaceID: request.params.id, request: request.body, signal: lifetime.signal, wait: lifetime.wait })
       return await creation.execute()
     } catch (error) {
-      if (error instanceof MissionCreationPreparationError) return reply.code(error.status).send({ error: error.message })
+      // Hold codes keep their own meaning: a creation-uncertain retry may follow
+      // an earlier dispatched attempt with the same request identity.
       if (error instanceof MissionCreationHoldError) {
         return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
       }
-      if (error instanceof Error && "code" in error && error.code === "worktree-deleting") {
-        return reply.code(409).send({ error: "Worktree deletion is in progress" })
+      const deleting = error instanceof Error && "code" in error && error.code === "worktree-deleting"
+      // Only failures before the native create was attempted prove no effect and
+      // carry a no-effect code; later failures stay codeless and uncertain.
+      if (!creation?.dispatched) {
+        if (error instanceof MissionCreationPreparationError) {
+          return reply.code(error.status).send({ error: error.message, ...(error.status === 503 ? { code: "creation-unavailable" } : {}) })
+        }
+        if (deleting) return reply.code(409).send({ error: "Worktree deletion is in progress", code: "creation-worktree-deleting" })
+        return reply.code(503).send({ error: "Mission creation unavailable", code: "creation-unavailable" })
       }
+      if (deleting) return reply.code(409).send({ error: "Worktree deletion is in progress" })
       return mutationError(reply, error)
     } finally { lifetime.dispose() }
   })

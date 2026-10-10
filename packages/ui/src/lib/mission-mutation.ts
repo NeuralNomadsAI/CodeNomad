@@ -2,13 +2,16 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { authenticatedFetch } from "./auth-recovery"
 import { HttpResponseError } from "./retryable-file-search"
 
-const codes = ["creation-uncertain", "creation-conflict", "creation-capacity", "revision-conflict", "request-conflict"] as const
+const codes = ["creation-uncertain", "creation-conflict", "creation-capacity", "creation-unavailable", "creation-worktree-deleting",
+  "mission-limit", "revision-conflict", "request-conflict"] as const
 type MissionMutationCode = typeof codes[number]
 type Operation = "create" | "edit"
+// The route forwards a native mission-limit only with its exact no-effect receipt.
+const createOnly = (code: MissionMutationCode) => code.startsWith("creation-") || code === "mission-limit"
 
 export function missionMutationCode(body: unknown, operation: Operation): MissionMutationCode | undefined {
   if (!body || typeof body !== "object" || !("code" in body)) return undefined
-  return codes.find(code => body.code === code && (operation === "create" || !code.startsWith("creation-")))
+  return codes.find(code => body.code === code && (operation === "create" || !createOnly(code)))
 }
 
 export class MissionMutationError extends HttpResponseError {
@@ -39,9 +42,11 @@ export function isUncertainCreation(error: unknown): boolean {
 }
 
 // The route answers every dispatched-but-unproven create with `creation-uncertain`;
-// only another received, reviewed rejection proves no effect. Transport loss, an
-// undecodable acknowledgement and unrecognized statuses (including proxy 5xx) may
-// follow a committed native write and must keep the original request held.
+// only another received, reviewed rejection proves no effect. Refusals before the
+// native create was attempted carry `creation-unavailable` or
+// `creation-worktree-deleting`. Transport loss, an undecodable acknowledgement and
+// codeless statuses (including proxy 5xx and post-dispatch failures) may follow a
+// committed native write and must keep the original request held.
 export function isDefinitiveCreationRejection(error: unknown): boolean {
   if (!(error instanceof MissionMutationError) || error.operation !== "create") return false
   if (error.code) return error.code !== "creation-uncertain"
@@ -53,6 +58,9 @@ export function missionMutationErrorKey(error: unknown): string {
     if (isUncertainCreation(error)) return "missions.control.creation.uncertain"
     if (error.status === 409 && error.code === "creation-conflict") return "missions.control.creation.scopeConflict"
     if (error.status === 503 && error.code === "creation-capacity") return "missions.control.creation.capacity"
+    if (error.status === 503 && error.code === "creation-unavailable") return "missions.control.creation.unavailable"
+    if (error.status === 409 && error.code === "creation-worktree-deleting") return "missions.control.creation.worktreeDeleting"
+    if (error.status === 409 && error.code === "mission-limit") return "missions.control.creation.limit"
     if (error.status === 409 && error.code === "revision-conflict") return "missions.control.mutation.conflict"
     if (error.status === 409 && error.code === "request-conflict") return "missions.control.mutation.requestConflict"
     if (error.status === 403) return "missions.control.mutation.forbidden"
