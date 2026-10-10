@@ -144,7 +144,7 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [minimum, latest]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -175,12 +175,17 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # The Missions fixture invokes tools through ctx.tool.list, which is
-          # newer than the application's technical minimum (2.0.7).
+          # Shipped Missions bundle: loading, model-visible tools through the
+          # ordinary prompt loop, journal RPC and recurrence capability.
+          node scripts/test-missions-native-contract.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-missions-native-family-control.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Only this fixture's own test-harness plugin drives tool executors
+          # through ctx.tool.list, which postdates 2.0.7; the product does not
+          # consume it, so the minimum is covered by the contract fixture above.
           if ('${{ matrix.runtime }}' -eq 'latest') {
             node scripts/test-missions-native.mjs $cli
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            node scripts/test-missions-native-family-control.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           node scripts/test-session-environment-native.mjs $cli
@@ -191,6 +196,12 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Recurring schedule journeys (~6.5 min) qualify the latest stable
+          # only; the contract fixture qualifies the recurrence graph on both.
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-recurring-simple-native.mjs $cli ABCD
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
 
   tests:
     needs: authorize
