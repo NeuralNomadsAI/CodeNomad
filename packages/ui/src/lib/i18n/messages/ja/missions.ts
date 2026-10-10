@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "プロジェクト連携",
   "missions.control.title": "ミッションコントロール",
   "missions.control.refresh": "ミッションマップを更新",
+  "missions.control.refreshResend": "更新して未確認の操作を再送信",
   "missions.control.loading": "ミッションマップを読み込み中…",
   "missions.control.unavailable.title": "ミッションコントロールを利用できません",
   "missions.control.unavailable.workspace": "OpenCode ワークスペースの準備ができていません。再接続して更新してください。",

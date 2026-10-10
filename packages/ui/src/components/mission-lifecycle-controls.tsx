@@ -7,12 +7,15 @@ import { missionStore } from "../stores/missions"
 import { instances } from "../stores/instances"
 import { showConfirmDialog } from "../stores/alerts"
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
-import type { ActionOverflowMenuItem } from "./action-overflow-menu"
-
 export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; onSelect: () => void | Promise<void> }
 
-/** Play/Pause/Stop for one Mission row: one contextual primary action, the rest
- * for the row's overflow menu. Unresolved requests are checked, never resent. */
+/** Explicit refresh-then-resend of a selected item's unconfirmed control, owned
+ * by the panel's refresh button. `reconcile` is read-only; `resend` replays the
+ * exact original request identity and runs only from that explicit click. */
+export interface MissionControlRetry { pending: () => boolean; reconcile: () => Promise<void>; resend: () => Promise<void> }
+
+/** Play/Pause/Stop for the selected Mission: one contextual primary action and
+ * Stop. Unresolved requests are checked, and resent only on explicit refresh. */
 export function createMissionLifecycle(props: { instanceId: string; mission: MissionMap; disabled?: boolean }) {
   const { t } = useI18n()
   const [refreshing, setRefreshing] = createSignal(false)
@@ -103,11 +106,12 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   }
   const stop = (): MissionPrimaryAction | undefined => !terminal() && !(retry() && !pending())
     ? { key: "stop", label: t("missions.control.run.stop"), disabled: blocked(), onSelect: confirmStop } : undefined
-  const menu = (): ActionOverflowMenuItem[] => unresolved() && !retryBlocked() ? [{ key: "retry", label: t("missionsPanel.action.retry"),
-    disabled: Boolean(props.disabled) || busy(), onSelect: () => act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) }] : []
+  /** The unresolved exact request may be resent, unchanged, on an explicit click only. */
+  const retryable = () => unresolved() && !retryBlocked() && !props.disabled && !busy()
+  const resend = () => retryable() ? act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
   const feedback = <>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
     <Show when={!busy() && (unresolved() || (full() && !terminal()))}><small role="alert">{t("missions.control.run.error")}</small></Show>
   </>
-  return { primary, stop, menu, feedback }
+  return { primary, stop, retryable, resend, feedback }
 }

@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "परियोजना समन्वय",
   "missions.control.title": "मिसन नियन्त्रण",
   "missions.control.refresh": "मिसन नक्सा ताजा गर्नुहोस्",
+  "missions.control.refreshResend": "ताजा गर्नुहोस् र पुष्टि नभएको कार्य पुनः पठाउनुहोस्",
   "missions.control.loading": "मिसन नक्सा पढिँदै छ…",
   "missions.control.unavailable.title": "मिसन नियन्त्रण उपलब्ध छैन",
   "missions.control.unavailable.workspace": "OpenCode कार्यक्षेत्र तयार छैन। फेरि जडान गरेर ताजा गर्नुहोस्।",

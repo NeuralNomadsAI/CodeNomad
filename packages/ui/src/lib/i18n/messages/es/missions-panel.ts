@@ -17,6 +17,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "Editar",
   "missionsPanel.action.openConversation": "Abrir conversación",
   "missionsPanel.action.requestUpdate": "Pedir una actualización",
+  "missionsPanel.action.recover": "Recuperar la misión interrumpida",
   "missionsPanel.task.active": "Activa",
   "missionsPanel.task.ready": "Siguiente",
   "missionsPanel.task.blocked": "Bloqueada",

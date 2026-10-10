@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "Coordination du projet",
   "missions.control.title": "Centre de mission",
   "missions.control.refresh": "Actualiser la carte de mission",
+  "missions.control.refreshResend": "Actualiser et renvoyer l’action non confirmée",
   "missions.control.loading": "Lecture de la carte de mission…",
   "missions.control.unavailable.title": "Le centre de mission est indisponible",
   "missions.control.unavailable.workspace": "L’espace de travail OpenCode n’est pas prêt. Reconnectez-le, puis actualisez.",

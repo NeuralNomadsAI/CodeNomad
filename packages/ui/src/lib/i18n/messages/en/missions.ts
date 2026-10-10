@@ -280,6 +280,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "Project coordination",
   "missions.control.title": "Mission Control",
   "missions.control.refresh": "Refresh mission map",
+  "missions.control.refreshResend": "Refresh and resend the unconfirmed action",
   "missions.control.loading": "Reading the mission map…",
   "missions.control.unavailable.title": "Mission Control is unavailable",
   "missions.control.unavailable.workspace": "The OpenCode workspace is not ready. Reconnect it, then refresh.",

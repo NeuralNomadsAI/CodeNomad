@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "תיאום הפרויקט",
   "missions.control.title": "בקרת משימה",
   "missions.control.refresh": "רענון מפת המשימה",
+  "missions.control.refreshResend": "רענון ושליחה מחדש של הפעולה שלא אושרה",
   "missions.control.loading": "מפת המשימה נטענת…",
   "missions.control.unavailable.title": "בקרת המשימה אינה זמינה",
   "missions.control.unavailable.workspace": "סביבת העבודה של OpenCode אינה מוכנה. יש להתחבר מחדש ולרענן.",

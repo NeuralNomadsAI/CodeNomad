@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "项目协同",
   "missions.control.title": "任务控制台",
   "missions.control.refresh": "刷新任务地图",
+  "missions.control.refreshResend": "刷新并重新发送未确认的操作",
   "missions.control.loading": "正在读取任务地图…",
   "missions.control.unavailable.title": "任务控制台不可用",
   "missions.control.unavailable.workspace": "OpenCode 工作区尚未就绪。请重新连接后刷新。",

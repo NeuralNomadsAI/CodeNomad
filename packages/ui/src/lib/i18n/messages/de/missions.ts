@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "Projektkoordination",
   "missions.control.title": "Missionszentrale",
   "missions.control.refresh": "Missionskarte aktualisieren",
+  "missions.control.refreshResend": "Aktualisieren und die unbestätigte Aktion erneut senden",
   "missions.control.loading": "Missionskarte wird gelesen…",
   "missions.control.unavailable.title": "Missionszentrale ist nicht verfügbar",
   "missions.control.unavailable.workspace": "Der OpenCode-Arbeitsbereich ist nicht bereit. Erneut verbinden und aktualisieren.",

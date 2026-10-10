@@ -275,6 +275,7 @@ export const missionMessages = {
   "missions.control.eyebrow": "Proje koordinasyonu",
   "missions.control.title": "Görev Kontrolü",
   "missions.control.refresh": "Görev haritasını yenile",
+  "missions.control.refreshResend": "Yenile ve onaylanmamış işlemi yeniden gönder",
   "missions.control.loading": "Görev haritası okunuyor…",
   "missions.control.unavailable.title": "Görev Kontrolü kullanılamıyor",
   "missions.control.unavailable.workspace": "OpenCode çalışma alanı hazır değil. Yeniden bağlanıp yenileyin.",

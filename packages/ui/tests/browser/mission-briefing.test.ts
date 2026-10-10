@@ -85,25 +85,17 @@ const row = (page: Page, title = TITLE) => page.locator("li.mission-index-entry"
 // The selected Mission's detail is a separate section below the list; request
 // feedback stays under its row and all prose opens in the central reader.
 const card = (page: Page) => page.locator("section.mission-detail")
-const feedback = (page: Page) => row(page).locator(".mission-briefing-feedback")
+const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
 const readAll = (page: Page) => card(page).locator(".mission-overview-toggle")
 const reader = (page: Page) => page.locator(".mission-reader")
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))
-async function openMenu(page: Page, title = TITLE) {
-  await row(page, title).getByRole("button", { name: "Plus d’actions", exact: true }).click()
-  await page.getByRole("menu").waitFor()
-}
-/** The briefing request lives in the row menu; unavailable items are hidden, never disabled. */
+/** The briefing request is a permanent toolbar icon; unavailable or waiting requests disable it. */
+const requestButton = (page: Page) => card(page).getByRole("toolbar").getByRole("button", { name: REQUEST, exact: true })
 async function requestUpdate(page: Page) {
-  await openMenu(page)
-  await page.getByRole("menuitem", { name: REQUEST, exact: true }).click()
+  await requestButton(page).click()
 }
 async function canRequest(page: Page): Promise<boolean> {
-  await openMenu(page)
-  const count = await page.getByRole("menuitem", { name: REQUEST, exact: true }).count()
-  await page.keyboard.press("Escape")
-  await page.getByRole("menu").waitFor({ state: "hidden" })
-  return count === 1
+  return await requestButton(page).isEnabled()
 }
 function publish(value: MissionMap, requestID: string) {
   value.briefing = { id: `briefing-${value.id}-${requestID}`, requestID, basedOnRevision: value.revision, basedOnUpdatedAt: value.updatedAt,
@@ -200,9 +192,8 @@ test("unconfirmed briefing admission survives navigation and remount without aut
 test("a freshly paused mission fences the request without resuming or sending it", async () => {
   const { page, values, writes } = await setup()
   try {
-    // Pause lands after the menu offered the request: admission's fresh read must fence it.
-    await openMenu(page)
-    const item = page.getByRole("menuitem", { name: REQUEST, exact: true })
+    // Pause lands after the toolbar offered the request: admission's fresh read must fence it.
+    const item = requestButton(page)
     await item.waitFor()
     values[0].runState = "paused"
     await item.click()
@@ -221,8 +212,7 @@ test("the panel has no coordinator field; Open conversation in the row menu reac
     assert.equal(await feedback(page).count(), 0)
     assert.equal(await canRequest(page), true)
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
-    await openMenu(page)
-    await page.getByRole("menuitem", { name: "Ouvrir la conversation", exact: true }).click()
+    await card(page).getByRole("button", { name: "Ouvrir la conversation", exact: true }).click()
     await page.waitForFunction(() => window.missionNavigation.snapshot().selectedSession === "ses_A")
     assert.ok(!writes.some(write => write.path.includes("/missions/")))
     assert.deepEqual(errors, [])

@@ -17,6 +17,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "सम्पादन गर्नुहोस्",
   "missionsPanel.action.openConversation": "कुराकानी खोल्नुहोस्",
   "missionsPanel.action.requestUpdate": "अद्यावधिक माग्नुहोस्",
+  "missionsPanel.action.recover": "अवरुद्ध मिसन पुनःप्राप्त गर्नुहोस्",
   "missionsPanel.task.active": "सक्रिय",
   "missionsPanel.task.ready": "अर्को",
   "missionsPanel.task.blocked": "अवरुद्ध",

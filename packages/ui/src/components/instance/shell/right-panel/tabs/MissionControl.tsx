@@ -16,6 +16,7 @@ import { missionIncludesSession, selectMissionAttention } from "../../../../miss
 import { MissionPicker } from "../../../../mission-picker"
 import { missionEntryAttention, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
+import type { MissionControlRetry } from "../../../../mission-lifecycle-controls"
 import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
 import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
@@ -43,6 +44,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const [editor, setEditor] = createSignal<MissionEditorAction & { current: () => boolean }>()
   const [navigationError, setNavigationError] = createSignal(false)
   const [recurrenceRefresh, setRecurrenceRefresh] = createSignal(0)
+  // The selected item's unconfirmed control, resent only by an explicit refresh click.
+  const [controlRetry, setControlRetry] = createSignal<MissionControlRetry>()
+  const [refreshing, setRefreshing] = createSignal(false)
+  const registerRetry = (retry: MissionControlRetry) => {
+    setControlRetry(() => retry)
+    return () => setControlRetry(current => current === retry ? undefined : current)
+  }
   const state = () => missionStore.state(props.instanceId)
   // Cached display revalidation is not a view/ownership transition. Message
   // admission still performs its own fresh authoritative mission read.
@@ -221,7 +229,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
     get onRead() { return props.onRevealConversation }, get selectedSchedule() { return selectedSchedule() },
-    get tracking() { return tracking() }, detailId,
+    get tracking() { return tracking() }, detailId, registerRetry,
     get passage() {
       const passage = mission()
       if (!passage) return undefined
@@ -247,6 +255,19 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const selectedOneTime = () => selectedSchedule() ? undefined : mission()
   const selectedOneTimeId = () => selectedOneTime()?.id
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
+  const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
+  /** Read-only reconciliation first; only a control still unconfirmed by that
+   * read is resent, with its original identity, from this explicit click. */
+  const refresh = async () => {
+    if (refreshing()) return
+    const retry = controlRetry(), instanceId = props.instanceId
+    setRefreshing(true)
+    try {
+      await Promise.allSettled([missionStore.refresh(instanceId), retry?.reconcile()])
+      setRecurrenceRefresh(value => value + 1)
+      if (retry && controlRetry() === retry && props.instanceId === instanceId && retry.pending()) await retry.resend()
+    } finally { setRefreshing(false) }
+  }
   return (
     <section class="mission-control" aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
@@ -264,10 +285,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             title={props.t("missions.preferences.title")} onClick={openPreferences}>
             <Settings class="h-4 w-4" aria-hidden="true" />
           </button>
-          <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.control.refresh")}
-            title={props.t("missions.control.refresh")} disabled={state().status === "loading"}
-            onClick={() => { void missionStore.refresh(props.instanceId); setRecurrenceRefresh(value => value + 1) }}>
-            <Show when={state().status === "loading"} fallback={<RefreshCw class="h-4 w-4" />}>
+          <button type="button" class="mission-control-icon-button" aria-label={refreshLabel()}
+            title={refreshLabel()} disabled={state().status === "loading" || refreshing()} onClick={() => void refresh()}>
+            <Show when={state().status === "loading" || refreshing()} fallback={<RefreshCw class="h-4 w-4" />}>
               <Loader2 class="h-4 w-4 animate-spin" />
             </Show>
           </button>
@@ -316,7 +336,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
-            onAdmitted={() => missionStore.refresh(props.instanceId)}
+            onAdmitted={() => missionStore.refresh(props.instanceId)} registerRetry={registerRetry}
             editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
             onEdit={() => openEditor({ kind: "edit", mission: selected() })}
             onDelete={() => openEditor({ kind: "delete", mission: selected() })} />

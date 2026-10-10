@@ -61,5 +61,5 @@ export function createMissionBriefingRequest(props: {
       </Show>
     </div>
   </Show>
-  return { available, waiting, ask, feedback }
+  return { available, waiting, ask, feedback, state: () => answered() ? undefined : request()?.state }
 }

@@ -17,6 +17,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "עריכה",
   "missionsPanel.action.openConversation": "פתיחת השיחה",
   "missionsPanel.action.requestUpdate": "בקשת עדכון",
+  "missionsPanel.action.recover": "שחזור משימה שנקטעה",
   "missionsPanel.task.active": "פעילה",
   "missionsPanel.task.ready": "הבאה בתור",
   "missionsPanel.task.blocked": "חסומה",

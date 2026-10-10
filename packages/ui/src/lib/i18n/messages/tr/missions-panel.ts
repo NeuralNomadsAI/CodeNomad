@@ -17,6 +17,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "Düzenle",
   "missionsPanel.action.openConversation": "Konuşmayı aç",
   "missionsPanel.action.requestUpdate": "Güncelleme iste",
+  "missionsPanel.action.recover": "Kesintiye uğrayan görevi kurtar",
   "missionsPanel.task.active": "Etkin",
   "missionsPanel.task.ready": "Sırada",
   "missionsPanel.task.blocked": "Engellendi",

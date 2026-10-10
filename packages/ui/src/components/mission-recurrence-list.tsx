@@ -5,7 +5,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
 import { scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
-import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
+import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { showSessionChatFor } from "../stores/session-previews"
@@ -21,8 +21,9 @@ const unresolved = new Map<string, RecurrenceControlIntent>()
 const partialResults = new Map<string, RecurrenceControlStatus>()
 const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
 
-/** Schedule controls for one row: a single contextual primary action and the
- * remaining available actions for the overflow menu. */
+/** Schedule controls for one row: a single contextual primary action, Stop,
+ * the remaining available actions for a secondary menu, and the explicit
+ * refresh-then-resend of an unconfirmed control. */
 function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identity: string; instanceId: string;
   directory: string; active: () => boolean; enabled: () => boolean; refresh: () => void }) {
   const { t } = useI18n()
@@ -112,16 +113,19 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   }
   const stopAction = (): MissionPrimaryAction | undefined => props.schedule.actions.includes("stop") && !heldIntent()
     ? { key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop } : undefined
+  // The panel refresh first reads the exact request's status, then resends it
+  // only when that read leaves it partially applied.
+  const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.enabled(),
+    reconcile: () => heldIntent() ? check() : Promise.resolve(),
+    resend: () => retryCapable() ? act(heldIntent()!.action, true) : Promise.resolve() }
   const menu = (): ActionOverflowMenuItem[] => [
-    ...(retryCapable() ? [{ key: "retry", label: t("missionsPanel.action.retry"), description: t("missions.recurrence.retry", { id: props.schedule.title }),
-      onSelect: () => act(heldIntent()!.action, true) }] : []),
     ...props.schedule.actions.filter(action => action !== primaryAction() && action !== "stop" && !heldIntent()).map(action => ({
       key: action, label: label(action), description: description(action), disabled: !capable(action),
       onSelect: () => action === "stop" ? stop() : act(action),
     })),
   ]
   const feedback = <Show when={heldIntent()}><small role="status">{t("missions.recurrence.uncertain")}</small></Show>
-  return { primary, stop: stopAction, menu, feedback }
+  return { primary, stop: stopAction, menu, retry, feedback }
 }
 
 /** Recurring schedules: picker entries for the shared mission list, and the
@@ -130,7 +134,8 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   selectedSchedule?: string; onRead?: (restoreChat?: boolean) => void; detailId: string
   tracking?: JSX.Element
   /** The admitted passage, when one is tracked: its overview reader and coordinator conversation. */
-  passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void } }) {
+  passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void }
+  registerRetry?: (retry: MissionControlRetry) => () => void }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
@@ -185,6 +190,8 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       const controls = createRecurrenceControls({ get schedule() { return schedule() }, get identity() { return JSON.stringify([props.instanceId, props.projectID, props.scope]) },
         get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid,
         refresh: () => setRevision(value => value + 1) })
+      const unregister = props.registerRetry?.(controls.retry)
+      onCleanup(() => unregister?.())
       return <section id={props.detailId} class="mission-detail mission-schedule-detail" aria-label={schedule().title}>
         {/* A running passage's summary opens what is happening now; otherwise the schedule reader. */}
         <MissionActionBar label={t("missionsPanel.picker.actions")}
