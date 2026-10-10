@@ -89,8 +89,9 @@ async function fixture() {
       return { entries, ...(rows.length > limit ? { next: entries.at(-1)!.key } : {}) }
     } }
   // Native plugin storage is Effect-based; the journal membership read uses it read-only.
+  let journalScans = 0
   const nativeStorage = { get: (key: string) => Effect.promise(() => storage.get(key)),
-    scan: (options: Parameters<MissionStorage["scan"]>[0]) => Effect.promise(() => storage.scan(options)) }
+    scan: (options: Parameters<MissionStorage["scan"]>[0]) => Effect.promise(() => { journalScans++; return storage.scan(options) }) }
   const native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location, storage: nativeStorage } as never), graph))
   const markKey = `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`project\0${directory}`, 24)}/ses_child/${form.id}`
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
@@ -134,7 +135,7 @@ async function fixture() {
     projectID: "project", directory, delegationToolName: "subagent", question: "Choose the seam?", answer: "Module" }
   return { native, db, get, put, markKey, decision, form, part, storage, nativeGet, directory, finish,
     secrets: [cookie.id, registration.token],
-    counts: () => replies, expire: () => { expired = true }, fail: (value = true) => { failReply = value }, lose: () => { loseReply = true }, defer: () => { complete = false },
+    counts: () => replies, journalScans: () => journalScans, expire: () => { expired = true }, fail: (value = true) => { failReply = value }, lose: () => { loseReply = true }, defer: () => { complete = false },
     changeState: (status: string) => { state.status = status },
     submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
       headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) }, payload: { answer: { q0: answer } } }),
@@ -349,6 +350,35 @@ test("a metadata-less root outside the durable journal is an ordinary conversati
       assert.equal(f.get(f.markKey), undefined, submit)
     } finally { await f.dispose() }
   }
+})
+
+test("an unrelated metadata-less root answers without reading a populated Mission journal", async () => {
+  const f = await fixture()
+  try {
+    attached(f)
+    // Another Mission's coordinator populates this project's journal.
+    await new MissionJournal(f.storage, "project", f.directory).append({ version: 1, id: "evt_elsewhere", type: "mission.created",
+      missionID: "msn_elsewhere", projectID: "project", projectCanonical: f.directory, createdAt: 1, objective: "Elsewhere", template: "custom",
+      coordinator: { sessionID: "ses_elsewhere", title: "Elsewhere", location: { directory: f.directory } } })
+    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal(f.counts(), 1, "the ordinary native reply still lands")
+    assert.equal(f.get(f.markKey), undefined)
+    assert.equal(f.journalScans(), 0, "the bounded identity probe skips the journal read")
+  } finally { await f.dispose() }
+})
+
+test("an attached journal coordinator still pays the exact membership read and gets its mark", async () => {
+  const f = await fixture()
+  try {
+    attached(f)
+    await new MissionJournal(f.storage, "project", f.directory).append({ version: 1, id: "evt_attached", type: "mission.created",
+      missionID: "msn_attached", projectID: "project", projectCanonical: f.directory, createdAt: 1, objective: "Attached", template: "custom",
+      coordinator: { sessionID: "ses_root", title: "Attached", location: { directory: f.directory } } })
+    const scans = f.journalScans()
+    assert.equal((await f.submit()).statusCode, 200)
+    assert(f.journalScans() > scans, "a probe hit is confirmed by the exact snapshot")
+    assert.equal(f.get(f.markKey)?.state, "confirmed")
+  } finally { await f.dispose() }
 })
 
 test("unpaired or revoked Remote Control requests answer ordinarily and never mint a mark", async () => {

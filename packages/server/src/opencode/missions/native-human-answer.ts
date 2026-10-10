@@ -6,7 +6,7 @@ import { Location } from "@opencode/schema/location"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
 import type { SqlClient } from "effect/unstable/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import { MissionJournal, stableToken, type MissionStorage } from "../../missions/journal"
+import { MISSION_JOURNAL_STORAGE_PREFIX, MissionJournal, stableToken, type MissionStorage } from "../../missions/journal"
 import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBindingSchema, humanAnswerRpcInputSchema,
   humanDecisionRequestSchema, assertHumanAnswerFresh, matchHumanQuestion,
   type HumanDecisionMark } from "../../missions/human-answer"
@@ -92,6 +92,16 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       if (row.parent_id === null || row.parent_id === undefined) { if (id !== root) return false; break }
       if (depth >= 32 || typeof row.parent_id !== "string") return false
       id = row.parent_id
+    }
+    // Bounded exact-identity probe first: a root whose ID appears nowhere in this
+    // project's journal values cannot be any Mission's coordinator, so ordinary
+    // conversations never pay the full journal read. Only a match (or an ID whose
+    // JSON form could be escaped) proceeds to the exact snapshot membership below.
+    if (/^[A-Za-z0-9_-]{1,256}$/.test(root)) {
+      const prefix = nativeKey(`${MISSION_JOURNAL_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/`)
+      const hit = await run(query("SELECT 1 AS hit FROM kv WHERE key>=? AND key<? AND instr(value,?)>0 LIMIT 1",
+        [prefix, `${prefix.slice(0, -1)}0`, JSON.stringify(root)]))
+      if (!hit.length) return false
     }
     if (!ctx.storage) throw new Error("Native Mission journal unavailable")
     const storage = ctx.storage
