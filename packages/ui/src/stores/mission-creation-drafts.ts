@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
@@ -14,21 +15,56 @@ export interface UncertainMissionCreation {
   taskMode?: MissionTaskMode
 }
 
+export type MissionCreationHoldState = "pending" | "uncertain"
+interface HeldCreation { operation: Readonly<UncertainMissionCreation>; state: MissionCreationHoldState }
+
 // Window-memory only, not native settlement authority or restart persistence.
-// Retain unknown operations by their original scope/request; reads cannot clear
-// these holds. No drafts are written into the identity-only native view layout.
-const held = new Map<string, Map<string, Readonly<UncertainMissionCreation>>>()
+// Retain dispatched/unknown operations by their original scope/request; reads cannot
+// clear these holds. No drafts are written into the identity-only native view layout.
+const held = new Map<string, Map<string, HeldCreation>>()
+const [version, setVersion] = createSignal(0)
+const freeze = (operation: UncertainMissionCreation): Readonly<UncertainMissionCreation> => Object.freeze({
+  ...operation, ...(operation.profiles === undefined ? {} : { profiles: copyMissionProfiles(operation.profiles) }),
+})
+
+/** Register the exact intent BEFORE dispatch so a closed/remounted editor in the
+ * same scope cannot submit another logical creation while its reply is pending. */
+export function holdMissionCreation(scope: string, operation: UncertainMissionCreation): boolean {
+  if (held.get(scope)?.size) return false
+  held.set(scope, new Map([[operation.requestId, { operation: freeze(operation), state: "pending" }]]))
+  setVersion(value => value + 1)
+  return true
+}
+
+/** Only the original request's definitive outcome (success or reviewed rejection) releases it. */
+export function releaseMissionCreation(scope: string, requestId: string): void {
+  const operations = held.get(scope)
+  if (operations?.get(requestId)?.state !== "pending") return
+  operations.delete(requestId)
+  if (!operations.size) held.delete(scope)
+  setVersion(value => value + 1)
+}
 
 export function retainUncertainMissionCreation(scope: string, operation: UncertainMissionCreation): void {
-  const operations = held.get(scope) ?? new Map<string, Readonly<UncertainMissionCreation>>()
-  if (!operations.has(operation.requestId)) operations.set(operation.requestId, Object.freeze({
-    ...operation, ...(operation.profiles === undefined ? {} : { profiles: copyMissionProfiles(operation.profiles) }),
-  }))
+  const operations = held.get(scope) ?? new Map<string, HeldCreation>()
+  const current = operations.get(operation.requestId)
+  if (current?.state === "uncertain") return
+  operations.set(operation.requestId, { operation: current?.operation ?? freeze(operation), state: "uncertain" })
   held.set(scope, operations)
+  setVersion(value => value + 1)
 }
 
 export function uncertainMissionCreation(scope: string): Readonly<UncertainMissionCreation> | undefined {
-  return held.get(scope)?.values().next().value
+  version()
+  for (const entry of held.get(scope)?.values() ?? []) if (entry.state === "uncertain") return entry.operation
+  return undefined
+}
+
+/** Tracked: any pending or unknown creation in this scope fences new submissions. */
+export function missionCreationHold(scope: string): Readonly<HeldCreation> | undefined {
+  version()
+  const operations = held.get(scope)
+  return operations && ([...operations.values()].find(entry => entry.state === "uncertain") ?? operations.values().next().value)
 }
 
 /** Copy before freezing: the caller's editable signals remain caller-owned. */

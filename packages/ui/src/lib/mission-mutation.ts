@@ -26,11 +26,26 @@ export async function missionMutationRequest(url: string, method: "POST" | "PATC
     const body: unknown = await response.json().catch(() => undefined)
     throw new MissionMutationError(response.status, operation, missionMutationCode(body, operation))
   }
-  return await response.json()
+  const body: unknown = await response.json()
+  const mission = body && typeof body === "object" && "mission" in body ? body.mission : undefined
+  if (!mission || typeof mission !== "object" || typeof (mission as { id?: unknown }).id !== "string") {
+    throw new TypeError("Mission change acknowledgement is unreadable")
+  }
+  return body as { mission: MissionMap }
 }
 
 export function isUncertainCreation(error: unknown): boolean {
   return error instanceof MissionMutationError && error.operation === "create" && error.status === 409 && error.code === "creation-uncertain"
+}
+
+// The route answers every dispatched-but-unproven create with `creation-uncertain`;
+// only another received, reviewed rejection proves no effect. Transport loss, an
+// undecodable acknowledgement and unrecognized statuses (including proxy 5xx) may
+// follow a committed native write and must keep the original request held.
+export function isDefinitiveCreationRejection(error: unknown): boolean {
+  if (!(error instanceof MissionMutationError) || error.operation !== "create") return false
+  if (error.code) return error.code !== "creation-uncertain"
+  return [400, 401, 403, 404].includes(error.status)
 }
 
 export function missionMutationErrorKey(error: unknown): string {

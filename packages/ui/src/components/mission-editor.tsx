@@ -6,8 +6,9 @@ import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
 import { createMissionViewFence } from "../lib/mission-view-fence"
-import { isUncertainCreation, missionMutationErrorKey } from "../lib/mission-mutation"
-import { copyMissionProfiles, missionCreationPayloadIdentity, retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
+import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/mission-mutation"
+import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
+  retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { missionProfileRoles, profilesForTemplate } from "./mission-profile-controls-data"
 import { useConfig } from "../stores/preferences"
@@ -94,7 +95,14 @@ export function MissionEditor(props: {
     setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
     setDefaultsReady(true)
   })
-  const [uncertain, setUncertain] = createSignal(Boolean(held || recurrenceHold))
+  const [recurrenceUncertain, setUncertain] = createSignal(Boolean(recurrenceHold))
+  // A one-time hold is adopted when it is unknown at mount or met at submission;
+  // a newer editor keeps its own draft while another request is merely pending.
+  const [adopted, setAdopted] = createSignal(Boolean(held))
+  const creationHold = () => kind === "create" && adopted() ? missionCreationHold(identity()) : undefined
+  const creationPending = () => creationHold()?.state === "pending"
+  const uncertain = () => recurrenceUncertain() || creationHold()?.state === "uncertain"
+  const busy = () => pending() || uncertain() || creationPending()
   const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
   const [deleteAttempted, setDeleteAttempted] = createSignal(false)
   const [pending, setPending] = createSignal(false)
@@ -134,10 +142,10 @@ export function MissionEditor(props: {
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
   let requestId = held?.requestId ?? recurrenceHold?.requestID ?? crypto.randomUUID(), lastPayload = ""
-  const locked = () => !creationReady() || defaultsRefreshing() || pending() || uncertain()
+  const locked = () => !creationReady() || defaultsRefreshing() || busy()
 
   async function useSavedDefaults() {
-    if (pending() || uncertain() || defaultsRefreshing() || !isActive()) return
+    if (busy() || defaultsRefreshing() || !isActive()) return
     const current = captureView()
     setDefaultsRefreshing(true); setDefaultsFailed(false)
     try {
@@ -160,8 +168,8 @@ export function MissionEditor(props: {
     if (recurrence) {
       try { recurrenceStartText({ consigne: objective().trim(), template: template(), taskMode: taskMode() ?? "native" }) }
       catch { fail("objective", t("missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return }
-      const held = uncertainRecurrence(identity())
-      if (held || uncertainMissionCreation(identity())) { setUncertain(true); return }
+      if (uncertainRecurrence(identity())) { setUncertain(true); return }
+      if (missionCreationHold(identity())) { setAdopted(true); return }
       const selected = copyMissionProfiles(profiles())
       if (!selected?.coordinator?.agent || !selected.coordinator.model?.providerID || !selected.coordinator.model.id
         || missionProfileRoles[template()].some(role => !selected.roles?.[role]?.agent
@@ -213,12 +221,16 @@ export function MissionEditor(props: {
     // A hold learned after this editor opened still cannot become a new logical
     // creation merely because the user submits another draft in the same scope.
     if (kind === "create" && uncertainRecurrence(identity())) { setUncertain(true); return }
-    const existingHold = kind === "create" ? uncertainMissionCreation(identity()) : undefined
-    if (existingHold) {
-      setObjective(existingHold.objective); setTitleOverride(existingHold.title); setNotes(existingHold.notes); setTemplate(existingHold.template)
-      setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
-      setTaskMode(existingHold.taskMode); setCustomTaskMode(true)
-      setSelectedModel(submittedMissionModel(existingHold.requestId)); setUncertain(true); return
+    if (kind === "create" && missionCreationHold(identity())) {
+      // Show an unknown contract exactly; a merely pending one leaves this draft alone.
+      const existingHold = uncertainMissionCreation(identity())
+      if (existingHold) {
+        setObjective(existingHold.objective); setTitleOverride(existingHold.title); setNotes(existingHold.notes); setTemplate(existingHold.template)
+        setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
+        setTaskMode(existingHold.taskMode); setCustomTaskMode(true)
+        setSelectedModel(submittedMissionModel(existingHold.requestId))
+      }
+      setAdopted(true); return
     }
     const origin = identity(), directory = props.directory, instanceId = props.instanceId
     const viewCurrent = captureView()
@@ -232,10 +244,14 @@ export function MissionEditor(props: {
       : JSON.stringify(kind === "delete" ? { deleteManagedSessions: deleteManagedSessions() } : fields)
     if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
     lastPayload = payload
-    setPending(true)
-    setError("")
     const creation = { ...fields, requestId, directory }
     const modelIdentity = selectedModel()
+    if (kind === "create") {
+      if (!holdMissionCreation(origin, creation)) { setAdopted(true); return }
+      setAdopted(true)
+    }
+    setPending(true)
+    setError("")
     try {
       if (kind === "delete" && original) {
         // A failed acknowledgement may follow a committed tombstone. Keep its
@@ -258,13 +274,18 @@ export function MissionEditor(props: {
         const result = kind === "edit" && original
           ? await serverApi.editMission(instanceId, original.id, { objective: fields.objective, notes: fields.notes, expectedRevision: original.revision, requestId })
           : await serverApi.createMission(instanceId, { ...fields, directory, requestId })
+        if (kind === "create") releaseMissionCreation(origin, creation.requestId)
         if (current()) props.onSaved(result.mission)
         else if (identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }
     } catch (error) {
-      if (kind === "create" && isUncertainCreation(error)) {
-        retainUncertainMissionCreation(origin, creation)
-        retainSubmittedMissionModel(requestId, modelIdentity)
+      const definitive = kind !== "create" || isDefinitiveCreationRejection(error)
+      if (kind === "create") {
+        if (definitive) releaseMissionCreation(origin, creation.requestId)
+        else {
+          retainUncertainMissionCreation(origin, creation)
+          retainSubmittedMissionModel(creation.requestId, modelIdentity)
+        }
       }
       if (!current()) return
       if (kind === "delete" && original) {
@@ -283,8 +304,8 @@ export function MissionEditor(props: {
         } catch { /* Unknown observation is not permission to change the intent. */ }
         if (current()) { setError(t(key)); void missionStore.refresh(instanceId) }
       } else {
-        if (kind === "create" && isUncertainCreation(error)) setUncertain(true)
-        else setError(t(missionMutationErrorKey(error)))
+        // An unknown create stays visible through its adopted hold, never as a retryable error.
+        if (definitive) setError(t(missionMutationErrorKey(error)))
       }
     } finally { if (current()) setPending(false) }
   }
@@ -295,7 +316,7 @@ export function MissionEditor(props: {
   const createBody = () => <>
     <label for={ids.objective}>{t("missions.create.objective")}</label>
     <textarea id={ids.objective} required maxLength={mode() === "recurring" ? MISSION_LIFECYCLE_TEXT_LIMIT : 20_000} value={objective()}
-      placeholder={t("missions.create.objectivePlaceholder")} disabled={pending() || uncertain()}
+      placeholder={t("missions.create.objectivePlaceholder")} disabled={busy()}
       aria-invalid={Boolean(errorFor("objective"))} aria-describedby={errorFor("objective") ? ids.objectiveError : undefined}
       onInput={e => setObjective(e.currentTarget.value)} />
     {inlineError("objective", ids.objectiveError)}
@@ -303,10 +324,10 @@ export function MissionEditor(props: {
       <span class="mission-create-field-error" role="alert">{t(watchedIDs().length ? "missions.recurrence.sourceInputTooLong" : "missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })}</span>
     </Show>
     <label>{t("missions.create.title")}
-      <input maxLength={MISSION_TITLE_MAX} value={title()} placeholder={derivedTitle()} disabled={pending() || uncertain()}
+      <input maxLength={MISSION_TITLE_MAX} value={title()} placeholder={derivedTitle()} disabled={busy()}
         onInput={e => setTitleOverride(e.currentTarget.value)} />
     </label>
-    <fieldset class="mission-create-when" disabled={pending() || uncertain()} aria-describedby={errorFor("when") ? ids.whenError : undefined}>
+    <fieldset class="mission-create-when" disabled={busy()} aria-describedby={errorFor("when") ? ids.whenError : undefined}>
       <legend>{t("missions.create.when")}</legend>
       <label class="mission-create-choice"><input type="radio" name="mission-create-when" value="once" checked={mode() === "once"}
         onChange={() => setMode("once")} />{t("missions.create.once")}</label>
@@ -356,23 +377,23 @@ export function MissionEditor(props: {
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
           </Show>
           <div class="mission-create-option-actions">
-            <button type="button" class="window-text-button" disabled={pending() || defaultsRefreshing() || uncertain()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
+            <button type="button" class="window-text-button" disabled={busy() || defaultsRefreshing()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
             <Show when={props.onOpenPreferences}><button type="button" class="window-text-button" title={t("missions.defaults.hint")} onClick={props.onOpenPreferences}>{t("missions.defaults.manage")}</button></Show>
           </div>
         </details>
         {inlineError("profiles", ids.profilesError)}
       </section>
       <label>{t("missions.control.notes")}
-        <textarea maxLength={20_000} value={notes()} disabled={pending() || uncertain()} onInput={e => setNotes(e.currentTarget.value)} />
+        <textarea maxLength={20_000} value={notes()} disabled={busy()} onInput={e => setNotes(e.currentTarget.value)} />
       </label>
       <Show when={mode() === "recurring"}>
         <MissionConversationPicker instanceId={props.instanceId} directory={props.directory} projectID={props.projectID}
-          value={watchedIDs()} disabled={pending() || uncertain()} active={() => mode() === "recurring" && optionsOpen() && isActive()} onChange={setWatched} />
+          value={watchedIDs()} disabled={busy()} active={() => mode() === "recurring" && optionsOpen() && isActive()} onChange={setWatched} />
         {inlineError("followed", ids.followedError)}
         <Show when={needsSourceLocation() && !sourceLocationReady() && !errorFor("followed")}><p role={sourceLocationFailed() ? "alert" : "status"}>{t(sourceLocationFailed() ? "missions.recurrence.sourceLocationUnavailable" : "missions.control.loading")}</p></Show>
         <label>{t("missions.create.zoneOverride")}
           <input ref={zoneInput} required maxLength={100} value={zone()} aria-label={t("missions.create.zoneOverride")} aria-invalid={!zoneValid()}
-            aria-describedby={!zoneValid() ? ids.zoneError : undefined} disabled={pending() || uncertain()} onInput={e => setZone(e.currentTarget.value)}
+            aria-describedby={!zoneValid() ? ids.zoneError : undefined} disabled={busy()} onInput={e => setZone(e.currentTarget.value)}
             list={zones().length ? ids.zoneList : undefined} />
           <Show when={zones().length}><datalist id={ids.zoneList}><For each={zones()}>{value => <option value={value} />}</For></datalist></Show>
           <Show when={!zoneValid()}><span id={ids.zoneError} class="mission-create-field-error" role="alert">{t("missions.simple.zoneInvalid")}</span></Show>
@@ -429,7 +450,7 @@ export function MissionEditor(props: {
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
         </button>}>
         <button type="submit" class="button-primary" disabled={createDisabled()}>
-          {t(pending() ? "missions.control.mutation.pending" : "missions.create.submit")}
+          {t(pending() || creationPending() ? "missions.control.mutation.pending" : "missions.create.submit")}
         </button>
       </Show>
     </footer>

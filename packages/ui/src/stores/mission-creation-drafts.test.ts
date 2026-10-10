@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { missionCreationPayloadIdentity, retainUncertainMissionCreation, uncertainMissionCreation } from "./mission-creation-drafts"
+import { holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation, retainUncertainMissionCreation,
+  uncertainMissionCreation } from "./mission-creation-drafts"
 
 test("uncertain creation keeps immutable original request/draft in its window scope, never adopting a refreshed scope", () => {
   const original = { requestId: "original", objective: "Draft", notes: "Notes", template: "custom" as const, directory: "/private" }
@@ -12,6 +13,23 @@ test("uncertain creation keeps immutable original request/draft in its window sc
   assert.equal(uncertainMissionCreation("other-instance/directory/project"), undefined)
   assert.equal(uncertainMissionCreation("instance/other-directory/project"), undefined)
   assert.equal(uncertainMissionCreation("instance/directory/other-project"), undefined)
+})
+
+test("a dispatched creation fences its scope until its exact definitive outcome; unknown outcomes never release", () => {
+  const operation = { requestId: "pending-original", objective: "Draft", notes: "", template: "custom" as const }
+  assert.equal(holdMissionCreation("pending/scope", operation), true)
+  assert.equal(missionCreationHold("pending/scope")!.state, "pending")
+  assert.equal(uncertainMissionCreation("pending/scope"), undefined, "a pending reply is not yet an unknown outcome")
+  assert.equal(holdMissionCreation("pending/scope", { ...operation, requestId: "second" }), false, "no second logical creation in the scope")
+  releaseMissionCreation("pending/scope", "other-request")
+  assert.equal(missionCreationHold("pending/scope")!.operation.requestId, "pending-original")
+  releaseMissionCreation("pending/scope", "pending-original")
+  assert.equal(missionCreationHold("pending/scope"), undefined)
+  assert.equal(holdMissionCreation("pending/scope", operation), true)
+  retainUncertainMissionCreation("pending/scope", { ...operation, objective: "Changed" })
+  releaseMissionCreation("pending/scope", "pending-original")
+  assert.equal(missionCreationHold("pending/scope")!.state, "uncertain")
+  assert.equal(uncertainMissionCreation("pending/scope")!.objective, "Draft", "the original submitted payload is retained")
 })
 
 test("unknown creation retains a deep-frozen copy of all profile selections, including variant", () => {
