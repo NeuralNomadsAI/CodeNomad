@@ -11,7 +11,8 @@ export interface MissionReaderTarget {
   instanceId?: string
   projectID?: string
 }
-interface ProjectView { selected?: string; selectedRecurrence?: string; reader?: MissionReaderTarget }
+/** `listExpanded`: the picker's inline list, opened and closed only by its chevron. */
+interface ProjectView { selected?: string; selectedRecurrence?: string; reader?: MissionReaderTarget; listExpanded?: boolean }
 const [version, setVersion] = createSignal(0)
 const projects = new Map<string, ProjectView>()
 const disclosures = new Map<string, Map<string, boolean>>()
@@ -39,6 +40,7 @@ export function missionProjectView(scope: string): ProjectView {
       const stored = JSON.parse(readClientLayoutValue(storageKey) ?? "{}")
       if (typeof stored.selected === "string") value.selected = stored.selected
       if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
+      if (stored.listExpanded === true) value.listExpanded = true
       const r = stored.reader
       if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence"].includes(r.kind)
         && (r.itemId === undefined || typeof r.itemId === "string")
@@ -52,7 +54,8 @@ export function missionProjectView(scope: string): ProjectView {
 export function updateMissionProjectView(scope: string, patch: Partial<ProjectView>): void {
   const previous = missionProjectView(scope)
   const value = { ...previous, ...patch }
-  if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader) return
+  if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
+    && previous.listExpanded === value.listExpanded) return
   projects.set(projectKey(scope), value)
   writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
   setVersion(v => v + 1)

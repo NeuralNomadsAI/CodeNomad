@@ -16,10 +16,6 @@
 }
 
 .mission-control-actions { display: flex; align-items: center; gap: 2px; }
-.mission-control-create { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target-size-compact); padding-inline: var(--space-xs) var(--space-sm); font-size: var(--font-size-sm); color: var(--text-primary); }
-.mission-control-create:hover:not(:disabled) { background: var(--surface-hover-overlay); color: var(--accent-primary); }
-.mission-control-create:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
-.mission-control-create:disabled { opacity: .35; }
 .mission-control-preferences { margin-block-end: var(--space-sm); padding: 0 var(--space-sm) var(--space-sm); border: 1px solid var(--border-base); }
 .mission-control-preferences:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .mission-control-preferences > .window-header { padding-inline: 0; font-size: var(--font-size-sm); }

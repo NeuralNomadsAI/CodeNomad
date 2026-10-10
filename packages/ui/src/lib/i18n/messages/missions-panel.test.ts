@@ -26,7 +26,8 @@ test("every Missions panel key exists in all ten locales with the English placeh
 })
 
 test("panel components reference only declared Missions panel keys", () => {
-  const files = ["instance/shell/right-panel/tabs/MissionControl.tsx", "mission-index-row.tsx", "mission-task-tree.tsx",
+  const files = ["instance/shell/right-panel/tabs/MissionControl.tsx", "mission-picker.tsx", "mission-selected-actions.tsx",
+    "mission-picker-model.ts", "mission-task-tree.tsx",
     "mission-tracking.tsx", "mission-attention.tsx", "mission-lifecycle-controls.tsx", "mission-recurrence-list.tsx", "mission-overview-details.tsx"]
   for (const file of files) {
     const source = readFileSync(new URL(`../../../components/${file}`, import.meta.url), "utf8")

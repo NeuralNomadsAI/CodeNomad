@@ -15,7 +15,8 @@
 @import "./panels/mission-create.css";
 @import "./panels/mission-schedule.css";
 @import "./panels/mission-list-item.css";
-@import "./panels/mission-index-row.css";
+@import "./panels/mission-picker.css";
+@import "./panels/mission-action-bar.css";
 @import "./panels/mission-detail.css";
 @import "./panels/mission-overview.css";
 @import "./panels/mission-route.css";

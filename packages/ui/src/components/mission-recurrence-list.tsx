@@ -2,7 +2,8 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX 
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
-import { MissionIndexRow } from "./mission-index-row"
+import { MissionActionBar } from "./mission-action-bar"
+import { scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
 import { MissionOverviewToggle } from "./mission-tracking"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
@@ -122,9 +123,11 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   return { primary, menu, feedback }
 }
 
-export function MissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
-  selectedSchedule?: string; onSelect?: (id: string) => void; onRead?: (restoreChat?: boolean) => void; detailId: string
-  children?: JSX.Element; tracking?: JSX.Element; hasTracking?: boolean }) {
+/** Recurring schedules: picker entries for the shared mission list, and the
+ * selected schedule's detail (actions, notice, current passage, past runs). */
+export function createMissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
+  selectedSchedule?: string; onRead?: (restoreChat?: boolean) => void; detailId: string
+  tracking?: JSX.Element; hasTracking?: boolean }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
@@ -162,29 +165,25 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
           <bdi>{text.run(schedule, item)}</bdi>
         </button></li>}</For></ol>
     </section></Show>
-  const selected = createMemo(() => snapshot()?.schedules.find(schedule => schedule.id === props.selectedSchedule))
-  return <>
-    <ul class="mission-control-index" aria-label={t("missions.control.mapLabel")}>
-      {props.children}
-      <For each={snapshot()?.schedules.map(schedule => schedule.id)}>{id => {
-        // Keyed by identity: a refreshed snapshot keeps the row, its focus and an open menu.
-        const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
-        const controls = createRecurrenceControls({ get schedule() { return schedule() }, get identity() { return JSON.stringify([props.instanceId, props.projectID, props.scope]) },
-          get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid,
-          refresh: () => setRevision(value => value + 1) })
-        return <MissionIndexRow title={schedule().title} detailId={props.detailId}
-          meta={<><span class="neutral-badge badge-shape" title={text.every(schedule())}>{t("missionsPanel.dailyBadge")}</span>
-            <Show when={text.next(schedule())} fallback={<span>{t(`missions.recurrence.state.${schedule().state}`)}</span>}>
-              {next => <bdi>{next()}</bdi>}</Show></>}
-          statusKind={schedule().state} selected={props.selectedSchedule === schedule().id} onSelect={() => props.onSelect?.(schedule().id)}
-          primary={controls.primary()} menu={controls.menu()} feedback={controls.feedback} />
-      }}</For>
-    </ul>
+  const entries = createMemo((): MissionPickerEntry[] => (snapshot()?.schedules ?? []).map(schedule => {
+    const attention = scheduleEntryAttention(schedule)
+    const state = t(`missions.recurrence.state.${schedule.state}`), next = text.next(schedule)
+    return { key: `schedule:${schedule.id}`, title: schedule.title, attention, mark: attention ?? schedule.state,
+      status: [t("missionsPanel.dailyBadge"), state, next, text.every(schedule)].filter(Boolean).join(" · ") }
+  }))
+  const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
+  const view = () => <>
     <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    {/* Separate detail below the list: a stuck schedule's one sentence, the
-        current passage's tree and the compact list of past runs. */}
-    <Show when={selected()}>{schedule => {
+    {/* Separate detail below the list: actions, a stuck schedule's one sentence,
+        the current passage's tree and the compact list of past runs. */}
+    <Show when={selectedId()} keyed>{id => {
+      // Keyed by identity: a refreshed snapshot keeps the controls and their focus.
+      const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
+      const controls = createRecurrenceControls({ get schedule() { return schedule() }, get identity() { return JSON.stringify([props.instanceId, props.projectID, props.scope]) },
+        get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid,
+        refresh: () => setRevision(value => value + 1) })
       return <section id={props.detailId} class="mission-detail mission-schedule-detail" aria-label={schedule().title}>
+        <MissionActionBar label={t("missionsPanel.picker.actions")} primary={controls.primary()} items={controls.menu()} feedback={controls.feedback} />
         <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
         <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
           {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
@@ -195,4 +194,5 @@ export function MissionRecurrenceList(props: { instanceId: string; projectID?: s
       </section>
     }}</Show>
   </>
+  return { entries, view }
 }
