@@ -72,6 +72,23 @@ describe("Git ownership preflight admission", () => {
     assert.equal(await sharesGitCommonDirectory(repo, separate), false)
   })
 
+  it("leaves committed HEAD/commondir Git directories and incomplete .git layouts to Git", async () => {
+    const other = path.join(temp, "other repo")
+    git(temp, "init", "--quiet", other)
+    const pseudo = path.join(repo, "vendor", "pseudo")
+    mkdirSync(path.join(pseudo, "nested"), { recursive: true })
+    writeFileSync(path.join(pseudo, "HEAD"), "ref: refs/heads/main\n")
+    writeFileSync(path.join(pseudo, "commondir"), `${path.relative(pseudo, path.join(other, ".git")).replaceAll("\\", "/")}\n`)
+    const incomplete = path.join(repo, "incomplete")
+    mkdirSync(path.join(incomplete, ".git", "objects"), { recursive: true })
+    writeFileSync(path.join(incomplete, ".git", "HEAD"), "ref: refs/heads/main\n")
+    for (const directory of [pseudo, path.join(pseudo, "nested"), incomplete]) {
+      assert.equal(await readGitCommonDirectory(directory), realpathSync(git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")), directory)
+    }
+    assert.equal(await sharesGitCommonDirectory(repo, pseudo), false)
+    assert.equal(await sharesGitCommonDirectory(repo, path.join(pseudo, "nested")), false)
+  })
+
   it("defers environment overrides, paths inside Git directories and invalid layouts to Git", async () => {
     const internal = path.join(repo, ".git", "refs")
     assert.equal(await readGitCommonDirectory(internal), realpathSync(git(internal, "rev-parse", "--path-format=absolute", "--git-common-dir")))

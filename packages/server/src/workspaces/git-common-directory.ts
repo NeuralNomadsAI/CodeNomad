@@ -4,7 +4,7 @@ import { runWorktreeGit } from "./git-process"
 
 const pending = new Map<string, Promise<string>>()
 const LOCATION_ENVIRONMENT = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE"]
-const DISCOVERY_ENVIRONMENT = ["GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"]
+const DISCOVERY_ENVIRONMENT = ["GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_OBJECT_DIRECTORY"]
 
 export function gitLocationOverridden(): boolean {
   return LOCATION_ENVIRONMENT.some(key => process.env[key] !== undefined)
@@ -34,8 +34,10 @@ export async function readCheckoutIdentity(directory: string) {
   }
 }
 
-const isGitDirectory = (directory: string) => Promise.all(["HEAD", "objects", "refs"].map(entry => stat(path.join(directory, entry))))
-  .then(() => true, () => false)
+// Git may recognise the level itself as a Git directory, directly or through
+// `commondir`. Any such marker, even committed content, is left to Git.
+const mayBeGitDirectory = (directory: string) => Promise.all(["HEAD", "commondir"].map(entry => stat(path.join(directory, entry))
+  .then(() => true, error => (error as NodeJS.ErrnoException).code !== "ENOENT"))).then(found => found.some(Boolean))
 
 // Git discovery: the nearest ancestor holding `.git`, without crossing devices.
 async function findCheckoutRoot(directory: string): Promise<string> {
@@ -51,7 +53,7 @@ async function findCheckoutRoot(directory: string): Promise<string> {
     }
     // Git also discovers bare/separate Git directories at each level; a nested
     // one is an independent repository, never part of the enclosing checkout.
-    if (await isGitDirectory(current)) throw new Error("Directory is inside a bare or separate Git directory")
+    if (await mayBeGitDirectory(current)) throw new Error("Directory may be inside a bare or separate Git directory")
     const parent = path.dirname(current)
     if (parent === current) throw new Error("Directory is not inside a Git checkout")
     if ((await stat(parent)).dev !== device) throw new Error("Git discovery stops at filesystem boundaries")
@@ -64,8 +66,9 @@ async function readCheckoutCommonDirectory(directory: string): Promise<string> {
     throw new Error("Git discovery is configured by the environment")
   }
   const { gitDirectory, common } = await readCheckoutIdentity(await findCheckoutRoot(directory))
-  // Mirror Git's repository check before trusting the layout.
-  await Promise.all([stat(path.join(gitDirectory, "HEAD")), stat(path.join(common, "objects"))])
+  // Mirror Git's repository check before trusting the layout; Git skips an
+  // invalid `.git` and keeps walking, which the Git fallback reproduces.
+  await Promise.all([stat(path.join(gitDirectory, "HEAD")), stat(path.join(common, "objects")), stat(path.join(common, "refs"))])
   return common
 }
 
