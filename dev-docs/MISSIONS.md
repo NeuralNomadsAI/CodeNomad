@@ -450,6 +450,10 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
   `creation-worktree-deleting` 409, plus the existing capacity/scope codes and a
   receipt-backed native `mission-limit`): the UI keeps the draft and re-enables
   Create. Every later failure stays an exact `creation-uncertain`/codeless hold.
+  Recurring creation uses the same classification (`creation-unavailable`,
+  `creation-worktree-deleting`, the hold codes, `recurrence-capacity`, 400 and
+  codeless 401/403/404 are definitive; codeless 409/5xx and `creation-uncertain`
+  stay held), keyed on a flag set immediately before the paused-schedule RPC.
   Known limit: that UI hold lives in window memory only and there is no exact
   creation-status endpoint, so an uncertain create keeps Create blocked for that
   project scope until the window reloads (the backend permit and deletion block

@@ -6,7 +6,7 @@ import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
 import { createMissionViewFence } from "../lib/mission-view-fence"
-import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/mission-mutation"
+import { isDefinitiveCreationRejection, missionMutationErrorKey, recurrenceCreationRefusalKey } from "../lib/mission-mutation"
 import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
   retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
@@ -204,19 +204,19 @@ export function MissionEditor(props: {
         await serverApi.createMissionRecurrence(instanceId, { ...payload, requestID: requestId })
         if (current()) props.onRecurrenceSaved?.()
       } catch (error) {
-        if (error instanceof HttpResponseError && error.status === 503 && error.code === "recurrence-capacity") {
-          if (current()) setError(t("missions.recurrence.capacity"))
-          return
-        }
-        if (error instanceof HttpResponseError && error.status === 400) {
+        // A refusal proven to precede the native write keeps the draft editable and
+        // Create available, with the same request identity for an explicit resubmit.
+        const refusal = recurrenceCreationRefusalKey(error)
+        if (refusal) {
           if (current()) {
-            if (error.code === "recurrence-input-capacity") fail("objective", t("missions.recurrence.sourceInputTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT }))
-            else setError(t("missions.recurrence.invalid"))
+            if (error instanceof HttpResponseError && error.code === "recurrence-input-capacity") fail("objective", t("missions.recurrence.sourceInputTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT }))
+            else setError(t(refusal))
           }
           return
         }
-        // Transport/5xx/409 can follow a committed native write. Never retry or
-        // turn a list read into permission to issue a new request in this scope.
+        // Transport, uncoded 5xx/409 and creation-uncertain can follow a committed
+        // native write. Never retry or turn a list read into permission to issue a
+        // new request in this scope.
         holdRecurrence(scope, { ...payload, requestID: requestId });
         retainSubmittedMissionModel(requestId, selectedModel())
         if (current()) setUncertain(true)

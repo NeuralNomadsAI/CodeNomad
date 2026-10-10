@@ -16,6 +16,7 @@ import { recurrenceConfigDigest, recurrenceScheduleID } from "../../opencode/mis
 import { requestAdmission } from "../request-admission"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, reconcileRecurrenceCreation } from "./mission-creation-holds"
+import { MissionControlError } from "../../missions/control-error"
 import { resolveRecurrenceRoot, type WslGit } from "./mission-recurrence-roots"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../missions/lifecycle-input"
 import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
@@ -53,6 +54,9 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
     if (!deps.auth?.isAuthEnabled() || !human || human.sessionId === "auth-disabled" || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
     const lifetime = requestAdmission(request, reply)
     let admission: Awaited<ReturnType<typeof admitMissionCreationLocations>> | undefined
+    // Flips immediately before the only native write; until then a refusal proves no effect.
+    let dispatched = false
+    const unavailable = (error: string) => reply.code(503).send({ error, code: "creation-unavailable" })
     try {
       const parsed = schema.safeParse(request.body)
       if (!parsed.success || !z.string().min(1).max(200).safeParse(request.params.id).success) {
@@ -69,8 +73,8 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       catch { return reply.code(400).send({ error: "Invalid recurrence profile selection" }) }
       const workspace = manager.get(workspaceID), base = manager.getServiceLocation(workspaceID), fence = deps.worktreeDeletionFence
       if (!workspace || !base) return reply.code(404).send({ error: "Workspace unavailable" })
-      if (!fence) return reply.code(503).send({ error: "Recurrence deletion fence unavailable" })
-      if (!deps.settings?.configYamlPathForAuthority) return reply.code(503).send({ error: "Recurrence profile unavailable" })
+      if (!fence) return unavailable("Recurrence deletion fence unavailable")
+      if (!deps.settings?.configYamlPathForAuthority) return unavailable("Recurrence profile unavailable")
       const profileScope = deps.settings.getProfileScope(), selectedDistro = manager.getServiceWslDistro(workspaceID)
       const executionHost = selectedDistro ? `wsl:${selectedDistro}` : "local"
       const assertScopeCurrent = () => {
@@ -79,7 +83,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       }
       assertScopeCurrent()
       const connection = await lifetime.wait(manager.getSharedServiceConnection(workspaceID))
-      if (!connection) return reply.code(503).send({ error: "Mission service unavailable" })
+      if (!connection) return unavailable("Mission service unavailable")
       const check = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         assertScopeCurrent()
@@ -113,7 +117,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       if (!physicalCheckout) return reply.code(403).send({ error: "Physical recurrence checkout unavailable" })
       const inventory = await lifetime.wait(client.plugin.list({ location }, options))
       if (!inventory.data.some(item => item.id === CODENOMAD_MISSIONS_RPC_ID && item.state.status === "active")) {
-        return reply.code(503).send({ error: "Mission plugin unavailable" })
+        return unavailable("Mission plugin unavailable")
       }
       const catalog = await lifetime.wait(readMissionCatalog(client, directory))
       try { validateMissionProfileCatalog(input.profiles, catalog, input.taskMode) }
@@ -146,7 +150,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       const holdDigest = recurrenceConfigDigest({ digest, workspaceID, directory, checkout, family })
       const readCurrent = fence.captureDisplay([physicalCheckout])
       const assertPhysicalCurrent = async () => {
-        if (!readCurrent()) throw new Error("Recurrence root is being deleted")
+        if (!readCurrent()) throw new MissionControlError("Recurrence root is being deleted", "worktree-deleting")
         const [currentRoot, currentCheckout] = await Promise.all([
           resolveRecurrenceRoot(manager, workspaceID, directory, resolved.project.canonical, selectedDistro, deps.wslGit),
           manager.getWorktreeIdentityForPath(workspaceID, directory),
@@ -177,6 +181,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       await admission.assertCurrent()
       if (!await watchedCurrent()) throw new Error("Watched conversation moved before recurrence creation")
       check()
+      dispatched = true
       admission.dispatched()
       const proofIdentity = { sessionID: human.sessionId, workspaceID, requestID: input.requestID, location,
         scheduleID: id, expectedRevision: 0, action: "create" as const, configDigest: digest,
@@ -200,8 +205,20 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       admission.settled()
       return { schedule: created.schedule }
     } catch (error) {
-      if (error instanceof MissionCreationHoldError) return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message })
-      request.log.warn({ err: error }, "Recurrence creation unavailable or uncertain")
+      // Hold codes keep their own meaning: creation-uncertain stays held in the UI.
+      if (error instanceof MissionCreationHoldError) {
+        return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
+      }
+      // Mirrors one-time creation: only failures before the native create carry a
+      // no-effect code; later failures stay codeless and therefore held.
+      if (!dispatched) {
+        request.log.warn({ err: error }, "Recurrence creation unavailable before dispatch")
+        if (error instanceof Error && "code" in error && error.code === "worktree-deleting") {
+          return reply.code(409).send({ error: "Worktree deletion is in progress", code: "creation-worktree-deleting" })
+        }
+        return unavailable("Recurrence creation unavailable")
+      }
+      request.log.warn({ err: error }, "Recurrence creation uncertain")
       return reply.code(503).send({ error: "Recurrence creation unavailable or uncertain" })
     } finally { admission?.release(); lifetime.dispose() }
   })

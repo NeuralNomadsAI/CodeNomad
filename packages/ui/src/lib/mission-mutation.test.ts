@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { serverApi } from "./api-client"
 import { HttpResponseError } from "./retryable-file-search"
-import { isDefinitiveCreationRejection, isUncertainCreation, missionMutationCode, MissionMutationError, missionMutationErrorKey } from "./mission-mutation"
+import { isDefinitiveCreationRejection, isUncertainCreation, missionMutationCode, MissionMutationError, missionMutationErrorKey,
+  recurrenceCreationRefusalKey } from "./mission-mutation"
 
 test("Mission mutation classification distinguishes held creation, capacity, scope and actual revision conflicts", () => {
   const key = (status: number, code: ConstructorParameters<typeof MissionMutationError>[2]) => missionMutationErrorKey(new MissionMutationError(status, "create", code))
@@ -31,6 +32,36 @@ test("only a received reviewed rejection is a definitive creation outcome; trans
     create(500), create(502), create(503), create(504), new MissionMutationError(400, "edit"), new Error("private"), undefined]) {
     assert.equal(isDefinitiveCreationRejection(error), false, String(error))
   }
+})
+
+test("recurring create releases only refusals the route proves preceded the native write", async t => {
+  let status = 503, body: unknown = {}, calls = 0
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+    // A 401 may trigger a read-only auth status check; count only creation sends.
+    if (init?.method === "POST") calls++
+    if (status === 0) throw new TypeError("fetch failed")
+    return Response.json(body, { status })
+  })
+  const profile = { agent: "agent", model: { providerID: "provider", id: "model" } }
+  const input = { requestID: "recurring-request", title: "Daily", instructions: "Review", template: "custom" as const,
+    clock: { time: "09:00", zone: "UTC" }, watchedConversationIDs: [], profiles: { coordinator: profile, roles: {} }, taskMode: "native" as const }
+  const classify = async (nextStatus: number, nextBody: unknown = {}) => {
+    status = nextStatus; body = nextBody
+    let key: string | undefined | null = null
+    await assert.rejects(serverApi.createMissionRecurrence("fixture", input), error => { key = recurrenceCreationRefusalKey(error); return true })
+    return key
+  }
+  assert.equal(await classify(503, { code: "creation-unavailable" }), "missions.control.creation.unavailable")
+  assert.equal(await classify(409, { code: "creation-worktree-deleting" }), "missions.control.creation.worktreeDeleting")
+  assert.equal(await classify(503, { code: "creation-capacity" }), "missions.control.creation.capacity")
+  assert.equal(await classify(409, { code: "creation-conflict" }), "missions.control.creation.scopeConflict")
+  assert.equal(await classify(503, { code: "recurrence-capacity" }), "missions.recurrence.capacity")
+  assert.equal(await classify(400, { code: "recurrence-input-capacity" }), "missions.recurrence.invalid")
+  for (const forbidden of [401, 403, 404]) assert.equal(await classify(forbidden), "missions.control.mutation.forbidden")
+  // Everything that may follow a committed paused schedule stays held.
+  for (const [held, heldBody] of [[503, {}], [409, {}], [409, { code: "creation-uncertain" }], [500, {}], [502, {}],
+    [403, { code: "creation-uncertain" }], [0, {}]] as const) assert.equal(await classify(held, heldBody), undefined, `${held}`)
+  assert.equal(calls, 16, "classification never resends")
 })
 
 test("lost fetch and undecodable create acknowledgements surface as non-definitive without a second request", async t => {

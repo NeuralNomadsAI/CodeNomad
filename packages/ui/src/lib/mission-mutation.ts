@@ -53,6 +53,23 @@ export function isDefinitiveCreationRejection(error: unknown): boolean {
   return [400, 401, 403, 404].includes(error.status)
 }
 
+// Recurring twin of isDefinitiveCreationRejection: the message key of a refusal that
+// proves nothing was sent, or undefined when the request must stay held. The route
+// codes pre-dispatch refusals; codeless 409/5xx, creation-uncertain and transport
+// loss may follow a committed paused schedule.
+export function recurrenceCreationRefusalKey(error: unknown): string | undefined {
+  if (!(error instanceof HttpResponseError)) return undefined
+  const { status, code } = error
+  if (status === 400) return "missions.recurrence.invalid"
+  if (status === 503 && code === "recurrence-capacity") return "missions.recurrence.capacity"
+  if (status === 503 && code === "creation-capacity") return "missions.control.creation.capacity"
+  if (status === 503 && code === "creation-unavailable") return "missions.control.creation.unavailable"
+  if (status === 409 && code === "creation-worktree-deleting") return "missions.control.creation.worktreeDeleting"
+  if (status === 409 && code === "creation-conflict") return "missions.control.creation.scopeConflict"
+  if (!code && [401, 403, 404].includes(status)) return "missions.control.mutation.forbidden"
+  return undefined
+}
+
 export function missionMutationErrorKey(error: unknown): string {
   if (error instanceof MissionMutationError) {
     if (isUncertainCreation(error)) return "missions.control.creation.uncertain"

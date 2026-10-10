@@ -89,6 +89,66 @@ test("pre-send creation refusals keep the draft, re-enable Create and explain th
   } finally { await page.close() }
 })
 
+/** Daily creation: answers recurrence POSTs through `answer` (later page routes win). */
+async function setupDaily(page: Page, answer: (route: Route, attempt: number) => Promise<void> | void) {
+  const fixture = await setup(page, route => route.abort())
+  const attempts: Array<Record<string, unknown>> = []
+  await page.route("**/api/workspaces/fixture/missions/recurrence", route => {
+    if (route.request().method() !== "POST") return route.fallback()
+    attempts.push(route.request().postDataJSON())
+    return answer(route, attempts.length)
+  })
+  await fixture.objective.fill("Review merged changes daily")
+  await fixture.form.getByLabel("Every day at", { exact: true }).check()
+  await fixture.form.getByLabel("Daily local time", { exact: true }).fill("07:30")
+  return { ...fixture, attempts }
+}
+const schedule = { schedule: { id: "rec_created", revision: 0, state: "paused", digest: "d".repeat(64), projectID: "project", projectCanonical: "/fixture" } }
+
+test("daily pre-send refusals keep the draft and Create available with the same request identity", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const refusals = [
+    { status: 503, json: { error: "Mission plugin unavailable", code: "creation-unavailable" }, message: /Nothing was sent/ },
+    { status: 409, json: { error: "Worktree deletion is in progress", code: "creation-worktree-deleting" }, message: /worktree deletion is in progress/i },
+    { status: 403, json: { error: "Recurrence directory is not owned" }, message: /was not admitted/ },
+  ]
+  try {
+    const fixture = await setupDaily(page, (route, attempt) => attempt <= refusals.length
+      ? route.fulfill({ status: refusals[attempt - 1]!.status, json: refusals[attempt - 1]!.json })
+      : route.fulfill({ json: schedule }))
+    for (const refusal of refusals) {
+      await submitReady(page)
+      await fixture.submit.click()
+      await page.getByRole("alert").filter({ hasText: refusal.message }).waitFor()
+      assert.equal(await fixture.objective.inputValue(), "Review merged changes daily")
+      assert.equal(await fixture.objective.isDisabled(), false)
+    }
+    await submitReady(page)
+    await fixture.submit.click()
+    await fixture.form.waitFor({ state: "detached" })
+    assert.equal(fixture.attempts.length, refusals.length + 1, "only explicit user submissions were sent")
+    assert.equal(new Set(fixture.attempts.map(body => body.requestID)).size, 1, "an unchanged draft keeps its request identity")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("a daily codeless or uncertain failure stays held without a resend", async () => {
+  for (const json of [{ error: "Recurrence creation unavailable or uncertain" }, { error: "settlement unknown", code: "creation-uncertain" }]) {
+    const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+    try {
+      const fixture = await setupDaily(page, route => route.fulfill({ status: json.code ? 409 : 503, json }))
+      await submitReady(page)
+      await fixture.submit.click()
+      await page.waitForFunction(() => (document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+      await fixture.form.evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+      await page.waitForTimeout(200)
+      assert.equal(await fixture.submit.isDisabled(), true, JSON.stringify(json))
+      assert.equal(fixture.attempts.length, 1, "no automatic or manual replay")
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  }
+})
+
 test("a codeless server failure stays an exact uncertain hold without a resend", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   try {
