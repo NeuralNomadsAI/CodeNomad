@@ -72,7 +72,7 @@ function fixture(action: "pause" | "stop" | "start", options: { stuck?: string }
   }
   const command = { kind: "lifecycle", input: { missionID: mission.id, operationID: "evt_control", sessionID: "ses_coordinator" } }
   const send = () => applyMissionLifecycle(manager as never, new WorktreeDeletionFence(), "ses_coordinator", command, new AbortController().signal)
-  return { client, native, depth, running, inboxes, calls, send, delivered: () => delivered }
+  return { client, native, depth, running, inboxes, calls, send, mission, delivered: () => delivered }
 }
 
 function firstInterruptDepths(f: ReturnType<typeof fixture>): number[] {
@@ -122,14 +122,26 @@ test("a sub-agent that cannot be confirmed stopped makes the receipt partial", a
   assert.ok(f.running.has("ses_coordinator_0_0_0"))
 })
 
-test("Play tells the coordinator which sub-agent conversations were interrupted", async () => {
+test("Play tells the coordinator which sub-agent conversations the latest Pause interrupted", async () => {
   const f = fixture("start")
+  f.mission.control.pausedDescendants = { sessions: ["ses_coordinator_1", "ses_coordinator_2_0"], partial: false }
   f.native.get("ses_coordinator_1").outcome = "interrupted"
   f.native.get("ses_coordinator_2_0").outcome = "interrupted"
+  // Interrupted by the user, or by an earlier Pause whose work was already re-delegated.
+  f.native.get("ses_coordinator_0").outcome = "interrupted"
   const ack = (await f.send()).nativeAcknowledgement
   if (ack.disposition !== "start-admitted") throw new Error("Wrong ACK")
   assert.match(ack.admission.payload.text, /task build \(ses_coordinator_1\)/)
   assert.match(ack.admission.payload.text, /ses_coordinator_2_0/)
+  assert.doesNotMatch(ack.admission.payload.text, /ses_coordinator_0[^_]/)
+})
+
+test("Play attributes nothing to a Pause without receipts of interrupted sub-agents", async () => {
+  const f = fixture("start")
+  f.native.get("ses_coordinator_1").outcome = "interrupted"
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "start-admitted") throw new Error("Wrong ACK")
+  assert.doesNotMatch(ack.admission.payload.text, /interrupted when the mission was paused/)
 })
 
 for (const action of ["pause", "stop"] as const) {

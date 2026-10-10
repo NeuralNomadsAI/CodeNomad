@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { controlResumeAdmissionID } from "../../missions/receipt-identity"
 import { parseMissionNativeAcknowledgement } from "../../missions/lifecycle-schema"
-import type { MissionNativeAcknowledgement } from "../../missions/lifecycle-model"
+import type { MissionLifecycleOperation, MissionNativeAcknowledgement } from "../../missions/lifecycle-model"
 import type { MissionSnapshot } from "../../missions/model"
 import { matchesExecution } from "../../missions/execution"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
@@ -129,7 +129,8 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await checkCoordinator()
       await checkOperation()
       current()
-      const interrupted = target.sessionID === coordinatorID ? await interruptedConversations(client, await checkTarget(), mission.tasks, signal, current) : ""
+      const interrupted = target.sessionID === coordinatorID && operation.pausedDescendants
+        ? await interruptedConversations(client, await checkTarget(), mission.tasks, operation.pausedDescendants, signal, current) : ""
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
@@ -228,20 +229,25 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
 
 const MAX_LISTED_INTERRUPTIONS = 32
 
-/** Natively interrupted descendant conversations, so the coordinator can
- * decide what to re-delegate. Advisory: a partial read lists what it saw. */
+/** Descendant conversations the latest Pause interrupted that are still natively
+ * interrupted, so the coordinator can decide what to re-delegate. User or older
+ * interruptions are never attributed to that Pause. Advisory: a partial read or
+ * receipt lists what it saw. */
 async function interruptedConversations(client: Parameters<typeof readNativeControlFamily>[0], root: Parameters<typeof readNativeControlFamily>[1],
-  tasks: MissionSnapshot["missions"][number]["tasks"], signal: AbortSignal, current: () => void): Promise<string> {
+  tasks: MissionSnapshot["missions"][number]["tasks"], paused: NonNullable<MissionLifecycleOperation["pausedDescendants"]>,
+  signal: AbortSignal, current: () => void): Promise<string> {
+  if (!paused.sessions.length && !paused.partial) return ""
   const family = await readNativeControlFamily(client, root, signal, { assertCurrent: current, deadline: Date.now() + 15_000 })
-  const ids = [...family.members.values()].filter(({ session }) => session.id !== root.id && session.outcome === "interrupted")
-    .map(({ session }) => session.id)
-  if (!ids.length) return ""
+  const ids = [...family.members.values()].filter(({ session }) => session.id !== root.id && session.outcome === "interrupted"
+    && paused.sessions.includes(session.id)).map(({ session }) => session.id)
+  if (!ids.length && !paused.partial) return ""
+  if (!ids.length) return "\n\nThe mission was paused while sub-agents may have been running; inspect the mission map for unfinished delegated work."
   const listed = ids.slice(0, MAX_LISTED_INTERRUPTIONS).map(id => {
     const task = tasks.find(task => task.actorSessionId === id)
     return task ? `task ${task.key} (${id})` : id
   })
   const more = ids.length > listed.length ? ` and ${ids.length - listed.length} more` : ""
-  const partial = family.complete ? "" : " The sub-agent inventory was incomplete; inspect the mission map for others."
+  const partial = family.complete && !paused.partial ? "" : " The sub-agent inventory was incomplete; inspect the mission map for others."
   return `\n\nThese sub-agent conversations were interrupted when the mission was paused: ${listed.join(", ")}${more}.`
     + ` Re-delegate or continue their unfinished tasks as needed; do not assume their work completed.${partial}`
 }

@@ -72,6 +72,7 @@ export function parseMissionLifecycleReply(value: unknown, expected: Parameters<
 export const lifecycleOperationReadSchema = z.object({ id, missionID: id, requestID: id,
   expectedRevision: z.number().int().positive().safe(), action: z.enum(["start", "pause", "stop"]),
   recurrence: recurrence.optional(), completedRevision: z.number().int().positive().safe().optional(),
+  pausedDescendants: z.object({ sessions: z.array(id).max(MAX_REPORTED_DESCENDANTS), partial: z.boolean() }).strict().optional(),
   targets: z.array(z.object({ sessionID: id, location: z.object({ directory: z.string().min(1).max(4096), workspaceID: id.optional() }).strict() }).strict()).max(32),
   pending: z.array(id).max(32),
   receipts: z.array(z.union([
@@ -144,6 +145,8 @@ export const lifecycleOperationSchema = {
     }, required: ["grantID", "passageID", "messageID", "coordinatorSessionID"], additionalProperties: false },
     id: { type: "string" }, pending: { type: "array", items: { type: "string" } },
     completedRevision: { type: "integer", minimum: 1 },
+    pausedDescendants: { type: "object", properties: { sessions: { type: "array", maxItems: MAX_REPORTED_DESCENDANTS,
+      items: ackIdentityProperties.sessionID }, partial: { type: "boolean" } }, required: ["sessions", "partial"], additionalProperties: false },
     // Native V2's JSON Schema decoder does not support `not`. Complete,
     // disjoint object branches retain the exact known/unknown evidence rule.
     receipts: { type: "array", maxItems: 8, items: { oneOf: [

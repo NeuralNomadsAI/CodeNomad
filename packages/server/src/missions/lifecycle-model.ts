@@ -1,7 +1,7 @@
 import type { MissionEvent, MissionLocation, MissionMap } from "./model"
 import type { SessionInboxSynthetic, SessionInterruptResponse } from "@opencode/client"
 import { hasInvalidControlHistory, isControlReceipt } from "./receipt-identity"
-import type { MissionDescendantControl } from "./native-family-interrupt"
+import { MAX_REPORTED_DESCENDANTS, type MissionDescendantControl } from "./native-family-interrupt"
 
 export type MissionAction = "start" | "pause" | "stop"
 export type MissionRunState = "prepared" | "running" | "paused" | "stopped"
@@ -40,6 +40,8 @@ export interface MissionLifecycleOperation extends MissionLifecycleInput {
   receipts?: MissionLifecycleReceipt[]
   /** Journal revision when this exact operation's final target ACK was saved. */
   completedRevision?: number
+  /** Start only: descendant sessions the latest preceding Pause reported interrupting. */
+  pausedDescendants?: { sessions: string[]; partial: boolean }
 }
 export interface MissionControlRequestedEvent extends MissionLifecycleInput {
   version: 1
@@ -79,6 +81,7 @@ export function projectLifecycle(events: readonly MissionEvent[]): { runState: M
   const pending = operation.targets.filter(target => !acknowledged.has(target.sessionID)).map(target => target.sessionID)
   const completedRevision = pending.length ? undefined : events.reduce((revision, event, index) =>
     event.id === operation.id || event.type === "mission.control-applied" && isControlReceipt(event, operation, event.sessionID) ? index + 1 : revision, 0)
+  const paused = operation.action === "start" ? pausedDescendants(scoped, operation) : undefined
   return {
     ...unavailable,
     runState: operation.action === "stop" ? "stopped" : operation.action === "pause" ? "paused" : "running",
@@ -87,8 +90,28 @@ export function projectLifecycle(events: readonly MissionEvent[]): { runState: M
       action: operation.action, targets: operation.targets, pending, receipts,
       ...(operation.recurrence ? { recurrence: operation.recurrence } : {}),
       ...(completedRevision !== undefined ? { completedRevision } : {}),
+      ...(paused ? { pausedDescendants: paused } : {}),
     },
   }
+}
+
+/** Exact receipts of the latest Pause before `start`, so Play attributes only
+ * the interruptions that Pause made, never older or user interruptions. */
+function pausedDescendants(events: readonly MissionEvent[], start: MissionControlRequestedEvent) {
+  const before = events.slice(0, events.indexOf(start))
+  const pause = [...before].reverse().find(event => event.type === "mission.control-requested")
+  if (!pause || pause.type !== "mission.control-requested" || pause.action !== "pause") return undefined
+  const sessions = new Set<string>()
+  let partial = false
+  for (const target of pause.targets) {
+    const receipts = before.filter(event => event.type === "mission.control-applied" && isControlReceipt(event, pause, target.sessionID))
+    const ack = receipts.length === 1 && receipts[0].type === "mission.control-applied" ? receipts[0].nativeAcknowledgement : undefined
+    if (ack?.disposition === "target-missing") continue
+    const descendants = ack?.disposition === "interrupt-observed" ? ack.descendants : undefined
+    if (!descendants || !descendants.complete || descendants.sessions.length < descendants.interrupted) partial = true
+    for (const id of descendants?.sessions ?? []) if (sessions.size < MAX_REPORTED_DESCENDANTS) sessions.add(id)
+  }
+  return { sessions: [...sessions], partial }
 }
 
 export function missionIsRunning(mission: Pick<MissionMap, "status" | "runState" | "controlUnavailable">): boolean {
