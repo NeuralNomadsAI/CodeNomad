@@ -24,6 +24,14 @@ test("fixture cleanup accepts an owned child closing after forced termination", 
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"])
 })
 
+test("Missions native fixtures stop their owned serve with bounded escalation", () => {
+  for (const script of ["test-missions-native.mjs", "test-missions-native-family-control.mjs"]) {
+    const source = fs.readFileSync(new URL(script, import.meta.url), "utf8")
+    assert.match(source, /await stopFixtureChild\(child, stopped\)/, script)
+    assert.doesNotMatch(source, /child\?\.kill\(\)/, `${script} must not await an unbounded close`)
+  }
+})
+
 test("native pagination rejects cycles instead of looping indefinitely", () => {
   const accept = fixturePaginationGuard()
   accept("one"); accept("two")
