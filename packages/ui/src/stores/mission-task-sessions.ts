@@ -47,6 +47,12 @@ export function demandMissionTaskSessions(instanceId: string, mission: MissionMa
   const known = entry?.stamp === stamp
   if (!client || (known && entry.pulse === pulse)) return
   const tail = known && live(mission, entry.sessions)
+  // Nothing linked and nothing left to discover: the pulse needs no native read
+  // (the active map fans out per active session on the server).
+  if (known && !tail && entry.sessions.size === 0) {
+    setEntries(previous => new Map(previous).set(key, { ...entry, pulse }))
+    return
+  }
   const request = `${stamp}:${known ? pulse : "full"}`
   if (pending.get(key) === request) return
   pending.set(key, request)
