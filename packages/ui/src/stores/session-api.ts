@@ -62,6 +62,7 @@ import {
   getSessionListIds,
   sessionInfoByInstance,
 } from "./session-state"
+import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
@@ -597,7 +598,11 @@ async function fetchSessions(instanceId: string, options?: {
     && generationCurrent()
     && !options?.signal?.aborted
   options?.registerInvalidation?.(() => {
-    if (isLatestSessionListRequest(instanceId, requestId)) clearSessionListRequestState(instanceId)
+    if (!isLatestSessionListRequest(instanceId, requestId)) return
+    clearSessionListRequestState(instanceId)
+    // No request will write a terminal loading state now. Settle restoration
+    // without claiming a loaded list, so deferred panels still start.
+    if (instances().get(instanceId)?.client === client) settleAbandonedSessionListRestoration(instanceId)
   })
 
   setLoading((prev) => {

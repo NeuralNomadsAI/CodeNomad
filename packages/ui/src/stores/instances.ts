@@ -24,6 +24,7 @@ import {
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
 } from "./sessions"
+import { forgetSessionListRestoration } from "./session-list-restoration"
 import {
   ensureWorktreesLoaded,
   getWorktrees,
@@ -1495,6 +1496,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
+  forgetSessionListRestoration(id)
   clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
