@@ -74,20 +74,27 @@ test("unrequested auto:<revision> briefings advance per revision without disturb
   assert.equal(f.sends(), 0)
 })
 
-test("a requested briefing superseded by automatic milestones keeps its exact identity within a bounded window", async () => {
+test("a requested briefing superseded by any number of automatic milestones keeps its exact identity", async () => {
   const f = harness(); await start(f)
   const requested = (await f.control.briefing("ses_coordinator", content(1, { requestID: "ui-request-1" }))).mission
   const milestone = (await f.control.briefing("ses_coordinator", content(requested.revision, { requestID: `auto:${requested.revision}` }))).mission
   assert.equal(milestone.briefing?.requestID, `auto:${requested.revision}`)
-  assert.deepEqual(milestone.briefingResponses, [{ requestID: "ui-request-1", briefingID: requested.briefing!.id },
-    { requestID: `auto:${requested.revision}`, briefingID: milestone.briefing!.id }])
+  const answered = [{ requestID: "ui-request-1", briefingID: requested.briefing!.id }]
+  assert.deepEqual(milestone.briefingResponses, answered, "unrequested milestones answer nobody")
   const rebuilt = (await new MissionJournal(f.storage, "project", "/repo").snapshot()).missions[0]
   assert.deepEqual(rebuilt.briefingResponses, milestone.briefingResponses)
   let latest = milestone
-  for (let i = 0; i < MISSION_BRIEFING_RESPONSES_MAX - 1; i++)
+  for (let i = 0; i < MISSION_BRIEFING_RESPONSES_MAX * 2; i++)
     latest = (await f.control.briefing("ses_coordinator", content(latest.revision, { requestID: `auto:${latest.revision}` }))).mission
+  assert.deepEqual(latest.briefingResponses, answered, "automatic briefings never evict an explicit request")
+  // An off-protocol ID that does not match its revision is retained like a request.
+  latest = (await f.control.briefing("ses_coordinator", content(latest.revision, { requestID: "auto:1" }))).mission
+  assert.equal(latest.briefingResponses?.at(-1)?.requestID, "auto:1")
+  // Only later explicit requests consume the bounded window.
+  for (let i = 0; i < MISSION_BRIEFING_RESPONSES_MAX - 1; i++)
+    latest = (await f.control.briefing("ses_coordinator", content(latest.revision, { requestID: `ui-request-${i + 2}` }))).mission
   assert.equal(latest.briefingResponses?.length, MISSION_BRIEFING_RESPONSES_MAX)
-  assert.ok(!latest.briefingResponses!.some(item => item.requestID === "ui-request-1"), "only a bounded recent window is retained")
+  assert.ok(!latest.briefingResponses!.some(item => item.requestID === "ui-request-1"), "the window holds the most recent explicit requests")
   assert.equal(f.sends(), 0)
 })
 

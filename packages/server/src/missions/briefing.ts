@@ -19,7 +19,14 @@ export interface MissionBriefing extends MissionBriefingContent {
 /** Identity of one accepted briefing: proof that the coordinator published a
  * response to this exact request, never that a person read it. */
 export interface MissionBriefingResponse { requestID: string; briefingID: string }
+/** Retained responses to explicit requests only. Unrequested `auto:<revision>`
+ * briefings answer nobody, so any number of them never evicts a request. */
 export const MISSION_BRIEFING_RESPONSES_MAX = 16
+
+/** The protocol's unrequested milestone identity; nobody waits on it. */
+export function isAutomaticBriefing(briefing: Pick<MissionBriefing, "requestID" | "basedOnRevision">): boolean {
+  return briefing.requestID === `auto:${briefing.basedOnRevision}`
+}
 export interface MissionBriefingInput extends MissionBriefingContent {
   missionID?: string
   requestID: string

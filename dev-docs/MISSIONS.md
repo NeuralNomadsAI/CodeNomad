@@ -119,7 +119,11 @@ context; the frozen passage start text remains the verbatim instructions.
 Request admission is visibly distinct from receiving the matching request-ID
 briefing. Pending/uncertain requests survive mission navigation and remount in
 window-local memory. A seen exact response remains recognized if a later briefing
-replaces it. No mutation replay, automatic retries or background polling is added.
+replaces it. Snapshots also project `briefingResponses` for the 16 most recent
+explicitly requested briefings; unrequested `auto:<revision>` milestones are not
+retained there, so any number of them cannot send an answered request back to
+waiting. Only 16 newer answered explicit requests can evict an unseen answer.
+No mutation replay, automatic retries or background polling is added.
 An explicit, confirmed separate request is possible after checking the native
 conversation (for an unresponsive coordinator, unsupported tool or lost ACK).
 Memory does not survive application restart or coordinate independent windows;

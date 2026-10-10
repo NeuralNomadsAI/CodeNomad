@@ -1,5 +1,5 @@
 import type { MissionExecution } from "./execution"
-import { MISSION_BRIEFING_RESPONSES_MAX, briefingSourcesExist, parseMissionBriefing, type MissionBriefing, type MissionBriefingResponse } from "./briefing"
+import { MISSION_BRIEFING_RESPONSES_MAX, briefingSourcesExist, isAutomaticBriefing, parseMissionBriefing, type MissionBriefing, type MissionBriefingResponse } from "./briefing"
 export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } from "./briefing"
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
@@ -522,6 +522,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || ["prepared", "paused", "stopped"].includes(lifecycle.runState ?? "running") || lifecycle.control?.pending.length
         || !briefingSourcesExist({ tasks: [...tasks.values()] }, value)) { discarded.count++; continue }
       briefing = value
+      if (isAutomaticBriefing(value)) continue
       briefingResponses.push({ requestID: value.requestID, briefingID: value.id })
       if (briefingResponses.length > MISSION_BRIEFING_RESPONSES_MAX) briefingResponses.shift()
       continue
