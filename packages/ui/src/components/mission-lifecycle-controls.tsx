@@ -101,14 +101,13 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     if (state() === "paused") return { key: "resume", label: t("missionsPanel.action.resume"), ariaLabel: t("missions.control.run.resume"), disabled, onSelect: () => act("start") }
     return { key: "pause", label: t("missionsPanel.action.pause"), ariaLabel: t("missions.control.run.pause"), disabled, onSelect: () => act("pause") }
   }
-  const menu = (): ActionOverflowMenuItem[] => [
-    ...(unresolved() && !retryBlocked() ? [{ key: "retry", label: t("missionsPanel.action.retry"), disabled: Boolean(props.disabled) || busy(),
-      onSelect: () => act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) }] : []),
-    ...(!terminal() && !(retry() && !pending()) ? [{ key: "stop", label: t("missionsPanel.action.stop"), disabled: blocked(), onSelect: confirmStop }] : []),
-  ]
+  const stop = (): MissionPrimaryAction | undefined => !terminal() && !(retry() && !pending())
+    ? { key: "stop", label: t("missions.control.run.stop"), disabled: blocked(), onSelect: confirmStop } : undefined
+  const menu = (): ActionOverflowMenuItem[] => unresolved() && !retryBlocked() ? [{ key: "retry", label: t("missionsPanel.action.retry"),
+    disabled: Boolean(props.disabled) || busy(), onSelect: () => act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) }] : []
   const feedback = <>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
     <Show when={!busy() && (unresolved() || (full() && !terminal()))}><small role="alert">{t("missions.control.run.error")}</small></Show>
   </>
-  return { primary, menu, feedback }
+  return { primary, stop, menu, feedback }
 }

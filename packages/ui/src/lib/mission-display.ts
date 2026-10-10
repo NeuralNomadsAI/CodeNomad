@@ -3,6 +3,9 @@
 const SENTENCE_END = /[.!?。！？](?=\s|$)|\n/u
 const CLAUSE_END = /[,;:，；：—–]/gu
 
+/** List/picker rows show the whole first sentence; CSS ellipsis truncates at the row edge. */
+export const MISSION_ROW_TITLE_MAX = 500
+
 /** An explicit title wins; otherwise the first sentence/clause of the objective. */
 export function missionDisplayTitle(mission: { objective: string; title?: string }, max = 60): string {
   const explicit = mission.title?.replace(/\s+/g, " ").trim()

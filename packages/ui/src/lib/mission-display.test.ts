@@ -1,11 +1,17 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { missionClockTime, missionDisplayTitle, missionRelativeTime, missionScheduleWhen, missionShortTitle, missionZoneDiffers,
+import { MISSION_ROW_TITLE_MAX, missionClockTime, missionDisplayTitle, missionRelativeTime, missionScheduleWhen, missionShortTitle, missionZoneDiffers,
   missionZoneName } from "./mission-display"
 
 test("an explicit title wins over the objective", () => {
   assert.equal(missionDisplayTitle({ title: "  Release  notes ", objective: "Write the notes." }), "Release notes")
   assert.equal(missionDisplayTitle({ title: " ", objective: "Write the notes. Then publish." }), "Write the notes")
+})
+
+test("row titles keep the whole first sentence for CSS truncation", () => {
+  const sentence = "Audit every mission panel control, then align the toolbar icons with the session row geometry"
+  assert.equal(missionDisplayTitle({ objective: `${sentence}. Then report.` }, MISSION_ROW_TITLE_MAX), sentence)
+  assert.ok(missionDisplayTitle({ objective: sentence }).endsWith("…"))
 })
 
 test("short titles keep the first sentence and cut long text at a clause or word", () => {

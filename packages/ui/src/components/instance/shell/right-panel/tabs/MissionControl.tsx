@@ -16,7 +16,7 @@ import { missionIncludesSession, selectMissionAttention } from "../../../../miss
 import { MissionPicker } from "../../../../mission-picker"
 import { missionEntryAttention, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
-import { missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
+import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
 import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { MissionPreferences } from "../../../../mission-preferences"
@@ -232,7 +232,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
     get onRead() { return props.onRevealConversation }, get selectedSchedule() { return selectedSchedule() },
-    get tracking() { return tracking() }, get hasTracking() { return Boolean(mission()) }, detailId })
+    get tracking() { return tracking() }, detailId,
+    get passage() {
+      const passage = mission()
+      if (!passage) return undefined
+      const overview: MissionReaderTarget = { missionId: passage.id, kind: "overview" }
+      return { reading: isReading(overview), onToggle: () => void read(overview),
+        onOpenConversation: () => void openActor(passage.coordinatorSessionId) }
+    } })
   const missionEntries = createMemo((): MissionPickerEntry[] => missions().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
     const requests = selectMissionAttention({ actors: value.actors, forms: getFormQueue(props.instanceId),
@@ -242,7 +249,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const resting = value.status !== "active" ? value.status : value.runState === "prepared" || value.runState === "paused" ? "paused" : "running"
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
-    return { key: `mission:${value.id}`, title: missionDisplayTitle(value), attention, mark: attention ?? resting,
+    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), attention, mark: attention ?? resting,
       status: [stateText, attention === "permission" ? props.t("missionsPanel.task.input") : "",
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
@@ -328,6 +335,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         return <section id={detailId} class="mission-detail" aria-label={missionDisplayTitle(selected())}>
           <MissionSelectedActions instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
             disabled={Boolean(editor())} messagingDisabled={messagingDisabled()}
+            reading={isReading({ missionId: id, kind: "overview" })} onToggleReader={() => void read({ missionId: id, kind: "overview" })}
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}

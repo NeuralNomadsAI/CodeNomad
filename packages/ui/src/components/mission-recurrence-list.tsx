@@ -4,7 +4,6 @@ import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
 import { scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
-import { MissionOverviewToggle } from "./mission-tracking"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
@@ -111,23 +110,27 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     const action = primaryAction()
     return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), onSelect: () => act(action) } : undefined
   }
+  const stopAction = (): MissionPrimaryAction | undefined => props.schedule.actions.includes("stop") && !heldIntent()
+    ? { key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop } : undefined
   const menu = (): ActionOverflowMenuItem[] => [
     ...(retryCapable() ? [{ key: "retry", label: t("missionsPanel.action.retry"), description: t("missions.recurrence.retry", { id: props.schedule.title }),
       onSelect: () => act(heldIntent()!.action, true) }] : []),
-    ...props.schedule.actions.filter(action => action !== primaryAction() && !heldIntent()).map(action => ({
+    ...props.schedule.actions.filter(action => action !== primaryAction() && action !== "stop" && !heldIntent()).map(action => ({
       key: action, label: label(action), description: description(action), disabled: !capable(action),
       onSelect: () => action === "stop" ? stop() : act(action),
     })),
   ]
   const feedback = <Show when={heldIntent()}><small role="status">{t("missions.recurrence.uncertain")}</small></Show>
-  return { primary, menu, feedback }
+  return { primary, stop: stopAction, menu, feedback }
 }
 
 /** Recurring schedules: picker entries for the shared mission list, and the
  * selected schedule's detail (actions, notice, current passage, past runs). */
 export function createMissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
   selectedSchedule?: string; onRead?: (restoreChat?: boolean) => void; detailId: string
-  tracking?: JSX.Element; hasTracking?: boolean }) {
+  tracking?: JSX.Element
+  /** The admitted passage, when one is tracked: its overview reader and coordinator conversation. */
+  passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
@@ -183,12 +186,15 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid,
         refresh: () => setRevision(value => value + 1) })
       return <section id={props.detailId} class="mission-detail mission-schedule-detail" aria-label={schedule().title}>
-        <MissionActionBar label={t("missionsPanel.picker.actions")} primary={controls.primary()} items={controls.menu()} feedback={controls.feedback} />
+        {/* A running passage's summary opens what is happening now; otherwise the schedule reader. */}
+        <MissionActionBar label={t("missionsPanel.picker.actions")}
+          reading={props.passage ? props.passage.reading : reading(schedule().id)}
+          onToggleReader={() => props.passage ? props.passage.onToggle() : read(schedule().id)}
+          primary={controls.primary()} stop={controls.stop()} onOpenConversation={props.passage?.onOpenConversation}
+          items={controls.menu()} feedback={controls.feedback} />
         <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
         <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
           {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
-        {/* A running passage's Overview opens what is happening now; otherwise the schedule reader. */}
-        <Show when={!props.hasTracking}><MissionOverviewToggle reading={reading(schedule().id)} onToggle={() => read(schedule().id)} /></Show>
         {props.tracking}
         {pastRuns(schedule())}
       </section>

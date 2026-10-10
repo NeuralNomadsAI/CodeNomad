@@ -2,8 +2,6 @@
    the Overview toggle, the dependency task tree and (recurring) past runs. */
 .mission-detail { display: grid; gap: var(--space-xs); min-width: 0; padding-block: var(--space-sm); font-size: var(--font-size-sm); overflow-wrap: anywhere; border-block-end: 1px solid var(--border-base); }
 .mission-detail p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
-.mission-detail-header { display: flex; align-items: center; min-width: 0; }
-.mission-overview-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: var(--font-size-xs); }
 
 .mission-needs { display: grid; padding-inline-start: var(--space-xs); border-inline-start: 2px solid var(--status-warning); }
 .mission-needs-item { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; min-height: var(--touch-target-size-compact); }

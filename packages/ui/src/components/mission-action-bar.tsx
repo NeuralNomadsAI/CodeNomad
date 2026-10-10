@@ -1,26 +1,45 @@
-import { For, Show, type JSX } from "solid-js"
-import { Pause, Play, RefreshCw } from "lucide-solid"
-import type { ActionOverflowMenuItem } from "./action-overflow-menu"
+import type { JSX } from "solid-js"
+import { ArrowUpRight, Eye, Pause, Play, RefreshCw, Square } from "lucide-solid"
+import { useI18n } from "../lib/i18n"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
 
-function primaryIcon(key: string): JSX.Element {
+function primaryIcon(key?: string): JSX.Element {
   if (key === "pause") return <Pause class="h-3.5 w-3.5" aria-hidden="true" />
   if (key === "check" || key === "status") return <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
   return <Play class="h-3.5 w-3.5" aria-hidden="true" />
 }
 
-/** Compact actions of the selected Mission/schedule, at the top of its detail:
- * the contextual lifecycle action first, then the remaining available actions. */
-export function MissionActionBar(props: { label: string; primary?: MissionPrimaryAction; items: ActionOverflowMenuItem[]; feedback?: JSX.Element }) {
+/** One row of icon buttons above the selected Mission/schedule's task tree:
+ * summary reader, contextual Play/Pause, Stop, coordinator conversation and
+ * the remaining actions. Inapplicable buttons stay in place, disabled. */
+export function MissionActionBar(props: {
+  label: string; reading: boolean; onToggleReader: () => void
+  primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; onOpenConversation?: () => void
+  items: ActionOverflowMenuItem[]; feedback?: JSX.Element
+}) {
+  const { t } = useI18n()
+  const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
+  const stopLabel = () => props.stop ? props.stop.ariaLabel ?? props.stop.label : t("missions.control.run.stop")
   return <>
-    <div class="mission-action-bar" role="group" aria-label={props.label}>
-      <Show when={props.primary}>{action => <button type="button" class="window-text-button mission-index-primary"
-        aria-label={action().ariaLabel ?? action().label} title={action().ariaLabel ?? action().label} disabled={action().disabled}
-        onClick={() => void action().onSelect()}>{primaryIcon(action().key)}<span>{action().label}</span></button>}</Show>
-      <For each={props.items}>{item => <button type="button" class="window-text-button" disabled={item.disabled}
-        title={item.description ?? item.label} aria-description={item.description} onClick={() => void item.onSelect()}>
-        <Show when={item.icon}><span class="mission-action-icon" aria-hidden="true">{item.icon}</span></Show><span>{item.label}</span>
-      </button>}</For>
+    <div class="mission-action-bar" role="toolbar" aria-label={props.label}>
+      <button type="button" class="mission-control-icon-button icon-toggle mission-overview-toggle" aria-pressed={props.reading}
+        aria-label={t("missionsPanel.overview")} title={t("missionsPanel.overview")} onClick={() => props.onToggleReader()}>
+        <Eye class="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={primaryLabel()}
+        disabled={!props.primary || props.primary.disabled} onClick={() => void props.primary?.onSelect()}>
+        {primaryIcon(props.primary?.key)}
+      </button>
+      <button type="button" class="mission-control-icon-button" aria-label={stopLabel()} title={stopLabel()}
+        disabled={!props.stop || props.stop.disabled} onClick={() => void props.stop?.onSelect()}>
+        <Square class="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.action.openConversation")}
+        title={t("missionsPanel.action.openConversation")} disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.()}>
+        <ArrowUpRight class="h-4 w-4" aria-hidden="true" />
+      </button>
+      <ActionOverflowMenu items={props.items} minItems={0} label={t("missionsPanel.moreActions")} triggerClass="mission-control-icon-button" />
     </div>
     <div class="mission-action-feedback">{props.feedback}</div>
   </>

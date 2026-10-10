@@ -1,9 +1,6 @@
-/* Selected Mission/schedule actions at the top of its detail (mission-action-bar.tsx). */
-.mission-action-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
-.mission-action-bar > .window-text-button { display: inline-flex; align-items: center; gap: var(--space-xs); min-width: 0; font-size: var(--font-size-xs); }
-.mission-action-bar > .window-text-button > span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.mission-action-icon { display: inline-flex; }
-.mission-action-icon svg { width: 0.875rem; height: 0.875rem; }
+/* Selected Mission/schedule icon toolbar above its task tree (mission-action-bar.tsx),
+   with the picker's [+][✎][−] icon geometry. */
+.mission-action-bar { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .mission-action-feedback { display: grid; color: var(--text-muted); font-size: var(--font-size-xs); }
 .mission-action-feedback:empty { display: none; }
 .mission-action-feedback small[role="alert"] { color: var(--status-warning); }
