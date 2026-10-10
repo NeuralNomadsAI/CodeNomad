@@ -75,6 +75,8 @@ async function settle(page: Page) {
 }
 async function open(page: Page) {
   await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+  // Ordinary journeys start after the session list restored; the startup gate has its own regression.
+  await call(page, "restoration", false)
   await call(page, "activate", true); await select(page); await pause(page).waitFor()
 }
 
@@ -176,6 +178,7 @@ test("directory/project source ABA retains original uncertainty; stale completio
       return route.fulfill({ status: 409, json: {} })
     })
     await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "restoration", false)
     await page.evaluate(async () => {
       const { addInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
       addInstance({ id: "mission-visibility", folder: "/source-a", proxyPath: "/fixture", port: 0, pid: 0, status: "ready", client: null,
@@ -271,6 +274,7 @@ test("same-project metadata hydration cannot enable fresh admission or erase the
       return route.fulfill({ status: 409, json: {} })
     })
     await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "restoration", false)
     await page.evaluate(async () => {
       const { addInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
       addInstance({ id: "mission-visibility", folder: "/fixture", proxyPath: "/fixture", port: 0, pid: 0, status: "ready", client: null })

@@ -62,6 +62,8 @@ async function retry(page: Page) {
 async function open(page: Page, title = /^Lifecycle /) {
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+  // Ordinary journeys start after the session list restored; the startup gate has its own regression.
+  await fixture(page, "restoration", false)
   await fixture(page, "activate", true)
   await selectMission(page, title)
 }
