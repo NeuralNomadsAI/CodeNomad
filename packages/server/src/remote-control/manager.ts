@@ -97,6 +97,11 @@ export class RemoteControlManager {
     return this.options.registry.list()
   }
 
+  /** A paired device remains a live principal only while Remote Control is connected and it is not revoked or expired. */
+  isDeviceAuthorized(id: string): boolean {
+    return this.enabled && this.tunnel !== null && this.options.registry.isPaired(id)
+  }
+
   revokeDevice(id: string): boolean {
     const revoked = this.options.registry.revoke(id)
     // Revocation also ends live HTTP and SSE connections already admitted.

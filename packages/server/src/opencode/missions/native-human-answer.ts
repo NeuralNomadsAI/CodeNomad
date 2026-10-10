@@ -6,7 +6,7 @@ import { Location } from "@opencode/schema/location"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
 import type { SqlClient } from "effect/unstable/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import { stableToken } from "../../missions/journal"
+import { MissionJournal, stableToken, type MissionStorage } from "../../missions/journal"
 import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBindingSchema, humanAnswerRpcInputSchema,
   humanDecisionRequestSchema, assertHumanAnswerFresh, matchHumanQuestion,
   type HumanDecisionMark } from "../../missions/human-answer"
@@ -34,7 +34,7 @@ type NativeForms = { get(id: string): Effect.Effect<unknown, unknown>; state(id:
 /** Authenticated UI marks, independent of one-time/recurring scheduling.
  * verify(request): Promise<HumanDecisionMark> retains exact native binding checks. */
 export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanAnswers")(function* (
-  ctx: Pick<Plugin.Context, "location">,
+  ctx: Pick<Plugin.Context, "location"> & Partial<Pick<Plugin.Context, "storage">>,
 ) {
   const database = yield* Effect.serviceOption(databaseTag), origin = yield* Effect.serviceOption(locationTag)
   const formService = yield* Effect.serviceOption(formTag)
@@ -81,10 +81,32 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
     return { ...part, state: part.state, input: part.state.input }
   })
   const keyFor = (sessionID: string, formID: string) => `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/${formID}`
+  /** Exact durable membership of a metadata-less root: the native parent chain
+   * from the Form's session ends at exactly this root, and that root is the
+   * coordinator actor of a Mission in this project's one-time journal. Bounded
+   * ancestry and the bounded journal only; no title, list or transcript scans. */
+  const journalCoordinator = async (sessionID: string, root: string) => {
+    let id = sessionID
+    for (let depth = 0; ; depth++) {
+      const row = await run(session(id))
+      if (row.parent_id === null || row.parent_id === undefined) { if (id !== root) return false; break }
+      if (depth >= 32 || typeof row.parent_id !== "string") return false
+      id = row.parent_id
+    }
+    if (!ctx.storage) throw new Error("Native Mission journal unavailable")
+    const storage = ctx.storage
+    const journal = new MissionJournal({ get: key => run(storage.get(key)) as ReturnType<MissionStorage["get"]>,
+      scan: options => run(storage.scan(options)) as ReturnType<MissionStorage["scan"]>,
+      set: async () => { throw new Error("Human answer membership is read-only") } }, location.project.id, location.project.canonical)
+    const snapshot = await journal.snapshot()
+    return snapshot.missions.some(mission => mission.actors.some(actor => actor.sessionId === root && actor.kind === "coordinator"))
+  }
   const api = {
     binding: async (raw: unknown) => {
-      const input = humanAnswerBindingInputSchema.parse(raw)
+      const { rootSessionID, ...input } = humanAnswerBindingInputSchema.parse(raw)
       await run(session(input.sessionID)); current()
+      if (rootSessionID !== undefined && !await journalCoordinator(input.sessionID, rootSessionID)) return null
+      current()
       return humanAnswerBindingSchema.parse({ ...input, projectID: location.project.id,
         location: { directory: location.directory, ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }) } })
     },
@@ -132,7 +154,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       const input = humanAnswerRpcInputSchema.parse(raw), body = input.body
       if (!await verifyHumanAnswerBridge(body, input.proof)) throw new Error("Human answer authentication unavailable")
       const binding = await api.binding({ sessionID: body.sessionID, formID: body.formID, profileID: body.profileID, executionHost: body.executionHost })
-      if (!same(binding, (({ workspaceID: _, cookieSessionID: _cookie, username: _user, issuedAt: _time, answer: _answer, ...target }) => target)(body)))
+      if (!binding || !same(binding, (({ workspaceID: _, principal: _principal, username: _user, issuedAt: _time, answer: _answer, ...target }) => target)(body)))
         throw new Error("Human answer binding mismatch")
       const key = keyFor(body.sessionID, body.formID), attemptID = randomUUID()
       const expectedForm = await run(db.db.transaction(() => Effect.gen(function* () {

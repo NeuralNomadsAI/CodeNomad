@@ -16,6 +16,7 @@ import { missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 import type { SettingsService } from "../../settings/service"
+import type { RemoteControlManager } from "../../remote-control/manager"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -25,6 +26,7 @@ interface AutomationPluginRouteDeps {
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope">
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
 }
 
 interface DeveloperNativeStatus {
@@ -61,7 +63,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
-        { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings }, lifetime.signal) }) }
+        { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices }, lifetime.signal) }) }
       catch { return reply.code(403).send({ error: "Human answer admission unavailable" }) }
     }
     if (body?.mode === "recurrence-control-verify") {
