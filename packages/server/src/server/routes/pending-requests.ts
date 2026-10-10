@@ -83,6 +83,18 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
     // Includes bounded Git ownership reads before/after the native reader's independent two-second deadline.
     const signal = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
+    const started = Date.now()
+    let phase = "ownership"
+    let nativeStatus: number | undefined
+    // Phase durations only; never paths or queue contents.
+    const timing: string[] = []
+    let lap = started
+    const record = (name: string) => {
+      const now = Date.now()
+      timing.push(`${name};dur=${now - lap}`)
+      lap = now
+      reply.header("Server-Timing", timing.join(", "))
+    }
     try {
       const connection = await manager.getSharedServiceConnection(id)
       if (!connection) return reply.code(503).send({ error: "Pending requests unavailable" })
@@ -92,8 +104,12 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if ([...optional].some((directory) => !submitted.includes(directory))) return reply.code(400).send({ error: "Invalid optional pending request directories" })
       const result: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
       const resolved: Array<{ submitted: string; directory: string; identity: string }> = []
-      const provisional: typeof resolved = []
+      // Optional history whose host directory is absent: authorized by its own owned
+      // identity or by an existing, canonically owned ancestor, and revalidated after RPC.
       const missing: Array<{ submitted: string; directory?: string; identity: string; host: string; ancestor?: string }> = []
+      // A candidate whose ownership cannot be (re)established reports its own
+      // non-authoritative error; it neither fails the batch nor counts as empty.
+      const failed = new Set<string>()
       const bootstrap = manager.getServiceLocation(id)
       const style = manager.getServicePathStyle(id)
       const nativePath = style === "win32" ? path.win32 : style === "posix" ? path.posix : undefined
@@ -102,7 +118,13 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (!bootstrap || bootstrap.workspaceID !== undefined || !root || !rootIdentity || !nativePath?.isAbsolute(bootstrap.directory)
         || await manager.getServiceDirectoryForPath(id, bootstrap.directory) !== root) throw new Error("Pending bootstrap unavailable")
       const bootstrapDirectory = bootstrap.directory
-      const ownedMissingAncestor = async (candidate: string) => {
+      const isolate = (error: unknown) => {
+        if (signal.aborted) throw error
+      }
+      let common: Promise<string> | undefined
+      const workspaceCommon = () => common ??= readCommon(workspace.path)
+      // Lazy: the expected identity is read only once an existing ancestor needs it.
+      const ownedMissingAncestor = async (candidate: string, expectedCommon: () => Promise<string>) => {
         if (!nativePath.isAbsolute(candidate)) return undefined
         let ancestor = candidate
         // Only an existing, canonically owned ancestor can authorize an absent hint.
@@ -117,7 +139,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             if (!identity || !canonical || deps.worktreeDeletionFence.isBlocked(identity)) return undefined
             try {
               if (await realpath(host) !== await realpath(canonical)
-                || await readCommon(host) !== await readCommon(workspace.path)) return undefined
+                || await readCommon(host) !== await expectedCommon()) return undefined
             } catch { return undefined }
             return { ancestor, identity }
           }
@@ -131,32 +153,47 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       for (let offset = 0; offset < submitted.length; offset += 8) {
         const candidates = await drainOwnershipReads(submitted.slice(offset, offset + 8).map(async (candidate) => {
           signal.throwIfAborted()
-          const directory = await manager.getServiceDirectoryForPath(id, candidate)
-          if (!directory && optional.has(candidate)) {
-            const host = await manager.getHostPathForServicePath(id, candidate)
-            const owned = host && path.isAbsolute(host) && await missingHost(host) && await ownedMissingAncestor(candidate)
-            if (host && owned) {
-              missing.push({ submitted: candidate, host, ...owned })
-              result.directories.push({ directory: candidate, status: "excluded" })
-            } else result.directories.push({ directory: candidate, status: "error" })
-            return
+          try {
+            const directory = await manager.getServiceDirectoryForPath(id, candidate)
+            if (!directory && optional.has(candidate)) {
+              const host = await manager.getHostPathForServicePath(id, candidate)
+              const owned = host && path.isAbsolute(host) && await missingHost(host) ? await ownedMissingAncestor(candidate, workspaceCommon) : undefined
+              if (!host || !owned) return { candidate, status: "error" as const }
+              return { candidate, status: "excluded" as const, missing: { submitted: candidate, host, ...owned } }
+            }
+            const identity = directory === root ? rootIdentity : directory && await manager.getWorktreeIdentityForPath(id, directory)
+            const host = directory && await manager.getHostPathForServicePath(id, directory)
+            if (!directory || !identity || !host || deps.worktreeDeletionFence.isBlocked(identity)) return { candidate, status: "error" as const }
+            // An owned optional path whose checkout is already gone is excluded history,
+            // still fenced by its identity and revalidated as absent after RPC.
+            if (directory !== root && optional.has(candidate) && await missingHost(host)) {
+              return { candidate, status: "excluded" as const, missing: { submitted: candidate, directory, identity, host } }
+            }
+            // Containment alone cannot authorize a nested independent clone.
+            const sameRepository = directory === root || await Promise.all([workspaceCommon(), readCommon(host)])
+              .then(([left, right]) => left === right, () => false)
+            if (!sameRepository) return { candidate, status: "error" as const }
+            return { candidate, status: "ok" as const, owned: { submitted: candidate, directory, identity } }
+          } catch (error) {
+            isolate(error)
+            return { candidate, status: "error" as const }
           }
-          const identity = directory && await manager.getWorktreeIdentityForPath(id, directory)
-          const host = directory && await manager.getHostPathForServicePath(id, directory)
-          if (!directory || !identity || !host) {
-            result.directories.push({ directory: candidate, status: "error" })
-            return
-          }
-          return { submitted: candidate, directory, identity }
         }))
-        provisional.push(...candidates.filter((candidate) => candidate !== undefined))
+        for (const entry of candidates) {
+          if (entry.status === "ok") resolved.push(entry.owned)
+          else {
+            if (entry.status === "excluded") missing.push(entry.missing)
+            result.directories.push({ directory: entry.candidate, status: entry.status })
+          }
+        }
       }
+      if (!resolved.length && result.directories.some((entry) => entry.status !== "excluded")) return reply.code(403).send({ error: "Directory does not belong to workspace" })
       const assertCurrent = () => {
         signal.throwIfAborted()
         connection.assertCurrent()
         const currentRoot = manager.getServiceLocation(id)
         if (manager.get(id) !== workspace || currentRoot?.directory !== bootstrapDirectory || currentRoot.workspaceID !== undefined
-          || deps.worktreeDeletionFence.isBlocked(rootIdentity) || [...resolved, ...missing].some(({ identity }) => identity && deps.worktreeDeletionFence.isBlocked(identity))) {
+          || deps.worktreeDeletionFence.isBlocked(rootIdentity)) {
           throw new Error("Pending request ownership changed")
         }
       }
@@ -167,82 +204,80 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           || await manager.getWorktreeIdentityForPath(id, bootstrapDirectory) !== rootIdentity) throw new Error("Invalid pending origin")
         assertCurrent()
       }
-      const assertCandidates = async (classify = false) => {
-        const candidates = classify ? provisional : resolved
-        if (!classify) for (let offset = 0; offset < missing.length; offset += 8) {
+      const revalidateCandidates = async () => {
+        const currentCommon = resolved.some((candidate) => candidate.directory !== root) || missing.some((entry) => entry.ancestor)
+          ? await readCommon(workspace.path) : undefined
+        for (let offset = 0; offset < resolved.length; offset += 8) {
+          await drainOwnershipReads(resolved.slice(offset, offset + 8).map(async (candidate) => {
+            if (failed.has(candidate.submitted)) return
+            try {
+              const host = candidate.directory === root ? undefined : await manager.getHostPathForServicePath(id, candidate.directory)
+              const owned = !deps.worktreeDeletionFence.isBlocked(candidate.identity)
+                && await manager.getServiceDirectoryForPath(id, candidate.submitted) === candidate.directory
+                && (candidate.directory === root || (await manager.getWorktreeIdentityForPath(id, candidate.directory) === candidate.identity
+                  && Boolean(host) && await readCommon(host!) === currentCommon))
+              if (!owned) failed.add(candidate.submitted)
+            } catch (error) {
+              isolate(error)
+              failed.add(candidate.submitted)
+            }
+          }))
+        }
+        // An exclusion stays valid only while its path is still absent and owned
+        // by the same identity; a reappearing checkout becomes this directory's error.
+        for (let offset = 0; offset < missing.length; offset += 8) {
           await drainOwnershipReads(missing.slice(offset, offset + 8).map(async ({ submitted, directory, identity, host, ancestor }) => {
-            signal.throwIfAborted()
-            if (await manager.getServiceDirectoryForPath(id, submitted) !== directory
-              || (directory && await manager.getWorktreeIdentityForPath(id, directory) !== identity)
-              || await manager.getHostPathForServicePath(id, directory ?? submitted) !== host
-              || !await missingHost(host)
-              || (ancestor && (await ownedMissingAncestor(submitted))?.identity !== identity)) {
-              throw new Error("Pending historical directory changed")
+            try {
+              const owned = !deps.worktreeDeletionFence.isBlocked(identity)
+                && await manager.getServiceDirectoryForPath(id, submitted) === directory
+                && (!directory || await manager.getWorktreeIdentityForPath(id, directory) === identity)
+                && await manager.getHostPathForServicePath(id, directory ?? submitted) === host
+                && await missingHost(host)
+                && (!ancestor || (await ownedMissingAncestor(submitted, async () => currentCommon!))?.identity === identity)
+              if (!owned) failed.add(submitted)
+            } catch (error) {
+              isolate(error)
+              failed.add(submitted)
             }
-            assertCurrent()
           }))
-          assertCurrent()
         }
-        const currentCommon = candidates.some((candidate) => candidate.directory !== root)
-          ? await readCommon(workspace.path).catch(error => { if (!classify) throw error; return undefined }) : undefined
-        for (let offset = 0; offset < candidates.length; offset += 8) {
-          const checked = await drainOwnershipReads(candidates.slice(offset, offset + 8).map(async (candidate) => {
-            signal.throwIfAborted()
-            if (await manager.getServiceDirectoryForPath(id, candidate.submitted) !== candidate.directory
-              || await manager.getWorktreeIdentityForPath(id, candidate.directory) !== candidate.identity) throw new Error("Pending directory ownership changed")
-            if (candidate.directory !== root) {
-              const host = await manager.getHostPathForServicePath(id, candidate.directory)
-              if (!host) throw new Error("Pending directory ownership changed")
-              if (classify && optional.has(candidate.submitted)
-                && await missingHost(host)) {
-                missing.push({ ...candidate, host })
-                result.directories.push({ directory: candidate.submitted, status: "excluded" })
-                assertCurrent()
-                return
-              }
-              // Containment alone cannot authorize a nested independent clone. Classify
-              // once immediately before RPC; after RPC every accepted identity is fresh.
-              const sameRepository = await readCommon(host).then(common => currentCommon !== undefined && common === currentCommon,
-                error => { if (!classify) throw error; return false })
-              if (!sameRepository) {
-                if (!classify) throw new Error("Pending repository ownership changed")
-                result.directories.push({ directory: candidate.submitted, status: "error" })
-                return
-              }
-            }
-            assertCurrent()
-            return candidate
-          }))
-          if (classify) resolved.push(...checked.filter((candidate) => candidate !== undefined))
-          assertCurrent()
-        }
+        // A deletion that began during the awaits above still fences publication.
+        for (const candidate of [...resolved, ...missing]) if (deps.worktreeDeletionFence.isBlocked(candidate.identity)) failed.add(candidate.submitted)
+        assertCurrent()
       }
       assertCurrent()
-      await assertCandidates(true)
-      if (!resolved.length && result.directories.some((entry) => entry.status !== "excluded")) return reply.code(403).send({ error: "Directory does not belong to workspace" })
-      await assertOrigin(bootstrapDirectory)
+      record("ownership")
+      // Initial resolution above admits this read. Revalidate after all native
+      // and placement IO, not repeatedly within the same pre/post-read phase.
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
       // Even an all-excluded historical batch must negotiate real RPC capability.
       // The established root is the only bootstrap, never an inactive candidate.
       const expected = new Set(resolved.length ? resolved.map((entry) => entry.directory) : [root])
       const url = new URL("/api/rpc/codenomad.pending-requests/snapshot", connection.endpoint.url)
       url.searchParams.set("location[directory]", bootstrapDirectory)
+      phase = "native-read"
       const response = await connection.fetch(url, { method: "POST", signal, redirect: "error",
         headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { directories: [...expected] } }) })
+      nativeStatus = response.status
+      phase = "response-validation"
       assertCurrent()
       if (response.status === 400 && unavailableSchema.safeParse(await readBoundedJson(response)).success) {
+        record("native")
+        phase = "ownership-revalidation"
         await assertOrigin(bootstrapDirectory)
-        await assertCandidates()
+        await revalidateCandidates()
+        record("revalidation")
         markLoadedPendingSupported(connection, false)
         return { supported: false } satisfies WorkspacePendingRequestsResponse
       }
       if (!response.ok) { await response.body?.cancel(); throw new Error("Native pending requests unavailable") }
       const native = nativeSchema.parse(await readBoundedJson(response)).output
-      await assertOrigin(native.originDirectory)
+      record("native")
       if (native.data.length !== expected.size || new Set(native.data.map((entry) => entry.directory)).size !== expected.size
         || native.data.some((entry) => !expected.has(entry.directory))
         || native.data.reduce((count, entry) => count + entry.locations.length, 0) > 64) throw new Error("Invalid pending coverage")
-      for (const entry of native.data) {
+      let placementRejected = false
+      const readLocations = async (entry: (typeof native.data)[number]) => {
         const locations: WorkspacePendingRequestLocation[] = []
         if (new Set(entry.locations.map((snapshot) => snapshot.location.directory)).size !== entry.locations.length) throw new Error("Duplicate pending placement")
         if (entry.locations.reduce((count, snapshot) => count + snapshot.permissions.length, 0) > 1024
@@ -250,29 +285,51 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           throw new Error("Invalid pending request count")
         }
         for (const snapshot of entry.locations) {
-          const owned = snapshot.location.workspaceID === undefined && nativePath.isAbsolute(snapshot.location.directory)
+          // A rejected placement withholds only its own directory's coverage and
+          // capability verification; malformed native data above fails the batch.
+          const owned = await (async () => snapshot.location.workspaceID === undefined && nativePath.isAbsolute(snapshot.location.directory)
             && await manager.getServiceDirectoryForPath(id, snapshot.location.directory) === entry.directory
-            && await manager.ownsLocation(id, snapshot.location, connection.client, signal)
-          if (!owned) throw new Error("Invalid pending placement")
+            && await manager.ownsLocation(id, snapshot.location, connection.client, signal))().catch((error) => {
+            isolate(error)
+            return false
+          })
+          if (!owned) {
+            placementRejected = true
+            return undefined
+          }
           locations.push({ location: { directory: snapshot.location.directory },
             permissions: snapshot.permissions as PermissionRequest[], forms: snapshot.forms as FormInfo[] })
         }
-        // Even empty/cold coverage needs current directory ownership; no location.get.
-        const stillOwned = await manager.getServiceDirectoryForPath(id, entry.directory) === entry.directory
+        if (!locations.length) locations.push({ location: { directory: entry.directory }, permissions: [], forms: [] })
+        return locations
+      }
+      for (const entry of native.data) {
+        const locations = await readLocations(entry)
         assertCurrent()
-        if (!stillOwned) throw new Error("Pending directory ownership changed")
-        if (!locations.length) {
-          locations.push({ location: { directory: entry.directory }, permissions: [], forms: [] })
-        }
         for (const original of resolved.filter((candidate) => candidate.directory === entry.directory)) {
-          result.directories.push({ directory: original.submitted, status: "ok", locations })
+          if (locations) result.directories.push({ directory: original.submitted, status: "ok", locations })
+          else failed.add(original.submitted)
         }
       }
+      record("placement")
+      phase = "ownership-revalidation"
+      // Includes every admitted candidate, even empty/cold coverage. The root
+      // identity is rechecked by assertOrigin; aliases still need their own check.
       await assertOrigin(native.originDirectory)
-      await assertCandidates()
-      markLoadedPendingSupported(connection, true)
+      await revalidateCandidates()
+      record("revalidation")
+      // Any admitted candidate (resolved or excluded) that failed revalidation also
+      // withholds capability: a changed or fenced directory cannot verify the RPC.
+      if (!placementRejected && !failed.size) markLoadedPendingSupported(connection, true)
+      result.directories = [
+        ...result.directories.filter((entry) => !failed.has(entry.directory)),
+        ...[...failed].map((directory) => ({ directory, status: "error" as const })),
+      ]
       return result
     } catch {
+      record(phase)
+      // Keep queue contents/paths and native payloads out of diagnostic logs.
+      request.log.warn({ workspaceId: id, phase, nativeStatus, timedOut: signal.aborted, elapsedMs: Date.now() - started }, "Pending request recovery failed")
       // Never convert transport, malformed coverage or ownership errors to empty.
       return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues" })
     }

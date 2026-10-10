@@ -24,7 +24,7 @@ const { serverEvents } = await import("../lib/server-events")
 const { alertDialogState } = await import("./alerts")
 const { appTabs, attachInstanceTab } = await import("./app-tabs")
 const { addInstance, instances, removeInstance, updateInstance } = await import("./instances")
-const { closeTemporaryInstance, leftoverTemporaryFolders, openTemporaryInstance, temporaryFolderLabel } = await import("./temporary-instances")
+const { closeTemporaryInstance, openTemporaryInstance } = await import("./temporary-instances")
 
 const folder = "D:\\CodeNomad\\temporary-workspaces\\20261009-120000-abcd"
 function open(...ids: string[]) {
@@ -98,15 +98,13 @@ test("a successful discard closes the tab", async () => {
   } finally { reset("gone") }
 })
 
-test("a keep announced by another window clears the mark, and unopened folders are offered to resume", async () => {
+test("a keep announced by another window clears the mark", async () => {
   open("elsewhere")
-  const leftover = "D:\\CodeNomad\\temporary-workspaces\\20261008-093000-beef"
+  const other = "D:\\CodeNomad\\temporary-workspaces\\20261008-093000-beef"
   try {
-    temporaryChanged([folder, leftover])
+    temporaryChanged([folder, other])
     assert.equal(instances().get("elsewhere")?.temporary, true)
-    assert.deepEqual(leftoverTemporaryFolders(), [leftover])
-    assert.notEqual(temporaryFolderLabel(leftover), "20261008-093000-beef")
-    temporaryChanged([leftover])
+    temporaryChanged([other])
     assert.equal(instances().get("elsewhere")?.temporary, false)
   } finally { reset("elsewhere"); temporaryChanged([]) }
 })

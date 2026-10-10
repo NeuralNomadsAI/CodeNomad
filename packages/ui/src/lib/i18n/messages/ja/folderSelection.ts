@@ -27,8 +27,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.button": "Git リポジトリをクローン",
   "folderSelection.temporary.button": "新しい一時インスタンス",
   "folderSelection.temporary.description": "CodeNomad が管理する空のフォルダで開始し、タブを閉じるときに保持または破棄します",
-  "folderSelection.temporary.resume": "{name} を再開",
-  "folderSelection.temporary.resumeDescription": "残っている一時インスタンスを再度開いて、保持または破棄します",
   "folderSelection.clone.destination.title": "クローン先を選択",
   "folderSelection.clone.destination.description": "リポジトリをクローンするフォルダを選択してください。",
   "folderSelection.clone.dialog.title": "Git リポジトリをクローン",
@@ -43,8 +41,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.clone": "クローン",
   "folderSelection.clone.dialog.cloning": "クローン中...",
   "folderSelection.clone.dialog.errorRequired": "リポジトリ URL と保存先フォルダは必須です。",
-  "folderSelection.actions.title": "フォルダを開くかサーバーに接続",
-  "folderSelection.actions.subtitle": "ローカルフォルダを開くか CodeNomad サーバーに接続します",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
 
   "folderSelection.advancedSettings": "詳細設定",

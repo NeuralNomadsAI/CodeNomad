@@ -265,6 +265,10 @@ const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
 export { incompletePendingRecovery }
 const notifiedPendingRecovery = new Set<string>()
+const failedPendingRecoveries = new Map<string, number>()
+// A single incomplete scan usually recovers on the next 30-second liveness pass.
+// Warn only when recovery stays incomplete across consecutive attempts.
+const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
 function markPendingRecovery(instanceId: string, incomplete: boolean, notify = false): void {
   setIncompletePendingRecovery((previous) => {
     if (previous.has(instanceId) === incomplete) return previous
@@ -273,8 +277,15 @@ function markPendingRecovery(instanceId: string, incomplete: boolean, notify = f
     else next.delete(instanceId)
     return next
   })
-  if (!incomplete) notifiedPendingRecovery.delete(instanceId)
-  else if (notify && !notifiedPendingRecovery.has(instanceId)) {
+  if (!incomplete) {
+    notifiedPendingRecovery.delete(instanceId)
+    failedPendingRecoveries.delete(instanceId)
+    return
+  }
+  if (!notify) return
+  const failures = (failedPendingRecoveries.get(instanceId) ?? 0) + 1
+  failedPendingRecoveries.set(instanceId, failures)
+  if (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && !notifiedPendingRecovery.has(instanceId)) {
     notifiedPendingRecovery.add(instanceId)
     showToastNotification({ message: tGlobal("interruption.recoveryIncomplete"), variant: "warning" })
   }

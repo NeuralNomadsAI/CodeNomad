@@ -9,7 +9,7 @@ import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
 import { showConfirmDialog } from "./stores/alerts"
-import { closeTemporaryInstance, openTemporaryInstance, resumeTemporaryInstance } from "./stores/temporary-instances"
+import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
@@ -518,12 +518,11 @@ const App: Component = () => {
 
   useDesktopFolderLaunch(handleSelectFolder)
 
-  // `folder` resumes a leftover temporary folder; otherwise a new one is created.
-  async function handleNewTemporaryInstance(folder?: string): Promise<void> {
+  async function handleNewTemporaryInstance(): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
-      selectInstanceTab(folder ? await resumeTemporaryInstance(folder) : await openTemporaryInstance())
+      selectInstanceTab(await openTemporaryInstance())
       setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
@@ -534,7 +533,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleNewTemporaryInstance(folder))
+        openOpenCodeSetup(() => handleNewTemporaryInstance())
         return
       }
       showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
@@ -896,7 +895,7 @@ const App: Component = () => {
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
             onSelectExistingInstance={handleSelectExistingInstance}
-            onNewTemporaryInstance={(folder) => void handleNewTemporaryInstance(folder)}
+            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
             onOpenSidecar={handleOpenSidecarPicker}
           />
@@ -908,7 +907,7 @@ const App: Component = () => {
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 onSelectExistingInstance={handleSelectExistingInstance}
-                onNewTemporaryInstance={(folder) => void handleNewTemporaryInstance(folder)}
+                onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {

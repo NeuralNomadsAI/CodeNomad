@@ -112,11 +112,14 @@ test("ordinary question answers settle through the ordinary reply; the human hea
   } finally { await page.close() }
 })
 
-test("incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
+test("persistently incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
   const { page, errors } = await fixture(393)
   try {
     await page.evaluate(() => (window as any).fixture.recover("empty"))
     const warning = page.getByText(/^Question and permission recovery is incomplete/)
+    // A single transient failure is retried by the liveness pass without a warning.
+    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 0)
+    await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
     assert.equal(await warning.count(), 1)
     assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 1)
@@ -135,6 +138,8 @@ test("incomplete recovery uses existing notifications once until recovery, witho
     await page.screenshot({ path: join(tmpdir(), "opencode", "pending-recovery-incomplete-393.png") })
     await page.evaluate(() => (window as any).fixture.recover("complete"))
     assert.equal(await warning.count(), 0)
+    await page.evaluate(() => (window as any).fixture.recover("unsupported"))
+    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 1)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
     assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 2)

@@ -27,8 +27,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.button": "克隆 Git 仓库",
   "folderSelection.temporary.button": "新建临时实例",
   "folderSelection.temporary.description": "在 CodeNomad 管理的空文件夹中开始；关闭标签页时可选择保留或丢弃",
-  "folderSelection.temporary.resume": "继续 {name}",
-  "folderSelection.temporary.resumeDescription": "重新打开这个遗留的临时实例，以保留或丢弃它",
   "folderSelection.clone.destination.title": "选择克隆目标位置",
   "folderSelection.clone.destination.description": "选择要将仓库克隆到的文件夹。",
   "folderSelection.clone.dialog.title": "克隆 Git 仓库",
@@ -43,8 +41,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.clone": "克隆",
   "folderSelection.clone.dialog.cloning": "正在克隆...",
   "folderSelection.clone.dialog.errorRequired": "仓库 URL 和目标文件夹为必填项。",
-  "folderSelection.actions.title": "打开文件夹或连接服务器",
-  "folderSelection.actions.subtitle": "打开本地文件夹或连接到 CodeNomad 服务器",
   "folderSelection.actions.connectButton": "连接 CodeNomad 服务器",
 
   "folderSelection.advancedSettings": "高级设置",

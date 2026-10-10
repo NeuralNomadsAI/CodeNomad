@@ -419,9 +419,6 @@ export const serverApi = {
   createTemporaryFolder(): Promise<{ path: string }> {
     return request("/api/workspaces/temporary", { method: "POST" })
   },
-  listTemporaryFolders(): Promise<{ folders: string[] }> {
-    return request("/api/workspaces/temporary")
-  },
   abandonTemporaryFolder(path: string): Promise<void> {
     return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
   },
