@@ -5,17 +5,20 @@ import { parseMissionTaskSessions } from "../lib/mission-task-sessions"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
-import { sessions } from "./session-state"
 import { listMessageWindow } from "./session-message-pages"
 
 // Only the latest coordinator messages are scanned: older delegations stay unlinked.
 // Long real coordinators exceed 1,000 messages; read lazily, once per revision.
 const COORDINATOR_MESSAGE_BOUND = 3_000
-// Native subagent calls follow their declaration without a new revision: each new
-// coordinator child rereads only this recent tail and merges it.
+// Native subagent calls follow their declaration without a new revision: while a
+// live task is still unlinked, each activity pulse rereads only this recent tail.
 const TAIL_MESSAGE_BOUND = 50
 
-interface Entry { stamp: string; children: string; sessions: Map<string, string[]> }
+interface Entry {
+  stamp: string; pulse: number; sessions: Map<string, string[]>
+  /** Linked conversations natively active at the latest read. */
+  active: ReadonlySet<string>
+}
 const [entries, setEntries] = createSignal(new Map<string, Entry>())
 const pending = new Map<string, string>()
 
@@ -28,46 +31,55 @@ function merge(previous: Map<string, string[]>, next: Map<string, string[]>): Ma
   return merged
 }
 
-/** Visible demand: a full read once per mission revision and connection generation,
- * then a tail read whenever the coordinator's known children start or appear. */
-export function demandMissionTaskSessions(instanceId: string, mission: MissionMap): void {
+const live = (mission: MissionMap, sessions: Map<string, string[]>) => mission.tasks.some(task =>
+  !task.actorSessionId && !sessions.has(task.key) && !["completed", "failed", "withdrawn"].includes(task.status))
+
+/** Visible demand: a full read once per mission revision and connection generation.
+ * Each activity pulse (the mission activity projection's generation) rereads the
+ * native active set, plus the coordinator tail while a live task is unlinked.
+ * Linked children are often absent from the loaded session list, so their status
+ * cannot come from it. */
+export function demandMissionTaskSessions(instanceId: string, mission: MissionMap, pulse = 0): void {
   const key = keyOf(instanceId, mission), client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const stamp = `${generation}:${mission.revision}`
-  // A child exists before its call records it; it starts working only after, so
-  // busy children are part of the signature too.
-  const ids: string[] = []
-  for (const session of sessions().get(instanceId)?.values() ?? []) {
-    if (session.parentId === mission.coordinatorSessionId) ids.push(session.status === "idle" ? session.id : `${session.id}*`)
-  }
-  const children = ids.sort().join(",")
   const entry = entries().get(key)
-  const tail = entry?.stamp === stamp
-  if (!client || (tail && entry.children === children)) return
-  const request = `${stamp}:${tail ? children : "full"}`
+  const known = entry?.stamp === stamp
+  if (!client || (known && entry.pulse === pulse)) return
+  const tail = known && live(mission, entry.sessions)
+  const request = `${stamp}:${known ? pulse : "full"}`
   if (pending.get(key) === request) return
   pending.set(key, request)
+  const root = getRootClient(instanceId)
   const current = () => pending.get(key) === request && instances().get(instanceId)?.client === client
     && getOpenCodeInstanceGeneration(instanceId) === generation
-  void listMessageWindow(getRootClient(instanceId), mission.coordinatorSessionId,
-    { limit: tail ? TAIL_MESSAGE_BOUND : COORDINATOR_MESSAGE_BOUND, isAuthoritative: current })
-    .then(page => {
-      if (!page || !current()) return
+  const page = known && !tail ? Promise.resolve(undefined)
+    : listMessageWindow(root, mission.coordinatorSessionId, { limit: tail ? TAIL_MESSAGE_BOUND : COORDINATOR_MESSAGE_BOUND, isAuthoritative: current })
+  void Promise.all([page, root.session.active()])
+    .then(([page, active]) => {
+      if (!current() || (!known && !page)) return
       const taskKeys = new Set(mission.tasks.map(task => task.key))
-      const found = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, page.messages, taskKeys)
+      const found = page ? parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, page.messages, taskKeys) : new Map()
       setEntries(previous => {
         const base = previous.get(key)
-        return new Map(previous).set(key, { stamp, children,
-          sessions: tail && base?.stamp === stamp ? merge(base.sessions, found) : found })
+        const sessions = known && base?.stamp === stamp ? merge(base.sessions, found) : found
+        const linked = new Set([...sessions.values()].flat())
+        const running = new Set(Object.keys(active ?? {}).filter(id => linked.has(id)))
+        return new Map(previous).set(key, { stamp, pulse, sessions, active: running })
       })
     })
     .catch(error => getLogger("session").warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }))
-    .finally(() => { if (pending.get(key) === stamp) pending.delete(key) })
+    .finally(() => { if (pending.get(key) === request) pending.delete(key) })
 }
 
 /** Latest exact child for a task, if the coordinator's native call proves one. */
 export function missionDerivedTaskSession(instanceId: string, mission: MissionMap, taskKey: string): string | undefined {
   return entries().get(keyOf(instanceId, mission))?.sessions.get(taskKey)?.at(-1)
+}
+
+/** Whether a linked conversation was natively active at the latest read. */
+export function missionDerivedSessionActive(instanceId: string, mission: MissionMap, sessionId: string): boolean {
+  return entries().get(keyOf(instanceId, mission))?.active.has(sessionId) === true
 }
 
 export function missionDerivedSessionIncludes(instanceId: string, mission: MissionMap, sessionId: string): boolean {

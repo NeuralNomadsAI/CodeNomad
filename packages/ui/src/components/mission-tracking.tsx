@@ -17,7 +17,9 @@ export function MissionTracking(props: {
 }) {
   const observed = () => props.activity?.missions.find(value => value.missionId === props.mission.id)
   const target = (kind: MissionReaderTarget["kind"], itemId?: string): MissionReaderTarget => ({ missionId: props.mission.id, kind, itemId })
-  createEffect(() => { if (props.active) demandMissionTaskSessions(props.instanceId, props.mission) })
+  // Native session.status invalidations regenerate the activity projection: its
+  // generation paces rereads of the linked conversations' activity.
+  createEffect(() => { if (props.active) demandMissionTaskSessions(props.instanceId, props.mission, props.activity?.generatedAt) })
   return <>
     <MissionAttention mission={props.mission} family={observed()?.family} instanceId={props.instanceId} onOpenActor={props.onOpenActor} />
     <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors}

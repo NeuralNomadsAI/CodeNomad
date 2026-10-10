@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowUpRight, Check, ChevronRight, Circle, CircleDot, Ci
 import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
+import { missionDerivedSessionActive } from "../stores/mission-task-sessions"
 import { sessions } from "../stores/session-state"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
@@ -28,12 +29,14 @@ export function missionTaskState(task: MissionTask, activity?: MissionActorActiv
 }
 
 /** A natively delegated task has no declared actor: the live status of its exact
- * linked conversation stands in, as the session list shows it. */
-function conversationActivity(instanceId: string, sessionId: string): MissionActorActivity["state"] | undefined {
+ * linked conversation stands in. Loaded sessions supply open requests; the native
+ * active set covers children the session list has not loaded. */
+function conversationActivity(instanceId: string, mission: MissionMap, sessionId: string): MissionActorActivity["state"] | undefined {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (session?.pendingPermission) return "permission"
   if (session?.pendingForm) return "form"
-  return session?.status === "working" || session?.status === "compacting" ? "running" : undefined
+  return session?.status === "working" || session?.status === "compacting"
+    || missionDerivedSessionActive(instanceId, mission, sessionId) ? "running" : undefined
 }
 
 const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, assigned: Circle, ready: Circle,
@@ -72,7 +75,7 @@ export function MissionTaskTree(props: {
             const actor = task().actorSessionId
             if (actor) return props.activity?.find(value => value.sessionId === actor)?.state
             const linked = props.conversation(task())
-            return linked ? conversationActivity(props.instanceId, linked) : undefined
+            return linked ? conversationActivity(props.instanceId, props.mission, linked) : undefined
           }
           const state = () => missionTaskState(task(), activity())
           const word = () => t(`missionsPanel.task.${state()}`)
