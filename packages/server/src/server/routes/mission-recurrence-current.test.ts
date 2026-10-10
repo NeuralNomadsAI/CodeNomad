@@ -149,3 +149,26 @@ test("semantic content targets keep exact reports/history separate from current 
     assert.equal(pages.join(""), f.mission.objective, "paging preserves a boundary surrogate pair without overlap")
   } finally { await f.app.close() }
 })
+
+test("current passage content keeps Markdown context across bounded pages", async () => {
+  const f = await fixture()
+  try {
+    f.mission.summary = "# Result\n\n[Evidence](https://example.invalid)\n\n```ts\n" + "const result = true;\n".repeat(600) + "```\n\n## Next\nDone."
+    const pages = []
+    for (const page of [0, 1]) {
+      const response = await f.app.inject({ method: "GET", url: `${f.url}/${f.passageID}/content?kind=overview&section=summary&page=${page}` })
+      assert.equal(response.statusCode, 200)
+      const result = response.json()
+      assert.equal(result.pageCount, 2)
+      assert.equal(typeof result.markdownText, "string")
+      assert(result.sourceText.length <= 9_001)
+      assert(result.markdownText.length <= 9_116)
+      pages.push(result)
+    }
+    assert.equal(pages.map(page => page.sourceText).join(""), f.mission.summary, "copy pages remain exact native source")
+    assert.match(pages[0].markdownText, /^# Result\n/)
+    assert.match(pages[0].markdownText, /\n```\n$/)
+    assert.match(pages[1].markdownText, /^```ts\n/)
+    assert.match(pages[1].markdownText, /## Next\nDone\.$/)
+  } finally { await f.app.close() }
+})

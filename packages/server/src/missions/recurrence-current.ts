@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { recurrenceIDSchema } from "./recurrence-contract"
 import type { MissionMap, MissionReport, MissionTask } from "./model"
+import { missionMarkdownPage } from "./markdown-pages"
 
 export const recurrenceCurrentInput = z.object({ scheduleID: recurrenceIDSchema }).strict()
 const labels = ["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles"] as const
@@ -14,7 +15,7 @@ export type RecurrenceCurrentContentInput = z.infer<typeof recurrenceCurrentCont
 export const recurrenceCurrentContentPage = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   scheduleID: recurrenceIDSchema, passageID: recurrenceIDSchema, missionID: z.string().min(1).max(240),
   revision: z.number().int().positive().safe(),
-  page: z.number().int().min(0).max(63), pageCount: z.number().int().min(1).max(64), sourceText: z.string().max(9_001), markdownText: z.null(),
+  page: z.number().int().min(0).max(63), pageCount: z.number().int().min(1).max(64), sourceText: z.string().max(9_001), markdownText: z.string().max(9_116).nullable(),
 }).strict()
 const id = { type: "string", minLength: 3, maxLength: 100 } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
@@ -31,7 +32,7 @@ export const recurrenceCurrentContentWire = {
   output: { type: "object", properties: { version: { type: "integer", const: 1 }, projectID: { type: "string" },
     projectCanonical: { type: "string" }, location: { type: "object", properties: { directory: { type: "string" }, workspaceID: { type: "string" } }, required: ["directory"], additionalProperties: false },
     scheduleID: id, passageID: id, missionID: { type: "string" }, revision: { ...counter, minimum: 1 },
-    page: { ...counter, maximum: 63 }, pageCount: { ...counter, minimum: 1, maximum: 64 }, sourceText: { type: "string", maxLength: 9_001 }, markdownText: { type: "null" },
+    page: { ...counter, maximum: 63 }, pageCount: { ...counter, minimum: 1, maximum: 64 }, sourceText: { type: "string", maxLength: 9_001 }, markdownText: { type: ["string", "null"], maxLength: 9_116 },
   }, required: ["version", "projectID", "projectCanonical", "location", "scheduleID", "passageID", "missionID", "revision", "page", "pageCount", "sourceText", "markdownText"], additionalProperties: false },
 } as const
 
@@ -90,11 +91,7 @@ export function currentRecurrenceContent(mission: MissionMap, raw: unknown) {
   if (text.length > 576_000) throw new Error("Current passage content capacity")
   const pageCount = Math.max(1, Math.ceil(text.length / 9_000))
   if (input.page >= pageCount) throw new Error("Current passage page unavailable")
-  const boundary = (offset: number) => {
-    const end = Math.min(offset, text.length), next = text.charCodeAt(end), previous = text.charCodeAt(end - 1)
-    return next >= 0xDC00 && next <= 0xDFFF && previous >= 0xD800 && previous <= 0xDBFF ? end - 1 : end
-  }
   return recurrenceCurrentContentPage.parse({ version: 1 as const, projectID: mission.projectID, scheduleID: input.scheduleID, passageID: input.passageID,
     missionID: mission.id, revision: mission.revision, page: input.page, pageCount,
-    sourceText: text.slice(boundary(input.page * 9_000), boundary((input.page + 1) * 9_000)), markdownText: null })
+    ...missionMarkdownPage(text, input.page) })
 }
