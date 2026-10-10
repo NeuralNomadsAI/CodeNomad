@@ -5,7 +5,8 @@ import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../
 import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-preparation"
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
-import { captureRecurrenceControlHoldRead, reconcileRecurrenceControlHold } from "./mission-recurrence-holds"
+import { captureRecurrenceControlHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
+  recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 
 export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Parameters<typeof prepareHumanRecurrenceControl>[3]) {
@@ -41,8 +42,13 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID || result.expectedRevision !== input.data.expectedRevision
         || !sameLocation(result.location, location) || !await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign manual status")
       current()
-      if (result.outcome !== "unknown") reconcileRecurrenceControlHold(deps.fence, request.params.id, location, identity,
-        { version: 1, ...input.data, revision: input.data.expectedRevision + 1, outcome: "committed", controlsComplete: true }, connection)
+      if (result.outcome !== "unknown") {
+        const owner = recurrenceControlHeldElsewhere(deps.fence, request.params.id, identity, connection)
+          ? await lifetime.wait(readRecurrenceHoldOwner(deps.manager, request.params.id, workspace, directory, connection.client, lifetime.signal)) : undefined
+        current()
+        reconcileRecurrenceControlHold(deps.fence, request.params.id, location, identity,
+          { version: 1, ...input.data, revision: input.data.expectedRevision + 1, outcome: "committed", controlsComplete: true }, connection, owner)
+      }
       return result
     } catch { return reply.code(503).send({ error: "Manual status unavailable" }) }
     finally { lifetime.dispose() }

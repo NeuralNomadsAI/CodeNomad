@@ -22,6 +22,7 @@ import { CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import { recurrenceConfigDigest, recurrenceScheduleID } from "./native-recurrence-create"
 import { desktopPlugin } from "./managed-owner-plugin"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
+import { nativeRecurrenceDue } from "./native-recurrence-due"
 
 export const DAY = 86_400_000
 export const START = Date.parse("2026-10-08T00:00:00Z")
@@ -484,6 +485,21 @@ export class RecurringDayFixture {
   async document() {
     const store = await Effect.runPromiseWith(this.graph)(acquireNativeRecurrenceStore(this.ctx))
     return store.read(this.id) // Real recurrence store, read only; no fixture-side lifecycle/reserve/finish shortcut.
+  }
+  /** Crash stand-in: the durable bytes a lost write would have left behind. */
+  rewriteDocument(change: (doc: Record<string, any>) => void) {
+    const key = this.db.prepare("SELECT key FROM kv WHERE json_extract(value,'$.id')=?").get(this.id) as { key: string }
+    const doc = JSON.parse(String((this.db.prepare("SELECT value FROM kv WHERE key=?").get(key.key) as { value: string }).value))
+    change(doc)
+    this.db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify(doc), key.key)
+  }
+  /** One due wake exactly as a Job of that role invokes it, in the native graph. */
+  async wake(settleOnly: boolean) {
+    const doc = await this.document()
+    const due = nativeRecurrenceDue(this.ctx, { projectID: "day-test", projectCanonical: this.root, directory: this.root,
+      scheduleID: this.id, profileID: this.profileScope.key, executionHost: "local", profileSource: doc!.profileSource, settleOnly })
+    return Effect.runPromiseWith(Context.add(this.graph, Scope.Scope, this.scope))(
+      Effect.scoped(due(this.id, () => true, new AbortController().signal)))
   }
   async restart() {
     for (const job of this.jobs.values()) if (job.fiber) await Effect.runPromise(Fiber.interrupt(job.fiber))

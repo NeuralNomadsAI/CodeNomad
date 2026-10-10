@@ -20,7 +20,10 @@ import { acquireNativeHumanAnswers } from "./native-human-answer"
 export type NativePassagePlacement = Readonly<{ projectID: string; projectCanonical: string; directory: string;
   workspaceID?: string; scheduleID: string; profileID: string; executionHost: string;
   profileSource?: AutonomousProfileSource; humanGate?: NativeHumanAnswerGate;
-  manual?: { requestID: string; expectedRevision: number } }>
+  manual?: { requestID: string; expectedRevision: number }
+  /** Settlement-only observer: never enters daily admission, even when its own
+   * reread finds the pending passage archived by another observer. */
+  settleOnly?: boolean }>
 export type NativePassageWake = "idle" | "started" | "pending" | "settled"
 type WakeEffect = Effect.Effect<NativePassageWake, Error | Schema.SchemaError, import("effect").Scope.Scope>
 export interface NativePassageDue {
@@ -130,7 +133,7 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         return "settled"
       }))
     }
-    if (doc.state !== "running") return "idle" as NativePassageWake
+    if (doc.state !== "running" || placement.settleOnly) return "idle" as NativePassageWake
     const outcome = yield* Effect.tryPromise(() => new MissionRecurrenceRunner(source, admission, now).tick(scheduleID))
     return (outcome === "accepted" ? "started" : ["pending", "unknown"].includes(outcome) ? "pending" : "idle") as NativePassageWake
   })

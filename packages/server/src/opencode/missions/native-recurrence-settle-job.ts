@@ -10,6 +10,6 @@ import { startNativeRecurrenceClock, type RecurrenceClockPlacement } from "./nat
  * passage is settled. Pause cancels it; Stop restarts it for the pending passage. */
 export function startNativeRecurrenceSettlement(ctx: Pick<Plugin.Context, "storage" | "location">,
   placement: RecurrenceClockPlacement, doc: RecurrenceDocument) {
-  return startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement, profileSource: doc.profileSource }),
+  return startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement, profileSource: doc.profileSource, settleOnly: true }),
     ctx, undefined, "settle")
 }

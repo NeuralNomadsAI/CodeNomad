@@ -8,7 +8,8 @@ import { recurrenceControlRequestSchema, recurrenceControlStatusSchema } from ".
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { requestAdmission } from "../request-admission"
-import { captureRecurrenceControlHoldRead, reconcileRecurrenceControlHold } from "./mission-recurrence-holds"
+import { captureRecurrenceControlHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
+  recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
 
 /** Explicit bounded read of an uncertain action. No mutation retry and no
  * generic RPC proxy, even when a signed archive establishes prior commitment. */
@@ -55,7 +56,12 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       const result = recurrenceControlStatusSchema.parse(raw)
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID
         || result.expectedRevision !== input.data.expectedRevision) throw new Error("Foreign control receipt")
-      reconcileRecurrenceControlHold(deps.fence, id, location, input.data, result, connection)
+      // A permit retained from a replaced connection settles only after this fresh
+      // read re-proves the same workspace, native project storage and checkout.
+      const owner = recurrenceControlHeldElsewhere(deps.fence, id, input.data, connection)
+        ? await lifetime.wait(readRecurrenceHoldOwner(deps.manager, id, workspace, directory, connection.client, signal)) : undefined
+      current()
+      reconcileRecurrenceControlHold(deps.fence, id, location, input.data, result, connection, owner)
       return result
     } catch {
       request.log.warn({ code: "recurrence-control-status-unavailable" }, "Mission recurrence control status unavailable")

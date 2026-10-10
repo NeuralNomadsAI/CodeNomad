@@ -5,7 +5,7 @@ import { verifyRecurrenceBridge } from "../automation-plugin"
 import { assertRecurrenceProofFresh, recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
 import { recurrenceControlRequestSchema } from "../../missions/recurrence-control-contract"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
-import { cancelNativeRecurrenceClock, readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
+import { cancelNativeRecurrenceClock, observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
 import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
@@ -76,9 +76,13 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
   const response = () => ({ version: 1 as const, scheduleID: input.scheduleID, ...record })
   if (record.controlsComplete || previous && !(input.retry && (input.action === "pause" || input.action === "stop"))) return response()
   if (input.action === "play" || input.action === "resume") {
+    // One Job per running schedule: the daily Job also settles a pending passage,
+    // so a paused Run now's settlement-only observer is retired, not kept beside it.
+    yield* cancelNativeRecurrenceClock(placement, "settle").pipe(Effect.catchCause(() => Effect.void))
     yield* startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement,
       profileSource: document.profileSource }), ctx)
-    record = { ...record, controlsComplete: true, targetsKnown: true }
+    const single = yield* observeNativeRecurrenceScheduleOnly(placement).pipe(Effect.catchCause(() => Effect.succeed(false)))
+    record = { ...record, controlsComplete: single, targetsKnown: true }
   } else if (input.action === "check") {
     // Reconcile-only: restarts settlement observation, never daily scheduling.
     yield* startNativeRecurrenceSettlement(ctx, placement, document)

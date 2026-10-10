@@ -40,7 +40,7 @@ export const recurrenceControlRequestWire = { type: "object", properties: {
 
 const timestamp = z.number().int().nonnegative().safe()
 const reference = z.object({ passageID: recurrenceIDSchema, dueAt: timestamp, settledAt: timestamp,
-  outcome: z.enum(["completed", "failed", "stopped", "ended-without-report"]), reason: z.enum(["interrupted", "not-started"]).optional(),
+  outcome: z.enum(["completed", "failed", "ended-without-report"]), reason: z.enum(["interrupted", "not-started"]).optional(),
   trigger: z.enum(["daily", "manual"]).optional(), missionID: z.string().optional(), conversationID: z.string().optional() }).strict().refine(value => value.settledAt >= value.dueAt)
 export const recurrenceSnapshotSchema = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   projectCanonical: z.string().min(1).max(4096), location: z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict(),
@@ -63,7 +63,7 @@ export const recurrenceSnapshotSchema = z.object({ version: z.literal(1), projec
 
 const numberWire = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
 const referenceWire = { type: ["object", "null"], properties: { passageID: { type: "string" }, dueAt: numberWire,
-  settledAt: numberWire, outcome: { type: "string", enum: ["completed", "failed", "stopped", "ended-without-report"] },
+  settledAt: numberWire, outcome: { type: "string", enum: ["completed", "failed", "ended-without-report"] },
   reason: { type: "string", enum: ["interrupted", "not-started"] },
   trigger: { type: "string", enum: ["daily", "manual"] }, missionID: { type: "string" }, conversationID: { type: "string" } },
   required: ["passageID", "dueAt", "settledAt", "outcome"], additionalProperties: false } as const
