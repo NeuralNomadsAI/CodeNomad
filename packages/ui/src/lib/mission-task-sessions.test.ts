@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { parseMissionTaskSessions } from "./mission-task-sessions"
+import { parseMissionChildTaskKey, parseMissionTaskSessions } from "./mission-task-sessions"
 
 const prompt = (mission: string, key: string, prefix = "") => `${prefix}# CodeNomad Mission Assignment
 
@@ -63,4 +63,14 @@ test("a repeated call for the same child moves it to the latest position", () =>
     assistant(call({ prompt: prompt("msn_one", "build") }, { sessionID: "ses_a" })),
   ]
   assert.deepEqual(parseMissionTaskSessions("msn_one", "ses_root", messages).get("build"), ["ses_b", "ses_a"])
+})
+
+test("links a running child by its own first message, only for this mission's declared keys", () => {
+  const keys = new Set(["branche-a"])
+  const first = (text: string) => ({ type: "user", text })
+  assert.equal(parseMissionChildTaskKey("msn_one", first(prompt("msn_one", "branche-a", "You are a subagent spawned by another session.\n")), keys), "branche-a")
+  assert.equal(parseMissionChildTaskKey("msn_two", first(prompt("msn_one", "branche-a")), keys), undefined)
+  assert.equal(parseMissionChildTaskKey("msn_one", first(prompt("msn_one", "undeclared")), keys), undefined)
+  assert.equal(parseMissionChildTaskKey("msn_one", { type: "assistant", text: prompt("msn_one", "branche-a") }, keys), undefined)
+  assert.equal(parseMissionChildTaskKey("msn_one", first("Task key: branche-a in mission msn_one"), keys), undefined)
 })

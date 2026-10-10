@@ -43,6 +43,15 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
+/** A running native `subagent` call records its child only when it completes; until
+ * then the child's own first (user) message carries the exact assignment prompt. */
+export function parseMissionChildTaskKey(missionId: string, firstMessage: unknown, taskKeys: ReadonlySet<string>): string | undefined {
+  const value = record(firstMessage)
+  if (value?.type !== "user" || typeof value.text !== "string") return undefined
+  const key = canonicalTaskKey(value.text, missionId)
+  return key && taskKeys.has(key) ? key : undefined
+}
+
 /** Returns child session IDs per task key, oldest first (the latest call is last). */
 export function parseMissionTaskSessions(missionId: string, coordinatorSessionId: string, messages: readonly unknown[],
   taskKeys: ReadonlySet<string> = new Set()): Map<string, string[]> {
