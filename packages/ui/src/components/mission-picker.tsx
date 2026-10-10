@@ -80,8 +80,9 @@ function MissionPickerList(props: {
   </div>
 }
 
-/** The single "current mission" line: chevron (persistent inline list), the
- * selected title (transient popup listbox) and always-visible icon actions. */
+/** An icon toolbar (create/edit/delete, trailing settings/refresh) above the
+ * "current mission" line: chevron (persistent inline list) and the selected
+ * title (transient popup listbox). */
 export function MissionPicker(props: {
   entries: MissionPickerEntry[]; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
   expanded: boolean; onExpandedChange: (expanded: boolean) => void
@@ -123,6 +124,15 @@ export function MissionPicker(props: {
   return <div ref={root} class="mission-picker" onFocusOut={event => {
     if (open() && !root.contains(event.relatedTarget as Node | null)) close(false)
   }} onKeyDown={event => { if (open() && event.key === "Escape") { event.preventDefault(); close(true) } }}>
+    <div class="mission-picker-actions" role="toolbar" aria-label={t("missionsPanel.picker.actions")}>
+      <button type="button" class="mission-control-icon-button" aria-label={t("missions.control.create")} title={t("missions.control.create")}
+        disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
+      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.edit")} title={t("missionsPanel.picker.edit")}
+        disabled={props.editDisabled} onClick={() => props.onEdit()}><Pencil class="h-3.5 w-3.5" aria-hidden="true" /></button>
+      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
+        disabled={props.deleteDisabled} onClick={() => props.onDelete()}><Minus class="h-4 w-4" aria-hidden="true" /></button>
+      <Show when={props.trailing}><span class="mission-picker-trailing">{props.trailing}</span></Show>
+    </div>
     <div class="mission-picker-control">
       <button type="button" class="mission-picker-expander" aria-expanded={props.expanded}
         aria-controls={props.expanded ? inlineId : undefined} aria-label={expanderLabel()} title={expanderLabel()}
@@ -140,15 +150,6 @@ export function MissionPicker(props: {
             <span class="sr-only">{entry().status}</span></>}
         </Show>
       </button>
-      <div class="mission-picker-actions">
-        <button type="button" class="mission-control-icon-button" aria-label={t("missions.control.create")} title={t("missions.control.create")}
-          disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
-        <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.edit")} title={t("missionsPanel.picker.edit")}
-          disabled={props.editDisabled} onClick={() => props.onEdit()}><Pencil class="h-3.5 w-3.5" aria-hidden="true" /></button>
-        <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
-          disabled={props.deleteDisabled} onClick={() => props.onDelete()}><Minus class="h-4 w-4" aria-hidden="true" /></button>
-        <Show when={props.trailing}><span class="mission-picker-separator" aria-hidden="true" />{props.trailing}</Show>
-      </div>
       <Show when={open()}>
         <div class="mission-picker-popup">
           <MissionPickerList id={popupId} popup label={t("missions.control.mapLabel")} entries={props.entries}
