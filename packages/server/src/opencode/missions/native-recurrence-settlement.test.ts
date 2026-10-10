@@ -1,7 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { passageFixture } from "./native-passage-test-fixture"
-import { observeNativePassageSettlement } from "./native-recurrence-settlement"
+import { observeNativePassageSettlement, passageFamilyRoots } from "./native-recurrence-settlement"
+
+test("native-bound child actors are reached through their parent, never seeded as walk roots", async () => {
+  const parents: Record<string, string | undefined> = { ses_coordinator: undefined, ses_child_actor: "ses_coordinator",
+    ses_grandchild_actor: "ses_root_actor", ses_root_actor: undefined }
+  const native = { session: async (id: string) => ({ parentID: parents[id] }) as never }
+  assert.deepEqual(await passageFamilyRoots(native, "ses_coordinator",
+    ["ses_coordinator", "ses_child_actor", "ses_grandchild_actor", "ses_root_actor", "ses_child_actor"]),
+  ["ses_coordinator", "ses_root_actor"])
+})
 
 // Integrator decision: a business failed report and a native terminal failure
 // without a completed report are both failed; a completed final report stands.
