@@ -162,7 +162,7 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       current()
       // Background subagents at any depth belong to this mission family. Stop
       // them deepest first before the root, best effort and honestly counted.
-      const { descendants } = await interruptNativeMissionFamily({ client, root, action, signal, current, checkpoint,
+      const { descendants, ledger } = await interruptNativeMissionFamily({ client, root, action, signal, current, checkpoint,
         deadline: Date.now() + FAMILY_CONTROL_BUDGET_MS })
       await checkpoint()
       const interrupt = await client.session.interrupt({ sessionID: target.sessionID, resume: false }, { signal })
@@ -205,10 +205,11 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
           }
         }
       }
-      // The root ran until its interrupt and may have launched sub-agents after
-      // the family passes: interrupt them before settling the root they re-wake.
+      // The root ran until its interrupt and may have launched or queued work for
+      // sub-agents after the family passes: interrupt them (and on Stop drain their
+      // inboxes) before settling the root they re-wake, counted in the same ledger.
       const recheck = (control: typeof descendants, interrupt: boolean) => recheckNativeMissionFamily({ client, root, action, signal,
-        current, checkpoint, deadline: Date.now() + FAMILY_RECHECK_BUDGET_MS }, control, interrupt)
+        current, checkpoint, deadline: Date.now() + FAMILY_RECHECK_BUDGET_MS }, ledger, control, interrupt)
       const caught = await recheck(descendants, true)
       // Pause leaves queued deliveries parked behind resume:false until Play.
       const settled = await settleInterruptedRoot({ client, root, action, signal, current, checkpoint,

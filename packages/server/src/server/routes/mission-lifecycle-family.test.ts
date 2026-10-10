@@ -214,6 +214,128 @@ for (const action of ["pause", "stop"] as const) {
   })
 }
 
+/** Root alone plus one optional child, so receipt counters are exact. */
+function smallFixture(action: "pause" | "stop") {
+  const f = fixture(action)
+  for (const id of [...f.native.keys()]) if (id !== "ses_coordinator") { f.native.delete(id); f.running.delete(id); f.inboxes.delete(id) }
+  const addChild = (id: string, running: boolean, queued: boolean) => {
+    f.native.set(id, { id, parentID: "ses_coordinator", projectID: "project", location: { directory: "/repo" } })
+    f.inboxes.set(id, queued ? [{ id: `inb_late_${id}`, type: "synthetic", payload: { text: "late work" } }] : [])
+    if (running) f.running.add(id)
+  }
+  const onRootInterrupt = (run: () => void) => {
+    const interrupt = f.client.session.interrupt
+    let fired = false
+    f.client.session.interrupt = async (input: any) => {
+      if (input.sessionID === "ses_coordinator" && !fired) { fired = true; run() }
+      return interrupt(input)
+    }
+  }
+  return { ...f, addChild, onRootInterrupt }
+}
+
+for (const action of ["pause", "stop"] as const) test(`${action}: a descendant re-woken by the root and interrupted again is counted once`, async () => {
+  const f = smallFixture(action)
+  f.addChild("ses_child", true, false)
+  f.onRootInterrupt(() => f.running.add("ses_child"))
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  const interrupts = f.calls.filter(call => call.kind === "interrupt" && call.sessionID === "ses_child")
+  assert.equal(interrupts.length, 2, "really interrupted twice")
+  assert.equal(f.running.size, 0)
+  assert.equal(ack.descendants?.observed, 1)
+  assert.equal(ack.descendants?.interrupted, 1, "distinct sessions, not interrupt calls")
+  assert.deepEqual(ack.descendants?.sessions, ["ses_child"])
+  assert.equal(ack.descendants?.complete, true)
+})
+
+for (const running of [false, true]) test(`stop: a ${running ? "running" : "idle"} child the root launches with queued input during its interrupt is drained`, async () => {
+  const f = smallFixture("stop")
+  f.onRootInterrupt(() => f.addChild("ses_late", running, true))
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.deepEqual(f.inboxes.get("ses_late"), [], "late queued input cancelled")
+  assert.equal(f.running.size, 0)
+  assert.equal(ack.descendants?.observed, 1)
+  assert.equal(ack.descendants?.interrupted, running ? 1 : 0)
+  assert.equal(ack.descendants?.cancelled, 1, "counted in the same receipt")
+  assert.equal(ack.descendants?.complete, true)
+})
+
+test("stop: a late child input that cannot be cancelled is never reported complete", async () => {
+  const f = smallFixture("stop")
+  f.onRootInterrupt(() => f.addChild("ses_late", false, true))
+  const cancel = f.client.session.inbox.cancel
+  f.client.session.inbox.cancel = async (input: any) => {
+    if (input.sessionID === "ses_late") throw new Error("native cancel unavailable")
+    return cancel(input)
+  }
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.equal(f.inboxes.get("ses_late")?.length, 1)
+  assert.equal(ack.descendants?.complete, false)
+  assert.ok((ack.descendants?.unconfirmed ?? 0) > 0)
+})
+
+test("stop: an unreadable late child inbox fails closed", async () => {
+  const f = smallFixture("stop")
+  f.onRootInterrupt(() => f.addChild("ses_late", false, false))
+  const list = f.client.session.inbox.list
+  f.client.session.inbox.list = async (input: any) => {
+    if (input.sessionID === "ses_late") throw new Error("native inbox unavailable")
+    return list(input)
+  }
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.equal(ack.descendants?.complete, false)
+})
+
+test("pause: interrupted children keep parked inputs, a never-interrupted late queue is not quiet", async () => {
+  const parked = smallFixture("pause")
+  parked.addChild("ses_child", true, true)
+  const ack = (await parked.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.equal(parked.calls.some(call => call.kind === "cancel"), false)
+  assert.equal(parked.inboxes.get("ses_child")?.length, 1, "Pause preserves the parked input")
+  assert.equal(ack.descendants?.complete, true)
+
+  const late = smallFixture("pause")
+  late.onRootInterrupt(() => late.addChild("ses_late", false, true))
+  const lateAck = (await late.send()).nativeAcknowledgement
+  if (lateAck.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.equal(late.calls.some(call => call.kind === "cancel"), false)
+  assert.equal(late.inboxes.get("ses_late")?.length, 1)
+  assert.equal(lateAck.descendants?.complete, false, "pending unparked input could still wake it")
+})
+
+test("stop never purges the root's unrelated inbox items", async () => {
+  const f = smallFixture("stop")
+  f.inboxes.set("ses_coordinator", [{ id: "inb_user_note", type: "user", payload: { text: "unrelated" } }])
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.deepEqual(f.inboxes.get("ses_coordinator")?.map(item => item.id), ["inb_user_note"])
+  assert.deepEqual(ack.cancellations, [])
+})
+
+test("an expired family deadline still interrupts the coordinator with a partial receipt", async () => {
+  const f = smallFixture("stop")
+  f.addChild("ses_child", true, true)
+  const interrupt = f.client.session.interrupt
+  f.client.session.interrupt = (async (input: any, init: { signal: AbortSignal }) => {
+    if (input.sessionID === "ses_child") return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }))
+    return interrupt(input)
+  }) as never
+  // Shrink the family deadline's in-flight bound so the hung child call expires.
+  const timeout = AbortSignal.timeout
+  AbortSignal.timeout = (ms: number) => timeout(Math.min(ms, 50))
+  try {
+    const ack = (await f.send()).nativeAcknowledgement
+    if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+    assert.ok(f.calls.some(call => call.kind === "interrupt" && call.sessionID === "ses_coordinator"))
+    assert.equal(ack.descendants?.complete, false)
+  } finally { AbortSignal.timeout = timeout }
+})
+
 test("the family deadline also bounds a wide level and a hung native interrupt", { timeout: 10_000 }, async () => {
   const f = fixture("pause")
   const root = await f.client.session.get({ sessionID: "ses_coordinator" })

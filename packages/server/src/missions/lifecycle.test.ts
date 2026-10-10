@@ -92,7 +92,34 @@ test("Stop then new Pause then Start cannot reopen work, including a pending Sto
   }
 })
 
-for (const action of ["pause", "stop"] as const) test(`${action} records native target receipts after final report without rewriting its completed result`, async () => {
+test("current-revision Pause of a finished mission is refused before any journal intent", async () => {
+  const f = fixture(), prepared = await f.create()
+  const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+  const journal = new MissionJournal(f.storage, "project", "/repo")
+  await journal.append({ version: 1, id: "evt_final_report", missionID: running.id, projectID: "project", type: "mission.finished",
+    createdAt: running.updatedAt + 1, outcome: "completed", summary: "Original successful result" })
+  const completed = (await f.control().snapshot()).missions[0]
+  const calls = f.calls.length
+  await assert.rejects(f.control().lifecycle(f.action(completed, "pause")), code("mission-finished"))
+  const after = (await f.control().snapshot()).missions[0]
+  assert.equal(after.revision, completed.revision, "no durable Pause intent was written")
+  assert.equal(after.control?.action, "start")
+  assert.deepEqual(after.control?.pending, [], "no unresolved control remains")
+  assert.equal(f.calls.length, calls, "no native Pause was dispatched")
+})
+
+test("a normal Pause of an active mission remains resumable", async () => {
+  const f = fixture(), prepared = await f.create()
+  const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+  const paused = (await f.control().lifecycle(f.action(running, "pause"))).mission
+  assert.equal(paused.runState, "paused")
+  assert.deepEqual(paused.control?.pending, [])
+  const resumed = (await f.control().lifecycle(f.action(paused, "start"))).mission
+  assert.equal(resumed.runState, "running")
+  assert.deepEqual(resumed.control?.pending, [])
+})
+
+test("stop records native target receipts after final report without rewriting its completed result", async () => {
   const f = fixture(), prepared = await f.create()
   const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
   const journal = new MissionJournal(f.storage, "project", "/repo")
@@ -100,7 +127,7 @@ for (const action of ["pause", "stop"] as const) test(`${action} records native 
     createdAt: running.updatedAt + 1, outcome: "completed", summary: "Original successful result" })
   const completed = (await f.control().snapshot()).missions[0]
   assert.equal(completed.status, "completed")
-  const controlled = (await f.control().lifecycle(f.action(completed, action))).mission
+  const controlled = (await f.control().lifecycle(f.action(completed, "stop"))).mission
   assert.equal(controlled.status, "completed")
   assert.equal(controlled.summary, "Original successful result")
   assert.equal(controlled.control?.receipts?.[0]?.nativeAcknowledgement?.disposition, "interrupt-observed")

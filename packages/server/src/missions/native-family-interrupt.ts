@@ -36,6 +36,23 @@ interface Options {
   settleMs?: number
 }
 
+/** Distinct evidence shared by the initial passes and the post-root rechecks of
+ * one control, so a session interrupted or drained twice is counted once. */
+export class FamilyControlLedger {
+  readonly observed = new Set<string>()
+  readonly interrupted: string[] = []
+  readonly drained = new Set<string>()
+  readonly failedCancels = new Set<string>()
+  cancelled = 0
+
+  interruptedSession(id: string): void { if (!this.interrupted.includes(id)) this.interrupted.push(id) }
+
+  summary(unconfirmed: number, complete: boolean): MissionDescendantControl {
+    return { observed: this.observed.size, interrupted: this.interrupted.length, cancelled: this.cancelled, unconfirmed,
+      complete: complete && unconfirmed === 0, sessions: this.interrupted.slice(0, MAX_REPORTED_DESCENDANTS) }
+  }
+}
+
 /** Interrupts every active native descendant of `root`, deepest level first,
  * so a child's completion cannot re-wake a parent that is already stopped.
  * Native subagent jobs deliver their (cancelled) result to the parent inbox
@@ -46,13 +63,14 @@ interface Options {
  * Native read/interrupt failures and the deadline yield an honest partial
  * result instead of throwing, so the caller can still interrupt the root;
  * only abort, currentness and checkpoint failures propagate. */
-export async function interruptNativeMissionFamily(options: Options): Promise<{ family: NativeControlFamily; descendants: MissionDescendantControl }> {
+export async function interruptNativeMissionFamily(options: Options): Promise<{ family: NativeControlFamily; descendants: MissionDescendantControl; ledger: FamilyControlLedger }> {
   const { client, root, signal, current } = options
   // Bound in-flight native calls too: an unanswered call past the deadline is unconfirmed.
   const walk = AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, options.deadline - Date.now()))])
   const native = { ...options, signal: walk }
-  const interrupted: string[] = [], observed = new Set<string>(), drained = new Set<string>(), failedCancels = new Set<string>()
-  let cancelled = 0, expired = false, unknown = false, residual: string[] = []
+  const ledger = new FamilyControlLedger()
+  const { observed, drained, failedCancels } = ledger
+  let expired = false, unknown = false, residual: string[] = []
   let family: NativeControlFamily = { members: new Map([[root.id, { session: root, depth: 0 }]]), complete: false }
   for (let pass = 0; pass <= PASSES; pass++) {
     let active: Readonly<Record<string, unknown>>
@@ -72,21 +90,7 @@ export async function interruptNativeMissionFamily(options: Options): Promise<{ 
       if (Date.now() > options.deadline) { expired = true; break }
       await options.checkpoint()
       const targets = level.filter(id => active[id] || drain.has(id))
-      if (!await bounded(targets, options.deadline, async id => {
-        if (active[id]) {
-          current()
-          try {
-            const result = await client.session.interrupt({ sessionID: id, resume: false }, { signal: walk })
-            if (result?.interrupted === true && !interrupted.includes(id)) interrupted.push(id)
-          } catch { signal.throwIfAborted() }
-        }
-        if (drain.has(id)) {
-          drained.add(id)
-          // Never `+= await`: concurrent workers would lose updates.
-          try { const count = await cancelQueued(native, id, () => true); cancelled += count; failedCancels.delete(id) }
-          catch { signal.throwIfAborted(); failedCancels.add(id) }
-        }
-      })) expired = true
+      if (!await bounded(targets, options.deadline, id => controlSession(options, walk, ledger, id, Boolean(active[id]), drain.has(id)))) expired = true
       current()
       if (expired) break
     }
@@ -94,45 +98,77 @@ export async function interruptNativeMissionFamily(options: Options): Promise<{ 
     try { await sleep(options.settleMs ?? 250, walk) } catch { signal.throwIfAborted(); expired = true; break }
   }
   const unconfirmed = new Set([...failedCancels, ...residual]).size
-  return { family, descendants: {
-    observed: observed.size, interrupted: interrupted.length, cancelled, unconfirmed,
-    complete: family.complete && !expired && !unknown && unconfirmed === 0, sessions: interrupted.slice(0, MAX_REPORTED_DESCENDANTS),
-  } }
+  return { family, ledger, descendants: ledger.summary(unconfirmed, family.complete && !expired && !unknown) }
+}
+
+/** Interrupts one active descendant and, on Stop, cancels its queued inputs,
+ * recording distinct evidence in the shared ledger. */
+async function controlSession(options: Pick<Options, "client" | "signal" | "current">, walk: AbortSignal, ledger: FamilyControlLedger,
+  id: string, active: boolean, drain: boolean): Promise<void> {
+  const { client, signal, current } = options
+  if (active) {
+    current()
+    try {
+      const result = await client.session.interrupt({ sessionID: id, resume: false }, { signal: walk })
+      if (result?.interrupted === true) ledger.interruptedSession(id)
+    } catch { signal.throwIfAborted() }
+  }
+  if (drain) {
+    ledger.drained.add(id)
+    // Never `+= await`: concurrent workers would lose updates.
+    try { const count = await cancelQueued({ ...options, signal: walk }, id, () => true); ledger.cancelled += count; ledger.failedCancels.delete(id) }
+    catch { signal.throwIfAborted(); ledger.failedCancels.add(id) }
+  }
 }
 
 /** Post-root recheck. The root ran until its own interrupt, so a descendant still
- * (or newly) active was missed or launched meanwhile: with `interrupt`, stop it
- * deepest first; otherwise this is the verification read, and a family is only
- * confirmed stopped when it observes the family whole and quiet. */
-export async function recheckNativeMissionFamily(options: Options, descendants: MissionDescendantControl,
+ * (or newly) active, or newly queued, was missed or launched meanwhile: with
+ * `interrupt`, stop it deepest first and, on Stop, drain its inbox under the same
+ * checkpoints and ledger as the passes. Otherwise this is the verification read:
+ * a family is only confirmed stopped when it is whole, inactive and has no input
+ * that could re-wake it (Stop: none left; Pause: only inputs parked behind a
+ * native interruption). Unknown reads fail closed. */
+export async function recheckNativeMissionFamily(options: Options, ledger: FamilyControlLedger, descendants: MissionDescendantControl,
   interrupt: boolean): Promise<MissionDescendantControl> {
   const { client, root, signal, current } = options
   const walk = AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, options.deadline - Date.now()))])
+  const native = { ...options, signal: walk }
   try {
     const family = await readNativeControlFamily(client, root, walk, { assertCurrent: current, deadline: options.deadline })
-    const active = await readActive({ ...options, signal: walk })
-    const residual = deepestFirst(family, root.id).flat().filter(id => active[id])
-    const sessions = [...descendants.sessions]
-    let interrupted = descendants.interrupted
-    if (interrupt && residual.length) {
-      await options.checkpoint()
-      for (const id of residual) {
+    const active = await readActive(native)
+    const order = deepestFirst(family, root.id)
+    for (const id of order.flat()) ledger.observed.add(id)
+    if (interrupt) {
+      let expired = false
+      for (const level of order) {
+        const targets = level.filter(id => active[id] || options.action === "stop" && !ledger.drained.has(id))
+        if (!targets.length) continue
+        if (Date.now() > options.deadline) { expired = true; break }
+        await options.checkpoint()
+        if (!await bounded(targets, options.deadline, id => controlSession(options, walk, ledger, id, Boolean(active[id]),
+          options.action === "stop"))) { expired = true; break }
         current()
-        try {
-          if ((await client.session.interrupt({ sessionID: id, resume: false }, { signal: walk }))?.interrupted === true) {
-            interrupted++
-            if (sessions.length < MAX_REPORTED_DESCENDANTS && !sessions.includes(id)) sessions.push(id)
-          }
-        } catch { signal.throwIfAborted() }
       }
+      const unconfirmed = new Set([...ledger.failedCancels]).size
+      return ledger.summary(Math.max(descendants.unconfirmed, unconfirmed), descendants.complete && family.complete && !expired)
     }
-    return { ...descendants, sessions, interrupted, observed: Math.max(descendants.observed, family.members.size - 1),
-      // A lower bound of the distinct union: the passes may already count these sessions.
-      ...(interrupt ? {} : { unconfirmed: Math.max(descendants.unconfirmed, residual.length) }),
-      complete: descendants.complete && family.complete && (interrupt || !residual.length) }
+    const awake = new Set(order.flat().filter(id => active[id]))
+    const unknown = new Set(ledger.failedCancels)
+    if (!await bounded(order.flat().filter(id => !awake.has(id)), options.deadline, async id => {
+      try {
+        const inbox = await client.session.inbox.list({ sessionID: id }, { signal: walk })
+        current()
+        const queued = inbox.some(item => item.type === "user" || item.type === "synthetic")
+        const parked = family.members.get(id)?.session.outcome === "interrupted"
+        if (inbox.length > 128 || queued && (options.action === "stop" || !parked)) awake.add(id)
+      } catch { signal.throwIfAborted(); unknown.add(id) }
+    })) return ledger.summary(Math.max(descendants.unconfirmed, awake.size + unknown.size, 1), false)
+    // A lower bound of the distinct union: earlier passes may count these sessions.
+    const unconfirmed = Math.max(descendants.unconfirmed, new Set([...awake, ...unknown]).size)
+    return ledger.summary(unconfirmed, descendants.complete && family.complete)
   } catch {
     signal.throwIfAborted()
-    return { ...descendants, complete: false }
+    return ledger.summary(descendants.unconfirmed, false)
   }
 }
 
