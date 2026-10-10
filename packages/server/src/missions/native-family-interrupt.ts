@@ -214,8 +214,9 @@ async function cancelQueued(options: Pick<Options, "client" | "signal" | "curren
   const inbox = await client.session.inbox.list({ sessionID }, { signal })
   current()
   let count = 0
-  for (const item of inbox.slice(0, 128)) {
-    if ((item.type !== "user" && item.type !== "synthetic") || !matches(item)) continue
+  // Bound the work, not the observation: unrelated items never hide matching ones.
+  const queued = inbox.filter(item => (item.type === "user" || item.type === "synthetic") && matches(item))
+  for (const item of queued.slice(0, 128)) {
     current()
     try { await client.session.inbox.cancel({ sessionID, inboxID: item.id }, { signal }) }
     catch (error) {
@@ -227,7 +228,7 @@ async function cancelQueued(options: Pick<Options, "client" | "signal" | "curren
     onCancelled?.(item.id)
     count++
   }
-  if (inbox.length > 128) throw new Error("Incomplete native inbox observation")
+  if (queued.length > 128) throw new Error("Incomplete native inbox cancellation")
   return count
 }
 

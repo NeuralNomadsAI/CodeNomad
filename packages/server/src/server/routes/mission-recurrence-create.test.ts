@@ -46,6 +46,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
     let active = canonical, lost = true, writes = 0, watchedDirectory = canonical, distro: string | undefined
     let createdConfig: unknown
     let afterRead: (() => void) | undefined, checkoutReadsAfterRead = -1, moveWatchAtFinalAdmission = false, redirectHost = false
+    let failCreate = false
     const saved = new Map<string, any>()
     const project = { id: "project", canonical }
     const connection = { assertCurrent: () => {}, client: {
@@ -62,6 +63,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
         return result
       },
         recurrenceCreate: async (input: any) => {
+          if (failCreate) { writes++; throw new Error("native create transport failed") }
           if (saved.size >= 64) return { schedule: null, noEffect: { code: "capacity", id: input.id,
             requestID: input.requestID, digest: input.digest, projectID: project.id, projectCanonical: project.canonical } }
           writes++
@@ -115,7 +117,8 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       }
       return args.at(-1)!
     }
-    registerMissionRecurrenceCreate(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence(200),
+    const fence = new WorktreeDeletionFence(200)
+    registerMissionRecurrenceCreate(app, { workspaceManager: manager, worktreeDeletionFence: fence,
       settings, wslGit, bridgeToken: "fixture-token", auth: { isAuthEnabled: () => true,
         getSessionFromRequest: () => ({ sessionId: "human-cookie", username: "human" }) } as never })
     const url = "/api/workspaces/workspace/missions/recurrence"
@@ -305,6 +308,40 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       const config = recurrenceConfigSchema.parse(createdConfig)
       assert.equal("budgets" in config, false); assert.equal("publication" in config, false)
       assert.equal(recurrenceInputBudget(config).sufficient, true)
+    })
+    await t.test("refusals before the native write carry no-effect codes; a dispatched failure stays codeless and held", async () => {
+      const before = writes, list = connection.client.plugin.list, location = connection.client.location.get
+      const attempt = async (requestID: string) => {
+        const response = await post({ ...payload, requestID })
+        return { status: response.statusCode, code: response.json().code as string | undefined }
+      }
+      connection.client.plugin.list = async () => ({ data: [{ id: "codenomad.missions", state: { status: "disabled" } }] })
+      assert.deepEqual(await attempt("refused_plugin"), { status: 503, code: "creation-unavailable" })
+      connection.client.plugin.list = list
+      const shared = manager.getSharedServiceConnection
+      manager.getSharedServiceConnection = async () => undefined
+      assert.deepEqual(await attempt("refused_connection"), { status: 503, code: "creation-unavailable" })
+      manager.getSharedServiceConnection = shared
+      connection.client.location.get = async () => { throw new Error("transport down with private detail") }
+      const transport = await post({ ...payload, requestID: "refused_transport" })
+      assert.deepEqual([transport.statusCode, transport.json().code], [503, "creation-unavailable"])
+      assert.equal(transport.body.includes("private detail"), false, "pre-dispatch failures stay redacted")
+      connection.client.location.get = location
+      let finish!: () => void
+      const deletion = fence.run(canonical, [canonical], () => new Promise<void>(resolve => { finish = resolve }))
+      assert.deepEqual(await attempt("refused_deleting"), { status: 409, code: "creation-worktree-deleting" })
+      finish(); await deletion
+      assert.equal(writes, before, "no refusal reached the native write")
+      // The same request identity is admitted normally once the cause clears: nothing was held.
+      assert.equal((await post({ ...payload, requestID: "refused_plugin" })).statusCode, 200)
+      assert.equal(writes, before + 1)
+      failCreate = true
+      assert.deepEqual(await attempt("dispatched_failure"), { status: 503, code: undefined }, "post-dispatch failure is uncertain")
+      failCreate = false
+      assert.equal(writes, before + 2)
+      assert.deepEqual(await attempt("dispatched_failure"), { status: 409, code: "creation-uncertain" },
+        "the held identity keeps its hold code and is never resent")
+      assert.equal(writes, before + 2)
     })
     assert.equal(await readFile(originalConfig, "utf8"), originalBytes, "paused CREATE never edits the original settings source")
   } finally {

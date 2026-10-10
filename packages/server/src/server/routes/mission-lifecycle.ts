@@ -18,6 +18,8 @@ import { readNativeControlFamily } from "../../missions/native-session-family"
 /** Leaves headroom for the root interrupt inside the bridge's lifecycle timeout. */
 const FAMILY_CONTROL_BUDGET_MS = 50_000
 const FAMILY_RECHECK_BUDGET_MS = 10_000
+/** The acknowledgement schema's cancellation bound. */
+const MAX_STOP_CANCELLATIONS = 128
 
 const schema = z.object({ kind: z.literal("lifecycle"), input: z.object({
   missionID: z.string().min(1).max(100), operationID: z.string().min(1).max(100), sessionID: z.string().regex(/^ses_/).max(240),
@@ -50,8 +52,12 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
   const targetActor = mission.actors.find(actor => actor.sessionId === target.sessionID)
   if (!targetActor || !sameLocation(targetActor.location, target.location)
     || !await manager.ownsLocation(workspace.id, target.location, client)) throw new Error("Foreign mission actor")
-  if (snapshot.missions.some(other => other.id !== mission.id && other.status === "active"
-    && other.actors.some(actor => actor.sessionId === target.sessionID))) throw new Error("Mission actor is shared")
+  // A stopped/finished mission's actor may since serve another active mission (an
+  // explicitly reused root). Stop then settles without touching it; any other
+  // control on a shared actor is refused.
+  const sharedIn = (current: MissionSnapshot) => current.missions.some(other => other.id !== mission.id && other.status === "active"
+    && other.actors.some(actor => actor.sessionId === target.sessionID))
+  if (sharedIn(snapshot) && operation.action !== "stop") throw new Error("Mission actor is shared")
   const expectedState = operation.action === "start" ? "running" : operation.action === "pause" ? "paused" : "stopped"
   if (mission.runState !== expectedState || (operation.action !== "stop" && mission.status !== "active")) throw new Error("Mission control superseded")
   const identities = await Promise.all([coordinator.location, target.location].map(location => manager.getWorktreeIdentityForPath(workspace.id, location.directory)))
@@ -69,7 +75,7 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       if (!nativeAcknowledgement) throw new Error("Unknown native control acknowledgement")
       return { nativeAcknowledgement }
     }
-    const checkOperation = async () => {
+    const checkOperation = async (allowShared = false) => {
       current()
       const fresh = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, {
         location: { directory: coordinator.location.directory }, ...locationRequestOptions(coordinator.location), signal,
@@ -83,8 +89,8 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
         || !isDeepStrictEqual(latest.control.targets, operation.targets) || !latest.control.pending.includes(target.sessionID)
         || latest.runState !== expectedState || (operation.action !== "stop" && latest.status !== "active")
         || !latest.actors.some(actor => actor.sessionId === target.sessionID && sameLocation(actor.location, target.location))
-        || fresh.missions.some(other => other.id !== mission.id && other.status === "active"
-          && other.actors.some(actor => actor.sessionId === target.sessionID))) throw new Error("Mission control superseded")
+        || !allowShared && sharedIn(fresh)) throw new Error("Mission control superseded")
+      return fresh
     }
     const checkTarget = async () => {
       const session = await client.session.get({ sessionID: target.sessionID }, { signal })
@@ -102,6 +108,12 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       if (freshCoordinator.id !== coordinatorID || freshCoordinator.parentID || freshCoordinator.projectID !== coordinator.projectID || !sameLocation(freshCoordinator.location, coordinator.location)
         || !await manager.ownsLocation(workspace.id, freshCoordinator.location, client)) throw new Error("Coordinator moved")
       current()
+    }
+    if (operation.action === "stop" && sharedIn(await checkOperation(true))) {
+      // No native effect: interrupting or draining it would stop the other mission.
+      await checkCoordinator()
+      if (!sharedIn(await checkOperation(true))) throw new Error("Mission control superseded")
+      return reply({ ...ackIdentity, disposition: "target-reused" })
     }
     await checkOperation()
     try { await checkTarget() }
@@ -177,13 +189,16 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
         return Boolean(metadata && typeof metadata === "object" && !Array.isArray(metadata) && metadata.missionID === mission.id)
           || isSubagentDelivery(item)
       }
+      // More matching items than one receipt holds: cancel the first bound now,
+      // let the settle passes drain the rest, and confirm with a final read.
+      let overflow = false
       if (operation.action === "stop") {
         const inbox = await client.session.inbox.list({ sessionID: target.sessionID }, { signal })
         current()
-        if (inbox.length > 128 || new Set(inbox.map(item => item.id)).size !== inbox.length) throw new Error("Incomplete native inbox observation")
-        for (const item of inbox) {
-          if (item.type !== "user" && item.type !== "synthetic") continue
-          if (!cancellable(item)) continue
+        if (new Set(inbox.map(item => item.id)).size !== inbox.length) throw new Error("Incomplete native inbox observation")
+        const queued = inbox.filter(cancellable)
+        overflow = queued.length > MAX_STOP_CANCELLATIONS
+        for (const item of queued.slice(0, MAX_STOP_CANCELLATIONS)) {
           await prepareMissionAuthority(authority)
           await checkTarget()
           await checkCoordinator()
@@ -199,7 +214,7 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
             current()
             const pending = await client.session.inbox.list({ sessionID: target.sessionID }, { signal })
             current()
-            if (pending.length > 128 || new Set(pending.map(item => item.id)).size !== pending.length
+            if (new Set(pending.map(item => item.id)).size !== pending.length
               || pending.some(pending => pending.id === item.id)) throw error
             cancellations.push({ inboxID: item.id, disposition: "observed-absent" })
           }
@@ -214,14 +229,22 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       // Pause leaves queued deliveries parked behind resume:false until Play.
       const settled = await settleInterruptedRoot({ client, root, action, signal, current, checkpoint,
         ...(action === "stop" ? { cancel: cancellable, onCancelled: (inboxID: string) => {
-          if (cancellations.length < 128 && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition: "native-acknowledged" })
+          if (cancellations.length < MAX_STOP_CANCELLATIONS && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition: "native-acknowledged" })
         } } : {}) })
       // Only a whole, quiet family read after the root settled confirms a full stop.
       const verified = await recheck(caught, false)
+      // The bounded receipt lists at most its first cancellations; an overflowing
+      // drain is complete only when a fresh read shows no matching item left.
+      let drained = !overflow
+      if (overflow) {
+        try { drained = !(await client.session.inbox.list({ sessionID: target.sessionID }, { signal })).some(cancellable) }
+        catch { signal.throwIfAborted() }
+        current()
+      }
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
-      const family = settled ? verified
+      const family = settled && drained ? verified
         : { ...verified, unconfirmed: verified.unconfirmed + 1, complete: false }
       return reply({ ...ackIdentity, disposition: "interrupt-observed", interrupt, cancellations, descendants: family })
     }

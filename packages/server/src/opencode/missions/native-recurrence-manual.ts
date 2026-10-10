@@ -47,11 +47,16 @@ export const runNativeRecurrenceNow = Effect.fn("missions.runNativeRecurrenceNow
     Effect.ensuring(Effect.sync(() => controller.abort())))
   // A live running schedule Job observes the passage. Otherwise (paused, or
   // Interrupted after a restart) start the settlement-only observer; it reconciles
-  // but never starts daily work.
+  // but never starts daily work. An unknown read is not proof of absence while the
+  // schedule is desired running: starting then could put a second observer beside
+  // its live daily Job. If that Job is in fact gone the schedule shows Interrupted,
+  // and Resume reconciles the pending passage.
   const after = yield* Effect.promise(() => store.read(doc.id))
-  if (after?.pending?.passage.id === doc.pending!.passage.id
-    && (yield* readNativeRecurrenceClock(placement).pipe(Effect.catchCause(() => Effect.succeed(undefined)))) !== true)
-    yield* startNativeRecurrenceSettlement(ctx, placement, after)
+  if (after?.pending?.passage.id === doc.pending!.passage.id) {
+    const live = yield* readNativeRecurrenceClock(placement).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+    if (live === false || (live === undefined && after.state !== "running"))
+      yield* startNativeRecurrenceSettlement(ctx, placement, after)
+  }
   const result = yield* readNativeRecurrenceRunNow(ctx, request)
   if (result.outcome !== "unknown") {
     const fresh = yield* Effect.promise(() => store.read(doc.id))

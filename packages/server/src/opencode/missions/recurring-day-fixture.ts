@@ -57,6 +57,8 @@ export class RecurringDayFixture {
   crashHits = 0
   /** Native Job.start failure: `absent` registers nothing, `registered` fails after the Job runs. */
   jobStartFailure: "absent" | "registered" | undefined
+  /** Transiently fails a native read of the daily schedule Job when this returns true. */
+  failScheduleJobRead: (() => boolean) | undefined
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
   readonly tools = new Map<string, NativeTool>()
@@ -204,7 +206,8 @@ export class RecurringDayFixture {
       cancelInbox: (input: { sessionID: string }) => Effect.sync(() => { this.db.prepare("DELETE FROM session_inbox WHERE session_id=?").run(input.sessionID) }),
       environment: (input: { variables?: unknown }) => Effect.succeed(input.variables ?? {}),
     }
-    const job = { get: (id: string) => Effect.sync(() => this.jobs.get(id)),
+    const job = { get: (id: string) => id.startsWith("codenomad.missions.recurrence:") && this.failScheduleJobRead?.()
+        ? Effect.die(new Error("Injected native Job read failure")) : Effect.sync(() => this.jobs.get(id)),
       start: (input: Job) => Effect.suspend(() => {
         if (this.jobStartFailure === "absent") return Effect.die(new Error("Injected native Job start failure"))
         const old = this.jobs.get(input.id)

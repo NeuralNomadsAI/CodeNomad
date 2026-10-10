@@ -444,6 +444,10 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
   journal storage, not live-map capacity. Recurring passage retention needs its
   own bounded history strategy rather than exhausting this one-shot task budget.
 - Existing root actors may be reused, but an actor cannot join two active missions.
+  Once a mission is stopped or finished another active mission may reuse its
+  actor; a Stop target found serving another active mission settles with a known
+  `target-reused` receipt and no native interrupt or inbox cancellation, so the
+  stopped mission can still be deleted. Pause/Play on a shared actor are refused.
 - Dependency tasks are mapped as blocked and are never auto-dispatched.
 - Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. The Debugging playbook's completed-role evidence gates still apply; retirement cannot satisfy a gate.
 - One-time creation refusals that provably happen before the native create is
@@ -451,6 +455,10 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
   `creation-worktree-deleting` 409, plus the existing capacity/scope codes and a
   receipt-backed native `mission-limit`): the UI keeps the draft and re-enables
   Create. Every later failure stays an exact `creation-uncertain`/codeless hold.
+  Recurring creation uses the same classification (`creation-unavailable`,
+  `creation-worktree-deleting`, the hold codes, `recurrence-capacity`, 400 and
+  codeless 401/403/404 are definitive; codeless 409/5xx and `creation-uncertain`
+  stay held), keyed on a flag set immediately before the paused-schedule RPC.
   Known limit: that UI hold lives in window memory only and there is no exact
   creation-status endpoint, so an uncertain create keeps Create blocked for that
   project scope until the window reloads (the backend permit and deletion block

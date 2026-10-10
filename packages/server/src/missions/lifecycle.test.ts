@@ -8,7 +8,7 @@ import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identit
 
 function fixture() {
   const values = new Map<string, MissionJsonValue>()
-  const state = { active: true, loseReceipt: false, afterNative: () => {}, interrupted: true }
+  const state = { active: true, loseReceipt: false, afterNative: () => {}, interrupted: true, reused: false }
   const storage: MissionStorage = {
     get: async key => values.get(key), set: async (key, value) => {
       if (state.loseReceipt && value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, MissionJsonValue>).type === "mission.control-applied") {
@@ -34,6 +34,7 @@ function fixture() {
       if (failing.has(input.sessionID)) throw new Error("Native unavailable")
       state.afterNative()
       const identity = { ...input, action: mission.control!.action }
+      if (state.reused) return { nativeAcknowledgement: { ...identity, disposition: "target-reused" } }
       return { nativeAcknowledgement: mission.control!.action === "start" ? { ...identity, disposition: "start-admitted", admission: {
         id: controlResumeAdmissionID(input.operationID, input.sessionID), sessionID: input.sessionID, type: "synthetic", delivery: "queue", time: { created: 100 },
         payload: { text: "Continue existing work", metadata: { "codenomad.mission": { version: 1, missionID: input.missionID, operationID: input.operationID, kind: "lifecycle" } } },
@@ -66,6 +67,17 @@ test("explicit Pause supersedes a lost start ACK and interrupts its registered r
   assert.equal(paused.runState, "paused")
   assert.equal(paused.control?.receipts?.[0]?.nativeAcknowledgement?.disposition, "interrupt-observed")
   assert.deepEqual(f.calls.map(call => call.action), ["start", "pause"])
+})
+
+test("a reused Stop target is a durable known receipt that settles the Stop", async () => {
+  const f = fixture(), prepared = await f.create()
+  const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+  f.state.reused = true
+  const stopped = (await f.control().lifecycle(f.action(running, "stop"))).mission
+  assert.equal(stopped.runState, "stopped")
+  assert.deepEqual(stopped.control?.pending, [], "nothing stays pending, so deletion is not blocked")
+  assert.equal(stopped.control?.receipts?.[0]?.acknowledgementState, "known")
+  assert.equal(stopped.control?.receipts?.[0]?.nativeAcknowledgement?.disposition, "target-reused")
 })
 
 test("Stop then new Pause then Start cannot reopen work, including a pending Stop", async () => {

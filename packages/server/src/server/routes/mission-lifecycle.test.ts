@@ -107,6 +107,25 @@ test("native lifecycle mutations reject absent authority, changed identities, se
   assert.deepEqual(f.calls, [])
 })
 
+test("Stop of a finished mission whose actor now serves another active mission settles without touching it", async () => {
+  const f = fixture("stop")
+  f.mission.status = "completed"
+  const other = { id: "msn_other", projectID: "project", status: "active", actors: [{ sessionId: "ses_actor", location: { directory: "/repo" } }] }
+  f.client.rpc = () => ({ snapshot: async () => ({ projectID: "project", missions: [f.mission, other] }) })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.deepEqual(await f.send(), { nativeAcknowledgement: { missionID: f.mission.id, operationID: "evt_control",
+      sessionID: "ses_actor", action: "stop", disposition: "target-reused" } })
+  }
+  assert.deepEqual(f.calls, [], "the other mission's session is never interrupted or drained")
+  // Pause/Play never act on a shared actor.
+  for (const action of ["pause", "start"] as const) {
+    const g = fixture(action)
+    g.client.rpc = () => ({ snapshot: async () => ({ projectID: "project", missions: [g.mission, other] }) })
+    await assert.rejects(g.send(), /shared/)
+    assert.deepEqual(g.calls, [])
+  }
+})
+
 test("missing roots can acknowledge interruption but are not recreated by Play", async () => {
   for (const action of ["start", "pause", "stop"] as const) {
     const f = fixture(action)

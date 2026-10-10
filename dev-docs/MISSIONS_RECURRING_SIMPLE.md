@@ -68,6 +68,13 @@ later completed control that restarted or cancelled it. A Play/Resume whose nati
 Job start fails while a fresh read positively shows no running daily Job completes
 its record with the schedule Interrupted (reason `error`), releasing the backend
 permit for an explicit Resume/Pause/Stop; a failed or running read stays unknown.
+Interrupted(error) and the completed record are one CAS revision, so no crash can
+separate them; a crash before that write is an ordinary unknown start. A status
+read also resolves an incomplete current start intent already marked
+Interrupted(error) (for example by the daily Job's own fatal exit) when a fresh
+definite read shows no running daily Job. A Job writes that reason inside its own
+run, before native reports it not running, and Resume admits only after such a
+read, so a stale reason cannot land after Resume cleared it.
 Nothing retries the start. A Run now is resolved by
 its own passage's admission or archive; archiving also resolves Checks of that
 passage. Pause/Stop on a reserved passage without a journal mission has no actor
@@ -193,7 +200,11 @@ reconcile-only (never a second coordinator message; at most the original start
 identity while dispatch is allowed), never starts daily passages and exits once
 the passage settles. Pause cancels it. Stop keeps (restarts) it for a pending
 passage so the passage still archives honestly; the schedule stays terminal. A
-live running schedule's own Job observes its manual passage instead. After a
+live running schedule's own Job observes its manual passage instead. The observer
+starts only on a definite native read that no daily Job runs, or on an unknown read
+of a schedule not desired running; an unknown read of a desired-running schedule
+starts nothing (if its Job is in fact gone it shows Interrupted and Resume
+reconciles the passage), so no second observer runs beside the daily Job. After a
 service restart with a pending passage on a paused or stopped schedule, the
 snapshot offers an explicit **Check passage** (`check`) control, admitted like the
 others (requestID, expectedRevision, authenticated route), which only restarts

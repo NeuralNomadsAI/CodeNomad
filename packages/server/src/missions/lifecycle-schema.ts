@@ -26,7 +26,8 @@ const startAcknowledgement = z.object({ ...identity, action: z.literal("start"),
       metadata: z.record(z.unknown()).refine(boundedJson).optional() }).strict(),
   }).strict() }).strict()
 const acknowledgement = z.union([startAcknowledgement, interruptAcknowledgement,
-  z.object({ ...identity, action: z.enum(["pause", "stop"]), disposition: z.literal("target-missing") }).strict()])
+  z.object({ ...identity, action: z.enum(["pause", "stop"]), disposition: z.literal("target-missing") }).strict(),
+  z.object({ ...identity, action: z.literal("stop"), disposition: z.literal("target-reused") }).strict()])
 
 /** Strict known evidence only. Historical absence stays absent; never coerce an
  * old {applied:true}, void, unknown response or activity observation into an ACK. */
@@ -136,6 +137,8 @@ export const nativeAcknowledgementSchema = { oneOf: [
     required: ["observed", "interrupted", "cancelled", "unconfirmed", "complete", "sessions"], additionalProperties: false },
   }, required: [...ackIdentityRequired, "interrupt", "cancellations"], additionalProperties: false },
   { type: "object", properties: { ...ackIdentityProperties, action: { enum: ["pause", "stop"] }, disposition: { const: "target-missing" } },
+    required: ackIdentityRequired, additionalProperties: false },
+  { type: "object", properties: { ...ackIdentityProperties, action: { const: "stop" }, disposition: { const: "target-reused" } },
     required: ackIdentityRequired, additionalProperties: false },
 ] } as const
 export const lifecycleOperationSchema = {

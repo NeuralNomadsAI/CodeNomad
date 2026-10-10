@@ -18,6 +18,8 @@ export type MissionNativeAcknowledgement = MissionNativeAcknowledgementIdentity 
       /** Recursive native subagent interruption under this target; absent on older receipts. */
       descendants?: MissionDescendantControl }
   | { action: "pause" | "stop"; disposition: "target-missing" }
+  /** Stop only: the actor now serves another active mission and was left untouched. */
+  | { action: "stop"; disposition: "target-reused" }
 )
 export interface MissionLifecycleReceipt {
   receiptID: string

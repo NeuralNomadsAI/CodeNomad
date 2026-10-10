@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { recurrenceControlRequestSchema, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
 import type { RecurrenceControlRecord, RecurrenceDocument } from "../../missions/recurrence-contract"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
-import { observeNativeRecurrenceScheduleOnly } from "./native-service-clock"
+import { observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClockStatus } from "./native-service-clock"
 
 /** Exact request lookup, never an automatic resend. An unknown Play/Resume whose
  * effect is positively observed (its schedule is still the running intent and its
@@ -25,7 +25,14 @@ export const readNativeRecurrenceControlStatus = Effect.fn("missions.readNativeR
       directory: ctx.location.directory, workspaceID: ctx.location.workspaceID, scheduleID: doc.id,
       profileID: doc.config.profileID, executionHost: doc.config.executionHost }
     // Any failed, partial or foreign Job read stays genuinely unknown (fail closed).
-    if (yield* observeNativeRecurrenceScheduleOnly(placement).pipe(Effect.catchCause(() => Effect.succeed(false)))) {
+    // Interrupted(error) is written only after a positive no-Job read or by the Job's
+    // own fatal exit (Play/Resume clear it first), so with a fresh definite absence it
+    // resolves the intent as Interrupted, exactly like the original call would have.
+    const job = doc.interruptionReason === "error"
+      ? yield* readNativeRecurrenceClockStatus(placement).pipe(Effect.catchCause(() => Effect.succeed(undefined))) : undefined
+    const resolved = doc.interruptionReason === "error" ? job !== undefined && job !== "running"
+      : yield* observeNativeRecurrenceScheduleOnly(placement).pipe(Effect.catchCause(() => Effect.succeed(false)))
+    if (resolved) {
       const observed = record
       const saved = yield* Effect.tryPromise(() => store.recordControl(doc.id,
         { ...observed, controlsComplete: true, targetsKnown: true }, () => true)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
