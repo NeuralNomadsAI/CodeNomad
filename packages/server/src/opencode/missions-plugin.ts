@@ -303,7 +303,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, Pocock bug-fix, or Wayfinder mission.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, or Wayfinder mission.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -440,7 +440,7 @@ const inspectSchema = {
       type: "object",
       properties: {
         objective: { type: "string", minLength: 1, maxLength: 20_000 },
-        template: { type: "string", enum: ["custom", "pocock-fix-bug", "wayfinder"] },
+        template: { type: "string", enum: ["custom", "debug", "wayfinder"] },
         notes: { type: "string", maxLength: 20_000 },
         profiles: missionProfilesSchema,
         taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omitted defaults to native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
@@ -480,7 +480,7 @@ const reportSchema = {
     summary: { type: "string", minLength: 1, maxLength: 20_000 },
     evidence: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     next: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
-    artifact: { description: "Optional structured playbook evidence. Required for completed Pocock tasks." },
+    artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks." },
     final: { type: "boolean", description: "Coordinator-only terminal mission report." },
   },
   required: ["outcome", "summary"],
@@ -726,7 +726,7 @@ function delivery(value: unknown): "queue" | "steer" {
 }
 
 function isTemplate(value: string): value is MissionTemplateId {
-  return value === "custom" || value === "pocock-fix-bug" || value === "wayfinder"
+  return value === "custom" || value === "debug" || value === "wayfinder"
 }
 
 function optionalJson(value: unknown): MissionJsonValue | undefined {

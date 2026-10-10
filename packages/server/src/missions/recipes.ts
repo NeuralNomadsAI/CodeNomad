@@ -36,7 +36,7 @@ const PARALLEL_WORK = `Parallel coordination:
 - Cover every explicitly requested workstream in the initial clear plan, including actionable preparation for a blocked deliverable. Do not invent speculative tasks; record unresolved scope in notes rather than silently dropping a workstream.
 - Before waiting for one result, launch the other independent ready tasks using background native calls or concurrent native calls supported by the runtime. Read each actual returned result and record its business readout; a launch or ready status is not execution/completion proof.
 - One workstream's missing tool, consent or failure must not park unrelated ready work. Keep real evidence gates, human consent, native permissions, resource limits and shared-write conflicts intact; state the concrete reason when work must be serial.
-- Prefer a fresh native child for independent work. Reuse an exact specialist only when its context helps and continuation is eligible; reuseFromTaskKey selects context, not a blockedBy dependency. Do not add a dependency just to reuse a session. An unavailable reused actor cannot run two assignments simultaneously; launch other ready work instead. Pocock resolver evidence must still connect to its implementer and both review axes.`
+- Prefer a fresh native child for independent work. Reuse an exact specialist only when its context helps and continuation is eligible; reuseFromTaskKey selects context, not a blockedBy dependency. Do not add a dependency just to reuse a session. An unavailable reused actor cannot run two assignments simultaneously; launch other ready work instead. Debugging resolver evidence must still connect to its implementer and both review axes.`
 
 const DELEGATION = `Prefer ordinary native delegation for bounded work. Run independent ready frontier tasks in parallel; blockedBy records real prerequisites, not an artificial stage order. Declare task contracts separately from execution: a blocked declaration does not dispatch work. Native tasks use subagent/all profiles; independent roots use primary/all profiles. Choose an independent root only for an explicit location, lifetime, existing-root, or playbook exception, with a concrete explanation. Do not convert historical no-mode root contracts. Native children may recursively delegate within the assignment and return normal native results to their parent; do not require child mission.report copies, task-generation forwarding, or invocation bindings. The coordinator reads those results and records a business readout using mission.report with taskKey and evidence (omit contract). This settles the plan, not native execution receipts, historical model identity, or human consent. Never infer idle from a report. Independent-root actors still submit their own assigned mission reports. Helpers receive the scoped instructions their parent passes, not coordinator topology authority or mission.report privileges.
 ${PARALLEL_WORK}
@@ -71,9 +71,9 @@ const custom: MissionRecipe = {
   }],
 }
 
-const pocock: MissionRecipe = {
-  id: "pocock-fix-bug",
-  title: "Pocock Bug Expedition",
+const debug: MissionRecipe = {
+  id: "debug",
+  title: "Debugging",
   summary: "Diagnose with evidence, fix through behavioral TDD, review on two independent axes, resolve, then validate green.",
   sequence: [
     "diagnose: keep one diagnostician until a red feedback loop and cause are confirmed",
@@ -175,7 +175,7 @@ const wayfinder: MissionRecipe = {
   ],
 }
 
-const recipes: Record<MissionTemplateId, MissionRecipe> = { custom, "pocock-fix-bug": pocock, wayfinder }
+const recipes: Record<MissionTemplateId, MissionRecipe> = { custom, debug, wayfinder }
 
 export function getMissionRecipe(id: MissionTemplateId, taskMode: MissionTaskMode = "native"): MissionRecipe {
   const recipe = recipes[id]

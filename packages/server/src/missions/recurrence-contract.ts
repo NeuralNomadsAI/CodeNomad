@@ -7,6 +7,7 @@ import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
+import { normalizeStoredTemplateId } from "./template-id"
 
 export const RECURRENCE_STORAGE_PREFIX = "codenomad-missions/recurrence-v1"
 export const RECURRENCE_HISTORY_LIMIT = 30
@@ -25,7 +26,7 @@ export const recurrenceConfigSchema = z.object({
   title: z.string().trim().min(1).max(120),
   consigne: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
   notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]),
+  template: z.preprocess(normalizeStoredTemplateId, z.enum(["custom", "debug", "wayfinder"])),
   profileID: id, executionHost: id,
   profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema,

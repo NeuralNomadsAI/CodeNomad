@@ -1,5 +1,6 @@
 import { parseMissionProfiles, validateMissionProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
+import { normalizeStoredTemplateId } from "../../../server/src/missions/template-id"
 import type { MissionTaskMode } from "./mission-defaults"
 
 /** A reusable user brief, not an AI model or a saved execution. */
@@ -26,9 +27,9 @@ export function parseMissionModel(input: unknown): UserMissionModel {
     || typeof value.name !== "string" || !value.name.trim() || value.name.length > 80
     || typeof value.objective !== "string" || !value.objective.trim() || value.objective.length > 20_000
     || typeof value.notes !== "string" || value.notes.length > 20_000
-    || !["custom", "pocock-fix-bug", "wayfinder"].includes(value.template as string)
+    || !["custom", "debug", "wayfinder"].includes(normalizeStoredTemplateId(value.template) as string)
     || (value.taskMode !== undefined && !["native", "independent"].includes(value.taskMode as string))) throw new Error("Invalid mission model")
-  const template = value.template as MissionTemplateId
+  const template = normalizeStoredTemplateId(value.template) as MissionTemplateId
   const profiles = parseMissionProfiles(value.profiles)
   validateMissionProfiles(template, profiles)
   return { version: 1, id: value.id, name: value.name.trim(), objective: value.objective.trim(), notes: value.notes, template,

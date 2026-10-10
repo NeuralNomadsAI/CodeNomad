@@ -274,7 +274,7 @@ context/actor choice and does not require or create a `blockedBy` edge. A fresh
 native child is preferred for independent work; eligible reuse still requires the
 exact live native source, unchanged parent, actual source return and fresh idle
 observation at admission. It never permits concurrent work on the same actor.
-Pocock's resolver still requires dependency-connected implementer/review evidence,
+The Debugging playbook's resolver still requires dependency-connected implementer/review evidence,
 and its reviewers/validator remain fresh distinct actors. Mixed admission cycles
 remain rejected. Neither declaration nor business readiness proves native activity.
 
@@ -432,11 +432,11 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
   own bounded history strategy rather than exhausting this one-shot task budget.
 - Existing root actors may be reused, but an actor cannot join two active missions.
 - Dependency tasks are mapped as blocked and are never auto-dispatched.
-- Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. Pocock's completed-role evidence gates still apply; retirement cannot satisfy a gate.
+- Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. The Debugging playbook's completed-role evidence gates still apply; retirement cannot satisfy a gate.
 
 ## Included playbooks
 
-- **Pocock Bug Expedition** preserves evidence-first diagnosis, behavioral TDD, independent fresh Standards and Spec reviews, implementer-session resolution, and a fresh read-only green gate. Completed role reports carry validated structured artifacts, while the coordinator still chooses each transition; no fixed state machine was ported.
+- **Debugging** preserves evidence-first diagnosis, behavioral TDD, independent fresh Standards and Spec reviews, implementer-session resolution, and a fresh read-only green gate. Completed role reports carry validated structured artifacts, while the coordinator still chooses each transition; no fixed state machine was ported.
 - **Wayfinder Map** adapts destination, map, frontier, claims, and fog-of-war planning to visible sessions. It remains planning-first and uses native Forms for human decisions.
 
 ## Validation

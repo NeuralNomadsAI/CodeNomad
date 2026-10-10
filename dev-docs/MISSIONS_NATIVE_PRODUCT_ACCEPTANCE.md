@@ -69,7 +69,7 @@ new execution authority.
 | Business report | Exact task/invocation provenance; native outcome is not business completion | Shared invocation-aware report control implemented; production writer/atomic-commit proof remains absent |
 | Delivery | Native immediate-parent readout distinct from coordinator notification and consumption | Stable-ID outbox retained; native-return reports excluded from coordinator wakes and outbox recovery |
 | Recovery/activity | Native-bound work does not require invented inbox admission; busy/unknown refuses | Scoped shared evidence integration delivered; authenticated child transport integration open |
-| Pocock | Full evidence chain; two fresh independent reviewers; exact implementer reuse; fresh validator | Shared policy/recipe/catalog and full frontier declaration implemented; full native playbook proof open |
+| Debugging | Full evidence chain; two fresh independent reviewers; exact implementer reuse; fresh validator | Shared policy/recipe/catalog and full frontier declaration implemented; full native playbook proof open |
 | Wayfinder | Additive frontier discovery; human Forms; planning rather than an automatic implementation pipeline | Additive revisions and strict decision provenance/observation implemented; durable Form/human-reply producer absent; completed native decisions refuse |
 | Existing session UX | Exact recursive child navigation, steering/queue, fork, compaction and `/btw` | Native session primitives exist; production shell qualification open |
 | Mission UX | Descendant membership/attention; truthful invocation/report/delivery; all ten locales | Recursive observed-family navigation, attention and requested profile editor implemented; historical invocation profile provenance unknown |

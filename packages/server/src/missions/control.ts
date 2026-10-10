@@ -18,7 +18,7 @@ import {
 import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
-import { nativeDecisionProvenance, resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
+import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { NativeHumanAnswerGate } from "./human-answer"
 import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
@@ -446,7 +446,7 @@ export class MissionControl {
           template: mission.template,
           role: item.role,
           targetSessionID: item.role === "resolver" && item.executionMode?.kind !== "native"
-            ? resolvePocockImplementerSessionID(policyTasks, item.blockedBy)
+            ? resolveDebuggingImplementerSessionID(policyTasks, item.blockedBy)
             : undefined,
           blockedBy: item.blockedBy,
           tasks: policyTasks,

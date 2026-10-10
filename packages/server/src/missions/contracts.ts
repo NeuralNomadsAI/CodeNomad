@@ -111,7 +111,7 @@ const ValidationArtifact = z.object({
   }
 })
 
-const pocockContracts: Record<string, z.ZodTypeAny> = {
+const debugContracts: Record<string, z.ZodTypeAny> = {
   diagnostician: DiagnosisArtifact,
   implementer: FixArtifact,
   "review-standards": reviewArtifact("standards"),
@@ -120,7 +120,7 @@ const pocockContracts: Record<string, z.ZodTypeAny> = {
   validator: ValidationArtifact,
 }
 
-const pocockPrerequisites: Record<string, string[]> = {
+const debugPrerequisites: Record<string, string[]> = {
   diagnostician: [],
   implementer: ["diagnostician"],
   "review-standards": ["implementer"],
@@ -158,8 +158,8 @@ export function validateMissionDelegationPolicy(input: {
   tasks: readonly PolicyTask[]
 }): void {
   if (input.template === "custom" && !input.executionMode && input.phase !== "declaration") return
-  const roles = input.template === "pocock-fix-bug"
-    ? Object.keys(pocockContracts)
+  const roles = input.template === "debug"
+    ? Object.keys(debugContracts)
     : ["cartographer", "research", "prototype", "grilling", "decision"]
   if (input.template !== "custom" && !roles.includes(input.role)) throw new Error(`${input.role} is not a ${input.template} playbook role`)
   if (input.executionMode || input.phase === "declaration") {
@@ -179,52 +179,52 @@ export function validateMissionDelegationPolicy(input: {
         }
       }
     }
-    if (input.template !== "pocock-fix-bug") return
+    if (input.template !== "debug") return
     if (["review-standards", "review-spec", "validator"].includes(input.role)
       && (input.targetSessionID || (mode?.kind === "native" && mode.reuseFromTaskKey))) {
-      throw new Error(`The Pocock ${input.role} role requires a fresh distinct session`)
+      throw new Error(`The Debugging ${input.role} role requires a fresh distinct session`)
     }
     if (input.role === "resolver" && mode?.kind === "native") {
       const implementer = input.tasks.find(task => task.key === mode.reuseFromTaskKey)
       if (!implementer || !keys.has(implementer.key) || implementer.role !== "implementer" || implementer.status === "withdrawn" || implementer.replacedByTaskKey) {
-        throw new Error("The native Pocock resolver must explicitly reuse a live dependency-connected implementer task")
+        throw new Error("The native Debugging resolver must explicitly reuse a live dependency-connected implementer task")
       }
       if (input.phase !== "declaration") {
-        const sessionID = resolvePocockImplementerSessionID(input.tasks, input.blockedBy ?? [], mode)
+        const sessionID = resolveDebuggingImplementerSessionID(input.tasks, input.blockedBy ?? [], mode)
         if (!sessionID || input.targetSessionID !== sessionID) {
-          throw new Error("The native Pocock resolver must reuse the exact completed implementer child with its report")
+          throw new Error("The native Debugging resolver must reuse the exact completed implementer child with its report")
         }
         // Current native-ended/returned and authoritative-idle observations belong to admission authority.
         // A completed report or stored actor ID is not an idleness proof.
       }
     }
-    const missing = pocockPrerequisites[input.role]?.find(role => !input.tasks.some(task =>
+    const missing = debugPrerequisites[input.role]?.find(role => !input.tasks.some(task =>
       keys.has(task.key) && task.role === role && task.status !== "withdrawn" && !task.replacedByTaskKey
       && (input.phase === "declaration" || task.status === "completed")))
-    if (missing) throw new Error(`The Pocock ${input.role} role requires dependency-connected ${missing} evidence`)
+    if (missing) throw new Error(`The Debugging ${input.role} role requires dependency-connected ${missing} evidence`)
     if (input.phase === "declaration" || mode?.kind === "native") return
     // Explicit independent admission retains the established root reuse/freshness constraints below.
   }
-  if (input.template !== "pocock-fix-bug") return
+  if (input.template !== "debug") return
   if (["review-standards", "review-spec", "validator"].includes(input.role) && input.targetSessionID) {
-    throw new Error(`The Pocock ${input.role} role requires a fresh root session`)
+    throw new Error(`The Debugging ${input.role} role requires a fresh root session`)
   }
   if (input.role === "resolver") {
-    const implementerSessionID = resolvePocockImplementerSessionID(input.tasks, input.blockedBy ?? [])
+    const implementerSessionID = resolveDebuggingImplementerSessionID(input.tasks, input.blockedBy ?? [])
     if (!implementerSessionID) {
-      throw new Error("The Pocock resolver needs one unambiguous live completed implementer from its review dependencies")
+      throw new Error("The Debugging resolver needs one unambiguous live completed implementer from its review dependencies")
     }
     if (!input.targetSessionID || input.targetSessionID !== implementerSessionID) {
-      throw new Error("The Pocock resolver must reuse the live implementer root session")
+      throw new Error("The Debugging resolver must reuse the live implementer root session")
     }
   }
-  const missing = pocockPrerequisites[input.role]?.find((role) => !input.tasks.some((task) => task.role === role && task.status === "completed"))
+  const missing = debugPrerequisites[input.role]?.find((role) => !input.tasks.some((task) => task.role === role && task.status === "completed"))
   if (missing) {
-    throw new Error(`The Pocock ${input.role} role requires completed ${missing} evidence`)
+    throw new Error(`The Debugging ${input.role} role requires completed ${missing} evidence`)
   }
 }
 
-export function resolvePocockImplementerSessionID(
+export function resolveDebuggingImplementerSessionID(
   tasks: readonly PolicyTask[],
   blockedBy: readonly string[],
   executionMode?: ExecutionMode,
@@ -250,7 +250,7 @@ export function validateMissionCompletionPolicy(input: {
   outcome: "completed" | "failed"
   tasks: readonly (Pick<MissionTask, "role" | "status"> & Partial<MissionTask>)[]
 }): void {
-  if (input.template !== "pocock-fix-bug" || input.outcome !== "completed") return
+  if (input.template !== "debug" || input.outcome !== "completed") return
   if (input.tasks.some(task => task.executionMode)) {
     const tasks = input.tasks.filter((task): task is MissionTask => Boolean(task.key && task.blockedBy))
     const liveFixes = tasks.filter(task => task.role === "implementer" && task.status !== "withdrawn" && !task.replacedByTaskKey)
@@ -261,7 +261,7 @@ export function validateMissionCompletionPolicy(input: {
     const newestTime = Math.max(...tips.map(task => task.createdAt))
     const newest = tips.filter(task => task.createdAt === newestTime)
     const latest = newest.length === 1 ? newest[0] : undefined
-    if (!latest || latest.status !== "completed") throw new Error("A green Pocock mission requires the latest live implementation")
+    if (!latest || latest.status !== "completed") throw new Error("A green Debugging mission requires the latest live implementation")
     const completed = (role: string) => tasks.filter(task => task.role === role && task.status === "completed" && !task.replacedByTaskKey)
     const connected = (task: MissionTask, key: string) => dependencyKeys(tasks, task.blockedBy).has(key)
     let chain: MissionTask[] | undefined
@@ -274,7 +274,7 @@ export function validateMissionCompletionPolicy(input: {
       if (chain) break
     }
     const diagnosis = completed("diagnostician").find(task => connected(latest, task.key))
-    if (!chain || !diagnosis) throw new Error("A green Pocock mission requires dependency-connected evidence for the latest live implementation")
+    if (!chain || !diagnosis) throw new Error("A green Debugging mission requires dependency-connected evidence for the latest live implementation")
     for (const task of [latest, diagnosis, ...chain]) {
       // Coordinator readout is business evidence validated by the journal, not
       // an assertion of native child/profile identity. Qualified reports still
@@ -282,15 +282,15 @@ export function validateMissionCompletionPolicy(input: {
       const readout = task.executionMode?.kind === "native" && task.report?.delivery === "coordinator-readout"
       if (!task.report || task.report.outcome !== "completed" || task.report.taskKey !== task.key
         || (!readout && task.report.sessionId !== task.actorSessionId)) {
-        throw new Error(`A green Pocock mission requires an exact completed ${task.role} report`)
+        throw new Error(`A green Debugging mission requires an exact completed ${task.role} report`)
       }
       validateMissionReportArtifact({ template: input.template, role: task.role, outcome: "completed", artifact: task.report.artifact })
     }
     return
   }
-  const missing = Object.keys(pocockContracts)
+  const missing = Object.keys(debugContracts)
     .find((role) => !input.tasks.some((task) => task.role === role && task.status === "completed"))
-  if (missing) throw new Error(`A green Pocock mission requires completed ${missing} evidence`)
+  if (missing) throw new Error(`A green Debugging mission requires completed ${missing} evidence`)
 }
 
 export function validateMissionReportArtifact(input: {
@@ -305,13 +305,13 @@ export function validateMissionReportArtifact(input: {
     validateNativeDecisionArtifact({ ...input.nativeDecision, artifact: input.artifact })
     return input.artifact
   }
-  if (input.template !== "pocock-fix-bug" || input.outcome !== "completed") return input.artifact
-  const contract = pocockContracts[input.role]
-  if (!contract) throw new Error(`The Pocock role ${input.role} has no report contract`)
+  if (input.template !== "debug" || input.outcome !== "completed") return input.artifact
+  const contract = debugContracts[input.role]
+  if (!contract) throw new Error(`The Debugging role ${input.role} has no report contract`)
   const result = contract.safeParse(input.artifact)
   if (!result.success) {
     const detail = result.error.issues.map((issue) => `${issue.path.join(".") || "artifact"}: ${issue.message}`).join("; ")
-    throw new Error(`Pocock ${input.role} report contract failed: ${detail}`)
+    throw new Error(`Debugging ${input.role} report contract failed: ${detail}`)
   }
   return result.data as MissionJsonValue
 }

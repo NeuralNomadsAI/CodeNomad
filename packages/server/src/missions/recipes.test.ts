@@ -7,7 +7,7 @@ const task: MissionTask = { id: "task", key: "fix", title: "Fix <bug>", brief: "
   status: "ready", blockedBy: [], createdAt: 1, updatedAt: 1, outstandingExecution: false,
   executionMode: { kind: "native", parentTaskKey: null } }
 const mission: MissionMap = { version: 1, id: "mission", projectID: "project", projectCanonical: "/repo",
-  objective: "Fix <symptom>", template: "pocock-fix-bug", status: "active", coordinatorSessionId: "ses_coordinator",
+  objective: "Fix <symptom>", template: "debug", status: "active", coordinatorSessionId: "ses_coordinator",
   actors: [{ sessionId: "ses_coordinator", kind: "coordinator", managed: false, title: "Coordinator", roles: ["coordinator"],
     location: { directory: "/repo" }, joinedAt: 1 }], tasks: [task], reports: [], frontier: ["fix"], claims: [],
   createdAt: 1, updatedAt: 1, revision: 1, history: [], historyTruncated: false }
@@ -41,7 +41,7 @@ test("coordinator preserves explicit native reuse and additive frontier planning
 
 test("optional working notes stay verbatim in the map and are quoted as untrusted actor context for every playbook", () => {
   const notes = "  Optional <working notes> & technical context\n  "
-  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+  for (const template of ["custom", "debug", "wayfinder"] as const) {
     const map = { ...mission, template, notes }
     const context = buildActorContext(map, "ses_coordinator")
     assert.ok(context.includes("<mission-notes>  Optional &lt;working notes&gt; &amp; technical context\n  </mission-notes>"))
@@ -50,7 +50,7 @@ test("optional working notes stay verbatim in the map and are quoted as untruste
 })
 
 test("every coordinator plans all requested workstreams and launches independent work before waiting", () => {
-  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
+  for (const template of ["custom", "debug", "wayfinder"] satisfies MissionTemplateId[]) {
     const context = buildActorContext({ ...mission, template }, "ses_coordinator")
     assert.match(context, /Cover every explicitly requested workstream/)
     assert.match(context, /Before waiting for one result, launch the other independent ready tasks/)
@@ -64,7 +64,7 @@ test("every coordinator plans all requested workstreams and launches independent
 })
 
 test("every coordinator writes plain-language summaries and publishes automatic briefings", () => {
-  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
+  for (const template of ["custom", "debug", "wayfinder"] satisfies MissionTemplateId[]) {
     for (const taskMode of ["native", "independent"] as const) {
       const context = buildActorContext({ ...mission, template, taskMode }, "ses_coordinator")
       assert.ok(context.includes(USER_FACING_TEXT) && context.includes(AUTOMATIC_BRIEFINGS))
@@ -82,8 +82,8 @@ test("every coordinator writes plain-language summaries and publishes automatic 
       assert.doesNotMatch(context, /never after every tool\/task/)
     }
   }
-  const pocock = buildActorContext(mission, "ses_coordinator")
-  assert.match(pocock, /role's structured artifact from the returned evidence/, "Pocock evidence gate survives")
+  const debug = buildActorContext(mission, "ses_coordinator")
+  assert.match(debug, /role's structured artifact from the returned evidence/, "Debugging evidence gate survives")
   assert.match(buildActorContext({ ...mission, template: "wayfinder" }, "ses_coordinator"), /never answer the human side yourself/)
   for (const prompt of [buildAssignmentPrompt(mission, task), buildAssignmentPrompt(mission, { ...task, executionMode: undefined })]) {
     assert.match(prompt, /Write the summary for a human reader: plain language/)
@@ -116,7 +116,7 @@ function assertNativeWorkPolicy(text: string) {
   assert.doesNotMatch(text, /subagent_depth|depth\s*[:=]\s*\d|reach (?:depth|level) \d/)
 }
 
-for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
+for (const template of ["custom", "debug", "wayfinder"] satisfies MissionTemplateId[]) {
   test(`${template} propagates bounded native policy while retaining every role's constraints`, () => {
     const map = { ...mission, template }
     const recipe = getMissionRecipe(template)
@@ -152,9 +152,9 @@ for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies Missi
 }
 
 test("playbook evidence and human boundaries survive parallel helper guidance", () => {
-  const pocock = getMissionRecipe("pocock-fix-bug")
-  assert.match(pocock.coordinator, /dependency-connected evidence gate/)
-  assert.match(pocock.coordinator, /fresh distinct native sessions for both review axes and final validation/)
+  const debug = getMissionRecipe("debug")
+  assert.match(debug.coordinator, /dependency-connected evidence gate/)
+  assert.match(debug.coordinator, /fresh distinct native sessions for both review axes and final validation/)
   for (const role of ["review-standards", "review-spec", "validator"]) {
     assert.match(buildAssignmentPrompt(mission, { ...task, role }), /Do not edit\./)
   }

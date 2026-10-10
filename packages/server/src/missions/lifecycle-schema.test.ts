@@ -22,7 +22,7 @@ test("strict lifecycle replies preserve the exact full native admission without 
 })
 
 test("frozen recurrence start text fits the unchanged native lifecycle receipt boundary", () => {
-  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+  for (const template of ["custom", "debug", "wayfinder"] as const) {
     const config = { template, taskMode: "native" as const, consigne: "x".repeat(MISSION_LIFECYCLE_TEXT_LIMIT) }
     const ack = start(); ack.admission.payload.text = recurrenceStartText(config)
     assert.ok(parseMissionNativeAcknowledgement(ack, expected))

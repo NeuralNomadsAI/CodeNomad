@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
+import { LEGACY_DEBUG_TEMPLATE_ID } from "../../../server/src/missions/template-id"
 
 const coordinator = { agent: "general", model: { providerID: "openai", id: "coordinator", variant: "high" } }
 const specialist = { agent: "explore", model: { providerID: "openai", id: "specialist", variant: "low" } }
 const templateRoles = {
   custom: ["specialist"],
-  "pocock-fix-bug": ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
+  debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
 } as const
 
@@ -25,6 +26,11 @@ describe("mission profile default normalization", () => {
     assert.deepEqual(input, snapshot, "normalization must not retain mutable profile references")
   })
 
+  it("reads a saved legacy Debugging exception as debug", () => {
+    assert.deepEqual(normalizeMissionDefaults([{ template: LEGACY_DEBUG_TEMPLATE_ID, profiles: { coordinator } }]),
+      [{ template: "debug", profiles: { coordinator } }])
+  })
+
   it("keeps deliberately empty profiles without injecting selectors", () => {
     assert.deepEqual(normalizeMissionDefaults([{ template: "all", profiles: {} }]), [
       { template: "all", profiles: {} },
@@ -38,8 +44,8 @@ describe("mission profile default normalization", () => {
     const valid = { template: "custom", profiles: { coordinator } }
     for (const input of [undefined, null, {}, "custom", 1, [null], [false], ["custom"],
       [{ template: "unknown", profiles: {} }], [valid, valid],
-      [valid, { template: "wayfinder", profiles: {} }, { template: "pocock-fix-bug", profiles: {} }, valid],
-      [{ template: "all", profiles: {} }, valid, { template: "wayfinder", profiles: {} }, { template: "pocock-fix-bug", profiles: {} }, valid],
+      [valid, { template: "wayfinder", profiles: {} }, { template: "debug", profiles: {} }, valid],
+      [{ template: "all", profiles: {} }, valid, { template: "wayfinder", profiles: {} }, { template: "debug", profiles: {} }, valid],
       [{ template: "all", profiles: { roles: { research: specialist } } }],
       [valid, { template: "wayfinder" }]]) {
       assert.deepEqual(normalizeMissionDefaults(input), [], JSON.stringify(input))
@@ -63,7 +69,7 @@ describe("mission profile default normalization", () => {
       ]), [], JSON.stringify(profiles))
     }
     assert.deepEqual(normalizeMissionDefaults([{ template: "wayfinder", profiles: { roles: { specialist } } }]), [])
-    assert.deepEqual(normalizeMissionDefaults([{ template: "pocock-fix-bug", profiles: { roles: { decision: specialist } } }]), [])
+    assert.deepEqual(normalizeMissionDefaults([{ template: "debug", profiles: { roles: { decision: specialist } } }]), [])
   })
 })
 
@@ -72,19 +78,19 @@ describe("mission defaults for future creation", () => {
     const defaults: MissionProfileDefault[] = [{ template: "all", profiles: {}, taskMode: "independent" }, { template: "wayfinder", profiles: {}, taskMode: "native" }]
     assert.deepEqual(normalizeMissionDefaults(defaults), defaults)
     assert.equal(missionTaskModeFor([], "custom"), "native")
-    assert.equal(missionTaskModeFor(defaults, "pocock-fix-bug"), "independent")
+    assert.equal(missionTaskModeFor(defaults, "debug"), "independent")
     assert.equal(missionTaskModeFor(defaults, "wayfinder"), "native")
     for (const taskMode of [null, "automatic", 0, true]) assert.deepEqual(normalizeMissionDefaults([{ template: "custom", profiles: {}, taskMode }]), [])
   })
   it("returns no profile when there are no applicable selectors", () => {
     assert.equal(missionDefaultsFor([], "custom"), undefined)
     assert.equal(missionDefaultsFor([{ template: "custom", profiles: {} }], "wayfinder"), undefined)
-    assert.equal(missionDefaultsFor([{ template: "wayfinder", profiles: { coordinator } }], "pocock-fix-bug"), undefined)
+    assert.equal(missionDefaultsFor([{ template: "wayfinder", profiles: { coordinator } }], "debug"), undefined)
   })
 
   it("expands the custom specialist fallback to every role of the selected playbook only", () => {
     const defaults: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator, roles: { specialist } } }]
-    for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+    for (const template of ["custom", "debug", "wayfinder"] as const) {
       const resolved = missionDefaultsFor(defaults, template)!
       assert.deepEqual(resolved.coordinator, coordinator)
       assert.deepEqual(resolved.roles, Object.fromEntries(templateRoles[template].map(role => [role, specialist])))
@@ -106,13 +112,13 @@ describe("mission defaults for future creation", () => {
   it("inherits coordinator and fills only missing roles in partial specific defaults", () => {
     const defaults: MissionProfileDefault[] = [
       { template: "all", profiles: { coordinator, roles: { specialist } } },
-      { template: "pocock-fix-bug", profiles: { roles: { validator: {} } } },
+      { template: "debug", profiles: { roles: { validator: {} } } },
     ]
-    const resolved = missionDefaultsFor(defaults, "pocock-fix-bug")!
+    const resolved = missionDefaultsFor(defaults, "debug")!
     assert.deepEqual(resolved.coordinator, coordinator)
     assert.deepEqual(resolved.roles!.validator, {}, "an explicit empty native selection is not missing")
     assert.deepEqual(resolved.roles!.implementer, specialist)
-    assert.deepEqual(Object.keys(resolved.roles!), templateRoles["pocock-fix-bug"])
+    assert.deepEqual(Object.keys(resolved.roles!), templateRoles["debug"])
     assert.deepEqual(missionDefaultsFor([{ template: "wayfinder", profiles: { roles: { research: specialist } } }], "wayfinder"), {
       roles: { research: specialist },
     })
@@ -123,7 +129,7 @@ describe("mission defaults for future creation", () => {
     const migrated = normalizeMissionDefaults(legacy)
     assert.deepEqual(migrated, [{ ...legacy[0], template: "all" }])
     assert.equal(legacy[0].template, "custom", "reading never mutates the saved document")
-    for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+    for (const template of ["custom", "debug", "wayfinder"] as const) {
       assert.deepEqual(missionDefaultsFor(migrated, template)!.coordinator, coordinator)
       assert.equal(missionTaskModeFor(migrated, template), "independent")
     }

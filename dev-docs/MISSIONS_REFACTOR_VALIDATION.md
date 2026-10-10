@@ -350,7 +350,7 @@ Wayfinder and original after-denial human evidence remain separate increments.
 
 The owned `missions-ui-final-join-20261008` assembly joins the reviewed current
 passage, archived reader and signed-control sources without replacing main's
-paused CREATE, Custom/Pocock/Wayfinder templates, verbatim Notes, saved briefs
+paused CREATE, Custom/Debugging/Wayfinder templates, verbatim Notes, saved briefs
 or source/input budgets. Final independent UI review closed all reported
 P0/P1/P2 findings; the additional read-only retry-increment review reported zero
 actionable findings (`ses_ee2fb91ceffeRx6LMmjl07gQTP`). This is source/UI scope,

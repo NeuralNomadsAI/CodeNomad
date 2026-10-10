@@ -356,7 +356,7 @@ export function MissionEditor(props: {
           setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
           if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
         }}>
-          <For each={["custom", "pocock-fix-bug", "wayfinder"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
+          <For each={["custom", "debug", "wayfinder"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
         </select>
       </label>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={locked()}

@@ -116,7 +116,7 @@ test("explicit override survives playbook changes; closed and inactive controls 
     await openProfiles(page)
     const agent = page.getByLabel("Coordinator · Agent", { exact: true })
     await agent.locator('option[value="root"]').waitFor({ state: "attached" }); await agent.selectOption("root")
-    await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
+    await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
     assert.equal(await agent.inputValue(), "root", "template change retains an explicit override")
     await openProfiles(page)
     await page.evaluate(() => window.missionDefaultsModels.active(false))
@@ -479,7 +479,7 @@ test("Creation and Settings summaries group requested tuples once and collapse a
     await ensureOptions(page)
     const label = await text(page, "missions.defaults.summary"), native = await text(page, "missions.simple.profilesNative")
     assert.equal(await page.getByLabel(label).textContent(), native)
-    await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
+    await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
     assert.equal(await page.getByLabel(label).textContent(), native)
     assert.equal(fixture.reads.length, 0)
     await page.evaluate(async () => {
@@ -488,13 +488,13 @@ test("Creation and Settings summaries group requested tuples once and collapse a
       } }] })
       window.missionDefaultsModels.view("settings")
     })
-    await page.locator('.mission-preferences-scope select').selectOption("pocock-fix-bug")
+    await page.locator('.mission-preferences-scope select').selectOption("debug")
     const settingsSummary = (await page.getByLabel(label).textContent())!
     assert.equal(settingsSummary.match(/p\/m \/ high/g)?.length, 1)
     assert.equal(settingsSummary.match(/\bchild\b/g)?.length, 1)
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
     await ensureOptions(page)
-    await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
+    await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
     const creationSummary = (await page.getByLabel(label).textContent())!
     assert.equal(creationSummary, settingsSummary)
     assert.equal(creationSummary.match(/p\/m \/ high/g)?.length, 1)

@@ -18,7 +18,7 @@ class MemoryStorage implements MissionStorage {
 
 class FakeSessions implements MissionSessionAdapter {
   private readonly sessions = new Map<string, NativeMissionSession>([["ses_coordinator", {
-    id: "ses_coordinator", projectID: "project-pocock", title: "Coordinator", location: { directory: "/repo" },
+    id: "ses_coordinator", projectID: "project-debug", title: "Coordinator", location: { directory: "/repo" },
   }]])
 
   async get({ sessionID }: { sessionID: string }) {
@@ -28,7 +28,7 @@ class FakeSessions implements MissionSessionAdapter {
   }
   async create(input: Parameters<MissionSessionAdapter["create"]>[0]) {
     const session: NativeMissionSession = {
-      id: input.id, projectID: "project-pocock", title: input.title,
+      id: input.id, projectID: "project-debug", title: input.title,
       location: input.location, agent: input.agent, model: input.model,
     }
     this.sessions.set(session.id, session)
@@ -38,15 +38,15 @@ class FakeSessions implements MissionSessionAdapter {
   async synthetic() {}
 }
 
-test("delegates and revises Pocock resolvers to one actor shared by a multi-step implementation", async () => {
+test("delegates and revises Debugging resolvers to one actor shared by a multi-step implementation", async () => {
   const rootException = { kind: "independent", reason: "existing-root", explanation: "Reuse the historical implementer root" } as const
   const control = new MissionControl({
-    project: { id: "project-pocock", canonical: "/repo", location: { directory: "/repo" } },
+    project: { id: "project-debug", canonical: "/repo", location: { directory: "/repo" } },
     storage: new MemoryStorage(), sessions: new FakeSessions(),
   })
   await control.inspect("ses_coordinator", {
-    start: { objective: "Implement one fix in two dependent steps", template: "pocock-fix-bug" },
-  }, "pocock-shared-implementer")
+    start: { objective: "Implement one fix in two dependent steps", template: "debug" },
+  }, "debug-shared-implementer")
 
   const diagnosis = await control.delegate("ses_coordinator", {
     taskKey: "diagnose", title: "Diagnose", brief: "Confirm root cause.",

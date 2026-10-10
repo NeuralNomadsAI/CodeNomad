@@ -115,15 +115,15 @@ export function MissionProfileControls(props: {
   return <section class="mission-profiles" aria-label={t("missions.control.profiles.title")}>
     <h4 title={t("missions.taskMode.hint")} aria-description={t("missions.taskMode.hint")}>{t("missions.control.profiles.title")}</h4>
     {row("coordinator")}
-    <Show when={props.template === "pocock-fix-bug"}>
-      <span class="sr-only">{t("missions.control.profiles.pocock")}</span>
-      <For each={missionProfileRoles["pocock-fix-bug"].slice(0, 3)}>{row}</For>
+    <Show when={props.template === "debug"}>
+      <span class="sr-only">{t("missions.control.profiles.debug")}</span>
+      <For each={missionProfileRoles["debug"].slice(0, 3)}>{row}</For>
     </Show>
     <Show when={props.requireRoleProfiles}>
-      <For each={props.template === "pocock-fix-bug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
+      <For each={props.template === "debug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
     </Show>
     <Show when={!props.requireRoleProfiles}><details class="mission-profile-optional"><summary>{t("missions.control.profiles.optional")}</summary>
-      <For each={props.template === "pocock-fix-bug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
+      <For each={props.template === "debug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
     </details></Show>
     <Show when={loading()}><p role="status">{t("missions.control.profiles.loading")}</p></Show>
     <Show when={failed()}><p role="status">{t("missions.control.profiles.error")}</p></Show>

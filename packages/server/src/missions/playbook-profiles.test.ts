@@ -5,7 +5,7 @@ import { getMissionRecipe } from "./recipes"
 import type { MissionProfiles } from "./playbook-profiles"
 
 test("profile roles match every playbook's declared role catalog", () => {
-  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+  for (const template of ["custom", "debug", "wayfinder"] as const) {
     assert.deepEqual([...missionProfileRoles[template]].sort(), getMissionRecipe(template).roles.map(role => role.id).sort())
   }
 })
@@ -20,7 +20,7 @@ test("profile codec preserves historical absence and every explicit agent/model/
   assert.deepEqual(parsed, value)
   value.coordinator.model.variant = "low"
   assert.equal(parsed.coordinator!.model!.variant, "high")
-  assert.doesNotThrow(() => validateMissionProfiles("pocock-fix-bug", parsed))
+  assert.doesNotThrow(() => validateMissionProfiles("debug", parsed))
 })
 
 test("strict bounded profile codec rejects malformed, unknown, unsafe and misplaced keys", () => {

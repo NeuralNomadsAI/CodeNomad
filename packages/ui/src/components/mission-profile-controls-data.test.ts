@@ -51,7 +51,7 @@ test("all ten locale bundles own all twenty profile labels without English fallb
     assert.ok(value.trim(), `${locale} has text for ${key}`)
     if (locale !== "en") assert.notEqual(value, (en as Record<string, string>)[key], `${locale} translates ${key}`)
   }
-  assert.match(en["missions.control.profiles.pocock"], /separate standards and specification axes/)
-  assert.match(en["missions.control.profiles.pocock"], /exact implementer child/)
+  assert.match(en["missions.control.profiles.debug"], /separate standards and specification axes/)
+  assert.match(en["missions.control.profiles.debug"], /exact implementer child/)
   assert.match(en["missions.control.profiles.detail"], /future calls, not proof/)
 })

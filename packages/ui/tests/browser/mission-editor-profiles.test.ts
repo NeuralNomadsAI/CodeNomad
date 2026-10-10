@@ -132,7 +132,7 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Profile fixture")
     await openOptions(page)
-    await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
+    await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
     assert.equal(catalogReads.length, 0, "collapsed overrides have no catalog demand")
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
     await openAgents(page)

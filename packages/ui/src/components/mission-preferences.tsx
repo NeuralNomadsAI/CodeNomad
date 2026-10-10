@@ -67,7 +67,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     <label class="mission-preferences-scope">{t("missions.defaults.scope")}<select value={template()} disabled={disabled()}
       onChange={event => setTemplate(event.currentTarget.value as MissionDefaultScope)}>
       <option value="all">{t("missions.defaults.allPlaybooks")}</option>
-      <For each={["custom", "pocock-fix-bug", "wayfinder"] as const}>{id => <option value={id}>{t("missions.defaults.exception", { type: t(`missions.control.template.${id}`) })}</option>}</For>
+      <For each={["custom", "debug", "wayfinder"] as const}>{id => <option value={id}>{t("missions.defaults.exception", { type: t(`missions.control.template.${id}`) })}</option>}</For>
     </select></label>
     <p class="mission-preferences-priority">{t("missions.defaults.priority")}</p>
     <MissionTaskModeControls value={exception() ? entry()?.taskMode : globalMissionTaskMode(draft())}

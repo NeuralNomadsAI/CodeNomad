@@ -30,7 +30,7 @@ Start with [README](../README.md) for installation and usage, then
 
 ## Missions
 
-- [Missions](MISSIONS.md): one-time Mission maps, native admission, Wayfinder/Pocock playbooks and validation.
+- [Missions](MISSIONS.md): one-time Mission maps, native admission, Wayfinder/Debugging playbooks and validation.
 - [Recurring Missions](MISSIONS_RECURRING_SIMPLE.md): simple native schedule contract; [qualification](MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md) records the isolated native runs.
 
 ## Desktop automation and validation

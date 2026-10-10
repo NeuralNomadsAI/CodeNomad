@@ -29,7 +29,7 @@ SOFTWARE.
 
 ## Skills For Real Engineers and Pocock Skills Workflow Family
 
-The Pocock and Wayfinder mission playbooks adapt methods from Skills For Real
+The Debugging and Wayfinder mission playbooks adapt methods from Skills For Real
 Engineers by Matt Pocock and the Pocock Skills Workflow Family by Sean Wright:
 https://github.com/mattpocock/skills (v1.1.0 source snapshot `d574778f94cf620fcc8ce741584093bc650a61d3`)
 https://github.com/seanrobertwright/archon-pocock-workflow (source snapshot `629e57716ea72bb8cf2f77fc7728d3845aa2cf92`)

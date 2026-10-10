@@ -1,11 +1,12 @@
 import { parseMissionProfiles, missionProfileRoles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
+import { normalizeStoredTemplateId } from "../../../server/src/missions/template-id"
 
 export type MissionTaskMode = "native" | "independent"
 /** `all` is the global default; a mission type entry is an exception overriding it. */
 export type MissionDefaultScope = "all" | MissionTemplateId
 export interface MissionProfileDefault { template: MissionDefaultScope; profiles: MissionProfiles; taskMode?: MissionTaskMode }
-const scopes: MissionDefaultScope[] = ["all", "custom", "pocock-fix-bug", "wayfinder"]
+const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder"]
 // The global default carries one task profile, like the Flexible specialist.
 const scopeRoles = (scope: MissionDefaultScope): readonly string[] => missionProfileRoles[scope === "all" ? "custom" : scope]
 
@@ -14,14 +15,15 @@ export function normalizeMissionDefaults(value: unknown): MissionProfileDefault[
   if (!Array.isArray(value) || value.length > scopes.length) return []
   const result: MissionProfileDefault[] = []
   for (const entry of value) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)
-      || Object.keys(entry).some(key => !["template", "profiles", "taskMode"].includes(key))
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return []
+    const template = normalizeStoredTemplateId(entry.template) as MissionDefaultScope
+    if (Object.keys(entry).some(key => !["template", "profiles", "taskMode"].includes(key))
       || (entry.taskMode !== undefined && !["native", "independent"].includes(entry.taskMode))
-      || !scopes.includes(entry.template) || result.some(item => item.template === entry.template)) return []
+      || !scopes.includes(template) || result.some(item => item.template === template)) return []
     try {
       const profiles = parseMissionProfiles(entry.profiles)
-      if (!profiles || Object.keys(profiles.roles ?? {}).some(role => !scopeRoles(entry.template).includes(role))) return []
-      result.push({ template: entry.template, profiles, ...(entry.taskMode === undefined ? {} : { taskMode: entry.taskMode }) })
+      if (!profiles || Object.keys(profiles.roles ?? {}).some(role => !scopeRoles(template).includes(role))) return []
+      result.push({ template, profiles, ...(entry.taskMode === undefined ? {} : { taskMode: entry.taskMode }) })
     } catch { return [] }
   }
   // Before the explicit global entry existed, the Flexible entry was the global base:

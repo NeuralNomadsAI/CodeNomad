@@ -242,10 +242,10 @@ test("delegates between root sessions, queues reports, and restores the durable 
   const { create, sessions } = harness()
   const control = create()
   const started = await control.inspect("ses_coordinator", {
-    start: { objective: "Fix the intermittent save bug", template: "pocock-fix-bug" },
+    start: { objective: "Fix the intermittent save bug", template: "debug" },
   }, "call-start")
   assert.equal(started.actor?.kind, "coordinator")
-  assert.equal(started.mission?.template, "pocock-fix-bug")
+  assert.equal(started.mission?.template, "debug")
 
   const delegated = await control.delegate("ses_coordinator", {
     taskKey: "diagnose",
@@ -811,26 +811,26 @@ test("rejects a new event before the durable journal can exceed its safety limit
   assert.equal(storage.values.size, MISSION_MAX_EVENTS)
 })
 
-test("runs the Pocock evidence gates dynamically while reusing the implementer for resolution", async () => {
+test("runs the Debugging evidence gates dynamically while reusing the implementer for resolution", async () => {
   const { create } = harness()
   const control = create()
   await control.inspect("ses_coordinator", {
-    start: { objective: "Fix save isolation without publishing", template: "pocock-fix-bug" },
-  }, "pocock-full")
+    start: { objective: "Fix save isolation without publishing", template: "debug" },
+  }, "debug-full")
 
   const diagnosis = await control.delegate("ses_coordinator", {
     taskKey: "diagnose", title: "Diagnose save isolation", brief: "Confirm the cause.",
     role: "diagnostician", blockedBy: [], delivery: "queue",
   })
   const diagnostician = actorFor(diagnosis.mission, "diagnostician")
-  await reportCompleted(control, diagnostician, "diagnose", pocockArtifact("diagnostician"))
+  await reportCompleted(control, diagnostician, "diagnose", debugArtifact("diagnostician"))
 
   const implementation = await control.delegate("ses_coordinator", {
     taskKey: "implement", title: "Implement the regression fix", brief: "Use the confirmed diagnosis.",
     role: "implementer", blockedBy: ["diagnose"], delivery: "queue",
   })
   const implementer = actorFor(implementation.mission, "implementer")
-  await reportCompleted(control, implementer, "implement", pocockArtifact("implementer"))
+  await reportCompleted(control, implementer, "implement", debugArtifact("implementer"))
 
   const standards = await control.delegate("ses_coordinator", {
     taskKey: "review-standards", title: "Review repository standards", brief: "Review the fixed diff only.",
@@ -840,21 +840,21 @@ test("runs the Pocock evidence gates dynamically while reusing the implementer f
     taskKey: "review-spec", title: "Review reported behavior", brief: "Review the fixed diff only.",
     role: "review-spec", blockedBy: ["implement"], delivery: "queue",
   })
-  await reportCompleted(control, actorFor(standards.mission, "review-standards"), "review-standards", pocockArtifact("review-standards"))
-  await reportCompleted(control, actorFor(specification.mission, "review-spec"), "review-spec", pocockArtifact("review-spec"))
+  await reportCompleted(control, actorFor(standards.mission, "review-standards"), "review-standards", debugArtifact("review-standards"))
+  await reportCompleted(control, actorFor(specification.mission, "review-spec"), "review-spec", debugArtifact("review-spec"))
 
   const resolution = await control.delegate("ses_coordinator", {
     taskKey: "resolve", title: "Resolve both reviews", brief: "Address all correct hard findings.",
     role: "resolver", blockedBy: ["review-standards", "review-spec"], targetSessionID: implementer, delivery: "queue",
   })
   assert.equal(actorFor(resolution.mission, "resolver"), implementer)
-  await reportCompleted(control, implementer, "resolve", pocockArtifact("resolver"))
+  await reportCompleted(control, implementer, "resolve", debugArtifact("resolver"))
 
   const validation = await control.delegate("ses_coordinator", {
     taskKey: "validate", title: "Validate the complete fix", brief: "Run every configured gate read-only.",
     role: "validator", blockedBy: ["resolve"], delivery: "queue",
   })
-  await reportCompleted(control, actorFor(validation.mission, "validator"), "validate", pocockArtifact("validator"))
+  await reportCompleted(control, actorFor(validation.mission, "validator"), "validate", debugArtifact("validator"))
   const finished = await control.report("ses_coordinator", {
     outcome: "completed", summary: "Diagnosis, fix, both reviews, resolution, and validation are green.",
     evidence: [], next: [], final: true,
@@ -864,24 +864,24 @@ test("runs the Pocock evidence gates dynamically while reusing the implementer f
   assert.equal(finished.mission.actors.length, 6)
 })
 
-test("routes Pocock resolver to the live replacement implementer through revise and delegate", async () => {
+test("routes Debugging resolver to the live replacement implementer through revise and delegate", async () => {
   const { create } = harness()
   const control = create()
   const executionMode = { kind: "independent" as const, reason: "existing-root" as const,
     explanation: "Qualify explicit independent root replacement and exact implementer reuse" }
   await control.inspect("ses_coordinator", {
-    start: { objective: "Replace a completed fix and resolve its reviews", template: "pocock-fix-bug" },
-  }, "pocock-replaced-implementer")
+    start: { objective: "Replace a completed fix and resolve its reviews", template: "debug" },
+  }, "debug-replaced-implementer")
   const diagnosis = await control.delegate("ses_coordinator", {
     taskKey: "diagnose", title: "Diagnose", brief: "Confirm the cause.", role: "diagnostician", blockedBy: [], delivery: "queue",
   })
   const diagnostician = actorFor(diagnosis.mission, "diagnostician")
-  await reportCompleted(control, diagnostician, "diagnose", pocockArtifact("diagnostician"))
+  await reportCompleted(control, diagnostician, "diagnose", debugArtifact("diagnostician"))
   const oldFix = await control.delegate("ses_coordinator", {
     taskKey: "old-fix", title: "Implement the fix", brief: "First implementation.", role: "implementer", blockedBy: ["diagnose"], delivery: "queue",
   })
   const oldImplementer = oldFix.mission.tasks.find(task => task.key === "old-fix")!.actorSessionId!
-  await reportCompleted(control, oldImplementer, "old-fix", pocockArtifact("implementer"))
+  await reportCompleted(control, oldImplementer, "old-fix", debugArtifact("implementer"))
 
   const beforeReplace = (await control.snapshot()).missions[0]!
   const replacement = await control.revise("ses_coordinator", {
@@ -898,7 +898,7 @@ test("routes Pocock resolver to the live replacement implementer through revise 
   })
   const newImplementer = newFixDispatch.mission.tasks.find(task => task.key === "new-fix")!.actorSessionId!
   assert.notEqual(newImplementer, oldImplementer)
-  await reportCompleted(control, newImplementer, "new-fix", pocockArtifact("implementer"))
+  await reportCompleted(control, newImplementer, "new-fix", debugArtifact("implementer"))
 
   const standards = await control.delegate("ses_coordinator", {
     taskKey: "standards", title: "Standards review", brief: "Review new fix.", role: "review-standards", blockedBy: ["new-fix"], delivery: "queue",
@@ -906,14 +906,14 @@ test("routes Pocock resolver to the live replacement implementer through revise 
   const specification = await control.delegate("ses_coordinator", {
     taskKey: "specification", title: "Spec review", brief: "Review new fix.", role: "review-spec", blockedBy: ["new-fix"], delivery: "queue",
   })
-  await reportCompleted(control, actorFor(standards.mission, "review-standards"), "standards", pocockArtifact("review-standards"))
-  await reportCompleted(control, actorFor(specification.mission, "review-spec"), "specification", pocockArtifact("review-spec"))
+  await reportCompleted(control, actorFor(standards.mission, "review-standards"), "standards", debugArtifact("review-standards"))
+  await reportCompleted(control, actorFor(specification.mission, "review-spec"), "specification", debugArtifact("review-spec"))
 
   const firstResolver = await control.delegate("ses_coordinator", {
     taskKey: "resolver-first", title: "Resolve reviews", brief: "Address the new reviews.", role: "resolver",
     blockedBy: ["standards", "specification"], targetSessionID: newImplementer, delivery: "queue",
   })
-  await reportCompleted(control, newImplementer, "resolver-first", pocockArtifact("resolver"))
+  await reportCompleted(control, newImplementer, "resolver-first", debugArtifact("resolver"))
   const beforeResolverReplacement = (await control.snapshot()).missions[0]!
   const revisedResolver = await control.revise("ses_coordinator", {
     missionID: beforeResolverReplacement.id, expectedRevision: beforeResolverReplacement.revision,
@@ -934,16 +934,16 @@ test("routes Pocock resolver to the live replacement implementer through revise 
   })
   assert.equal(finalResolver.mission.tasks.find(task => task.key === "resolver-final")?.actorSessionId, newImplementer)
   assert.equal(actorFor(finalResolver.mission, "resolver"), newImplementer)
-  await reportCompleted(control, newImplementer, "resolver-final", pocockArtifact("resolver"))
+  await reportCompleted(control, newImplementer, "resolver-final", debugArtifact("resolver"))
   assert(firstResolver.mission.tasks.some(task => task.key === "resolver-first"))
 })
 
-test("enforces Pocock evidence gates even when the coordinator omits dependency keys", async () => {
+test("enforces Debugging evidence gates even when the coordinator omits dependency keys", async () => {
   const { create } = harness()
   const control = create()
   await control.inspect("ses_coordinator", {
-    start: { objective: "Fix only after proving the bug", template: "pocock-fix-bug" },
-  }, "pocock-policy")
+    start: { objective: "Fix only after proving the bug", template: "debug" },
+  }, "debug-policy")
 
   await assert.rejects(control.delegate("ses_coordinator", {
     taskKey: "implement", title: "Implement too early", brief: "Skip diagnosis.",
@@ -1027,7 +1027,7 @@ async function reportCompleted(control: MissionControl, sessionID: string, taskK
   })
 }
 
-function pocockArtifact(role: string): any {
+function debugArtifact(role: string): any {
   if (role === "diagnostician") return {
     kind: "diagnosis",
     feedbackLoop: { command: "npm test -- save", redOutput: "cross-workspace value observed" },

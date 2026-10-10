@@ -18,7 +18,7 @@ test("unknown creation retains a deep-frozen copy of all profile selections, inc
   const profiles = { coordinator: { agent: "root", model: { providerID: "p", id: "m", variant: "high" } }, roles: {
     "review-spec": { agent: "child", model: { providerID: "p", id: "m", variant: "low" } },
   } }
-  const operation = { requestId: "profile-original", objective: "Review", notes: "", template: "pocock-fix-bug" as const, profiles }
+  const operation = { requestId: "profile-original", objective: "Review", notes: "", template: "debug" as const, profiles }
   retainUncertainMissionCreation("profiles/scope", operation)
   profiles.coordinator.model.variant = "changed"
   profiles.roles["review-spec"].agent = "changed"
@@ -32,7 +32,7 @@ test("unknown creation retains a deep-frozen copy of all profile selections, inc
 })
 
 test("logical retry identity includes profiles and variant but not role insertion order", () => {
-  const base = { objective: "Review", notes: "", template: "pocock-fix-bug" as const }
+  const base = { objective: "Review", notes: "", template: "debug" as const }
   const profiles = { coordinator: { agent: "root" }, roles: { validator: {}, "review-spec": { model: { providerID: "p", id: "m", variant: "high" } } } }
   const original = missionCreationPayloadIdentity({ ...base, profiles })
   assert.equal(original, missionCreationPayloadIdentity({ ...base, profiles: { ...profiles, roles: { "review-spec": profiles.roles["review-spec"], validator: {} } } }))

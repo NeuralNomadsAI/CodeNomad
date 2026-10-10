@@ -50,8 +50,8 @@ test("coordinator readout remains ownership-fenced and cannot invent human decis
   assert.equal((await h.control.snapshot()).missions[0].reports.length, 0)
 })
 
-test("native Pocock business plan finishes from connected coordinator artifacts without invocation bindings", async () => {
-  const h = harness("pocock-fix-bug")
+test("native Debugging business plan finishes from connected coordinator artifacts without invocation bindings", async () => {
+  const h = harness("debug")
   await h.start()
   const artifacts = {
     diagnostician: { kind: "diagnosis", feedbackLoop: { command: "test", redOutput: "red" }, minimizedRepro: "repro",
@@ -197,8 +197,8 @@ test("disconnected reuse declarations preserve exact native parent and live sour
   assert.equal(h.sideEffects(), 0)
 })
 
-test("the full native Pocock frontier can be declared before any role executes", async () => {
-  const h = harness("pocock-fix-bug")
+test("the full native Debugging frontier can be declared before any role executes", async () => {
+  const h = harness("debug")
   const { mission } = await h.start()
   const declare = (key: string, role: string, blockedBy: string[], reuseFromTaskKey?: string) => h.control.declare(h.coordinator.id, {
     ...task(key, blockedBy), missionID: mission.id, role,
@@ -218,7 +218,7 @@ test("the full native Pocock frontier can be declared before any role executes",
 })
 
 test("one atomic additive revision can declare a native playbook in arbitrary row order", async () => {
-  const h = harness("pocock-fix-bug")
+  const h = harness("debug")
   const { mission } = await h.start()
   const items = [
     { ...task("validate", ["resolve"]), role: "validator" },

@@ -35,7 +35,7 @@ export const authorityIntentSchema = z.discriminatedUnion("method", [
   header.extend({ method: z.literal("create"), payload: z.object({
     objective: z.string().min(1).max(20_000), notes: z.string().max(20_000).optional(),
     title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(),
-    template: z.enum(["custom", "pocock-fix-bug", "wayfinder"]), prepared: z.literal(true),
+    template: z.enum(["custom", "debug", "wayfinder"]), prepared: z.literal(true),
     profiles: missionProfilesInputSchema,
     taskMode: missionTaskModeInputSchema.optional(),
   }).strict() }).strict(),

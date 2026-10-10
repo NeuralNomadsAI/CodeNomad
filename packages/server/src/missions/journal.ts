@@ -28,6 +28,7 @@ import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
 import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { normalizeStoredTemplateId } from "./template-id"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -235,8 +236,9 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       return { ...eventBase(input), type: "mission.briefed", actorSessionID: input.actorSessionID, briefing }
     }
     case "mission.created": {
+      const templateID = normalizeStoredTemplateId(input.template)
       if (!text(input.projectCanonical, MAX_TEXT) || !text(input.objective, MAX_TEXT)
-        || !template(input.template) || !record(input.coordinator)) return undefined
+        || !template(templateID) || !record(input.coordinator)) return undefined
       const location = parseLocation(input.coordinator.location)
       if (!location || !text(input.coordinator.sessionID, MAX_SHORT_TEXT)
         || !text(input.coordinator.title, MAX_SHORT_TEXT)) return undefined
@@ -245,7 +247,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
       if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
       let profiles
-      try { profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, profiles) }
+      try { profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(templateID, profiles) }
       catch { return undefined }
       return {
         ...eventBase(input),
@@ -254,7 +256,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         ...(input.title === undefined ? {} : { title: input.title as string }),
         objective: input.objective,
         notes: input.notes as string | undefined,
-        template: input.template,
+        template: templateID,
         ...(input.taskMode === undefined ? {} : { taskMode: missionTaskModeInputSchema.parse(input.taskMode) }),
         ...(profiles === undefined ? {} : { profiles }),
         coordinator: {
@@ -542,7 +544,7 @@ function parseLocation(input: unknown): MissionLocation | undefined {
 }
 
 function template(value: unknown): value is MissionTemplateId {
-  return value === "custom" || value === "pocock-fix-bug" || value === "wayfinder"
+  return value === "custom" || value === "debug" || value === "wayfinder"
 }
 
 function delivery(value: unknown): value is "queue" | "steer" {

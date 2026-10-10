@@ -11,7 +11,7 @@ export interface MissionProfiles {
 
 export const missionProfileRoles = {
   custom: ["specialist"],
-  "pocock-fix-bug": ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
+  debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
 } as const satisfies Record<MissionTemplateId, readonly string[]>
 const allowedRoles: readonly string[] = [...new Set(Object.values(missionProfileRoles).flat())]

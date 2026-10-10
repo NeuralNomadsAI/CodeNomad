@@ -243,7 +243,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       assert.equal((await post({ ...payload, requestID: "wsl_schedule" })).statusCode, 200)
       assert.equal(writes, 3, "WSL duplicate is an exact read, not another native write")
     })
-    for (const template of ["pocock-fix-bug", "wayfinder"] as const) await t.test(`recurring ${template} freezes its exact role selections`, async () => {
+    for (const template of ["debug", "wayfinder"] as const) await t.test(`recurring ${template} freezes its exact role selections`, async () => {
       const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template]
         .map(role => [role, { ...profile, agent: "child" }])) }
       const recurring = { ...payload, requestID: `recurring_${template}`, template, profiles }
@@ -277,7 +277,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       }
     })
     await t.test("exact 16384-character start payload is accepted; 16385 is rejected before native write", async () => {
-      for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+      for (const template of ["custom", "debug", "wayfinder"] as const) {
         const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, { ...profile, agent: "child" }])) }
         const full = { ...payload, template, profiles, requestID: `boundary_${template}`, instructions: "x".repeat(MISSION_LIFECYCLE_TEXT_LIMIT) }
         const before = writes

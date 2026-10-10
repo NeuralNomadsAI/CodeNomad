@@ -4,6 +4,7 @@ import {
   MAX_MISSION_MODELS, normalizeMissionModels, parseMissionModel, removeMissionModelRecord, saveMissionModelRecord,
   type UserMissionModel,
 } from "./mission-model-library"
+import { LEGACY_DEBUG_TEMPLATE_ID } from "../../../server/src/missions/template-id"
 
 function model(index = 1, overrides: Partial<UserMissionModel> = {}): UserMissionModel {
   return {
@@ -15,11 +16,14 @@ function model(index = 1, overrides: Partial<UserMissionModel> = {}): UserMissio
 const execution = { agent: "general", model: { providerID: "openai", id: "native-model", variant: "high" } }
 const templateRoles = {
   custom: ["specialist"],
-  "pocock-fix-bug": ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
+  debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
 } as const
 
 describe("strict reusable Mission model records", () => {
+  it("reads a saved legacy Debugging brief as debug", () => {
+    assert.equal(parseMissionModel({ ...model(), template: LEGACY_DEBUG_TEMPLATE_ID }).template, "debug")
+  })
   it("preserves a selected task policy in a reusable brief and rejects invented modes", () => {
     assert.equal(parseMissionModel(model(1, { taskMode: "independent" })).taskMode, "independent")
     assert.equal(parseMissionModel(model()).taskMode, undefined)
@@ -55,7 +59,7 @@ describe("strict reusable Mission model records", () => {
       { name: "" }, { name: " \n\t" }, { name: "n".repeat(81) }, { name: null },
       { objective: "" }, { objective: " \n\t" }, { objective: "o".repeat(20_001) }, { objective: 1 },
       { notes: "n".repeat(20_001) }, { notes: null }, { notes: [] },
-      { template: "unknown" }, { template: "Pocock" }, { template: null },
+      { template: "unknown" }, { template: "Debugging" }, { template: null },
     ]
     for (const overrides of invalid) assert.throws(() => parseMissionModel({ ...model(), ...overrides }))
   })
@@ -67,7 +71,7 @@ describe("strict reusable Mission model records", () => {
   })
 
   it("accepts every exact playbook role with independent parsed native profile selections", () => {
-    for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+    for (const template of ["custom", "debug", "wayfinder"] as const) {
       const input = model(1, {
         template, profiles: { coordinator: structuredClone(execution), roles: Object.fromEntries(templateRoles[template].map(role => [role, structuredClone(execution)])) },
       })
@@ -82,7 +86,7 @@ describe("strict reusable Mission model records", () => {
   })
 
   it("rejects other-playbook roles, unknown profile fields and invalid nested selectors", () => {
-    for (const [template, foreignRole] of [["custom", "research"], ["pocock-fix-bug", "decision"], ["wayfinder", "specialist"]] as const) {
+    for (const [template, foreignRole] of [["custom", "research"], ["debug", "decision"], ["wayfinder", "specialist"]] as const) {
       assert.throws(() => parseMissionModel(model(1, { template, profiles: { roles: { [foreignRole]: execution } } })))
     }
     for (const profiles of [

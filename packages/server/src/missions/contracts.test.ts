@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
+import { resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { MissionJsonValue, MissionTask } from "./model"
 
-test("accepts a green Pocock validation contract only when every check category is reported", () => {
+test("accepts a green Debugging validation contract only when every check category is reported", () => {
   const artifact = {
     kind: "validation",
     checks: [
@@ -17,66 +17,66 @@ test("accepts a green Pocock validation contract only when every check category 
     verdict: "green",
   }
   assert.deepEqual(validateMissionReportArtifact({
-    template: "pocock-fix-bug", role: "validator", outcome: "completed", artifact,
+    template: "debug", role: "validator", outcome: "completed", artifact,
   }), artifact)
 
   assert.throws(() => validateMissionReportArtifact({
-    template: "pocock-fix-bug",
+    template: "debug",
     role: "validator",
     outcome: "completed",
     artifact: { ...artifact, checks: artifact.checks.filter((check) => check.kind !== "build") },
   }), /build must be reported/)
   assert.throws(() => validateMissionReportArtifact({
-    template: "pocock-fix-bug",
+    template: "debug",
     role: "validator",
     outcome: "completed",
     artifact: { ...artifact, checks: artifact.checks.map((check) => check.kind === "test" ? { ...check, status: "failed" } : check) },
   }), /failed check/)
 })
 
-test("keeps the two Pocock review axes structurally independent", () => {
+test("keeps the two Debugging review axes structurally independent", () => {
   const standards = { kind: "review", axis: "standards", verdict: "pass", findings: [] }
   assert.deepEqual(validateMissionReportArtifact({
-    template: "pocock-fix-bug", role: "review-standards", outcome: "completed", artifact: standards,
+    template: "debug", role: "review-standards", outcome: "completed", artifact: standards,
   }), standards)
   assert.throws(() => validateMissionReportArtifact({
-    template: "pocock-fix-bug", role: "review-spec", outcome: "completed", artifact: standards,
+    template: "debug", role: "review-spec", outcome: "completed", artifact: standards,
   }), /axis/)
 })
 
-test("requires structured evidence only for completed Pocock roles", () => {
+test("requires structured evidence only for completed Debugging roles", () => {
   assert.throws(() => validateMissionReportArtifact({
-    template: "pocock-fix-bug", role: "diagnostician", outcome: "completed",
+    template: "debug", role: "diagnostician", outcome: "completed",
   }), /report contract failed/)
   assert.equal(validateMissionReportArtifact({
-    template: "pocock-fix-bug", role: "diagnostician", outcome: "blocked",
+    template: "debug", role: "diagnostician", outcome: "blocked",
   }), undefined)
   assert.equal(validateMissionReportArtifact({
     template: "custom", role: "specialist", outcome: "completed",
   }), undefined)
 })
 
-test("fences fresh Pocock reviewers and implementer-session resolution without fixed task keys", () => {
+test("fences fresh Debugging reviewers and implementer-session resolution without fixed task keys", () => {
   const tasks = [
     { key: "fix", role: "implementer", status: "completed" as const, blockedBy: [], actorSessionId: "ses_fix" },
     { key: "standards", role: "review-standards", status: "completed" as const, blockedBy: ["fix"] },
     { key: "spec", role: "review-spec", status: "completed" as const, blockedBy: ["fix"] },
   ]
   assert.doesNotThrow(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_fix", blockedBy: ["standards", "spec"], tasks,
+    template: "debug", role: "resolver", targetSessionID: "ses_fix", blockedBy: ["standards", "spec"], tasks,
   }))
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", blockedBy: ["standards", "spec"], tasks,
+    template: "debug", role: "resolver", blockedBy: ["standards", "spec"], tasks,
   }), /reuse the live implementer/)
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "review-spec", targetSessionID: "ses_fix", tasks: [],
+    template: "debug", role: "review-spec", targetSessionID: "ses_fix", tasks: [],
   }), /fresh root session/)
   assert.throws(() => validateMissionDelegationPolicy({
     template: "wayfinder", role: "implementer", tasks: [],
   }), /not a wayfinder/)
 })
 
-test("selects the implementer connected to Pocock review dependencies and rejects ambiguous lineage", () => {
+test("selects the implementer connected to Debugging review dependencies and rejects ambiguous lineage", () => {
   const tasks = [
     { key: "old-fix", role: "implementer", status: "withdrawn" as const, blockedBy: [], actorSessionId: "ses_old", replacedByTaskKey: "new-fix" },
     { key: "new-fix", role: "implementer", status: "completed" as const, blockedBy: [], actorSessionId: "ses_new" },
@@ -85,17 +85,17 @@ test("selects the implementer connected to Pocock review dependencies and reject
     { key: "spec", role: "review-spec", status: "completed" as const, blockedBy: ["new-fix"] },
   ]
   assert.doesNotThrow(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_new", blockedBy: ["standards", "spec"], tasks,
+    template: "debug", role: "resolver", targetSessionID: "ses_new", blockedBy: ["standards", "spec"], tasks,
   }))
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_other", blockedBy: ["standards", "spec"],
+    template: "debug", role: "resolver", targetSessionID: "ses_other", blockedBy: ["standards", "spec"],
     tasks: tasks.map(task => task.key === "old-fix"
       ? { key: task.key, role: task.role, status: "completed" as const, blockedBy: [], actorSessionId: task.actorSessionId }
       : task),
   }), /unambiguous/)
 })
 
-test("resolves a Pocock chain with multiple implementer tasks to their one shared actor", () => {
+test("resolves a Debugging chain with multiple implementer tasks to their one shared actor", () => {
   const tasks = [
     { key: "diagnose", role: "diagnostician", status: "completed" as const, blockedBy: [] },
     { key: "fix-part-one", role: "implementer", status: "completed" as const, blockedBy: ["diagnose"], actorSessionId: "ses_implementer" },
@@ -103,16 +103,16 @@ test("resolves a Pocock chain with multiple implementer tasks to their one share
     { key: "standards", role: "review-standards", status: "completed" as const, blockedBy: ["fix-part-two"] },
     { key: "spec", role: "review-spec", status: "completed" as const, blockedBy: ["fix-part-two"] },
   ]
-  assert.equal(resolvePocockImplementerSessionID(tasks, ["standards", "spec"]), "ses_implementer")
+  assert.equal(resolveDebuggingImplementerSessionID(tasks, ["standards", "spec"]), "ses_implementer")
   assert.doesNotThrow(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_implementer",
+    template: "debug", role: "resolver", targetSessionID: "ses_implementer",
     blockedBy: ["standards", "spec"], tasks,
   }))
 
   const ambiguous = [...tasks,
     { key: "other-fix", role: "implementer", status: "completed" as const, blockedBy: ["diagnose"], actorSessionId: "ses_other" },
   ].map(task => task.key === "spec" ? { ...task, blockedBy: ["fix-part-two", "other-fix"] } : task)
-  assert.equal(resolvePocockImplementerSessionID(ambiguous, ["standards", "spec"]), undefined)
+  assert.equal(resolveDebuggingImplementerSessionID(ambiguous, ["standards", "spec"]), undefined)
 })
 
 const native = { kind: "native", parentTaskKey: null } as const
@@ -124,26 +124,26 @@ test("native declarations validate topology without admitting incomplete prerequ
     { key: "standards", role: "review-standards", status: "blocked" as const, blockedBy: ["fix"] },
     { key: "spec", role: "review-spec", status: "blocked" as const, blockedBy: ["fix"] },
   ]
-  const input = { template: "pocock-fix-bug" as const, role: "resolver", blockedBy: ["standards", "spec"],
+  const input = { template: "debug" as const, role: "resolver", blockedBy: ["standards", "spec"],
     executionMode: { ...native, reuseFromTaskKey: "fix" }, tasks }
   assert.doesNotThrow(() => validateMissionDelegationPolicy({ ...input, phase: "declaration" }))
   assert.throws(() => validateMissionDelegationPolicy(input), /exact completed implementer/)
   assert.doesNotThrow(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "implementer", blockedBy: ["diagnose"], tasks, phase: "declaration",
+    template: "debug", role: "implementer", blockedBy: ["diagnose"], tasks, phase: "declaration",
   }))
   assert.throws(() => validateMissionDelegationPolicy({ ...input, blockedBy: ["missing"], phase: "declaration" }), /existing task/)
   assert.throws(() => validateMissionDelegationPolicy({ ...input, blockedBy: [], phase: "declaration" }), /dependency-connected/)
-  assert.throws(() => validateMissionDelegationPolicy({ ...input, role: "unknown", phase: "declaration" }), /not a pocock/)
+  assert.throws(() => validateMissionDelegationPolicy({ ...input, role: "unknown", phase: "declaration" }), /not a debug/)
   assert.throws(() => validateMissionDelegationPolicy({ ...input, executionMode: { ...native, parentTaskKey: "missing" }, phase: "declaration" }), /parent/)
   assert.doesNotThrow(() => validateMissionDelegationPolicy({ ...input, role: "review-spec", blockedBy: ["fix"], executionMode: native, phase: "declaration" }))
   assert.throws(() => validateMissionDelegationPolicy({ ...input, role: "review-spec", blockedBy: ["fix"], executionMode: native }), /dependency-connected implementer/)
 })
 
 test("native fresh reviewers and validators reject explicit reuse without requiring root shape", () => {
-  const tasks = nativePocockChain()
+  const tasks = nativeDebuggingChain()
   for (const role of ["review-standards", "review-spec", "validator"]) {
     const blockedBy = role === "validator" ? ["resolve"] : ["fix"]
-    const input = { template: "pocock-fix-bug" as const, role, blockedBy, tasks, executionMode: native }
+    const input = { template: "debug" as const, role, blockedBy, tasks, executionMode: native }
     assert.doesNotThrow(() => validateMissionDelegationPolicy(input))
     assert.throws(() => validateMissionDelegationPolicy({ ...input, targetSessionID: "ses_child" }), /fresh distinct/)
     assert.throws(() => validateMissionDelegationPolicy({ ...input, executionMode: { ...native, reuseFromTaskKey: "fix" } }), /fresh distinct/)
@@ -151,25 +151,25 @@ test("native fresh reviewers and validators reject explicit reuse without requir
 })
 
 test("native resolver names one exact reported implementer and never uses legacy unrelated fallback", () => {
-  const tasks = nativePocockChain()
+  const tasks = nativeDebuggingChain()
   const mode = { ...native, reuseFromTaskKey: "fix" }
-  assert.equal(resolvePocockImplementerSessionID(tasks, ["standards", "spec"], mode), "ses_fix")
-  assert.doesNotThrow(() => validateMissionDelegationPolicy({ template: "pocock-fix-bug", role: "resolver",
+  assert.equal(resolveDebuggingImplementerSessionID(tasks, ["standards", "spec"], mode), "ses_fix")
+  assert.doesNotThrow(() => validateMissionDelegationPolicy({ template: "debug", role: "resolver",
     tasks, blockedBy: ["standards", "spec"], executionMode: mode, targetSessionID: "ses_fix" }))
-  assert.equal(resolvePocockImplementerSessionID(tasks, [], mode), undefined)
-  assert.equal(resolvePocockImplementerSessionID(tasks, []), "ses_fix", "legacy sole-actor fallback is preserved")
-  assert.equal(resolvePocockImplementerSessionID(tasks, ["standards", "spec"], native), undefined)
-  assert.equal(resolvePocockImplementerSessionID(tasks.map(task => task.key === "fix" ? { ...task, report: undefined } : task), ["standards", "spec"], mode), undefined)
-  assert.equal(resolvePocockImplementerSessionID(tasks.map(task => task.key === "fix"
+  assert.equal(resolveDebuggingImplementerSessionID(tasks, [], mode), undefined)
+  assert.equal(resolveDebuggingImplementerSessionID(tasks, []), "ses_fix", "legacy sole-actor fallback is preserved")
+  assert.equal(resolveDebuggingImplementerSessionID(tasks, ["standards", "spec"], native), undefined)
+  assert.equal(resolveDebuggingImplementerSessionID(tasks.map(task => task.key === "fix" ? { ...task, report: undefined } : task), ["standards", "spec"], mode), undefined)
+  assert.equal(resolveDebuggingImplementerSessionID(tasks.map(task => task.key === "fix"
     ? { ...task, report: { ...task.report!, sessionId: "ses_other" } } : task), ["standards", "spec"], mode), undefined)
-  assert.equal(resolvePocockImplementerSessionID(tasks.map(task => task.key === "fix"
+  assert.equal(resolveDebuggingImplementerSessionID(tasks.map(task => task.key === "fix"
     ? { ...task, replacedByTaskKey: "new-fix" } : task), ["standards", "spec"], mode), undefined)
   // No idle/ended claims are accepted here: binding and exact current execution observations are authority-owned.
 })
 
-test("green native Pocock completion requires applicable evidence for the latest live fix", () => {
-  const tasks = nativePocockChain()
-  const policy = (tasks: MissionTask[]) => validateMissionCompletionPolicy({ template: "pocock-fix-bug", outcome: "completed", tasks })
+test("green native Debugging completion requires applicable evidence for the latest live fix", () => {
+  const tasks = nativeDebuggingChain()
+  const policy = (tasks: MissionTask[]) => validateMissionCompletionPolicy({ template: "debug", outcome: "completed", tasks })
   assert.doesNotThrow(() => policy(tasks))
   const laterFix = { ...tasks[1]!, id: "new-fix", key: "new-fix", createdAt: 20,
     report: { ...tasks[1]!.report!, taskKey: "new-fix" } }
@@ -184,11 +184,11 @@ test("green native Pocock completion requires applicable evidence for the latest
     ? { ...task, report: undefined } : task)), /exact completed validator report/)
   assert.throws(() => policy(tasks.map(task => task.role === "review-spec"
     ? { ...task, report: { ...task.report!, artifact: { kind: "review", axis: "standards", verdict: "pass", findings: [] } } } : task)), /axis/)
-  assert.doesNotThrow(() => validateMissionCompletionPolicy({ template: "pocock-fix-bug", outcome: "completed",
+  assert.doesNotThrow(() => validateMissionCompletionPolicy({ template: "debug", outcome: "completed",
     tasks: tasks.map(({ role, status }) => ({ role, status })) }), "historical role-only proof gate remains valid")
 })
 
-function nativePocockChain(): MissionTask[] {
+function nativeDebuggingChain(): MissionTask[] {
   const artifacts: Record<string, MissionJsonValue> = {
     diagnostician: { kind: "diagnosis", feedbackLoop: { command: "test", redOutput: "red" }, minimizedRepro: "repro",
       confirmedHypothesis: "cause", evidence: "observed", rejectedHypotheses: [] },

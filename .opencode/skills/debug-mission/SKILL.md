@@ -1,11 +1,11 @@
 ---
-name: pocock-fix-bug-mission
-description: Fix a difficult bug with the dynamic Pocock mission playbook and independent visible reviewers.
+name: debug-mission
+description: Fix a difficult bug with the dynamic Debugging mission playbook and independent visible reviewers.
 ---
 
-# Pocock Bug Mission
+# Debug Mission
 
-Start `mission.inspect` with template `pocock-fix-bug` and the exact bug report as the objective. Follow the returned evidence gates rather than blindly dispatching every stage.
+Start `mission.inspect` with template `debug` and the exact bug report as the objective. Follow the returned evidence gates rather than blindly dispatching every stage.
 
 - Keep one `diagnostician` session until it reports a minimized red feedback loop and confirmed cause.
 - Declare clear tasks before their prerequisites finish if useful; declaration is not execution. Admit `implementer` only after dependency-connected diagnosis. Require behavioral red/green evidence and the original loop green.

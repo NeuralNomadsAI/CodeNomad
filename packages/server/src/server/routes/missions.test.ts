@@ -334,7 +334,7 @@ test("creation forwards exact role profiles and refuses a response that silently
     registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
     try {
       const result = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
-        payload: { objective: "Profiles", template: "pocock-fix-bug", requestId: "profiles-exact", profiles } })
+        payload: { objective: "Profiles", template: "debug", requestId: "profiles-exact", profiles } })
       assert.equal(result.statusCode, dropProfiles ? 409 : 200)
       const sent = fake.calls.find(call => call.method === "create")!.value as { input: { profiles: unknown } }
       assert.deepEqual(sent.input.profiles, profiles)
