@@ -225,8 +225,9 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
         headers: { cookie: "session=isolated-human", "content-type": "application/json", ...(mode === "ui" ? { "x-codenomad-human-answer": "1" } : {}) },
         payload: JSON.stringify({ answer: { q0: "Module" } }) })
       R.reply = { status: reply.statusCode, body: reply.body.slice(0, 300) }
-      // The dock route answers 200; the ordinary path proxies native's 204 No Content.
-      assert.equal(reply.statusCode, mode === "ui" ? 200 : 204, reply.body)
+      // Both the marked dock route and the ordinary proxy answer native's 204 No Content,
+      // the only success status the generated client accepts for form replies.
+      assert.equal(reply.statusCode, 204, reply.body)
       await c.quiet(R.passage.sessionID)
       const { after } = await archived(scheduleID, n + 1)
       R.outcome = after.latestResult.outcome; R.decisionResult = q.decisionResult?.slice(0, 600); R.provenance = q.provenance
@@ -275,7 +276,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
       headers: { cookie: "session=isolated-human", "content-type": "application/json", "x-codenomad-human-answer": "1" },
       payload: JSON.stringify({ answer: { q0: "Blue" } }) })
     N.reply = { status: reply.statusCode, body: reply.body.slice(0, 300) }
-    assert.ok(reply.statusCode >= 200 && reply.statusCode < 300, `ordinary reply succeeds: ${reply.statusCode} ${reply.body}`)
+    assert.equal(reply.statusCode, 204, `ordinary reply succeeds with native 204: ${reply.statusCode} ${reply.body}`)
     await c.until(() => calls(session.id).some(call => call.name.startsWith("N-ANSWER")), 120_000)
     await c.quiet(session.id)
     N.modelSaw = calls(session.id).map(call => call.name)

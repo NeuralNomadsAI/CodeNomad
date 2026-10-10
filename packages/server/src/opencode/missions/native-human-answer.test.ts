@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import Fastify from "fastify"
+import { OpenCode } from "@opencode/client"
 import pino from "pino"
 import { Context, Effect } from "effect"
 import { AuthManager } from "../../auth/manager"
@@ -101,7 +102,8 @@ async function fixture() {
     fetch: async (_url: unknown, init: { body: string }) => {
       ordinary = true
       await Effect.runPromise(Effect.provide(forms.reply({ id: form.id, answer: JSON.parse(init.body).answer }), graph))
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+      // Native form replies answer an empty 204 (the generated client's successStatus).
+      return new Response(null, { status: 204 })
     }, profile: async () => "modern", invalidate: () => {} }
   const workspace = { id: "workspace", path: directory }
   const manager = { get: () => workspace, getSharedServiceConnection: async () => connection,
@@ -127,7 +129,8 @@ async function fixture() {
   registerInstanceProxyRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence(80), logger: pino({ level: "silent" }),
     humanAnswers: { auth, manager, settings, bridgeToken: registration.token, remoteDevices } } as never)
   await app.listen({ host: "127.0.0.1", port: 0 })
-  registration.url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}/api/opencode-plugin/automation`
+  const baseUrl = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`
+  registration.url = `${baseUrl}/api/opencode-plugin/automation`
   const disposeBridge = await publishAutomationBridge(registration)
   const decision: NativeDecisionEvidenceRequest = { kind: "native-form-answer", contract: { missionID: "msn_test", taskKey: "decision", generation: 1 },
     nativeCall: { generation: 1, parentSessionID: "ses_root", parentMessageID: "msg_delegate", toolCallID: "call_delegate" },
@@ -140,6 +143,10 @@ async function fixture() {
     submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
       headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) }, payload: { answer: { q0: answer } } }),
     devices,
+    /** The dock's actual call: the generated client against the proxy, which enforces the native success status. */
+    submitClient: (human = true) => OpenCode.make({ baseUrl: `${baseUrl}/workspaces/workspace/instance`,
+      headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookie.id)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) } })
+      .session.form.reply({ sessionID: "ses_child", formID: form.id, answer: { q0: "Module" } }),
     /** A Remote Control dock answer: no local cookie, only the ingress device identity ("" = unpaired). */
     submitRemote: (device = "device-1") => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
       headers: { "x-codenomad-human-answer": "1", "x-fixture-remote-device": device }, payload: { answer: { q0: "Module" } } }),
@@ -149,7 +156,7 @@ async function fixture() {
 test("dock header writes a secret-free mark before native reply and gate accepts", async () => {
   const f = await fixture()
   try {
-    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal((await f.submit()).statusCode, 204)
     const mark = await f.native.verify(f.decision)
     assert.deepEqual(Object.keys(mark).sort(), ["answer", "answeredAt", "form", "formID", "sessionID", "via"])
     assert.equal(mark.via, "ui"); assert.equal(f.counts(), 1)
@@ -164,12 +171,26 @@ test("dock header writes a secret-free mark before native reply and gate accepts
   } finally { await f.dispose() }
 })
 
+test("the generated client accepts both marked and ordinary dock answers as native successes", async () => {
+  for (const human of [true, false]) {
+    const f = await fixture()
+    try {
+      // The dock settles its queue only when this resolves; any non-204 status rejects as UnexpectedStatus.
+      await f.submitClient(human)
+      assert.equal(f.counts(), 1)
+      assert.equal(f.get(f.markKey)?.state, human ? "confirmed" : undefined)
+      // The Form is answered: a replay must fail rather than double-answer.
+      await assert.rejects(f.submitClient(human))
+    } finally { await f.dispose() }
+  }
+})
+
 test("Windows native SQL slash-separated session directories still bind the dock answer and gate", async () => {
   const f = await fixture()
   try {
     // Observed natively (2.0.26, hF44ln): session_v2 stores `/`, Location keeps host `\` separators.
     f.db.prepare("UPDATE session_v2 SET directory=?").run(f.directory.replaceAll("\\", "/"))
-    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal((await f.submit()).statusCode, 204)
     assert.equal(f.get(f.markKey)?.state, "confirmed")
     assert.equal((await f.native.verify(f.decision)).via, "ui")
   } finally { await f.dispose() }
@@ -178,7 +199,7 @@ test("Windows native SQL slash-separated session directories still bind the dock
 test("the gate reads the durable message projection; an empty native event table (2.0.26 serve) still qualifies", async () => {
   const f = await fixture()
   try {
-    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal((await f.submit()).statusCode, 204)
     f.db.exec("DELETE FROM event")
     assert.equal((await f.native.verify(f.decision)).via, "ui")
   } finally { await f.dispose() }
@@ -209,7 +230,7 @@ test("Wayfinder without a published binding accepts only the exact fresh assignm
     await assert.rejects(control.report("ses_root", report()), (error: Error) =>
       /^Human decision required: the user must answer this question from the CodeNomad interface\./.test(error.message)
       && !error.message.includes("Effect.tryPromise"), "no UI mark yet")
-    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal((await f.submit()).statusCode, 204)
     delegate({ agent: "worker", description: "Decision", prompt: "Unrelated work" })
     await assert.rejects(control.report("ses_root", report()), /not this assignment/)
     delegate({ agent: "worker", description: "Decision", prompt: assignment, sessionID: "ses_child" })
@@ -223,7 +244,7 @@ test("Wayfinder without a published binding accepts only the exact fresh assignm
 
 test("the same native answer without a human header produces no mark and gate refuses", async () => {
   const f = await fixture()
-  try { assert.equal((await f.submit(false)).statusCode, 200); assert.equal(f.counts(), 1)
+  try { assert.equal((await f.submit(false)).statusCode, 204); assert.equal(f.counts(), 1)
     assert.equal(f.get(f.markKey), undefined); await assert.rejects(f.native.verify(f.decision))
   } finally { await f.dispose() }
 })
@@ -231,7 +252,7 @@ test("the same native answer without a human header produces no mark and gate re
 test("an ordinary conversation's dock answer is an ordinary native reply: no mark, never blocked", async () => {
   const f = await fixture()
   try { f.db.prepare("UPDATE session_v2 SET metadata='{}' WHERE id='ses_root'").run()
-    assert.equal((await f.submit()).statusCode, 200); assert.equal(f.counts(), 1)
+    assert.equal((await f.submit()).statusCode, 204); assert.equal(f.counts(), 1)
     assert.equal(f.get(f.markKey), undefined); await assert.rejects(f.native.verify(f.decision))
   } finally { await f.dispose() }
 })
@@ -245,7 +266,7 @@ for (const mode of ["one-time", "recurring"] as const) {
     try { if (mode === "recurring") recurring(f)
       f.fail(); assert.equal((await f.submit()).statusCode, 409); assert.equal(f.counts(), 0)
       assert.equal(f.get(f.markKey), undefined, "a definitely failed attempt leaves no mark")
-      f.fail(false); assert.equal((await f.submit(false)).statusCode, 200); assert.equal(f.counts(), 1)
+      f.fail(false); assert.equal((await f.submit(false)).statusCode, 204); assert.equal(f.counts(), 1)
       await assert.rejects(f.native.verify(f.decision)); f.expire(); await assert.rejects(f.native.verify(f.decision))
     } finally { await f.dispose() }
   })
@@ -262,7 +283,7 @@ for (const mode of ["one-time", "recurring"] as const) {
   test(`${mode}: a successful dock reply confirms its exact attempt and qualifies`, async () => {
     const f = await fixture()
     try { if (mode === "recurring") recurring(f)
-      assert.equal((await f.submit()).statusCode, 200); assert.equal(f.get(f.markKey)?.state, "confirmed")
+      assert.equal((await f.submit()).statusCode, 204); assert.equal(f.get(f.markKey)?.state, "confirmed")
       assert.equal((await f.native.verify(f.decision)).via, "ui")
     } finally { await f.dispose() }
   })
@@ -271,7 +292,7 @@ for (const mode of ["one-time", "recurring"] as const) {
 test("answered mark survives native Form cache expiry and preserves verbatim free text and descriptions", async () => {
   const f = await fixture()
   try { const answer = "  A custom seam\nwith free text  "
-    assert.equal((await f.submit(true, answer)).statusCode, 200); f.expire()
+    assert.equal((await f.submit(true, answer)).statusCode, 204); f.expire()
     const mark = await f.native.verify({ ...f.decision, answer })
     assert.equal(mark.answer.q0, answer); assert.equal(mark.form.fields[0].type, "string")
     if (mark.form.fields[0].type === "string") assert.equal(mark.form.fields[0].options?.[0].description, "Own the boundary")
@@ -280,14 +301,14 @@ test("answered mark survives native Form cache expiry and preserves verbatim fre
 
 test("native answer alone waits for exact completed question evidence", async () => {
   const f = await fixture()
-  try { f.defer(); assert.equal((await f.submit()).statusCode, 200)
+  try { f.defer(); assert.equal((await f.submit()).statusCode, 204)
     await assert.rejects(f.native.verify(f.decision)); f.finish(); assert.equal((await f.native.verify(f.decision)).via, "ui")
   } finally { await f.dispose() }
 })
 
 test("a cached pending or cancelled Form refuses a mark even with completed native tool evidence", async () => {
   const f = await fixture()
-  try { assert.equal((await f.submit()).statusCode, 200)
+  try { assert.equal((await f.submit()).statusCode, 204)
     for (const status of ["pending", "cancelled"]) { f.changeState(status); await assert.rejects(f.native.verify(f.decision)) }
   } finally { await f.dispose() }
 })
@@ -295,7 +316,7 @@ test("a cached pending or cancelled Form refuses a mark even with completed nati
 test("the origin header without a live authenticated UI session cannot mint a mark", async () => {
   const f = await fixture()
   // The answer itself still goes through the ordinary native reply; it just never qualifies.
-  try { assert.equal((await f.submit(true, "Module", "invalid-cookie")).statusCode, 200)
+  try { assert.equal((await f.submit(true, "Module", "invalid-cookie")).statusCode, 204)
     assert.equal(f.get(f.markKey), undefined); assert.equal(f.counts(), 1)
     await assert.rejects(f.native.verify(f.decision))
   } finally { await f.dispose() }
@@ -306,7 +327,7 @@ test("recurring passage decisions use the same mark gate without recurrence ledg
   try {
     f.db.prepare("UPDATE session_v2 SET metadata=? WHERE id='ses_root'").run(JSON.stringify({
       "codenomad.mission": { version: 1, kind: "coordinator", role: "coordinator", missionID: "msn_test", recurrence: { passageID: "passage" } } }))
-    assert.equal((await f.submit()).statusCode, 200); f.expire()
+    assert.equal((await f.submit()).statusCode, 204); f.expire()
     assert.equal((await f.native.verify(f.decision)).via, "ui")
     assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv").get()!.count, 1, "only the mark, no passage ledger or key")
   } finally { await f.dispose() }
@@ -314,7 +335,7 @@ test("recurring passage decisions use the same mark gate without recurrence ledg
 
 test("gate refuses foreign Form/session/message/tool/field and provider-hosted execution", async () => {
   const f = await fixture()
-  try { assert.equal((await f.submit()).statusCode, 200)
+  try { assert.equal((await f.submit()).statusCode, 204)
     for (const mutation of [{ sessionID: "ses_other" }, { formID: "frm_other" }, { messageID: "msg_other" },
       { toolCallID: "call_other" }, { fieldKey: "q1" }, { answer: "Other" }, { directory: "D:/foreign" }])
       await assert.rejects(f.native.verify({ ...f.decision, ...mutation }))
@@ -345,7 +366,7 @@ test("a metadata-less root outside the durable journal is an ordinary conversati
     const f = await fixture()
     try {
       attached(f)
-      assert.equal((await (submit === "local" ? f.submit() : f.submitRemote())).statusCode, 200)
+      assert.equal((await (submit === "local" ? f.submit() : f.submitRemote())).statusCode, 204)
       assert.equal(f.counts(), 1, "the human answer still lands through the ordinary native reply")
       assert.equal(f.get(f.markKey), undefined, submit)
     } finally { await f.dispose() }
@@ -360,7 +381,7 @@ test("an unrelated metadata-less root answers without reading a populated Missio
     await new MissionJournal(f.storage, "project", f.directory).append({ version: 1, id: "evt_elsewhere", type: "mission.created",
       missionID: "msn_elsewhere", projectID: "project", projectCanonical: f.directory, createdAt: 1, objective: "Elsewhere", template: "custom",
       coordinator: { sessionID: "ses_elsewhere", title: "Elsewhere", location: { directory: f.directory } } })
-    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal((await f.submit()).statusCode, 204)
     assert.equal(f.counts(), 1, "the ordinary native reply still lands")
     assert.equal(f.get(f.markKey), undefined)
     assert.equal(f.journalScans(), 0, "the bounded identity probe skips the journal read")
@@ -375,7 +396,7 @@ test("an attached journal coordinator still pays the exact membership read and g
       missionID: "msn_attached", projectID: "project", projectCanonical: f.directory, createdAt: 1, objective: "Attached", template: "custom",
       coordinator: { sessionID: "ses_root", title: "Attached", location: { directory: f.directory } } })
     const scans = f.journalScans()
-    assert.equal((await f.submit()).statusCode, 200)
+    assert.equal((await f.submit()).statusCode, 204)
     assert(f.journalScans() > scans, "a probe hit is confirmed by the exact snapshot")
     assert.equal(f.get(f.markKey)?.state, "confirmed")
   } finally { await f.dispose() }
@@ -387,7 +408,7 @@ test("unpaired or revoked Remote Control requests answer ordinarily and never mi
     try {
       if (mode === "revoked") f.devices.authorized = false
       const response = await f.submitRemote(mode === "unpaired" ? "" : mode === "unknown-device" ? "device-2" : "device-1")
-      assert.equal(response.statusCode, 200, mode); assert.equal(f.counts(), 1)
+      assert.equal(response.statusCode, 204, mode); assert.equal(f.counts(), 1)
       assert.equal(f.get(f.markKey), undefined, mode)
       await assert.rejects(f.native.verify(f.decision))
     } finally { await f.dispose() }
@@ -409,7 +430,7 @@ async function finalizeWayfinder(f: Awaited<ReturnType<typeof fixture>>, respond
     const report = { missionID: mission.id, taskKey: "decision", outcome: "completed" as const, summary: "Human chose the seam", evidence: [], next: [], final: false,
       artifact: { kind: "decision", question, answer, provenance } }
     await assert.rejects(control.report("ses_root", report))
-    assert.equal((await respond()).statusCode, 200); f.expire()
+    assert.equal((await respond()).statusCode, 204); f.expire()
     assert.equal((await control.report("ses_root", report)).disposition, "reported")
     const current = (await control.snapshot()).missions[0]
     await journal.append({ version: 1, id: "decision_returned", type: "task.native-returned", missionID: mission.id, projectID: "project", createdAt: current.updatedAt + 1,

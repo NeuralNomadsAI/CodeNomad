@@ -1100,7 +1100,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           args.humanAnswers, connection, signal)
         if (result) {
           releaseMutation?.()
-          return reply.send({})
+          // Native form replies succeed with an empty 204; the generated
+          // client rejects any other status as UnexpectedStatus.
+          return reply.code(204).send()
         }
       } catch {
         releaseMutation?.()
