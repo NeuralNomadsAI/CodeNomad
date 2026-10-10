@@ -23,6 +23,7 @@ where their authority, lifetime or runtime differs.
 
 | Area | Current behaviour | Implementation |
 | --- | --- | --- |
+| Session catalog | Per-window, per-workspace persistent display metadata for every known root and descendant. Byte-sized native partitions impose no session-count cutoff and consume no draft string budget. Seed titles, ancestry, locations, selection and expansion before HTTP hydration. Cached rows carry unknown runtime status; the selected chain is revalidated directly, while the owned project inventory refreshes asynchronously. Partial/failed/directory-only initial pages never evict saved workspace families; a complete owned inventory reconciles absent rows with concurrent-update fences. | `stores/session-catalog-persistence.ts`, `session-catalog-hydration.ts`, `client-state-catalog-partitions.ts`, `session-api.ts` |
 | Session outline | Structural indexes independent of transcript and excerpts; up to 16 memory snapshots / 200k entries (one larger active index allowed). Restoration persists up to 16 indexes / 200k entries / 16 MiB in optional content-addressed chunks. Saved geometry displays before full checkpoint revalidation; unchanged ranges do not resend entries. The last range grows to 512 rows before another is added. Unchanged session returns make no read; native message changes revalidate checkpoints. Destructive mutation, generation, location/project and undo boundary fence reuse. Paused scans retain cursors. | `packages/ui/src/stores/session-outline.ts`, `session-outline-persistence.ts`, `client-state-outline-partitions.ts` |
 | Timeline previews | At most 512 bounded Markdown excerpts. Visible-nearby batches of 12, hovered ID first; obsolete demand cancels. Thirty-second age prompts on-demand revalidation only. Generation, mutation and undo fence reuse. No transcript-window loads or geometry changes. | `packages/ui/src/stores/timeline-previews.ts` |
 | Providers/models | Retained signals; shared in-flight catalogue load; dirty-bit trailing refresh; instance, location and request-generation checks. No completed-result TTL inside `fetchProviders` itself. | `packages/ui/src/stores/session-api.ts` |
@@ -87,6 +88,14 @@ reconciliation still waits for verified worktree membership. Metadata-dependent
 callers retain the combined worktree/project readiness barrier.
 
 Restored selection identity is seeded before HTTP hydration. The saved session and
+its last captured catalog are restored together; catalogs are optional, versioned
+graph extensions shared by Electron and Tauri. Older snapshots simply need one
+successful catalog load before they can offer this cache. Corrupt catalog chunks
+discard only display metadata, retaining selected identity, drafts and other state.
+The existing native aggregate byte/partition limits still apply atomically; no
+session-count slice or age expiry truncates the catalog. This display cache grants
+no directory authorization and persists neither transcript bodies nor permissions.
+The saved session and
 composer catalogues load once the client is ready, independently of the complete
 project-family inventory. Supplemental metadata waits for session hydration.
 Creation-ownership release starts alongside saved-session hydration; its HTTP

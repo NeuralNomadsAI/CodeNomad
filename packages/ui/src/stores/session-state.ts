@@ -128,7 +128,14 @@ function getSessionPaginationState(instanceId: string): SessionPaginationState {
 }
 
 function getSessionListIds(instanceId: string): string[] {
-  return getSessionPaginationState(instanceId).ids
+  const ids = getSessionPaginationState(instanceId).ids
+  const current = sessions().get(instanceId)
+  if (!current) return ids
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  // Restored catalogs retain all candidates before worktree scope is known.
+  // Match the thread builder's root projection without rewriting native parents.
+  return ids.filter(id => !current.has(id) || getSessionRootFromMap(current, id, directory)?.id === id)
 }
 
 function getSessionNextCursor(instanceId: string): string | undefined {
