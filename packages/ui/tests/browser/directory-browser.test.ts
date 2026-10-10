@@ -245,6 +245,16 @@ test("the Go button appears for a different typed path and navigates without ope
     assert.equal(await field(page).inputValue(), "/ws/start/projects")
     assert.equal(await page.getByRole("dialog").count(), 1)
     assert.deepEqual(await page.evaluate(() => (window as any).directoryBrowserFixture.navigations()), [], "Go must not open the folder")
+
+    // Keyboard: Tab to the button and press Enter; focus returns to the field.
+    await field(page).fill("/ws/start/pictures")
+    await field(page).press("Tab")
+    assert.equal(await go.evaluate((button) => button === document.activeElement), true)
+    await page.keyboard.press("Enter")
+    await go.waitFor({ state: "detached" })
+    assert.equal(await field(page).evaluate((input) => input === document.activeElement), true)
+    assert.equal(await field(page).inputValue(), "/ws/start/pictures")
+    assert.deepEqual(await page.evaluate(() => (window as any).directoryBrowserFixture.navigations()), [])
   } finally { assert.deepEqual(errors, []); await page.close() }
 })
 

@@ -25,6 +25,7 @@ const DirectoryBrowserAddress: Component<DirectoryBrowserAddressProps> = (props)
   const { t } = useI18n()
   const id = createUniqueId()
   const [active, setActive] = createSignal(-1)
+  let inputEl: HTMLInputElement | undefined
   const isExpanded = () => props.open && props.destinations.length > 0
 
   createEffect(() => {
@@ -38,61 +39,68 @@ const DirectoryBrowserAddress: Component<DirectoryBrowserAddressProps> = (props)
       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onOpenChange(false)
     }}>
       <div class="directory-browser-address-field">
-      <input
-        type="text"
-        value={props.value}
-        onInput={(event) => { props.onInput(event.currentTarget.value); setActive(-1) }}
-        onFocus={() => { props.onOpenChange(true); setActive(-1) }}
-        onClick={() => { if (!props.open) { props.onOpenChange(true); setActive(-1) } }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && props.open) {
-            event.preventDefault()
-            event.stopPropagation()
-            props.onOpenChange(false)
-            props.onReset()
-          } else if (event.key === "ArrowDown" && !props.open && props.destinations.length > 0) {
-            event.preventDefault()
-            props.onOpenChange(true)
-            setActive(0)
-          } else if (event.key === "ArrowDown" && isExpanded()) {
-            event.preventDefault()
-            setActive((index) => Math.min(index + 1, props.destinations.length - 1))
-          } else if (event.key === "ArrowUp" && isExpanded()) {
-            event.preventDefault()
-            setActive((index) => Math.max(index - 1, -1))
-          } else if (event.key === "Enter") {
-            event.preventDefault()
-            const destination = isExpanded() ? props.destinations[active()] : undefined
-            if (destination) props.onChoose(destination)
-            else props.onSubmit()
-            props.onOpenChange(false)
-            setActive(-1)
-          }
-        }}
-        spellcheck={false}
-        placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
-        aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
-        role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={isExpanded()}
-        aria-controls={isExpanded() ? id : undefined}
-        aria-activedescendant={isExpanded() && active() >= 0 ? `${id}-${active()}` : undefined}
-        class="selector-input directory-browser-current-path"
-        data-can-go={props.canGo ? "" : undefined}
-      />
-      {/* Same as Enter: navigate to the typed path without opening it. */}
-      <Show when={props.canGo}>
-        <button
-          type="button"
-          class="directory-browser-go"
-          title={t("directoryBrowser.goToTypedPath")}
-          aria-label={t("directoryBrowser.goToTypedPath")}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => { props.onOpenChange(false); setActive(-1); props.onSubmit() }}
-        >
-          <CornerDownLeft class="w-4 h-4" aria-hidden="true" />
-        </button>
-      </Show>
+        <input
+          ref={inputEl}
+          type="text"
+          value={props.value}
+          onInput={(event) => { props.onInput(event.currentTarget.value); setActive(-1) }}
+          onFocus={() => { props.onOpenChange(true); setActive(-1) }}
+          onClick={() => { if (!props.open) { props.onOpenChange(true); setActive(-1) } }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && props.open) {
+              event.preventDefault()
+              event.stopPropagation()
+              props.onOpenChange(false)
+              props.onReset()
+            } else if (event.key === "ArrowDown" && !props.open && props.destinations.length > 0) {
+              event.preventDefault()
+              props.onOpenChange(true)
+              setActive(0)
+            } else if (event.key === "ArrowDown" && isExpanded()) {
+              event.preventDefault()
+              setActive((index) => Math.min(index + 1, props.destinations.length - 1))
+            } else if (event.key === "ArrowUp" && isExpanded()) {
+              event.preventDefault()
+              setActive((index) => Math.max(index - 1, -1))
+            } else if (event.key === "Enter") {
+              event.preventDefault()
+              const destination = isExpanded() ? props.destinations[active()] : undefined
+              if (destination) props.onChoose(destination)
+              else props.onSubmit()
+              props.onOpenChange(false)
+              setActive(-1)
+            }
+          }}
+          spellcheck={false}
+          placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
+          aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isExpanded()}
+          aria-controls={isExpanded() ? id : undefined}
+          aria-activedescendant={isExpanded() && active() >= 0 ? `${id}-${active()}` : undefined}
+          class="selector-input directory-browser-current-path"
+          data-can-go={props.canGo ? "" : undefined}
+        />
+        {/* Same as Enter: navigate to the typed path without opening it. */}
+        <Show when={props.canGo}>
+          <button
+            type="button"
+            class="directory-browser-go"
+            title={t("directoryBrowser.goToTypedPath")}
+            aria-label={t("directoryBrowser.goToTypedPath")}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              // Keep keyboard focus in the field: this button leaves once the path is shown.
+              inputEl?.focus()
+              props.onOpenChange(false)
+              setActive(-1)
+              props.onSubmit()
+            }}
+          >
+            <CornerDownLeft class="w-4 h-4" aria-hidden="true" />
+          </button>
+        </Show>
       </div>
       <Show when={isExpanded()}>
         <div id={id} class="directory-browser-destinations" role="listbox" aria-label={t("directoryBrowser.goTo")}>
