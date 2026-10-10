@@ -59,7 +59,7 @@ async function retry(page: Page) {
   const sent = page.waitForRequest(request => request.url().endsWith("/control"))
   await missionRefresh(page).click(); await sent
 }
-async function open(page: Page, title = /^Lifecycle /) {
+async function open(page: Page, title: string | RegExp = /^Lifecycle /) {
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).missionVisibility))
   // Ordinary journeys start after the session list restored; the startup gate has its own regression.
@@ -242,13 +242,13 @@ test("Stop asks for confirmation in a dialog: cancel and Escape never submit; co
     await open(page)
     const dialog = page.getByRole("dialog")
     await stop(page).click(); await dialog.waitFor()
-    assert.deepEqual(calls, [])
+    assert.deepEqual(calls, [] as Input[])
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     await dialog.waitFor({ state: "hidden" })
     await stop(page).click(); await dialog.waitFor()
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "hidden" })
-    assert.deepEqual(calls, [])
+    assert.deepEqual(calls, [] as Input[])
     await stop(page).click(); await dialog.waitFor()
     await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
     // A terminal Mission keeps its lifecycle buttons in place, disabled.

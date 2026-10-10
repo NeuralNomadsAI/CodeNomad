@@ -34,10 +34,10 @@ function snapshot() {
     summary: "Retained late result", next: ["Verify before publication"], evidence: ["Recorded proof"],
     artifact: { source: "x".repeat(19_000) + "RAW_TAIL" }, notificationStatus: "pending", delivery: "coordinator-notification" }
   const task: MissionTask = { id: "task", key: "work", title: "Retired review", brief: "Original brief", role: "specialist",
-    status: "withdrawn", blockedBy: [], lateReports: [report], createdAt: 1, updatedAt: 2 }
+    status: "withdrawn", blockedBy: [], lateReports: [report], outstandingExecution: false, createdAt: 1, updatedAt: 2 }
   const mission: MissionMap = { version: 1, id: "mission", projectID: "project", projectCanonical: "/fixture", objective: "Original objective",
     summary: "Verified final outcome", template: "custom", coordinatorSessionId: "coordinator", status: "completed", actors: [],
-    tasks: [task], reports: [], frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2, history: [] }
+    tasks: [task], reports: [], frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2, history: [], historyTruncated: false }
   return { available: true, projectID: "project", missions: [mission], generatedAt: 1 }
 }
 

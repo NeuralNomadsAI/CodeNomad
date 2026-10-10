@@ -45,7 +45,7 @@ function Fixture() {
     removeActor: () => setSessions(previous => new Map(previous).set(instanceId, new Map([["coordinator", session("coordinator")]]))),
     deleteActor: () => (sseManager as unknown as { handleEvent(instanceId: string, event: V2Event): void }).handleEvent(instanceId, {
       id: "deleted-actor", type: "session.deleted", created: 2, location: { directory: scope }, data: { sessionID: "actor" },
-      durable: { aggregateID: "actor", seq: 2, version: 1 },
+      durable: { aggregateID: "actor", seq: 2, version: 2 },
     } as V2Event),
     snapshot: () => ({ view: missionProjectView(scope), active: activeSessionId().get(instanceId),
       actor: sessions().get(instanceId)?.get("actor"), parent: sessions().get(instanceId)?.get("native-parent") }),

@@ -46,7 +46,7 @@ function mission(): MissionMap {
     frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2,
     tasks: [{ ...task, id: "before", key: "before", title: "Earlier task", brief: "Earlier brief", blockedBy: [], status: "withdrawn", replacedByTaskKey: "work", report: undefined },
       { ...task, replacesTaskKey: "before" }, { ...task, id: "after", key: "after", title: "Later task", brief: "Later brief", blockedBy: ["work"], report: undefined }],
-    reports: [report], history: [] }
+    reports: [report], history: [], historyTruncated: false }
 }
 async function setup(value = mission()) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 850 }, locale: "en-US" }), errors: string[] = [], mutations: string[] = [], requests: string[] = []

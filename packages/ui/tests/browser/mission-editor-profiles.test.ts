@@ -230,7 +230,7 @@ test("creation waits for owned defaults and sends their exact snapshot without o
     assert.equal(await page.getByLabel("Playbook", { exact: true }).isDisabled(), true)
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
-    assert.deepEqual(writes, [], "pending defaults fence direct form admission, not just the Save button")
+    assert.deepEqual(writes, [] as typeof writes, "pending defaults fence direct form admission, not just the Save button")
     release()
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).waitFor()
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)

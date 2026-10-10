@@ -6,7 +6,7 @@ import { createMissionRecoveryAction } from "../../../src/components/mission-rec
 import { MissionCleanupPanel } from "../../../src/components/mission-cleanup"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
-import type { MissionMap } from "../../../../../server/src/api-types"
+import type { MissionMap } from "../../../../server/src/api-types"
 import "../../../src/index.css"
 
 const mission = {

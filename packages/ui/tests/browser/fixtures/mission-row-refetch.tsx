@@ -19,7 +19,8 @@ const initialReceipt: MissionCleanup = { missionID: "mission", deletionID: "dele
 
 function Fixture() {
   const [mission, setMission] = createSignal(initialMission)
-  const [forms, setForms] = createSignal<FormWithLocation[]>([{ id: "same-request", sessionID: "actor-a", title: "Form title", fields: [], location: { directory: "/fixture" } }])
+  // A field-less initial request: only its identity matters until the refetch adds a field.
+  const [forms, setForms] = createSignal<FormWithLocation[]>([{ id: "same-request", sessionID: "actor-a", title: "Form title", fields: [], location: { directory: "/fixture" } } as unknown as FormWithLocation])
   let permission = { id: "same-request", sessionID: "actor-b", action: "Permission title", resources: ["fixture.txt"] }
   const [cleanups, setCleanups] = createSignal([initialReceipt])
   const [disabled, setDisabled] = createSignal(false)

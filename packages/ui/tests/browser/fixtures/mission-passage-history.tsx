@@ -45,10 +45,11 @@ function Fixture() {
   const [status, setStatus] = createSignal(false)
   const [readerVisible, setReaderVisible] = createSignal(true)
   let revision = 0
+  // The plugin's custom Bus event is outside the client's typed native event union.
   const dispatch = (type: string, data: Record<string, unknown>, instanceId = "fixture") =>
     (serverEvents as unknown as { dispatchBatch(events: WorkspaceEventPayload[]): void }).dispatchBatch([
       { type: "instance.event", instanceId, event: { type, id: "evt_schedule_changed", created: 1,
-        location: { directory: scope() }, data } },
+        location: { directory: scope() }, data } } as unknown as WorkspaceEventPayload,
     ])
   window.passageHistory = {
     activate, readerVisible: setReaderVisible, status: setStatus, refresh: () => setRefresh(value => value + 1),

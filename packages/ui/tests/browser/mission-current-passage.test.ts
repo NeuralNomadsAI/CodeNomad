@@ -10,6 +10,8 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
+/** The plugin wire also carries project identity, which the HTTP route does not project. */
+type RecurrenceWireSnapshot = MissionRecurrenceSnapshot & { projectCanonical: string; location: { directory: string } }
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
@@ -67,7 +69,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       state: "interrupted", interruptionReason: "service-restart", clock: { time: "08:15", zone: "UTC" }, nextDueAt: null, actions: [], controls: [],
       pending: passageID ? { passageID, status: "running", missionID: mission.id, conversationID: "ses_coordinator" } : null,
       latestResult: passageID ? null : { passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" },
-      history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies MissionRecurrenceSnapshot) })
+      history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies RecurrenceWireSnapshot) })
     if (path.endsWith("/rec_current/current")) {
       reads++
       if (!passageID) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_current", passageID: null } })
@@ -132,7 +134,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(reads, 1, "reader joins the existing visible snapshot demand")
     await page.locator(".mission-briefing-sources").getByRole("button", { name: "Review commits" }).click()
     await page.locator(".mission-reader").getByText("Exact isolated result", { exact: true }).waitFor()
-    const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("/fixture").reader)
+    const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
     assert.deepEqual(target?.recurrence, { instanceId: "fixture", projectID: "project", scheduleID: "rec_current", passageID: "pas_current" })
     assert.ok(sourceReads.some(input => input.kind === "report" && input.itemId === "rpt_first" && input.section === "summary"), "result reader reads the exact isolated report page")
     assert.ok(sourceReads.every(input => input.scheduleID === "rec_current" && input.passageID === "pas_current" && input.revision === 4 && input.page === 0))
@@ -172,7 +174,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
-    await page.waitForFunction(async () => (await import("/src/stores/sessions.ts")).activeSessionId().get("fixture") === "ses_task")
+    await page.waitForFunction(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))
     assert.deepEqual(nativeReads, [], "current passage task navigation reuses only the exact loaded task actor and native parent")
     fail = true
@@ -200,12 +202,12 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // The created one-time Mission becomes the picker's current selection.
     await selectedMissionTitle(page).getByText("One-shot from recurring", { exact: true }).waitFor()
     await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor()
-    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("/fixture").selectedRecurrence)
+    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").selectedRecurrence)
     assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")
     assert.deepEqual(writes, ["/api/workspaces/fixture/missions"], "only the explicit creation uses a mock mutation")
     assert.deepEqual(errors, [])
   } catch (error) { console.error(errors, sourceReads, await page.locator("body").innerText(), await page.evaluate(async () => {
-    const s = await import("/src/stores/sessions.ts")
+    const s = await import("/src/stores/sessions.ts" as string)
     return { sessions: [...(s.sessions().get("fixture") ?? [])], active: s.activeSessionId().get("fixture") }
   })); throw error }
   finally { await page.close() }

@@ -71,8 +71,12 @@ export function cleanupBackend() {
     sessions: { get: http.session.get, create: async input => {
       const session = { ...input, projectID: "private-project" }; native.set(input.id, session); return structuredClone(session)
     }, prompt: async () => {}, synthetic: async () => {} },
-    transport: { prompt: async () => {}, synthetic: async () => {}, cleanup: (coordinator, input) => admitMissionInput(manager as never, fence, coordinator,
-      { kind: "cleanup", input }, new AbortController().signal) },
+    transport: { prompt: async () => {}, synthetic: async () => {}, cleanup: async (coordinator, input) => {
+      const result = await admitMissionInput(manager as never, fence, coordinator, { kind: "cleanup", input }, new AbortController().signal)
+      // The bridge entry serves every command kind; a cleanup command yields only a cleanup outcome.
+      if (!("outcome" in result)) throw new Error("Cleanup admission returned a non-cleanup result")
+      return result
+    } },
   })
   const app = Fastify()
   registerMissionRoutes(app, { workspaceManager: manager as never, worktreeDeletionFence: fence })

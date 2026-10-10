@@ -73,7 +73,8 @@ async function readAll(page: Page, title: string) {
 
 test("native reference history uses the shared reader, exact eyes, visible cache demand and no mutation/transcript reads", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 390, height: 800 } })
-  let snapshot: MissionRecurrenceSnapshot = { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [schedule("rec_first"), { ...schedule("rec_second"), pending: null }] }
+  // Served with the plugin wire's project identity, which the client ignores.
+  let snapshot: MissionRecurrenceSnapshot & { projectCanonical: string; location: { directory: string } } = { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [schedule("rec_first"), { ...schedule("rec_second"), pending: null }] }
   let reads = 0, fail = false
   const errors: string[] = [], unexpected: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -126,7 +127,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     assert.equal(await reader.locator("li").count(), 30, "admission does not create another final result")
     assert.equal(await firstEye.getAttribute("aria-pressed"), "true", "refresh preserves exact reader identity")
     await page.evaluate(async () => {
-      const { addFormToQueue } = await import("/src/stores/forms.ts")
+      const { addFormToQueue } = await import("/src/stores/forms.ts" as string)
       for (const [id, sessionID, title] of [["frm_pending", "ses_pending", "Publish review?"],
         ["frm_archived", "ses_29", "Archived request"], ["frm_global", "global", "Global request"]]) {
         addFormToQueue("fixture", { id, sessionID, title, fields: [], location: { directory: "/fixture" } } as never)
@@ -135,7 +136,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     assert.equal(await page.locator("aside").getByRole("button", { name: /Publish review|Archived request|Global request/ }).count(), 0,
       "the compact schedule list does not duplicate native request actions")
     await page.evaluate(async () => {
-      const { removeFormFromQueue } = await import("/src/stores/forms.ts")
+      const { removeFormFromQueue } = await import("/src/stores/forms.ts" as string)
       removeFormFromQueue("fixture", "frm_pending")
     })
     fail = true
@@ -169,7 +170,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await reader.getByText("rcp_rec_first_29", { exact: true }).waitFor({ state: "attached" })
     const beforeStop = reads
     await page.evaluate(async () => {
-      const { serverEvents } = await import("/src/lib/server-events.ts")
+      const { serverEvents } = await import("/src/lib/server-events.ts" as string)
       ;(serverEvents as unknown as { dispatchBatch(events: unknown[]): void }).dispatchBatch([{ type: "workspace.stopped", workspaceId: "fixture" }])
     })
     await reader.getByText("This mission content is no longer available.").waitFor()

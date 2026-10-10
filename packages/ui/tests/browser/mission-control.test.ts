@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { chromium, type Browser, type Page } from "playwright"
+import { chromium, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
@@ -1166,7 +1166,7 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     await page.goto(url)
     // Rows carry the whole first sentence; CSS ellipsis shortens it at the row edge and the full context stays in the reader.
     const titleOf = (index: number) => missions[index].objective
-    const rows = []
+    const rows: Locator[] = []
     for (const index of missions.keys()) rows.push(await inlineMissionEntry(page, titleOf(index)))
     for (const row of rows) {
       await row.waitFor()
