@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { MissionControl } from "./control"
-import { parseMissionBriefing, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
+import { MISSION_BRIEFING_RESPONSES_MAX, parseMissionBriefing, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
 import { MissionJournal, parseMissionEvent, type MissionStorage } from "./journal"
 import { reduceMissionEvents, type MissionEvent, type MissionJsonValue } from "./model"
 import type { NativeMissionSession } from "./control-types"
@@ -74,6 +74,23 @@ test("unrequested auto:<revision> briefings advance per revision without disturb
   assert.equal(f.sends(), 0)
 })
 
+test("a requested briefing superseded by automatic milestones keeps its exact identity within a bounded window", async () => {
+  const f = harness(); await start(f)
+  const requested = (await f.control.briefing("ses_coordinator", content(1, { requestID: "ui-request-1" }))).mission
+  const milestone = (await f.control.briefing("ses_coordinator", content(requested.revision, { requestID: `auto:${requested.revision}` }))).mission
+  assert.equal(milestone.briefing?.requestID, `auto:${requested.revision}`)
+  assert.deepEqual(milestone.briefingResponses, [{ requestID: "ui-request-1", briefingID: requested.briefing!.id },
+    { requestID: `auto:${requested.revision}`, briefingID: milestone.briefing!.id }])
+  const rebuilt = (await new MissionJournal(f.storage, "project", "/repo").snapshot()).missions[0]
+  assert.deepEqual(rebuilt.briefingResponses, milestone.briefingResponses)
+  let latest = milestone
+  for (let i = 0; i < MISSION_BRIEFING_RESPONSES_MAX - 1; i++)
+    latest = (await f.control.briefing("ses_coordinator", content(latest.revision, { requestID: `auto:${latest.revision}` }))).mission
+  assert.equal(latest.briefingResponses?.length, MISSION_BRIEFING_RESPONSES_MAX)
+  assert.ok(!latest.briefingResponses!.some(item => item.requestID === "ui-request-1"), "only a bounded recent window is retained")
+  assert.equal(f.sends(), 0)
+})
+
 test("briefing publication preserves coordinator, current location, lifecycle, source and damaged-storage gates", async () => {
   const f = harness(), created = (await start(f)).mission
   f.sessions.set("ses_foreign", { id: "ses_foreign", projectID: "project", location: { directory: "/repo" } })
@@ -116,6 +133,7 @@ test("direct stored events cannot fabricate a foreign, stale or paused briefing"
     { briefing: { ...event.briefing, basedOnUpdatedAt: 0 } }, { briefing: { ...event.briefing, next: [{ text: "Missing source", taskKeys: ["not-declared"] }] } }]) {
     const reduced = reduceMissionEvents([...events, { ...event, ...patch }])
     assert.equal(reduced.missions[0].briefing, undefined)
+    assert.equal(reduced.missions[0].briefingResponses, undefined, "a discarded briefing answers no request")
     assert.equal(reduced.discardedEvents, 1)
   }
   assert.equal(reduceMissionEvents([{ ...events[0], prepared: true } as MissionEvent, event]).missions[0].briefing, undefined)

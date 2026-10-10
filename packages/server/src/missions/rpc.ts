@@ -6,7 +6,7 @@ import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-sche
 import { missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_MAX_EVENTS } from "./model"
 import { MISSION_TITLE_MAX } from "./mission-title"
-import { missionBriefingSnapshotSchema } from "./briefing"
+import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
 import { recurrencePassageReadWire } from "./recurrence-reader-contract"
@@ -74,6 +74,7 @@ const mission = {
     summary: { type: "string" },
     coordinatorSessionId: { type: "string" },
     briefing: missionBriefingSnapshotSchema,
+    briefingResponses: missionBriefingResponsesSchema,
     actors: {
       type: "array",
       items: {

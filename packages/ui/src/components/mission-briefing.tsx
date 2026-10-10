@@ -17,11 +17,18 @@ export function createMissionBriefingRequest(props: {
   const identity = () => JSON.stringify([props.instanceId, instances().get(props.instanceId)?.folder,
     instances().get(props.instanceId)?.metadata?.project?.id, props.mission.projectID, props.mission.id, props.mission.coordinatorSessionId])
   const request = () => missionBriefingRequest(identity())
-  const answered = () => Boolean(request()?.briefingId || request() && props.mission.briefing?.requestID === request()?.requestID)
+  // Only an accepted briefing carrying this exact request ID answers it, even when
+  // a later (e.g. automatic) briefing superseded it before this view read it.
+  const response = () => {
+    const original = request(), latest = props.mission.briefing
+    if (!original) return undefined
+    if (latest?.requestID === original.requestID) return latest.id
+    return props.mission.briefingResponses?.find(item => item.requestID === original.requestID)?.briefingID
+  }
+  const answered = () => Boolean(request()?.briefingId || response())
   createEffect(() => {
-    const original = request(), value = props.mission.briefing
-    if (original && !original.briefingId && value?.requestID === original.requestID)
-      setMissionBriefingRequest(identity(), { ...original, briefingId: value.id })
+    const original = request(), briefingId = response()
+    if (original && !original.briefingId && briefingId) setMissionBriefingRequest(identity(), { ...original, briefingId })
   })
   const waiting = () => !answered() && Boolean(request()) && ["preparing", "sending", "admitted", "uncertain"].includes(request()!.state)
   const capture = createMissionViewFence(identity, () => props.active && !props.disabled)
