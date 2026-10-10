@@ -101,7 +101,13 @@ test("targeted recovery refuses native waits, then uses environment and one corr
   assert.deepEqual(f.calls.map(call => call.kind), ["environment"], "a native wait appearing during preparation blocks the nudge")
 })
 
-test("targeted recovery fences saved-location mismatch and moves during every preparation stage", async () => {
+test("targeted recovery fences saved-location mismatch and moves during every preparation stage", async t => {
+  // The "git" stage moves the session from the advisory Git context write, which
+  // happens only if the real `git --version` probe beats its 2 s deadline. An
+  // empty PATH makes that probe fail immediately, so the write always happens.
+  const originalPath = process.env.PATH
+  t.after(() => { if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath })
+  process.env.PATH = ""
   for (const stage of ["before", "environment", "readiness", "final-readiness", "git"] as const) {
     for (const sessionID of ["ses_actor", "ses_coordinator"] as const) {
       const f = fixture()
@@ -217,7 +223,9 @@ test("admits a late report synthetic from a withdrawn task's durable late-report
   assert.equal(f.calls[1].input.metadata["codenomad.mission"].reportID, late.id)
 })
 
-test("mission admission proceeds when an unrelated workspace connection is stalled", { timeout: 2_000 }, async t => {
+// Detects a stall on the unrelated connection (it never resolves) while leaving
+// room for the admitted send's own advisory Git context deadline of 2 s.
+test("mission admission proceeds when an unrelated workspace connection is stalled", { timeout: 10_000 }, async t => {
   const f = fixture()
   let unblock!: () => void
   const stalled = new Promise<void>(resolve => { unblock = resolve })

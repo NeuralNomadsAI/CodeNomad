@@ -68,9 +68,12 @@ const missingHost = (host: string) => lstat(host).then(() => false, error => (er
 export interface PendingRequestsRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation">
   worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked">
+  /** Test seam only; production always uses the real Git common-directory reader. */
+  readGitCommonDirectory?: typeof readGitCommonDirectory
 }
 
 export function registerPendingRequestRoutes(app: FastifyInstance, deps: PendingRequestsRouteDeps): void {
+  const readCommon = deps.readGitCommonDirectory ?? readGitCommonDirectory
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/pending-requests", async (request, reply) => {
     reply.header("Cache-Control", "no-store")
     const query = querySchema.safeParse(request.query)
@@ -114,7 +117,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             if (!identity || !canonical || deps.worktreeDeletionFence.isBlocked(identity)) return undefined
             try {
               if (await realpath(host) !== await realpath(canonical)
-                || await readGitCommonDirectory(host) !== await readGitCommonDirectory(workspace.path)) return undefined
+                || await readCommon(host) !== await readCommon(workspace.path)) return undefined
             } catch { return undefined }
             return { ancestor, identity }
           }
@@ -181,7 +184,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           assertCurrent()
         }
         const currentCommon = candidates.some((candidate) => candidate.directory !== root)
-          ? await readGitCommonDirectory(workspace.path).catch(error => { if (!classify) throw error; return undefined }) : undefined
+          ? await readCommon(workspace.path).catch(error => { if (!classify) throw error; return undefined }) : undefined
         for (let offset = 0; offset < candidates.length; offset += 8) {
           const checked = await drainOwnershipReads(candidates.slice(offset, offset + 8).map(async (candidate) => {
             signal.throwIfAborted()
@@ -199,7 +202,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
               }
               // Containment alone cannot authorize a nested independent clone. Classify
               // once immediately before RPC; after RPC every accepted identity is fresh.
-              const sameRepository = await readGitCommonDirectory(host).then(common => currentCommon !== undefined && common === currentCommon,
+              const sameRepository = await readCommon(host).then(common => currentCommon !== undefined && common === currentCommon,
                 error => { if (!classify) throw error; return false })
               if (!sameRepository) {
                 if (!classify) throw new Error("Pending repository ownership changed")

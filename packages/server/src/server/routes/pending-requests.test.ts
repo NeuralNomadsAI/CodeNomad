@@ -11,6 +11,7 @@ import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
 import { registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./pending-requests"
 import { observePendingDiscovery, markLoadedPendingSupported, deferPendingDiscovery } from "../../workspaces/pending-discovery"
+import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 
 const git = promisify(execFile)
 const permission = { id: "permission", sessionID: "background", action: "read", resources: ["file"] }
@@ -18,7 +19,7 @@ const form = { id: "form", sessionID: "global", title: "Question", fields: [{ ke
 const complete = (directory: string, locations: unknown[] = []) => ({ directory, status: "complete", locations })
 const emptyLocation = (directory: string) => ({ location: { directory }, permissions: [], forms: [] })
 
-async function harness() {
+async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDirectory"> = {}) {
   const root = await mkdtemp(join(tmpdir(), "codenomad-pending-"))
   await git("git", ["init", "--quiet", root])
   const subdirectory = join(root, "session-directory")
@@ -65,7 +66,7 @@ async function harness() {
     },
   }
   const app = Fastify()
-  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) } })
+  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, ...options })
   const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
     ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
   ])}`
@@ -739,7 +740,13 @@ for (const phase of ["provisional", "pre-RPC", "supported post-RPC", "unsupporte
 }
 
 test("64 cold directories use one fixed RPC with at most eight concurrent ownership checks", async () => {
-  const h = await harness()
+  // About 130 fresh per-candidate Git reads run two at a time in the Git worker;
+  // on a loaded Windows host that alone can exceed the 30 s route deadline. This
+  // test is about RPC/ownership fan-out, so answer for the plain cold subdirectories
+  // exactly as real Git does (the root's common directory), still once per read.
+  let commonReads = 0, common: string | undefined
+  const h = await harness({ readGitCommonDirectory: async () => { commonReads++; return common! } })
+  common = await readGitCommonDirectory(h.root)
   try {
     const cold = Array.from({ length: 64 }, (_, index) => join(h.root, `cold-${index}`))
     await Promise.all(cold.map((directory) => mkdir(directory)))
@@ -760,5 +767,6 @@ test("64 cold directories use one fixed RPC with at most eight concurrent owners
     assert.deepEqual(h.state.batches, [cold])
     assert.equal(peak, 8)
     assert.equal(active, 0)
+    assert.ok(commonReads >= 2 * 64, `every candidate is rechecked before and after the RPC: ${commonReads}`)
   } finally { await h.cleanup() }
 })
