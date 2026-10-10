@@ -187,6 +187,10 @@ jobs:
           if ('${{ matrix.runtime }}' -eq 'latest') {
             node scripts/test-missions-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            # Parallel siblings, a recursive grandchild and coordinator readout
+            # (same ctx.tool.list harness constraint as above).
+            node scripts/test-missions-native-trajectory.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

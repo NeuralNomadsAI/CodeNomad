@@ -13,7 +13,7 @@ clears a saved working marker; a queued synthetic with `resume:false` leaves the
 historical outcome but does **not** resolve pending local admission; explicitly
 resuming that private inbox produces a newer `time.idle` boundary and resolves
 recovery. Run PASS:
-`C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-1osQGf`.
+`<TEMP>/opencode/missions-native-1osQGf`.
 This supplements the deterministic store tests, not a real desktop quit/relaunch
 or recursive cancellation guarantee. It performs no replay of user work.
 

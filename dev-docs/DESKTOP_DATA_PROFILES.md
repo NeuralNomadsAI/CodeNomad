@@ -35,7 +35,7 @@ The alias keeps each host's historical normalization exactly (Electron lowercase
 
 Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. This divergence predates profiles and is deliberately kept: changing either fold would move existing scoped folders. The new choices file does not inherit it (see below).
 
-The host passes `CODENOMAD_DESKTOP_PROFILE=<name>` to its backend for non-default profiles; Settings → Info then shows a "Data profile" row. The default profile is never announced. Tauri applies it only to the backend `Command`, never through a process-wide `set_var`.
+The host passes `CODENOMAD_DESKTOP_PROFILE=<name>` to its backend for non-default profiles; Settings → Info then shows a "Data profile" row. The default profile is never announced in that row. Separately, every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them, `CODENOMAD_PROFILE`, `CODENOMAD_DESKTOP_PROFILE` and the private hand-offs from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
 
 ## One-time transition
 
