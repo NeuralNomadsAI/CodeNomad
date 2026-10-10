@@ -263,14 +263,24 @@ call whose prompt carries the declared assignment. Native 2.0.26 `serve` writes 
 projections (completed question part, `idle` outcome).
 Do not infer identity from answer text, tool completion or the agent's assertion.
 
-Only Forms whose session belongs to a Mission family (root `codenomad.mission`
-metadata) take the mark path. Every other Form uses the ordinary native reply
-unchanged and gets no mark. When the mark cannot be prepared before forwarding
-(auth disabled, plugin/binding unavailable), the answer falls back to the
-ordinary reply without a mark; the user is never blocked from answering. A
-paired Remote Control device has no local cookie session for the bridge to
-re-verify, so it also answers ordinarily without a mark rather than widening the
-mark's trust to tunnelled requests. Only a
+Only Forms whose session belongs to a Mission family take the mark path: a root
+with `codenomad.mission` metadata, or a metadata-less root (an attached
+existing coordinator) that the plugin finds as the coordinator actor of a
+Mission in the project's durable one-time journal, after walking the bounded
+native parent chain to exactly that root. Every other Form uses the ordinary
+native reply unchanged and gets no mark. Marks live under
+`codenomad-missions/human-marks-v1`, never the retired `authority-v2` namespace.
+
+The UI principal is explicit in the private bridge proof: a local login cookie
+session (auth enabled), or a paired Remote Control device chosen by ingress
+socket membership. A device qualifies only while Remote Control is connected
+and the device is still paired, unrevoked and unexpired; the route and the
+bridge callback revalidate that principal across native I/O. A device ID never
+poses as a cookie session. When the mark cannot be prepared before forwarding
+(no authenticated principal, plugin/binding unavailable, revocation or a
+session move), the answer falls back to the ordinary reply without a mark; the
+user is never blocked from answering. The human-answer header alone (automation,
+Yolo, SDK) never mints a mark. Only a
 dispatched mark reply with a lost outcome is reported as uncertain.
 
 There are no signatures or reserved/replied/settled answer receipts.
