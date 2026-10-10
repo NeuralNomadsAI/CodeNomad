@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { controlResumeAdmissionID } from "../../missions/receipt-identity"
 import { parseMissionNativeAcknowledgement } from "../../missions/lifecycle-schema"
-import type { MissionNativeAcknowledgement } from "../../missions/lifecycle-model"
+import type { MissionLifecycleOperation, MissionNativeAcknowledgement } from "../../missions/lifecycle-model"
 import type { MissionSnapshot } from "../../missions/model"
 import { matchesExecution } from "../../missions/execution"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
@@ -12,11 +12,12 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
 import { prepareMissionAuthority, assertMissionAuthorityCurrent, missionInstructionClient, type MissionAuthorityCheckpoint } from "./mission-authority-checkpoint"
-import { interruptNativeMissionFamily, isSubagentDelivery, settleInterruptedRoot, type NativeInboxItem } from "../../missions/native-family-interrupt"
+import { interruptNativeMissionFamily, isSubagentDelivery, recheckNativeMissionFamily, settleInterruptedRoot, type NativeInboxItem } from "../../missions/native-family-interrupt"
 import { readNativeControlFamily } from "../../missions/native-session-family"
 
 /** Leaves headroom for the root interrupt inside the bridge's lifecycle timeout. */
 const FAMILY_CONTROL_BUDGET_MS = 50_000
+const FAMILY_RECHECK_BUDGET_MS = 10_000
 
 const schema = z.object({ kind: z.literal("lifecycle"), input: z.object({
   missionID: z.string().min(1).max(100), operationID: z.string().min(1).max(100), sessionID: z.string().regex(/^ses_/).max(240),
@@ -128,7 +129,8 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await checkCoordinator()
       await checkOperation()
       current()
-      const interrupted = target.sessionID === coordinatorID ? await interruptedConversations(client, await checkTarget(), mission.tasks, signal, current) : ""
+      const interrupted = target.sessionID === coordinatorID && operation.pausedDescendants
+        ? await interruptedConversations(client, await checkTarget(), mission.tasks, operation.pausedDescendants, signal, current) : ""
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
@@ -203,16 +205,23 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
           }
         }
       }
+      // The root ran until its interrupt and may have launched sub-agents after
+      // the family passes: interrupt them before settling the root they re-wake.
+      const recheck = (control: typeof descendants, interrupt: boolean) => recheckNativeMissionFamily({ client, root, action, signal,
+        current, checkpoint, deadline: Date.now() + FAMILY_RECHECK_BUDGET_MS }, control, interrupt)
+      const caught = await recheck(descendants, true)
       // Pause leaves queued deliveries parked behind resume:false until Play.
       const settled = await settleInterruptedRoot({ client, root, action, signal, current, checkpoint,
         ...(action === "stop" ? { cancel: cancellable, onCancelled: (inboxID: string) => {
           if (cancellations.length < 128 && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition: "native-acknowledged" })
         } } : {}) })
+      // Only a whole, quiet family read after the root settled confirms a full stop.
+      const verified = await recheck(caught, false)
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
-      const family = settled ? descendants
-        : { ...descendants, unconfirmed: descendants.unconfirmed + 1, complete: false }
+      const family = settled ? verified
+        : { ...verified, unconfirmed: verified.unconfirmed + 1, complete: false }
       return reply({ ...ackIdentity, disposition: "interrupt-observed", interrupt, cancellations, descendants: family })
     }
   } finally { release() }
@@ -220,20 +229,25 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
 
 const MAX_LISTED_INTERRUPTIONS = 32
 
-/** Natively interrupted descendant conversations, so the coordinator can
- * decide what to re-delegate. Advisory: a partial read lists what it saw. */
+/** Descendant conversations the latest Pause interrupted that are still natively
+ * interrupted, so the coordinator can decide what to re-delegate. User or older
+ * interruptions are never attributed to that Pause. Advisory: a partial read or
+ * receipt lists what it saw. */
 async function interruptedConversations(client: Parameters<typeof readNativeControlFamily>[0], root: Parameters<typeof readNativeControlFamily>[1],
-  tasks: MissionSnapshot["missions"][number]["tasks"], signal: AbortSignal, current: () => void): Promise<string> {
+  tasks: MissionSnapshot["missions"][number]["tasks"], paused: NonNullable<MissionLifecycleOperation["pausedDescendants"]>,
+  signal: AbortSignal, current: () => void): Promise<string> {
+  if (!paused.sessions.length && !paused.partial) return ""
   const family = await readNativeControlFamily(client, root, signal, { assertCurrent: current, deadline: Date.now() + 15_000 })
-  const ids = [...family.members.values()].filter(({ session }) => session.id !== root.id && session.outcome === "interrupted")
-    .map(({ session }) => session.id)
-  if (!ids.length) return ""
+  const ids = [...family.members.values()].filter(({ session }) => session.id !== root.id && session.outcome === "interrupted"
+    && paused.sessions.includes(session.id)).map(({ session }) => session.id)
+  if (!ids.length && !paused.partial) return ""
+  if (!ids.length) return "\n\nThe mission was paused while sub-agents may have been running; inspect the mission map for unfinished delegated work."
   const listed = ids.slice(0, MAX_LISTED_INTERRUPTIONS).map(id => {
     const task = tasks.find(task => task.actorSessionId === id)
     return task ? `task ${task.key} (${id})` : id
   })
   const more = ids.length > listed.length ? ` and ${ids.length - listed.length} more` : ""
-  const partial = family.complete ? "" : " The sub-agent inventory was incomplete; inspect the mission map for others."
+  const partial = family.complete && !paused.partial ? "" : " The sub-agent inventory was incomplete; inspect the mission map for others."
   return `\n\nThese sub-agent conversations were interrupted when the mission was paused: ${listed.join(", ")}${more}.`
     + ` Re-delegate or continue their unfinished tasks as needed; do not assume their work completed.${partial}`
 }

@@ -13,6 +13,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
+import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute existing isolated CLI")
@@ -274,7 +275,10 @@ try {
 } finally {
   for (const resolve of holds.values()) resolve()
   await removeBridge?.(); await plugin?.stop(); await bridge.close(); await manager?.shutdown()
-  child?.kill(); if (stopped) await stopped
+  // Bounded: a serve that ignores termination fails the fixture instead of hanging CI.
+  if (child) await stopFixtureChild(child, stopped).catch(error => {
+    receipt.status = "failed"; receipt.cleanupFailure = error.message; process.exitCode = 1
+  })
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
   receipt.cleanup = { ownedServeExited: child ? child.exitCode !== null || child.signalCode !== null : false, exitCode: child?.exitCode, signalCode: child?.signalCode }
   await writeFile(path.join(root, "runtime.log"), output)

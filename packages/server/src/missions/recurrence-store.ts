@@ -7,7 +7,7 @@ import { latestDailyDue } from "./recurrence-clock"
 import {
   parseRecurrenceDocument, recurrenceAdmissionSchema, recurrenceConfigSchema, recurrenceIDSchema,
   recurrenceMessageID, recurrencePassageID, recurrenceResultSchema, recurrenceCoordinatorSessionID,
-  RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_SCHEDULE_LIMIT, RECURRENCE_STORAGE_PREFIX,
+  RECURRENCE_CONTROL_LIMIT, RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_SCHEDULE_LIMIT, RECURRENCE_STORAGE_PREFIX,
   type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceDue, type RecurrenceResult, type RecurrenceControlRecord,
 } from "./recurrence-contract"
 
@@ -109,7 +109,7 @@ export class NativeMissionRecurrenceStore {
         return doc
       }
       // Terminal Stop admits only Check, which merely observes its pending passage.
-      if (doc.revision !== input.expectedRevision || doc.state === "stopped" && input.action !== "check" || doc.controls.length >= 64
+      if (doc.revision !== input.expectedRevision || doc.state === "stopped" && input.action !== "check" || !roomForControl(doc)
         || doc.controls.some(item => !item.controlsComplete && !(["resume", "pause", "stop", "check"].includes(input.action)
           && (item.action === "play" || item.action === "resume" || item.action === "run-now" || item.action === "check")))) throw new Error("Recurrence control conflict")
       if (input.action === "play" && (doc.state !== "paused" || doc.pending)) throw new Error("Recurrence cannot play")
@@ -145,6 +145,7 @@ export class NativeMissionRecurrenceStore {
         || prior.targets.some(target => target.outcome === "acknowledged"
           && input.targets.find(item => item.sessionID === target.sessionID)?.outcome !== "acknowledged")) throw new Error("Recurrence control targets changed")
       doc.controls[index] = input
+      if (input.controlsComplete && input.action !== "run-now") supersedeStartIntents(doc, index)
       doc.revision++
       return this.publish(doc, current, doc.revision - 1)
     })
@@ -163,7 +164,7 @@ export class NativeMissionRecurrenceStore {
   reserveManual(id: string, requestID: string, expectedRevision: number, now: number,
     profileSource: NonNullable<RecurrenceDocument["profileSource"]>, current: () => true): Promise<RecurrenceDocument> {
     return this.change(id, expectedRevision, current, doc => {
-      if (doc.pending || doc.state === "stopped" || doc.controls.length >= 64 || doc.controls.some(item => !item.controlsComplete)
+      if (doc.pending || doc.state === "stopped" || !roomForControl(doc) || doc.controls.some(item => !item.controlsComplete)
         || profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
         || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence manual conflict")
       doc.profileSource = profileSource
@@ -203,6 +204,7 @@ export class NativeMissionRecurrenceStore {
         return doc
       }
       pending.admission = admission
+      completePassageControls(doc, false)
       doc.revision++
       return this.publish(doc, current, doc.revision - 1)
     })
@@ -234,6 +236,7 @@ export class NativeMissionRecurrenceStore {
 
   private settle(doc: RecurrenceDocument, result: RecurrenceResult, now: number) {
     const reference = (({ cursors: _cursors, ...receipt }) => receipt)(result)
+    completePassageControls(doc, true)
     doc.history.push({ passage: doc.pending!.passage, result: reference, settledAt: now })
     if (doc.pending!.passage.due.kind === "daily") doc.lastDaily = doc.pending!.passage.due
     doc.history = doc.history.slice(-RECURRENCE_HISTORY_LIMIT)
@@ -275,6 +278,35 @@ export class NativeMissionRecurrenceStore {
     if (canonicalAuthority(saved, RECURRENCE_MAX_BYTES) !== bytes) throw new Error("Recurrence publication unknown")
     fence()
     return saved
+  }
+}
+
+/** Completed requests are bounded history: evict the oldest completed record to
+ * make room. Incomplete intents are never evicted; an evicted request's exact
+ * status reads `unknown`, which never authorizes a resend. */
+function roomForControl(doc: RecurrenceDocument): boolean {
+  const index = doc.controls.length >= RECURRENCE_CONTROL_LIMIT ? doc.controls.findIndex(item => item.controlsComplete) : -1
+  if (index >= 0) doc.controls.splice(index, 1)
+  return doc.controls.length < RECURRENCE_CONTROL_LIMIT
+}
+
+/** A Job/observer start intent (Play, Resume, Check) whose outcome stayed unknown
+ * is settled by a later completed control, which restarted or cancelled it. */
+function supersedeStartIntents(doc: RecurrenceDocument, index: number) {
+  for (const item of doc.controls.slice(0, index)) {
+    if (!item.controlsComplete && (item.action === "play" || item.action === "resume" || item.action === "check"))
+      Object.assign(item, { controlsComplete: true, targetsKnown: true })
+  }
+}
+
+/** The pending passage's admission/archive settles the exact Run now that reserved
+ * it; archiving also settles every Check that only observed that passage. */
+function completePassageControls(doc: RecurrenceDocument, archived: boolean) {
+  const due = doc.pending?.passage.due
+  for (const item of doc.controls) {
+    if (item.controlsComplete) continue
+    if (due?.kind === "manual" && item.action === "run-now" && item.requestID === due.requestID && item.expectedRevision === due.expectedRevision
+      || archived && item.action === "check") Object.assign(item, { controlsComplete: true, targetsKnown: true })
   }
 }
 

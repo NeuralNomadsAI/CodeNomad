@@ -5,6 +5,7 @@ import type { OpenCodeClient, ShellInfo } from "@opencode/client"
 
 import { projectMissionActivity } from "./activity"
 import { assertNativeMissionRecoveryReady } from "./native-recovery-observation"
+import { observeActiveDescendant } from "./native-session-family"
 import type { MissionActor, MissionMap, MissionSnapshot, MissionTask } from "./model"
 
 const location = { directory: "/owned/repo" }
@@ -496,6 +497,51 @@ test("cross-mission native parent edges cannot fill holes in complete catalogs o
     assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
     assert.deepEqual(result.missions[1].family, { state: "unknown", members: [] })
   }
+})
+
+test("an oversized family still projects the actor's own permission or Form before running", async () => {
+  const sessions: Record<string, { parentID?: string }> = { coordinator: {} }
+  for (let index = 0; index < 40; index++) sessions[`child-${index}`] = { parentID: "coordinator" }
+  const active = { coordinator: { type: "running" as const } }
+  const coordinator = [actor("coordinator", "coordinator")]
+  assert.deepEqual(await states({ sessions, active, permissions: [{ sessionID: "coordinator" }] }, coordinator), { coordinator: "permission" })
+  assert.deepEqual(await states({ sessions, active, forms: [{ sessionID: "coordinator" }] }, coordinator), { coordinator: "form" })
+  assert.deepEqual(await states({ sessions, active }, coordinator), { coordinator: "running" })
+})
+
+test("oversized-family probes share one bounded read budget after the location reads", async () => {
+  const sessions: Record<string, { parentID?: string }> = {}
+  const roots = ["root-a", "root-b", "root-c"]
+  for (const root of roots) {
+    sessions[root] = {}
+    for (let index = 0; index < 40; index++) sessions[`${root}-child-${index}`] = { parentID: root }
+  }
+  const active: Record<string, { type: "running" }> = {}
+  for (let index = 0; index < 300; index++) { sessions[`unrelated-${index}`] = {}; active[`unrelated-${index}`] = { type: "running" } }
+  const client = native({ sessions, active }), log: string[] = []
+  const get = client.session.get.bind(client.session), forms = client.form.list.bind(client.form)
+  client.session.get = (async (input: { sessionID: string }, options?: unknown) => {
+    if (input.sessionID.startsWith("unrelated-")) log.push("probe")
+    return get(input as never, options as never)
+  }) as typeof client.session.get
+  client.form.list = (async (...args: Parameters<typeof forms>) => { log.push("forms"); return forms(...args) }) as typeof client.form.list
+  const result = await projectMissionActivity({ client, snapshot: snapshot(roots.map(root => actor(root))), workspaceID: "workspace-1",
+    ownsLocation: async () => true })
+  assert.deepEqual(result.missions[0].actors.map(item => item.state), ["unknown", "unknown", "unknown"])
+  assert.ok(log.filter(item => item === "probe").length <= 128, `one shared budget: ${log.filter(item => item === "probe").length}`)
+  assert.ok(log.indexOf("forms") >= 0 && log.indexOf("forms") < log.indexOf("probe"), "location reads precede the probe")
+})
+
+test("the ancestry probe skips inactive entries before its cap and continues through cached parents", async () => {
+  const sessions: Record<string, { parentID?: string }> = { root: {}, child: { parentID: "root" }, grandchild: { parentID: "child" }, stray: {} }
+  const active: Record<string, unknown> = {}
+  for (let index = 0; index < 300; index++) active[`idle-${index}`] = undefined
+  active.grandchild = { type: "running" }
+  assert.equal(await observeActiveDescendant(native({ sessions }), "root", active, new AbortController().signal), true)
+  const exhausted = { stray: { type: "running" }, grandchild: { type: "running" } }
+  assert.equal(await observeActiveDescendant(native({ sessions }), "root", exhausted, new AbortController().signal,
+    { known: new Map([["grandchild", { parentID: "child" }], ["child", { parentID: "root" }]]), maxReads: 0 }), true,
+    "an exhausted budget on one chain does not end the probe")
 })
 
 test("a family beyond the display cap with an active descendant is background, and recovery is busy rather than unknown", async () => {

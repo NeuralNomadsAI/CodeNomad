@@ -42,6 +42,7 @@ async function fixture(kind: "valid" | "no-fence" | "delete-aba" | "connection" 
     getServiceLocation: () => location,
     getSharedServiceConnection: async () => ({ client, assertCurrent() { if (!connected) throw new Error("replaced") } }),
     ownsLocation: async () => true,
+    getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
   } as never, ...(kind === "no-fence" ? {} : { worktreeDeletionFence: fence }) })
   try {
     const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-test/missions" })

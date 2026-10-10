@@ -273,6 +273,7 @@ test("authenticated backend GET forwards only exact archive selectors and owned 
   const calls: Array<{ input: ReadInput; options: unknown }> = []
   registerMissionRecurrenceSnapshot(app, { worktreeDeletionFence: fence, workspaceManager: {
     get: () => workspace, getServiceLocation: () => ({ directory: f.directory }),
+    getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
     ownsLocation: async (_id: string, location: unknown) => { assert.deepEqual(location, { directory: f.directory }); return owned },
     getSharedServiceConnection: async () => {
       connections++

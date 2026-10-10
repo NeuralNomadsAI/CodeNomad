@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../missions/recurrence-control-contract"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -13,7 +14,8 @@ import { captureRecurrenceControlHoldRead, reconcileRecurrenceControlHold } from
  * generic RPC proxy, even when a signed archive establishes prior commitment. */
 export function registerMissionRecurrenceControlStatus(app: FastifyInstance, deps: {
   auth: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
-  manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection" | "ownsLocation">
+  manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection" | "ownsLocation"
+    | "getWorktreeIdentityForPath">
   fence: WorktreeDeletionFence
 }) {
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control/status", async (request, reply) => {
@@ -34,7 +36,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       const connection = await lifetime.wait(deps.manager.getSharedServiceConnection(id))
       if (!connection) throw new Error("Native connection unavailable")
       const heldRead = captureRecurrenceControlHoldRead(deps.fence, id, { directory }, input.data, connection)
-      const currentDeletion = heldRead ?? deps.fence.captureDisplay([base.directory, directory])
+      const currentDeletion = heldRead ?? await lifetime.wait(captureDisplayIdentities(deps.fence, deps.manager, id, [base.directory, directory])) ?? (() => false)
       const current = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (!currentDeletion() || deps.manager.get(id) !== workspace

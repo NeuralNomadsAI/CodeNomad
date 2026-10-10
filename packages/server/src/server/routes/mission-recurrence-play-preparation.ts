@@ -13,6 +13,7 @@ import { recurrenceControlHttpSchema } from "../../missions/recurrence-control-c
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
 import { resolveRecurrenceRoot } from "./mission-recurrence-roots"
 import { captureRecurrenceControlHoldRead, holdRecurrenceControl } from "./mission-recurrence-holds"
+import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 
 /** Exact Settings profile and currently owned physical root are resolved only
  * inside the authenticated human request, never from native RPC path options. */
@@ -34,7 +35,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
     scheduleID: input.scheduleID, requestID: input.requestID, action: input.action,
     expectedRevision: input.expectedRevision,
   }, connection) : undefined
-  const display = previousHold ?? deps.fence.captureDisplay([base.directory, directory])
+  const display = previousHold ?? await captureDisplayIdentities(deps.fence, deps.manager, workspaceID, [base.directory, directory]) ?? (() => false)
   const current = (): true => {
     signal.throwIfAborted(); connection.assertCurrent()
     if (!deps.auth.isAuthEnabled() || deps.auth.getSessionFromRequest(request)?.sessionId !== session.sessionId

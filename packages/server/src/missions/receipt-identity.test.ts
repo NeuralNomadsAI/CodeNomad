@@ -51,6 +51,24 @@ test("conflicting duplicate receipt bytes are damaged evidence, not last-writer-
   assert.deepEqual(projectLifecycle([intent, receipt(ack), second]).control?.pending, ["ses_actor"])
 })
 
+test("Play projects only the latest Pause's reported descendant interruptions", () => {
+  const descendants = (sessions: string[], complete = true) => ({ observed: 3, interrupted: sessions.length, cancelled: 0,
+    unconfirmed: complete ? 0 : 1, complete, sessions })
+  const start = (requestID: string, expectedRevision: number): MissionControlRequestedEvent => ({ ...intent, action: "start", requestID,
+    id: controlOperationID(intent.missionID, requestID), expectedRevision, createdAt: expectedRevision })
+  const secondPause: MissionControlRequestedEvent = { ...intent, requestID: "pause_2", id: controlOperationID(intent.missionID, "pause_2"), expectedRevision: 5, createdAt: 5 }
+  const secondReceipt: MissionEvent = { ...receipt(), id: controlReceiptID(secondPause.id, "ses_actor"), operationID: secondPause.id,
+    nativeAcknowledgement: { ...ack, operationID: secondPause.id, descendants: descendants(["ses_new"]) } } as MissionEvent
+  const first = projectLifecycle([intent, receipt({ ...ack, descendants: descendants(["ses_old"]) }), start("play_1", 3)])
+  assert.deepEqual(first.control?.pausedDescendants, { sessions: ["ses_old"], partial: false })
+  const second = projectLifecycle([intent, receipt({ ...ack, descendants: descendants(["ses_old"]) }), start("play_1", 3),
+    secondPause, secondReceipt, start("play_2", 7)])
+  assert.deepEqual(second.control?.pausedDescendants, { sessions: ["ses_new"], partial: false }, "earlier Pause cycles are not re-attributed")
+  assert.deepEqual(projectLifecycle([intent, receipt(ack), start("play", 3)]).control?.pausedDescendants, { sessions: [], partial: true },
+    "a receipt without a descendant summary claims nothing")
+  assert.equal(projectLifecycle([intent, receipt(ack)]).control?.pausedDescendants, undefined)
+})
+
 test("superseding operations do not reuse earlier native ACKs or receipt identities", () => {
   const stop: MissionControlRequestedEvent = { ...intent, action: "stop", requestID: "stop", id: controlOperationID(intent.missionID, "stop"), expectedRevision: 3, createdAt: 3 }
   const projected = projectLifecycle([intent, receipt(ack), stop])

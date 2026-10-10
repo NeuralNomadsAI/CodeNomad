@@ -17,6 +17,14 @@ const replaceBytes = (file: string, bytes: Buffer) => {
   try { ftruncateSync(fd, 0); writeFileSync(fd, bytes) } finally { closeSync(fd) }
 }
 
+/** A Git-fallback fence runs synchronous Git with a 3 s timeout and correctly
+ * fails closed when a loaded host exceeds it; retry that transient refusal. */
+function withSlowGit(fence: () => string): string {
+  for (let attempt = 1; ; attempt++) {
+    try { return fence() } catch (error) { if (attempt >= 5) throw error }
+  }
+}
+
 test("physical family fences recheck real local Git inputs without processes", async t => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "opencode", "family-fence-"))
   const environment = { ...process.env }
@@ -69,10 +77,13 @@ test("physical family fences recheck real local Git inputs without processes", a
       assert.equal(fence(), family, "configuration creation alone is not reassignment")
       const redirected = path.join(temporary, "redirected main")
       mkdirSync(redirected)
-      git(repo, "config", "core.worktree", redirected)
-      assert.throws(fence, /family-identity-unavailable/)
-      writeFileSync(config, originalConfig)
-      rmSync(process.env.GIT_CONFIG_GLOBAL!)
+      try {
+        git(repo, "config", "core.worktree", redirected)
+        assert.throws(fence, /family-identity-unavailable/)
+      } finally {
+        writeFileSync(config, originalConfig)
+        rmSync(process.env.GIT_CONFIG_GLOBAL!, { force: true })
+      }
     })
 
     await t.test("ordinary model edits, branches and commits never revoke; unchanged sentinels remain process-free", async () => {
@@ -92,9 +103,10 @@ test("physical family fences recheck real local Git inputs without processes", a
       writeFileSync(trace, "")
       assert.equal(fence(), family)
       assert.equal(readFileSync(trace, "utf8"), "", "HEAD/branch/content are not routing fingerprints")
-      git(repo, "config", "user.name", "Unrelated local edit")
-      assert.equal(fence(), family, "unrelated local settings remain valid")
-      writeFileSync(config, originalConfig)
+      try {
+        git(repo, "config", "user.name", "Unrelated local edit")
+        assert.equal(withSlowGit(fence), family, "unrelated local settings remain valid")
+      } finally { writeFileSync(config, originalConfig) }
     })
 
     await t.test("missing, replaced and type-changed HEAD cannot retain an inner family's routing", async () => {
@@ -157,7 +169,7 @@ test("physical family fences recheck real local Git inputs without processes", a
         assert.equal(await readFamilyAuthorityIdentity(inner), family)
         const outerFence = await createFamilyAuthorityIdentityFence(inner)
         writeFileSync(trace, "")
-        assert.equal(outerFence(), family)
+        assert.equal(withSlowGit(outerFence), family)
         assert.notEqual(readFileSync(trace, "utf8"), "", "ambiguous nested discovery must retain fresh Git resolution")
         renameSync(saved, head)
         assert.deepEqual(identity(lstatSync(entry, { bigint: true })), before, "the nested .git directory was not replaced")
@@ -170,7 +182,7 @@ test("physical family fences recheck real local Git inputs without processes", a
         git(inner, "symbolic-ref", "HEAD", "refs/heads/another-valid-branch")
         assert.equal(innerFence(), innerFamily, "a valid verified-root HEAD change remains accepted")
         renameSync(head, saved)
-        assert.equal(outerFence(), family, "returning to the acquired outer routing remains valid")
+        assert.equal(withSlowGit(outerFence), family, "returning to the acquired outer routing remains valid")
       } finally { if (existsSync(saved)) renameSync(saved, head) }
     })
 
@@ -186,7 +198,7 @@ test("physical family fences recheck real local Git inputs without processes", a
         assert.equal(readFamilyAuthorityIdentitySync(repo), otherFamily, "native Git honors the lowercase Windows override")
         assert.throws(fence, /family-identity-unavailable/)
         const directed = await createFamilyAuthorityIdentityFence(repo)
-        assert.equal(directed(), otherFamily)
+        assert.equal(withSlowGit(directed), otherFamily)
         process.env.GiT_CoMmOn_DiR = family
         assert.throws(directed, /family-identity-unavailable/, "case aliases must retain exact-value change detection")
       } finally { delete process.env.git_common_dir }
@@ -217,38 +229,41 @@ test("physical family fences recheck real local Git inputs without processes", a
     })
 
     await t.test("worktree extension and relative/absolute core.worktree remain resolved by Git", async () => {
-      git(repo, "config", "extensions.worktreeConfig", "true")
-      git(linked, "config", "--worktree", "core.worktree", linked)
       const worktreeConfig = path.join(admin, "config.worktree")
-      const bytes = readFileSync(worktreeConfig)
-      const fence = await createFamilyAuthorityIdentityFence(linked)
-      writeFileSync(trace, "")
-      assert.equal(fence(), family)
-      assert.equal(readFileSync(trace, "utf8"), "")
-      const redirected = path.join(temporary, "effective root")
-      mkdirSync(redirected)
-      for (const value of [redirected, gitPath(path.relative(admin, redirected))]) {
-        git(linked, "config", "--worktree", "core.worktree", value)
-        assert.equal(realpathSync(git(linked, "rev-parse", "--show-toplevel")), realpathSync(redirected))
-        assert.throws(fence, /family-identity-unavailable/)
-        // Redirected roots lacking their own .git retain the current Git resolver.
-        const redirectedFence = await createFamilyAuthorityIdentityFence(linked)
-        assert.equal(redirectedFence(), readFamilyAuthorityIdentitySync(linked))
+      try {
+        git(repo, "config", "extensions.worktreeConfig", "true")
+        git(linked, "config", "--worktree", "core.worktree", linked)
+        const fence = await createFamilyAuthorityIdentityFence(linked)
+        writeFileSync(trace, "")
+        assert.equal(fence(), family)
+        assert.equal(readFileSync(trace, "utf8"), "")
+        const redirected = path.join(temporary, "effective root")
+        mkdirSync(redirected)
+        for (const value of [redirected, gitPath(path.relative(admin, redirected))]) {
+          git(linked, "config", "--worktree", "core.worktree", value)
+          assert.equal(realpathSync(git(linked, "rev-parse", "--show-toplevel")), realpathSync(redirected))
+          assert.throws(fence, /family-identity-unavailable/)
+          // Redirected roots lacking their own .git retain the current Git resolver.
+          const redirectedFence = await createFamilyAuthorityIdentityFence(linked)
+          assert.equal(withSlowGit(redirectedFence), withSlowGit(() => readFamilyAuthorityIdentitySync(linked)))
+        }
+      } finally {
+        writeFileSync(config, originalConfig)
+        rmSync(worktreeConfig, { force: true })
       }
-      writeFileSync(worktreeConfig, bytes)
-      writeFileSync(config, originalConfig)
-      rmSync(worktreeConfig)
     })
 
     await t.test("missing and conditional includes retain Git at every final fence", async () => {
       const missing = path.join(temporary, "missing-included-config")
       for (const key of ["include.path", `includeIf.gitdir:${gitPath(common)}/.path`]) {
-        git(repo, "config", key, gitPath(missing))
-        const fence = await createFamilyAuthorityIdentityFence(repo)
-        writeFileSync(trace, "")
-        assert.equal(fence(), family)
-        assert.notEqual(readFileSync(trace, "utf8"), "", "cannot freeze incomplete config dependencies")
-        writeFileSync(config, originalConfig)
+        // Restore even on failure: a leftover include would cascade into later subtests.
+        try {
+          git(repo, "config", key, gitPath(missing))
+          const fence = await createFamilyAuthorityIdentityFence(repo)
+          writeFileSync(trace, "")
+          assert.equal(withSlowGit(fence), family)
+          assert.notEqual(readFileSync(trace, "utf8"), "", "cannot freeze incomplete config dependencies")
+        } finally { writeFileSync(config, originalConfig) }
       }
     })
 

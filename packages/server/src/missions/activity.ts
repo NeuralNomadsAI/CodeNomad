@@ -11,6 +11,7 @@ const MAX_PROJECTED_ACTORS = MISSION_MAX_ACTORS * MISSION_MAX_MISSIONS
 const MAX_FAMILY_READS = 2 * (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const MAX_FAMILY_SESSIONS = (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const READ_CONCURRENCY = 4
+const ACTIVE_DESCENDANT_PROBE_MS = 5_000
 
 type OwnsLocation = (workspaceID: string, location: LocationRef, client: OpenCodeClient) => Promise<boolean>
 
@@ -123,13 +124,6 @@ export async function projectMissionActivity(input: {
   }
 
   const activeResult = await settle(() => observe(() => input.client.session.active({ signal })))
-  if (activeResult.ok) {
-    for (const [sessionID, read] of actorReads) {
-      if (!read.familyFailed || activeResult.value[sessionID]) continue
-      const probe = await settle(() => observe(() => observeActiveDescendant(input.client, sessionID, activeResult.value, signal, { maxReads: 128 })))
-      read.activeDescendant = probe.ok && probe.value
-    }
-  }
 
   const locationReads = new Map<string, LocationRead>()
   await readBounded([...authorizedLocations.entries()], async ([key, location]) => {
@@ -148,6 +142,18 @@ export async function projectMissionActivity(input: {
       failed,
     })
   })
+
+  // Oversized families: probe ancestry after the location reads, with one shared
+  // parent cache, read budget and bound, so it cannot starve the other reads.
+  if (activeResult.ok) {
+    const probeSignal = AbortSignal.any([signal, AbortSignal.timeout(ACTIVE_DESCENDANT_PROBE_MS)])
+    const parents = new Map<string, string | undefined>(), budget = { reads: 128 }
+    for (const [sessionID, read] of actorReads) {
+      if (!read.familyFailed || activeResult.value[sessionID]) continue
+      const probe = await settle(() => observe(() => observeActiveDescendant(input.client, sessionID, activeResult.value, probeSignal, { parents, budget })))
+      read.activeDescendant = probe.ok && probe.value
+    }
+  }
 
   // Cross-mission reuse may overlap, but changed parent/location observations
   // cannot be published as two simultaneously truthful display families.
@@ -198,6 +204,11 @@ export async function projectMissionActivity(input: {
         // An oversized/partial family is still positive evidence of ongoing work:
         // never let it read as unknown and invite recovery of a busy mission.
         if (read.familyFailed && activeResult.ok && read.session && sameLocation(read.session.location, actor.location)) {
+          // Membership is unknown, but the actor's own (or a global) request is not.
+          const resources = locationReads.get(locationKey(read.session.location))
+          const own = (item: { sessionID: string }) => item.sessionID === actor.sessionId || item.sessionID === "global"
+          if (resources && !resources.failed && resources.permissions.some(own)) return { sessionId: actor.sessionId, state: "permission" as const }
+          if (resources && !resources.failed && resources.forms.some(own)) return { sessionId: actor.sessionId, state: "form" as const }
           if (activeResult.value[actor.sessionId]) return { sessionId: actor.sessionId, state: "running" as const }
           if (read.activeDescendant) return { sessionId: actor.sessionId, state: "background" as const }
         }

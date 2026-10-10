@@ -60,6 +60,15 @@ An uncertain control must not be replaced with a fresh request to evade the hold
 Explicit Resume is a new user action, not an automatic retry of an unknown send.
 Stopped schedules cannot be played, resumed or run now.
 
+A schedule document keeps at most 64 control records. Admitting a new control
+evicts the oldest completed record; unresolved records are never evicted, and an
+evicted request's exact status reads unknown, which never authorizes a resend.
+A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
+later completed control that restarted or cancelled it. A Run now is resolved by
+its own passage's admission or archive; archiving also resolves Checks of that
+passage. Pause/Stop on a reserved passage without a journal mission has no actor
+to interrupt (dispatch of an unadmitted passage is refused once paused/stopped).
+
 ## Honest threat model and rationale
 
 HMAC authenticates the ordinary desktop bridge; it is not an OS sandbox.
@@ -258,7 +267,10 @@ Only Forms whose session belongs to a Mission family (root `codenomad.mission`
 metadata) take the mark path. Every other Form uses the ordinary native reply
 unchanged and gets no mark. When the mark cannot be prepared before forwarding
 (auth disabled, plugin/binding unavailable), the answer falls back to the
-ordinary reply without a mark; the user is never blocked from answering. Only a
+ordinary reply without a mark; the user is never blocked from answering. A
+paired Remote Control device has no local cookie session for the bridge to
+re-verify, so it also answers ordinarily without a mark rather than widening the
+mark's trust to tunnelled requests. Only a
 dispatched mark reply with a lost outcome is reported as uncertain.
 
 There are no signatures or reserved/replied/settled answer receipts.

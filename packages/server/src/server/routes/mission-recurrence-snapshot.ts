@@ -5,6 +5,7 @@ import { sameLocation, locationRequestOptions } from "../../opencode/compatibili
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { requestAdmission } from "../request-admission"
 import { recurrenceReadInput, recurrenceReadPage } from "../../missions/recurrence-reader-contract"
 import { recurrenceSnapshotSchema as snapshotSchema } from "../../missions/recurrence-control-contract"
@@ -15,7 +16,7 @@ const pageQuery = z.object({ section: z.coerce.number().int().nonnegative().opti
   revision: z.coerce.number().int().positive().optional() }).strict()
 
 export function registerMissionRecurrenceSnapshot(app: FastifyInstance, deps: {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath">
   worktreeDeletionFence?: WorktreeDeletionFence
 }): void {
   const read = async (request: FastifyRequest<{ Params: { id: string; scheduleID?: string; passageID?: string }; Querystring: unknown }>, reply: FastifyReply) => {
@@ -29,10 +30,11 @@ export function registerMissionRecurrenceSnapshot(app: FastifyInstance, deps: {
     const workspace = parsed.success && manager.get(parsed.data)
     const owned = parsed.success && manager.getServiceLocation(parsed.data)
     if (!workspace || !owned) { lifetime.dispose(); return reply.code(404).send({ error: "Workspace unavailable" }) }
-    const current = deps.worktreeDeletionFence?.captureDisplay([owned.directory])
+    const capture = captureDisplayIdentities(deps.worktreeDeletionFence, manager, parsed.data, [owned.directory])
     try {
       const connection = await lifetime.wait(manager.getSharedServiceConnection(parsed.data))
       if (!connection) return reply.code(503).send({ error: "Mission service unavailable" })
+      const current = await lifetime.wait(capture)
       const assertCurrent = () => {
         lifetime.signal.throwIfAborted()
         connection.assertCurrent()

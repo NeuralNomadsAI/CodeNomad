@@ -13,6 +13,7 @@ test("owned recurrence snapshots expose simple metadata; foreign, oversized and 
   let owned = true, connected = true, invalidate = false, writes = 0
   registerMissionRecurrenceSnapshot(app, { worktreeDeletionFence: fence, workspaceManager: {
     get: () => workspace, getServiceLocation: () => location, ownsLocation: async () => owned,
+    getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
     getSharedServiceConnection: async () => ({ assertCurrent: () => { if (!connected) throw new Error("Connection changed") }, client: {
       location: { get: async () => ({ project: { id: "project", canonical: "/project" } }) },
       plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
@@ -39,4 +40,25 @@ test("owned recurrence snapshots expose simple metadata; foreign, oversized and 
     invalidate = true; assert.equal((await read()).statusCode, 503)
     assert.equal(writes, 0)
   } finally { await app.close() }
+})
+
+test("a WSL snapshot read during its worktree identity's deletion is never published", async () => {
+  const app = Fastify(), fence = new WorktreeDeletionFence(), location = { directory: "/home/dev/repo" }, workspace = {}
+  registerMissionRecurrenceSnapshot(app, { worktreeDeletionFence: fence, workspaceManager: {
+    get: () => workspace, getServiceLocation: () => location, ownsLocation: async () => true,
+    getWorktreeIdentityForPath: async () => "wsl:ubuntu:/home/dev/repo",
+    getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: {
+      location: { get: async () => ({ project: { id: "project", canonical: "/home/dev/repo" } }) },
+      plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
+      rpc: () => ({ recurrenceSnapshot: async () => ({ version: 1, projectID: "project", projectCanonical: "/home/dev/repo", location, schedules: [] }) }),
+    } }),
+  } as never })
+  const read = () => app.inject({ method: "GET", url: "/api/workspaces/owned/missions/recurrence" })
+  let finish!: () => void
+  const deletion = fence.run("wsl:ubuntu:/home/dev/repo", ["wsl:ubuntu:/home/dev/repo"], () => new Promise<void>(resolve => { finish = resolve }))
+  try {
+    assert.equal((await read()).statusCode, 503)
+    finish(); await deletion
+    assert.equal((await read()).statusCode, 200, "the same read succeeds once the deletion ended")
+  } finally { finish(); await app.close() }
 })

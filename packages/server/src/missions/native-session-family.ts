@@ -107,21 +107,25 @@ export async function readNativeControlFamily(client: OpenCodeClient, root: Sess
 
 /** Bounded ancestry probe for display/recovery when the capped family read
  * cannot enumerate the whole tree: does any natively active session descend
- * from `rootID`? A false result proves nothing; true is positive evidence. */
+ * from `rootID`? A false result proves nothing; true is positive evidence.
+ * Callers probing several roots share `parents` and `budget` so the native
+ * reads stay bounded for the whole observation, not per root. */
 export async function observeActiveDescendant(client: OpenCodeClient, rootID: string, active: Readonly<Record<string, unknown>>,
-  signal: AbortSignal, options: { known?: ReadonlyMap<string, { parentID?: string }>; maxReads?: number } = {}): Promise<boolean> {
-  const parents = new Map<string, string | undefined>()
+  signal: AbortSignal, options: { known?: ReadonlyMap<string, { parentID?: string }>; maxReads?: number
+    parents?: Map<string, string | undefined>; budget?: { reads: number } } = {}): Promise<boolean> {
+  const parents = options.parents ?? new Map<string, string | undefined>()
   for (const [id, session] of options.known ?? []) parents.set(id, session.parentID)
-  let reads = options.maxReads ?? 256
-  for (const id of Object.keys(active).slice(0, 256)) {
-    if (id === rootID || !active[id]) continue
+  const budget = options.budget ?? { reads: options.maxReads ?? 256 }
+  for (const id of Object.keys(active).filter(id => id !== rootID && active[id]).slice(0, 256)) {
     const seen = new Set<string>()
     let cursor: string | undefined = id
     while (cursor && !seen.has(cursor)) {
       seen.add(cursor)
       if (cursor === rootID) return true
       if (!parents.has(cursor)) {
-        if (reads-- <= 0) return false
+        // Exhausted: later chains may still resolve through cached parents.
+        if (budget.reads <= 0) break
+        budget.reads--
         signal.throwIfAborted()
         try { parents.set(cursor, (await client.session.get({ sessionID: cursor }, { signal })).parentID) }
         catch { signal.throwIfAborted(); parents.set(cursor, undefined) }

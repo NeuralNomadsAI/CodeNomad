@@ -30,6 +30,7 @@ function manager(options: {
       getSharedServiceConnection: async () => ({ client: await value.getSharedServiceClient(), assertCurrent() {} }),
       getServiceLocation: (id: string) => id === "workspace-1" ? { directory: options.directory ?? "/owned/repo" } : undefined,
       ownsLocation: async () => true,
+      getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
       getSharedServiceClient: async () => fakeClient ??= ({
         location: { get: async (input: unknown) => {
           calls.push({ method: "location", value: input })

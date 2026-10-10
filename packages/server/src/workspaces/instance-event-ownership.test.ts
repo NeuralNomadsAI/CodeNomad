@@ -68,9 +68,10 @@ test("event ownership does not join a stalled native discovery refresh", async t
   events.on("instance.event", event => { if (event.event.type === "session.text.delta") delivered() })
   bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: events, logger })
   events.publish({ type: "workspace.started", workspace })
-  // Allow real Git/filesystem checks on loaded CI hosts. The refresh remains
-  // unresolved throughout, so this tests isolation, not a latency threshold.
-  const timeout = setTimeout(() => delivered(), 10_000)
+  // Allow real Git/filesystem checks on loaded CI hosts (10 s was exceeded under
+  // the serial full-suite load). The refresh remains unresolved throughout, so a
+  // joined refresh still fails here: this tests isolation, not a latency threshold.
+  const timeout = setTimeout(() => delivered(), 60_000)
   let published = false
   events.on("instance.event", event => { if (event.event.type === "session.text.delta") published = true })
   await received

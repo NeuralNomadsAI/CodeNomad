@@ -6,6 +6,7 @@ import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-prepara
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { captureRecurrenceControlHoldRead, reconcileRecurrenceControlHold } from "./mission-recurrence-holds"
+import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 
 export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Parameters<typeof prepareHumanRecurrenceControl>[3]) {
   app.get<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/run-now/status", async (request, reply) => {
@@ -25,7 +26,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       if (!directory || !connection) throw new Error("Manual status unavailable")
       const location = { directory }, identity = { ...input.data, action: "run-now" as const }
       const currentDeletion = captureRecurrenceControlHoldRead(deps.fence, request.params.id, location, identity, connection)
-        ?? deps.fence.captureDisplay([base.directory, directory])
+        ?? await lifetime.wait(captureDisplayIdentities(deps.fence, deps.manager, request.params.id, [base.directory, directory])) ?? (() => false)
       const current = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (!currentDeletion() || deps.manager.get(request.params.id) !== workspace

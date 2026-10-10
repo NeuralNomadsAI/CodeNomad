@@ -8,6 +8,7 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { HUMAN_ANSWER_HEADER, HUMAN_ANSWER_RPC, assertHumanAnswerFresh, humanAnswerBindingSchema,
   humanAnswerProof, humanAnswerProofSchema, humanAnswerResultSchema } from "../../missions/human-answer"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
+import { isRemoteRequest } from "../../remote-control/request-origin"
 
 type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
 type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string }
@@ -60,6 +61,9 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
   }
   // Ordinary conversations never take the mark path, nor write a mark.
   if (!missionRoot) return undefined
+  // The mark is bound to a local cookie session that the bridge callback can
+  // re-verify; a paired Remote Control device has none, so it answers ordinarily.
+  if (isRemoteRequest(request)) return undefined
   const human = deps.auth.getSessionFromRequest(request)
   if (!deps.auth.isAuthEnabled() || !human || human.sessionId === "auth-disabled") return undefined
   const current = () => {

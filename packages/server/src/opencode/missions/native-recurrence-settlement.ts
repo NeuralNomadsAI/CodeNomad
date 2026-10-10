@@ -4,7 +4,17 @@ import { recurrencePassage } from "../../missions/recurrence-passage"
 import { passageSourceCursors, passageStartInput, type PassageSource } from "../../missions/recurrence-input"
 import { samePassageObservation, type NativePassageObservation, type PassageSessionObservation } from "./native-passage-observation"
 
-export type PassageOutcome = "completed" | "failed" | "stopped" | "ended-without-report"
+export type PassageOutcome = "completed" | "failed" | "ended-without-report"
+
+/** Walk seeds: the coordinator and every journal actor that is a native root.
+ * A native-bound child actor is reached through its parent, never seeded as a
+ * root (its parent would mismatch, or the walk would visit it twice). */
+export async function passageFamilyRoots(native: Pick<NativePassageObservation, "session">, coordinatorSessionID: string,
+  actorIDs: readonly string[]): Promise<string[]> {
+  const roots = [coordinatorSessionID]
+  for (const id of new Set(actorIDs)) if (id !== coordinatorSessionID && !(await native.session(id)).parentID) roots.push(id)
+  return roots
+}
 
 /** Native quiescence, not an allowlist or exact replay of tool/event history.
  * Background subagents are ordinary descendants and must also be inactive. */
@@ -20,8 +30,9 @@ export async function observeNativePassageSettlement(input: {
   if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
     || !mission || mission.id !== passage.missionID || mission.coordinatorSessionId !== passage.coordinatorSessionID)
     throw new Error("Passage journal unavailable")
-  const family: PassageSessionObservation[] = [], queue = [...new Set([passage.coordinatorSessionID,
-    ...mission.actors.map(actor => actor.sessionId)])].map(id => ({ id, parentID: undefined as string | undefined }))
+  const actorIDs = mission.actors.map(actor => actor.sessionId)
+  const family: PassageSessionObservation[] = [], queue = (await passageFamilyRoots(native, passage.coordinatorSessionID, actorIDs))
+    .map(id => ({ id, parentID: undefined as string | undefined }))
   const seen = new Set<string>(), children = new Map<string, string[]>()
   while (queue.length) {
     signal.throwIfAborted(); input.current()
@@ -41,6 +52,8 @@ export async function observeNativePassageSettlement(input: {
     children.set(next.id, ids)
     queue.push(...ids.map(id => ({ id, parentID: next.id })))
   }
+  // A journal actor outside every walked native tree has moved.
+  if (actorIDs.some(id => !seen.has(id))) throw new Error("Passage family moved")
   if (await native.requests([...seen])) return undefined
   if (mission.control?.pending.length) return undefined
   const outcome: PassageOutcome = mission.status === "completed" ? "completed"
