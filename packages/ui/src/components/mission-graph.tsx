@@ -14,26 +14,34 @@ export function orderMissionTasks(tasks: MissionTask[]): MissionTask[] {
   return ordered
 }
 
-/** Rail width, matched by `.mission-flow-linked` row padding in mission-graph.css. */
+/** Lane area width, matched by `.mission-flow-linked` row padding in mission-graph.css. */
 const MISSION_GRAPH_WIDTH = 30
 
 /** Measured dependency rail: each edge leaves its source row's status icon and
- * enters its dependent's, so the icons are the graph's nodes. */
+ * enters its dependent's, so the icons are the graph's nodes. Both coordinates are
+ * measured: the row/button padding between the lane area and the icon belongs to
+ * the edge, in the SVG's own (possibly scaled or RTL-mirrored) user space. */
 export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListElement }) {
-  const [points, setPoints] = createSignal<Array<{ key: string; y: number }>>([])
+  let svg!: SVGSVGElement
+  const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number }>>([])
   const [height, setHeight] = createSignal(0)
   createEffect(() => {
     const tasks = props.tasks
     const list = props.list
     const measure = () => {
-      const bounds = list.getBoundingClientRect()
-      const scale = list.offsetHeight ? bounds.height / list.offsetHeight : 1
+      const bounds = list.getBoundingClientRect(), origin = svg.getBoundingClientRect()
+      const scaleY = list.offsetHeight ? bounds.height / list.offsetHeight : 1
+      const scaleX = list.offsetWidth ? bounds.width / list.offsetWidth : 1
+      // Mirrored in RTL (mission-graph.css): user x = 0 is the SVG's right edge.
+      const rtl = getComputedStyle(svg).direction === "rtl"
       const rows = new Map([...list.children].map(row => [(row as HTMLElement).dataset.taskKey, row]))
       setPoints(tasks.flatMap(task => {
         const anchor = rows.get(task.key)?.querySelector("[data-graph-anchor]")
         if (!anchor) return []
         const box = anchor.getBoundingClientRect()
-        return [{ key: task.key, y: (box.top - bounds.top + box.height / 2) / scale }]
+        // The edge stops at the icon's inline-start side, never crossing the glyph.
+        const x = (rtl ? origin.right - box.right : box.left - origin.left) / scaleX
+        return [{ key: task.key, x: Math.max(MISSION_GRAPH_WIDTH, x), y: (box.top - bounds.top + box.height / 2) / scaleY }]
       }))
       setHeight(list.offsetHeight)
     }
@@ -64,9 +72,9 @@ export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListEleme
     // an unrelated intermediate task just because it occupies the same depth.
     return links.map(link => ({ ...link, lane: 4 + lanes.get(link.from.key)! * Math.min(6, 20 / Math.max(1, ends.length - 1)) }))
   }
-  const x = MISSION_GRAPH_WIDTH
-  return <svg class="mission-graph" width={x} height={height()} aria-hidden="true">
+  const width = () => Math.ceil(Math.max(MISSION_GRAPH_WIDTH, ...points().map(point => point.x)))
+  return <svg ref={svg} class="mission-graph" width={width()} height={height()} aria-hidden="true">
     <For each={edges()}>{edge => <path data-from={edge.from.key} data-to={edge.to.key}
-      d={`M ${x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${x}`} />}</For>
+      d={`M ${edge.from.x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${edge.to.x}`} />}</For>
   </svg>
 }

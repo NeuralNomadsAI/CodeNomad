@@ -9,6 +9,7 @@ import { sessions } from "../stores/session-state"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
+import { missionTaskPanelScroll } from "./mission-task-scroll"
 
 export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready" | "waiting" | "blocked" | "failed" | "retired"
 
@@ -59,7 +60,9 @@ export function MissionTaskTree(props: {
   // Per project, like the picker list: the folder scope survives instance restarts.
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
-  return <section class="mission-tree mission-disclosure">
+  let root!: HTMLElement
+  const panelScrolls = missionTaskPanelScroll(() => root)
+  return <section ref={root} class="mission-tree mission-disclosure" data-scroller={panelScrolls() ? "panel" : undefined}>
     <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
       onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>
       <ChevronRight class="disclosure-chevron h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.tasks")}</span>

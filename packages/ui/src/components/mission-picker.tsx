@@ -6,6 +6,8 @@ import { filterMissionPickerEntries, missionPickerAttention, missionPickerAttent
 interface ListApi { key: (event: KeyboardEvent) => boolean; focusSearch: () => boolean; activeId: () => string | undefined }
 
 const describe = (entry: MissionPickerEntry) => `${entry.title} — ${entry.status}`
+/** Keys confirming or navigating an IME composition belong to the text field. */
+const composing = (event: KeyboardEvent) => event.isComposing || event.keyCode === 229
 
 function Mark(props: { entry: MissionPickerEntry }) {
   return <span class="mission-picker-mark" data-mark={props.entry.mark} aria-hidden="true" />
@@ -39,6 +41,7 @@ function MissionPickerList(props: {
   })
   createEffect(() => { const id = activeId(); if (id) document.getElementById(id)?.scrollIntoView({ block: "nearest" }) })
   const key = (event: KeyboardEvent) => {
+    if (composing(event)) return false
     const count = filtered().length
     const move = (index: number) => { event.preventDefault(); setActive(Math.min(Math.max(index, 0), Math.max(count - 1, 0))) }
     if (event.key === "ArrowDown") move(active() + 1)
@@ -112,8 +115,12 @@ export function MissionPicker(props: {
   })
   createEffect(() => { if (props.entries.length === 0 && open()) close(false) })
   const onFieldKey = (event: KeyboardEvent) => {
+    if (composing(event)) return
     if (!open()) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true) }
+      // Like a select, Space opens; its native keyup click stays suppressed (below)
+      // so it cannot toggle the popup again. Enter keeps the native button click.
+      else if (event.key === " ") { event.preventDefault(); if (!event.repeat) setOpen(true) }
       return
     }
     if (event.key === "Escape") { event.preventDefault(); close(true); return }
@@ -123,7 +130,7 @@ export function MissionPicker(props: {
   }
   return <div ref={root} class="mission-picker" onFocusOut={event => {
     if (open() && !root.contains(event.relatedTarget as Node | null)) close(false)
-  }} onKeyDown={event => { if (open() && event.key === "Escape") { event.preventDefault(); close(true) } }}>
+  }} onKeyDown={event => { if (open() && event.key === "Escape" && !composing(event)) { event.preventDefault(); close(true) } }}>
     <div class="mission-picker-actions" role="toolbar" aria-label={t("missionsPanel.picker.actions")}>
       <button type="button" class="mission-control-icon-button" aria-label={t("missions.control.create")} title={t("missions.control.create")}
         disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
