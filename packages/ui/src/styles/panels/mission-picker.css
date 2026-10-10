@@ -1,5 +1,5 @@
-/* Mission picker (mission-picker.tsx): an icon toolbar row (create/edit/delete, then
-   right-aligned trailing settings/refresh) above the full-width "current mission"
+/* Mission picker (mission-picker.tsx): a right-aligned toolbar of general actions
+   (create, settings, refresh) above the full-width "current mission"
    line (chevron, selected title field). */
 .mission-control-header > .mission-picker { display: grid; flex: 1 1 auto; gap: var(--space-xs); min-width: 0; }
 .mission-picker-control { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -39,11 +39,10 @@
 .mission-picker-placeholder { color: var(--text-muted); }
 .mission-picker :is(.mission-picker-expander, .mission-picker-field):focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .mission-picker-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.mission-picker-actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mission-picker-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
 /* Margins match the mission line / toolbar gap: above the toolbar and between it and the mission line. */
 .mission-control-header > .mission-picker { margin-block-start: var(--space-sm); }
 .mission-picker > .mission-picker-actions { margin-block-end: var(--space-sm); }
-.mission-picker-trailing { display: flex; align-items: center; gap: 2px; margin-inline-start: auto; }
 
 /* Small square status mark; the full state is in the tooltip and screen-reader text. */
 .mission-picker-mark { flex: 0 0 auto; width: 6px; height: 6px; background: var(--text-muted); }

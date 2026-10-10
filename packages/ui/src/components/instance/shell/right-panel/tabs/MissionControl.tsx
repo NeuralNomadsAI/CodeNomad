@@ -258,11 +258,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             else selectMission(id)
           }}
           createDisabled={state().status === "unavailable" || Boolean(editor())}
-          editDisabled={Boolean(editor()) || selectedOneTime()?.status !== "active"}
-          deleteDisabled={Boolean(editor()) || !selectedOneTime()}
           onCreate={() => openEditor({ kind: "create" })}
-          onEdit={() => { const value = selectedOneTime(); if (value) openEditor({ kind: "edit", mission: value }) }}
-          onDelete={() => { const value = selectedOneTime(); if (value) openEditor({ kind: "delete", mission: value }) }}
           trailing={<>
           <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.preferences.title")}
             title={props.t("missions.preferences.title")} onClick={openPreferences}>
@@ -320,7 +316,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
-            onAdmitted={() => missionStore.refresh(props.instanceId)} />
+            onAdmitted={() => missionStore.refresh(props.instanceId)}
+            editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
+            onEdit={() => openEditor({ kind: "edit", mission: selected() })}
+            onDelete={() => openEditor({ kind: "delete", mission: selected() })} />
           {tracking()}
         </section>
       }}</Show>

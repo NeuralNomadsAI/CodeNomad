@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js"
-import { ChevronRight, Minus, Pencil, Plus } from "lucide-solid"
+import { ChevronRight, Plus } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { filterMissionPickerEntries, missionPickerAttention, missionPickerAttentionLabel, type MissionPickerEntry } from "./mission-picker-model"
 
@@ -80,14 +80,14 @@ function MissionPickerList(props: {
   </div>
 }
 
-/** An icon toolbar (create/edit/delete, trailing settings/refresh) above the
+/** A right-aligned toolbar of general actions (create, then the trailing
+ * settings/refresh) above the
  * "current mission" line: chevron (persistent inline list) and the selected
  * title (transient popup listbox). */
 export function MissionPicker(props: {
   entries: MissionPickerEntry[]; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
   expanded: boolean; onExpandedChange: (expanded: boolean) => void
-  onCreate: () => void; onEdit: () => void; onDelete: () => void
-  createDisabled: boolean; editDisabled: boolean; deleteDisabled: boolean
+  onCreate: () => void; createDisabled: boolean
   trailing?: JSX.Element
 }) {
   const { t } = useI18n()
@@ -127,11 +127,7 @@ export function MissionPicker(props: {
     <div class="mission-picker-actions" role="toolbar" aria-label={t("missionsPanel.picker.actions")}>
       <button type="button" class="mission-control-icon-button" aria-label={t("missions.control.create")} title={t("missions.control.create")}
         disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
-      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.edit")} title={t("missionsPanel.picker.edit")}
-        disabled={props.editDisabled} onClick={() => props.onEdit()}><Pencil class="h-3.5 w-3.5" aria-hidden="true" /></button>
-      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
-        disabled={props.deleteDisabled} onClick={() => props.onDelete()}><Minus class="h-4 w-4" aria-hidden="true" /></button>
-      <Show when={props.trailing}><span class="mission-picker-trailing">{props.trailing}</span></Show>
+      {props.trailing}
     </div>
     <div class="mission-picker-control">
       <button type="button" class="mission-picker-expander" aria-expanded={props.expanded}

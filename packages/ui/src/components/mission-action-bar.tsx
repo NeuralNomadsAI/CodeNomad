@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js"
-import { ArrowUpRight, Eye, Pause, Play, RefreshCw, Square } from "lucide-solid"
+import { ArrowUpRight, Eye, Minus, Pause, Pencil, Play, RefreshCw, Square } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
@@ -11,11 +11,13 @@ function primaryIcon(key?: string): JSX.Element {
 }
 
 /** One row of icon buttons above the selected Mission/schedule's task tree:
- * summary reader, contextual Play/Pause, Stop, coordinator conversation and
- * the remaining actions. Inapplicable buttons stay in place, disabled. */
+ * contextual Play/Pause and Stop, a separator, then summary reader,
+ * coordinator conversation, edit, delete and the remaining actions.
+ * Inapplicable buttons stay in place, disabled. */
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader: () => void
   primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; onOpenConversation?: () => void
+  onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
   items: ActionOverflowMenuItem[]; feedback?: JSX.Element
 }) {
   const { t } = useI18n()
@@ -23,10 +25,6 @@ export function MissionActionBar(props: {
   const stopLabel = () => props.stop ? props.stop.ariaLabel ?? props.stop.label : t("missions.control.run.stop")
   return <>
     <div class="mission-action-bar" role="toolbar" aria-label={props.label}>
-      <button type="button" class="mission-control-icon-button icon-toggle mission-overview-toggle" aria-pressed={props.reading}
-        aria-label={t("missionsPanel.overview")} title={t("missionsPanel.overview")} onClick={() => props.onToggleReader()}>
-        <Eye class="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
       <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={primaryLabel()}
         disabled={!props.primary || props.primary.disabled} onClick={() => void props.primary?.onSelect()}>
         {primaryIcon(props.primary?.key)}
@@ -35,10 +33,19 @@ export function MissionActionBar(props: {
         disabled={!props.stop || props.stop.disabled} onClick={() => void props.stop?.onSelect()}>
         <Square class="h-3.5 w-3.5" aria-hidden="true" />
       </button>
+      <span class="mission-action-separator" role="separator" aria-orientation="vertical" />
+      <button type="button" class="mission-control-icon-button icon-toggle mission-overview-toggle" aria-pressed={props.reading}
+        aria-label={t("missionsPanel.overview")} title={t("missionsPanel.overview")} onClick={() => props.onToggleReader()}>
+        <Eye class="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
       <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.action.openConversation")}
         title={t("missionsPanel.action.openConversation")} disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.()}>
         <ArrowUpRight class="h-4 w-4" aria-hidden="true" />
       </button>
+      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.edit")} title={t("missionsPanel.picker.edit")}
+        disabled={!props.onEdit || props.editDisabled} onClick={() => props.onEdit?.()}><Pencil class="h-3.5 w-3.5" aria-hidden="true" /></button>
+      <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
+        disabled={!props.onDelete || props.deleteDisabled} onClick={() => props.onDelete?.()}><Minus class="h-4 w-4" aria-hidden="true" /></button>
       <ActionOverflowMenu items={props.items} minItems={0} label={t("missionsPanel.moreActions")} triggerClass="mission-control-icon-button" />
     </div>
     <div class="mission-action-feedback">{props.feedback}</div>

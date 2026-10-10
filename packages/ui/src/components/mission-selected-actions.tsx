@@ -8,11 +8,12 @@ import { createMissionLifecycle } from "./mission-lifecycle-controls"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
 
 /** Summary reader, lifecycle, coordinator conversation, update request and
- * recovery of the selected one-time Mission. Edit/delete live in the picker line. */
+ * recovery, edit and delete of the selected one-time Mission. */
 export function MissionSelectedActions(props: {
   instanceId: string; mission: MissionMap; active: boolean; disabled: boolean; messagingDisabled: boolean
   reading: boolean; onToggleReader: () => void
   coordinatorActivity?: MissionActorActivityState; onOpenCoordinator: () => void; onAdmitted: () => Promise<void>
+  onEdit: () => void; onDelete: () => void; editDisabled: boolean; deleteDisabled: boolean
 }) {
   const { t } = useI18n()
   const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
@@ -32,6 +33,7 @@ export function MissionSelectedActions(props: {
     ]
   }
   return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
-    primary={lifecycle.primary()} stop={lifecycle.stop()} onOpenConversation={() => props.onOpenCoordinator()} items={items()}
+    primary={lifecycle.primary()} stop={lifecycle.stop()} onOpenConversation={() => props.onOpenCoordinator()}
+    onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled} items={items()}
     feedback={<>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>} />
 }
