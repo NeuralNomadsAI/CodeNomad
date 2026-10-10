@@ -443,6 +443,10 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
   journal storage, not live-map capacity. Recurring passage retention needs its
   own bounded history strategy rather than exhausting this one-shot task budget.
 - Existing root actors may be reused, but an actor cannot join two active missions.
+  Once a mission is stopped or finished another active mission may reuse its
+  actor; a Stop target found serving another active mission settles with a known
+  `target-reused` receipt and no native interrupt or inbox cancellation, so the
+  stopped mission can still be deleted. Pause/Play on a shared actor are refused.
 - Dependency tasks are mapped as blocked and are never auto-dispatched.
 - Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. The Debugging playbook's completed-role evidence gates still apply; retirement cannot satisfy a gate.
 - One-time creation refusals that provably happen before the native create is

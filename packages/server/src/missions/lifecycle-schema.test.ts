@@ -39,6 +39,15 @@ test("boolean interrupted:false and target-missing are distinct known observatio
   assert.equal(parseMissionNativeAcknowledgement({ ...missing, action: "start" }), undefined)
 })
 
+test("a reused Stop target is its own known observation, Stop only, in both schemas", () => {
+  const reused = { ...identity, action: "stop", disposition: "target-reused" }
+  assert.deepEqual(parseMissionNativeAcknowledgement(reused), reused)
+  for (const action of ["pause", "start"]) assert.equal(parseMissionNativeAcknowledgement({ ...reused, action }), undefined)
+  const ackValid = new Ajv({ allErrors: true }).compile(nativeAcknowledgementSchema)
+  assert.equal(ackValid(reused), true)
+  assert.equal(ackValid({ ...reused, action: "pause" }), false)
+})
+
 test("unknown/legacy transport replies never become new native acknowledgements", () => {
   for (const value of [undefined, null, true, {}, { applied: true }, interrupt(), { nativeAcknowledgement: undefined },
     { nativeAcknowledgement: interrupt(), applied: true }, { nativeAcknowledgement: { ...interrupt(), activity: "idle" } }]) {
