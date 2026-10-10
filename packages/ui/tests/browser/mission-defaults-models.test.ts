@@ -330,11 +330,11 @@ test("late completion of other initial owner loads cannot republish the older UI
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(async profiles => {
       const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
-      serverEvents.dispatchBatch([{ type: "storage.configChanged", owner: "ui", value: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }])
+      serverEvents.dispatchBatch([{ type: "storage.configChanged", owner: "ui", value: { settings: { missionProfileDefaults: [{ template: "all", profiles }, { template: "custom", profiles }] } } }])
     }, profiles)
     release()
     await page.waitForFunction(() => window.missionDefaultsModels.generalLoaded())
-    assert.deepEqual(await page.evaluate(() => window.missionDefaultsModels.preferences().missionProfileDefaults), [{ template: "custom", profiles }])
+    assert.deepEqual(await page.evaluate(() => window.missionDefaultsModels.preferences().missionProfileDefaults), [{ template: "all", profiles }, { template: "custom", profiles }])
     assert.deepEqual(fixture.errors, [])
   } finally { release(); await page.close() }
 })

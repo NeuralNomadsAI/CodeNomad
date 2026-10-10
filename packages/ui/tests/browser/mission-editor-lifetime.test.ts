@@ -8,7 +8,9 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-editor-lifetime"
-import { clickMissionAction } from "./mission-actions"
+import { clickMissionAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
+
+const EDIT = "Edit selected mission"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -61,10 +63,10 @@ async function transition(page: Page, change: Transition) {
     await page.evaluate(() => window.missionEditorLifetime.project("other-project"))
     if (change.endsWith("aba")) await page.evaluate(() => window.missionEditorLifetime.project("project"))
   }
-  await page.getByRole("button", { name: "Objective two", exact: true }).click()
+  await selectMission(page, "Objective two")
   if (change === "selection-aba") {
-    await page.getByRole("button", { name: "Objective one", exact: true }).click()
-    await page.getByRole("button", { name: "Objective two", exact: true }).click()
+    await selectMission(page, "Objective one")
+    await selectMission(page, "Objective two")
   }
   if (change === "new-editor") {
     if (await page.locator("form.mission-editor").count()) await page.getByRole("button", { name: "Cancel", exact: true }).click()
@@ -95,9 +97,9 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
           return route.fulfill({ json: { mission: saved } })
         })
         await page.goto(url)
-        await page.getByRole("button", { name: "Objective one", exact: true }).click()
+        await selectMission(page, "Objective one")
         if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-        else await clickMissionAction(page.locator(".mission-control-index li.mission-index-entry-selected > .mission-index-row"), "Edit")
+        else await clickMissionAction(page, EDIT)
         await page.locator("form.mission-editor textarea").first().fill("Original draft")
         await page.locator("form.mission-editor button[type=submit]").first().click()
         await reached.promise
@@ -109,8 +111,8 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         // when a disposed editor no longer owns an onSaved callback.
         if (change === "inactive") await page.evaluate(() => window.missionEditorLifetime.activate(true))
         await page.evaluate(() => window.missionEditorLifetime.invalidate())
-        await page.getByRole("button", { name: "Saved result", exact: true }).waitFor()
-        assert.match(await page.locator(".mission-control-index li.mission-index-entry-selected .mission-index-title").innerText(), /^Objective two$/)
+        await (await inlineMissionEntry(page, "Saved result")).waitFor()
+        assert.match(await selectedMissionTitle(page).innerText(), /^Objective two$/)
         if (change === "new-editor") {
           assert.equal(await page.locator("form.mission-editor textarea").first().inputValue(), "Newer editor draft")
           assert.equal(await page.getByRole("alert").count(), 0)
@@ -137,17 +139,17 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
       return route.fulfill({ json: { mission: saved } })
     })
     await page.goto(url)
-    await page.getByRole("button", { name: "Objective two", exact: true }).click()
+    await selectMission(page, "Objective two")
     if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    else await clickMissionAction(page.locator(".mission-control-index .mission-index-row").filter({ has: page.getByRole("button", { name: "Objective one", exact: true }) }), "Edit")
+    else await clickMissionAction(page, EDIT, "Objective one")
     await page.locator("form.mission-editor textarea").first().fill("Current")
     // Browsing before Save is not a late gesture: Save captures its own origin.
-    await page.getByRole("button", { name: "Objective one", exact: true }).click()
-    await page.getByRole("button", { name: "Objective two", exact: true }).click()
+    await selectMission(page, "Objective one")
+    await selectMission(page, "Objective two")
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), false)
     const before = (await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).length
     await page.locator("form.mission-editor button[type=submit]").first().click()
-    await page.locator(".mission-control-index li.mission-index-entry-selected .mission-index-title", { hasText: "Saved result" }).waitFor()
+    await selectedMissionTitle(page).filter({ hasText: /^Saved result$/ }).waitFor()
     assert.equal(await page.locator("form.mission-editor").count(), 0); assert.equal(writes, 1)
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).slice(before).filter(id => id === (method === "POST" ? "saved" : "one")).length, 1)
     assert.deepEqual(errors, [])
@@ -186,7 +188,7 @@ test("creation-uncertain retains original request/draft across close, remount an
     // Even a map observed later is not a terminal receipt for the held creation.
     list = [...list, { ...mission("late"), objective: "Late durable map" }]
     await page.locator("form.mission-editor").getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await page.getByRole("button", { name: "Late durable map", exact: true }).waitFor()
+    await (await inlineMissionEntry(page, "Late durable map")).waitFor()
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(attempts.length, 1)
     assert.deepEqual(await page.evaluate(() => window.missionEditorLifetime.held()), original)
@@ -210,7 +212,7 @@ for (const method of ["POST", "PATCH"] as const) test(`late ${method} rejection 
     })
     await page.goto(url)
     if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    else await clickMissionAction(page.locator(".mission-control-index li.mission-index-entry > .mission-index-row").first(), "Edit")
+    else await clickMissionAction(page, EDIT, "Objective one")
     await page.locator("form.mission-editor textarea").first().fill("Original rejected draft")
     await page.locator("form.mission-editor button[type=submit]").first().click()
     await reached.promise

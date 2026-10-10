@@ -67,7 +67,7 @@ async function setup(label: string, narrow = false, independent = false) {
   const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown }> = []
   const voidResponses = new Set<Request>(), voidBodyCancellations: string[] = []
   const rawRequestFailures: string[] = [], navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
-  const failureChecks: Promise<void>[] = []
+  const failureChecks: Promise<unknown>[] = [], outlineResponses: Array<{ session: string; at: number }> = []
   const drainRequestFailures = async () => { await Promise.all(failureChecks) }
   const receipts: Array<{ method: string; path: string; status: number }> = [], fallbackResponses: string[] = []
   let family = structuredClone(independent ? deepFamily : observedFamily), deferred = false, release!: () => void, reached!: () => void, completed!: () => void
@@ -85,17 +85,33 @@ async function setup(label: string, narrow = false, independent = false) {
     // The actual Promise client cancels empty-response bodies. Retain these
     // confirmed 204 receipts separately, never excuse an unconfirmed failure.
     if (voidResponses.has(request) && request.failure()?.errorText === "net::ERR_ABORTED") voidBodyCancellations.push(message)
-    else if (request.method() === "POST" && new URL(request.url()).pathname === "/api/workspaces/native-family/session-history/outlinePreview"
+    else if (request.method() === "POST" && ["outline", "outlinePreview"].some(route => new URL(request.url()).pathname === `/api/workspaces/native-family/session-history/${route}`)
       && request.failure()?.errorText === "net::ERR_ABORTED") {
-      // Production timeline-previews.ts aborts demand on session/inactive
-      // cleanup. Verify the exact old-session request before classifying it;
-      // retain the raw failure and never count an abort as a response receipt.
-      const requestedSession = outlinePreviewInputSchema.parse(request.postDataJSON()).sessionID
-      failureChecks.push(page.evaluate(() => window.missionNativeFamily?.snapshot().session).then(activeSession => {
-        if (activeSession && activeSession !== requestedSession) navigationReadCancellations.push({ failure: message, requestedSession, activeSession })
-        else failures.push(message)
+      // Production timeline-previews.ts and session-outline.ts abort demand on
+      // session/inactive cleanup. Verify the exact old-session request before
+      // classifying it; retain the raw failure and never count an abort as a
+      // response receipt.
+      const preview = new URL(request.url()).pathname.endsWith("/outlinePreview")
+      const requestedSession = (preview ? outlinePreviewInputSchema : outlineInputSchema).parse(request.postDataJSON()).sessionID
+      // session-outline.ts also re-keys demand when the session's native
+      // identity settles; accept that abort only once a later request for the
+      // same session actually received an outline response.
+      const supersededAt = Date.now()
+      failureChecks.push(page.evaluate(() => window.missionNativeFamily?.snapshot().session).then(async activeSession => {
+        if (activeSession && activeSession !== requestedSession) return navigationReadCancellations.push({ failure: message, requestedSession, activeSession })
+        if (!preview) {
+          const deadline = Date.now() + 5000
+          while (Date.now() < deadline && !outlineResponses.some(item => item.session === requestedSession && item.at >= supersededAt)) await new Promise(resolve => setTimeout(resolve, 50))
+          if (outlineResponses.some(item => item.session === requestedSession && item.at >= supersededAt))
+            return navigationReadCancellations.push({ failure: message, requestedSession, activeSession: activeSession ?? "" })
+        }
+        failures.push(message)
       }).catch(() => { failures.push(message) }))
     } else failures.push(message)
+  })
+  page.on("requestfinished", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/workspaces/native-family/session-history/outline")
+      outlineResponses.push({ session: outlineInputSchema.parse(request.postDataJSON()).sessionID, at: Date.now() })
   })
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)

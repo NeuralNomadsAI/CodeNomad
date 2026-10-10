@@ -11,7 +11,7 @@ import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
-import { normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
+import { encodeMissionDefaults, normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
 import { normalizeMissionModels, validMissionModels, parseMissionModel, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../lib/mission-model-library"
 import { missionPreferenceExpectation, missionPreferenceValue, type MissionPreferenceKey, type MissionPreferenceExpectation } from "../lib/mission-preferences-document"
 import {
@@ -766,7 +766,7 @@ async function patchMissionPreferences(patch: unknown, expected: MissionPreferen
 function saveMissionDefaults(input: MissionProfileDefault[], expected: MissionPreferenceExpectation, repair = false): Promise<void> {
   if (!isUiConfigLoaded() || (!missionDefaultsValid() && !repair) || !validMissionDefaults(input)
     || expected.key !== "missionProfileDefaults") return Promise.reject(new Error("Invalid mission defaults document"))
-  return patchMissionPreferences({ settings: { missionProfileDefaults: normalizeMissionDefaults(input) } }, [expected])
+  return patchMissionPreferences({ settings: { missionProfileDefaults: encodeMissionDefaults(input) } }, [expected])
 }
 
 let missionModelWriteQueue = Promise.resolve()

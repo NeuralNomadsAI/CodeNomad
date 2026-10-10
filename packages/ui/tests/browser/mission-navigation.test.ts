@@ -9,7 +9,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { clickMissionAction, toggleMissionOverview } from "./mission-actions"
+import { clickMissionAction, missionPickerField, selectMission, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -140,7 +140,8 @@ async function setup(missing = false) {
   try {
     navigationStartedAt = Date.now(); documentBaseline = ownedHTTP.documentArrivals
     await page.goto(url)
-    await page.getByRole("button", { name: "Objective A", exact: true }).waitFor()
+    // Loaded Missions enable the current-mission field (nothing is selected by default).
+    await missionPickerField(page).and(page.locator(":enabled")).waitFor()
   } catch (error) {
     failedSetupHeld = held.promise
     try {
@@ -161,15 +162,12 @@ async function setup(missing = false) {
   return { page, held, reached, completed, errors, networkErrors, requests, cancelledRecurrenceReads,
     retireRecurrenceDemand: () => { recurrenceDemandRetired = true } }
 }
-const row = (page: Page, id: string) => page.locator(".mission-control-index > li.mission-index-entry").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
 async function read(page: Page, id: string) {
-  await row(page, id).waitFor()
-  // The overview reader belongs to the selected Mission's detail ("Overview").
-  await toggleMissionOverview(row(page, id))
+  // The overview reader belongs to the selected Mission's toolbar ("Summary" eye).
+  await toggleMissionOverview(page, `Objective ${id}`)
 }
 async function actor(page: Page, id: string) {
-  await row(page, id).waitFor()
-  await clickMissionAction(row(page, id).locator(".mission-index-row"), "Open conversation")
+  await clickMissionAction(page, "Open conversation", `Objective ${id}`)
 }
 async function settled(page: Page) {
   // Let the fulfilled HTTP response traverse the real Promise client and Solid
@@ -197,10 +195,9 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       } else if (change === "remount") {
         await page.evaluate(() => window.missionNavigation.mount(false)); await page.evaluate(() => window.missionNavigation.mount(true))
       }
-      if (change === "selection") await page.getByRole("button", { name: "Objective B", exact: true }).click()
+      if (change === "selection") await selectMission(page, "Objective B")
       else if (change === "actor") {
-        // Menu actions launch after the menu restores focus; let B's newer
-        // navigation land before capturing the state the stale A must keep.
+        // Let B's newer navigation land before capturing the state the stale A must keep.
         await actor(page, "B")
         await page.waitForFunction(() => { const value = window.missionNavigation.snapshot(); return value.view.selected === "B" && value.selectedSession === "ses_B" })
         await settled(page)

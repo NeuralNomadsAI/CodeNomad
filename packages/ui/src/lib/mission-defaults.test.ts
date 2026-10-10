@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
+import { encodeMissionDefaults, missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
 import { LEGACY_DEBUG_TEMPLATE_ID } from "../../../server/src/missions/template-id"
 
 const coordinator = { agent: "general", model: { providerID: "openai", id: "coordinator", variant: "high" } }
@@ -135,6 +135,16 @@ describe("mission defaults for future creation", () => {
     }
     const explicit = normalizeMissionDefaults([{ template: "all", profiles: { coordinator } }, { template: "custom", profiles: {} }])
     assert.deepEqual(explicit.map(item => item.template), ["all", "custom"], "an explicit global entry keeps Flexible as an exception")
+  })
+
+  it("writes a lone Flexible exception with the explicit global entry so it stays an exception", () => {
+    const exception: MissionProfileDefault[] = [{ template: "custom", profiles: { roles: { specialist } }, taskMode: "independent" }]
+    const written = encodeMissionDefaults(exception)
+    assert.deepEqual(written, [{ template: "all", profiles: {} }, exception[0]])
+    assert.deepEqual(normalizeMissionDefaults(written), written, "rereading the written document keeps Flexible an exception")
+    assert.equal(missionTaskModeFor(normalizeMissionDefaults(written), "wayfinder"), "native", "the exception never becomes global")
+    const global: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator } }, { template: "debug", profiles: {} }]
+    assert.deepEqual(encodeMissionDefaults(global), global, "documents without a Flexible exception are unchanged")
   })
 
   it("lets Flexible carry its own exception over the global default", () => {

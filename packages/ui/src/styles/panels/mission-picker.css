@@ -81,6 +81,7 @@
   box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
 }
 .mission-picker-option-selected:is(:hover, .mission-picker-option-active) {
+  background-color: var(--list-item-highlight-bg);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 button.mission-picker-option:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }

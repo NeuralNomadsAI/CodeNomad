@@ -15,7 +15,9 @@ describe("native Preferences requests", () => {
       location: { directory: "/repo", workspaceID: "worktree-1" },
     })
     assert.equal(normalizeNativePreferencesRequest("workspace"), null)
-    assert.equal(normalizeNativePreferencesRequest("missions"), null, "Mission preferences live in the Missions panel")
+    // The Missions panel gear opens Mission preferences in Settings, including native Preferences.
+    assert.deepEqual(normalizeNativePreferencesRequest({ section: "missions", instanceId: "workspace-1", location: { directory: "/repo" } }),
+      { section: "missions", instanceId: "workspace-1", location: { directory: "/repo" } })
   })
 
   it("reads initial section and provider context from the native URL", () => {

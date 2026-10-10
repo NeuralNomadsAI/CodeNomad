@@ -23,7 +23,7 @@ function Fixture() {
   const [mounted, setMounted] = createSignal(true)
   ;(window as any).missionVisibility = {
     activate: setActive,
-    // Rows persist across selection; unmounting is what disposes them.
+    // Selection persists in the per-window view; unmounting disposes the selected toolbar.
     mount: setMounted,
     demanded: () => missionStore.demandedInstanceIds(),
     state: () => missionStore.state(instance.id),

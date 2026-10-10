@@ -13,6 +13,7 @@ import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurre
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
+import { missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -95,18 +96,21 @@ test("actual MissionControl reuses the current task tree and attention, with bri
   })
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
-    await page.getByRole("button", { name: "Daily commit review", exact: true }).click()
-    const entry = page.locator("li.mission-index-entry", { has: page.getByRole("button", { name: "Daily commit review", exact: true }) })
-    const card = page.locator("section.mission-detail")
+    const card = await selectMission(page, "Daily commit review")
     await card.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
     assert.equal(reads, 1)
-    assert.equal(await entry.locator("section.mission-detail").count(), 0, "the detail is a separate section below the list")
+    assert.equal(await page.locator(".mission-picker section.mission-detail").count(), 0, "the detail is a separate section below the picker")
     assert(!(await card.innerText()).includes("Exact passage briefing"), "briefing prose belongs to the central reader")
     assert.equal(await card.locator(".mission-needs").getByText("Real child request", { exact: true }).count(), 1)
-    assert.equal(await page.getByRole("button", { name: /^(Start|Pause|Resume|Stop|Send|Request an update)/ }).count(), 0, "isolated read never opens ordinary mutations")
+    // Schedule controls name their schedule; the isolated passage never offers one-time Mission mutations.
+    // Toolbar buttons stay in place; a schedule without actions keeps them all disabled.
+    const mutations = await page.getByRole("button", { name: /^(Start|Pause|Resume|Stop|Run|Send|Request an update)/ })
+      .evaluateAll(nodes => nodes.map(node => [node.getAttribute("aria-label"), (node as HTMLButtonElement).disabled]))
+    assert.deepEqual(mutations, [["Start", true], ["Stop schedule Daily commit review", true], ["Run Daily commit review now", true]],
+      "isolated read never opens ordinary mutations")
+    for (const label of ["Edit selected mission", "Delete selected mission…"]) assert.equal(await missionToolbarAction(page, label).isDisabled(), true, `${label} stays disabled for a schedule`)
     assert.equal(await card.locator("form, textarea").count(), 0, "no coordinator field in the panel")
-    assert.equal(await entry.locator(".mission-index-primary").count(), 0)
-    assert.equal(await entry.getByRole("button", { name: "More actions", exact: true }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu")
     const order = await card.evaluate(node => {
       const request = node.querySelector(".mission-needs")!, tasks = node.querySelector(".mission-tree")!
       return Boolean(request.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING)
@@ -121,7 +125,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       await page.evaluate(() => { document.documentElement.dir = "ltr" })
       await page.setViewportSize({ width: 1200, height: 950 })
     }
-    const overview = card.getByRole("button", { name: "Overview", exact: true })
+    const overview = card.getByRole("button", { name: "Summary", exact: true })
     await overview.click()
     await page.locator(".mission-reader").getByText("Exact passage briefing", { exact: true }).waitFor()
     assert.equal(await overview.getAttribute("aria-pressed"), "true")
@@ -167,7 +171,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     mission.briefing = savedBriefing
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
-    await page.locator(".mission-reader").getByRole("button", { name: "Open Exact task actor" }).click()
+    await page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts")).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))
     assert.deepEqual(nativeReads, [], "current passage task navigation reuses only the exact loaded task actor and native parent")
@@ -193,7 +197,9 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("What should the mission do?", { exact: true }).fill("One-shot from recurring")
     await page.getByRole("button", { name: "Create", exact: true }).click()
-    await page.locator(".mission-control-index").getByRole("button", { name: "One-shot from recurring", exact: true }).waitFor()
+    // The created one-time Mission becomes the picker's current selection.
+    await selectedMissionTitle(page).getByText("One-shot from recurring", { exact: true }).waitFor()
+    await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor()
     const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("/fixture").selectedRecurrence)
     assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")
     assert.deepEqual(writes, ["/api/workspaces/fixture/missions"], "only the explicit creation uses a mock mutation")

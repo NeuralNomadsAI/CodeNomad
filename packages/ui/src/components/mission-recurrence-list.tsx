@@ -110,8 +110,9 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     const action = primaryAction()
     return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), onSelect: () => act(action) } : undefined
   }
-  const stopAction = (): MissionPrimaryAction | undefined => props.schedule.actions.includes("stop") && !heldIntent()
-    ? { key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop } : undefined
+  // Always the schedule's own Stop, disabled when unavailable or a request is held,
+  // so the toolbar never falls back to the one-time Mission wording.
+  const stopAction = (): MissionPrimaryAction => ({ key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop })
   // The panel refresh first reads the exact request's status, then resends it
   // only when that read leaves it partially applied.
   const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.enabled(),

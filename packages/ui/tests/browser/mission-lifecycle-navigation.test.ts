@@ -8,6 +8,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
 
 let browser: Browser, server: ViteDevServer, url: string
 before(async () => {
@@ -45,42 +46,36 @@ function mission(id = "one"): MissionMap {
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
   (window as any).missionVisibility[method](arg), { method, arg })
 const tick = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-const row = (page: Page, id = "one") => page.locator(".mission-control-index > li.mission-index-entry")
-  .filter({ has: page.getByRole("button", { name: `Navigation ${id}`, exact: true }) }).locator(".mission-index-row")
-const pause = (page: Page, id = "one") => row(page, id).getByRole("button", { name: "Pause mission", exact: true })
+// Only the selected Mission has a lifecycle toolbar; helpers select it first.
+const select = (page: Page, id = "one") => selectMission(page, `Navigation ${id}`)
+const pause = (page: Page) => missionToolbarAction(page, "Pause mission")
 // An unresolved request replaces the primary Pause with a status check.
-const check = (page: Page, id = "one") => row(page, id).getByRole("button", { name: "Check control status", exact: true })
+const check = (page: Page) => missionToolbarAction(page, "Check control status")
 // An in-flight exact intent shows only a busy, disabled status check.
-const inFlight = async (page: Page, id = "one") => await pause(page, id).count() === 0 && await check(page, id).isDisabled()
-const admissible = async (page: Page, id = "one") => await pause(page, id).count() === 1 && await pause(page, id).isEnabled()
-async function menu(page: Page, id = "one") {
-  await row(page, id).getByRole("button", { name: "More actions", exact: true }).click()
-  const items = page.getByRole("menuitem"); await items.first().waitFor()
-  const result = await Promise.all((await items.all()).map(async item => ({ label: (await item.innerText()).trim(),
-    enabled: await item.getAttribute("aria-disabled") !== "true" })))
-  await page.keyboard.press("Escape"); await items.first().waitFor({ state: "detached" })
-  return result
-}
-const retryItem = async (page: Page, id = "one") => (await menu(page, id)).find(item => item.label === "Retry last action")
-const retryCount = async (page: Page, id = "one") => await retryItem(page, id) ? 1 : 0
+const inFlight = async (page: Page, id = "one") => { await select(page, id); return await pause(page).count() === 0 && await check(page).isDisabled() }
+const admissible = async (page: Page, id = "one") => { await select(page, id); return await pause(page).count() === 1 && await pause(page).isEnabled() }
+// The explicit header refresh offers to resend only the selected Mission's unconfirmed exact request.
+const RESEND = "Refresh and resend the unconfirmed action"
+const retryOffered = async (page: Page, id = "one") => { await select(page, id); return await missionRefresh(page).getAttribute("aria-label") === RESEND }
+const retryCount = async (page: Page, id = "one") => await retryOffered(page, id) ? 1 : 0
 async function retry(page: Page, id = "one") {
-  // Menu actions launch after the menu closes; wait for the actual dispatch.
+  assert.equal(await retryOffered(page, id), true)
+  // The refresh reconciles read-only first; wait for the actual resend.
   const sent = page.waitForRequest(request => request.url().endsWith("/control"))
-  await row(page, id).getByRole("button", { name: "More actions", exact: true }).click()
-  await page.getByRole("menuitem", { name: "Retry last action", exact: true }).click()
+  await missionRefresh(page).click()
   await sent
 }
 async function remount(page: Page) {
-  await call(page, "mount", false); await row(page).waitFor({ state: "detached" })
-  await call(page, "mount", true); await row(page).waitFor()
+  await call(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" })
+  await call(page, "mount", true); await missionDetail(page).waitFor()
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready"); await tick(page)
 }
 async function settle(page: Page) {
-  await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready" && !document.querySelector('.mission-index-feedback [role="status"]'))
+  await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready" && !document.querySelector('.mission-action-feedback [role="status"]'))
 }
 async function open(page: Page) {
   await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
-  await call(page, "activate", true); await pause(page).waitFor()
+  await call(page, "activate", true); await select(page); await pause(page).waitFor()
 }
 
 test("certified rejection while hidden releases only its owned intent; reactivation permits explicit revision2 Pause", async () => {
@@ -103,6 +98,9 @@ test("certified rejection while hidden releases only its owned intent; reactivat
     assert.equal(readsWhileHidden, 0); assert.deepEqual(await call(page, "demanded"), [])
     await call(page, "activate", true); await settle(page)
     assert.equal(await retryCount(page), 0); assert.equal(calls.length, 1)
+    // An explicit refresh with nothing unconfirmed only reconciles read-only.
+    const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
+    await missionRefresh(page).click(); await reread; await settle(page); assert.equal(calls.length, 1)
     assert.equal(await page.evaluate(() => (window as any).missionVisibility.state().missions[0].revision), 2)
     await pause(page).click(); await settle(page)
     assert.deepEqual(calls.map(input => input.expectedRevision), [1, 2]); assert.notEqual(calls[0].requestId, calls[1].requestId)
@@ -148,14 +146,14 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
           : outcome === "unknown" ? route.fulfill({ status: 409, json: {} })
           : route.fulfill({ json: { mission: outcome === "foreign-ack" ? mission("foreign") : current } })
       })
-      // Rows survive selection; unmounting the panel disposes the dispatching row.
+      // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
       await open(page); await pause(page).click(); await sent; await remount(page)
-      await row(page, "two").getByRole("button", { name: "Navigation two", exact: true }).click(); await tick(page)
-      assert.equal(await inFlight(page), true, "the remounted row observes the in-flight exact intent")
+      assert.equal(await inFlight(page), true, "the remounted toolbar observes the in-flight exact intent")
+      await select(page, "two"); await tick(page)
       const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
       release(); await response; await tick(page)
       assert.equal(reads, before); assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
-      await row(page).getByRole("button", { name: "Navigation one", exact: true }).click(); await settle(page)
+      await select(page, "one"); await settle(page)
       const unresolved = outcome === "unknown" || outcome === "foreign-ack"
       assert.equal(await retryCount(page), unresolved ? 1 : 0)
       assert.equal(await admissible(page), !unresolved); assert.equal(await check(page).count(), unresolved ? 1 : 0)
@@ -183,7 +181,7 @@ test("directory/project source ABA retains original uncertainty; stale completio
       addInstance({ id: "mission-visibility", folder: "/source-a", proxyPath: "/fixture", port: 0, pid: 0, status: "ready", client: null,
         metadata: { project: { id: "project-a" } as any } })
     })
-    await call(page, "activate", true); await pause(page).waitFor(); await pause(page).click(); await sent
+    await call(page, "activate", true); await select(page); await pause(page).waitFor(); await pause(page).click(); await sent
     for (const [directory, projectID] of [["/source-b", "project-b"], ["/source-a", "project-a"]]) {
       await page.evaluate(async ({ directory, projectID }) => {
         const { updateInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
@@ -221,8 +219,8 @@ test("window capacity fails closed without eviction; exact release enables admis
       return { filled: records.filter(Boolean).length, available: store.available(), overflow: Boolean(store.reserve("overflow", "fixture", { action: "pause", expectedRevision: 1, requestId: "overflow" })) }
     })
     assert.deepEqual(count, { filled: 63, available: false, overflow: false })
-    assert.equal(await pause(page, "two").isDisabled(), true)
-    assert.equal((await retryItem(page))?.enabled, true)
+    await select(page, "two"); assert.equal(await pause(page).isDisabled(), true)
+    assert.equal(await retryOffered(page), true); assert.equal(await missionRefresh(page).isEnabled(), true)
     await retry(page); await settle(page); assert.deepEqual(calls[1], calls[0])
     await page.evaluate(async () => {
       const { missionLifecycleIntents: store }: IntentModule = await import("/src/stores/mission-lifecycle-intents" + ".ts")
@@ -277,7 +275,7 @@ test("same-project metadata hydration cannot enable fresh admission or erase the
       const { addInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
       addInstance({ id: "mission-visibility", folder: "/fixture", proxyPath: "/fixture", port: 0, pid: 0, status: "ready", client: null })
     })
-    await call(page, "activate", true); await pause(page).waitFor(); await pause(page).click(); await settle(page)
+    await call(page, "activate", true); await select(page); await pause(page).waitFor(); await pause(page).click(); await settle(page)
     await page.evaluate(async () => {
       const { updateInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
       updateInstance("mission-visibility", { metadata: { project: { id: "fixture" } as any } })

@@ -13,6 +13,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { missionMarkdownPage } from "../../src/lib/mission-markdown-pages"
 import type {} from "./fixtures/mission-passage-history"
 import { captureMissionView } from "./mission-view-capture"
+import { missionPickerExpander, selectMission } from "./mission-actions"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -46,17 +47,26 @@ const schedule = (id: string): MissionRecurrenceSnapshot["schedules"][number] =>
     nextDueAt: null, actions: [], controls: [], pending: { passageID: "rcp_pending", status: "uncertain" }, latestResult: history.at(-1)!, history }
 }
 
+/** A schedule's entry in the picker's persistent inline list (see `expandList`). */
 function scheduleEntry(page: Page, title: string) {
-  return page.locator("li.mission-index-entry", { has: page.getByRole("button", { name: title, exact: true }) })
+  return page.locator(".mission-picker-inline button.mission-picker-option")
+    .filter({ has: page.locator(".mission-picker-title", { hasText: new RegExp(`^${title}$`) }) })
 }
-/** The schedule's detail section (separate from its row) and its Overview eye. */
+/** Expand the persistent inline list; once expanded, an absent entry means an absent schedule. */
+async function expandList(page: Page) {
+  const expander = missionPickerExpander(page)
+  await expander.waitFor()
+  if (await expander.getAttribute("aria-expanded") !== "true") await expander.click()
+}
+const listExpanded = async (page: Page) => await missionPickerExpander(page).getAttribute("aria-expanded") === "true"
+/** The schedule's detail section (separate from the picker) and its Summary eye. */
 function overviewEye(page: Page, title: string) {
   return page.locator(`section.mission-detail[aria-label="${title}"] .mission-overview-toggle`)
 }
-/** The selected schedule detail's Overview eye, selecting the schedule row first when needed. */
+/** The selected schedule detail's Summary eye, selecting the schedule in the picker first when needed. */
 async function readAll(page: Page, title: string) {
   const eye = overviewEye(page, title)
-  if (!await eye.isVisible()) await page.getByRole("button", { name: title, exact: true }).click()
+  if (!await eye.isVisible()) await selectMission(page, title)
   await eye.waitFor()
   return eye
 }
@@ -81,9 +91,10 @@ test("native reference history uses the shared reader, exact eyes, visible cache
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
-    const firstRow = page.getByRole("button", { name: "Daily review first", exact: true })
+    const firstRow = scheduleEntry(page, "Daily review first")
     const firstEye = overviewEye(page, "Daily review first")
     const secondEye = overviewEye(page, "Daily review second")
+    await expandList(page)
     await firstRow.waitFor()
     assert.equal(await firstRow.count(), 1)
     assert.equal(await firstEye.count(), 0, "unselected schedules show no card")
@@ -150,6 +161,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => window.passageHistory.project("foreign"))
     await reader.getByText("This mission content is no longer available.").waitFor()
     assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 0)
+    assert.equal(await listExpanded(page), true)
     assert.equal(await firstRow.count(), 0, "foreign project response cannot populate the original list")
     assert.equal(await firstEye.count(), 0)
     await page.evaluate(() => window.passageHistory.project("project"))
@@ -161,6 +173,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
       ;(serverEvents as unknown as { dispatchBatch(events: unknown[]): void }).dispatchBatch([{ type: "workspace.stopped", workspaceId: "fixture" }])
     })
     await reader.getByText("This mission content is no longer available.").waitFor()
+    assert.equal(await listExpanded(page), true)
     assert.equal(await firstRow.count(), 0, "workspace teardown revokes the previous cache")
     assert.equal(await firstEye.count(), 0)
     assert.equal(reads, beforeStop, "teardown does not start a read or rearm a passage")
@@ -229,7 +242,8 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
     await result.getByText("BRIEF END", { exact: false }).waitFor()
     await page.setViewportSize({ width: 390, height: 800 })
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
-    assert.ok(await page.getByRole("button", { name: "Daily review long", exact: true }).evaluate(node => node.getBoundingClientRect().height) < 60,
+    await expandList(page)
+    assert.ok(await scheduleEntry(page, "Daily review long").evaluate(node => node.getBoundingClientRect().height) < 60,
       "the compact title remains readable beside the pinned eye")
     await captureMissionView(page, "archive-reader-390-rtl")
     const narrow = await result.getByRole("combobox").evaluate(node => ({ select: node.getBoundingClientRect().width,
@@ -281,12 +295,15 @@ test("late Location response never installs data into a different reader or list
     await page.evaluate(() => window.passageHistory.refresh())
     await secondRead
     await page.evaluate(() => window.passageHistory.directory("/other"))
-    await page.getByRole("button", { name: "Daily review new", exact: true }).waitFor()
+    await expandList(page)
+    await scheduleEntry(page, "Daily review new").waitFor()
     release()
     await (await readAll(page, "Daily review new")).click()
     await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor({ state: "attached" })
     assert.equal(await page.getByText("rcp_rec_old_29", { exact: true }).count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Daily review old", exact: true }).count(), 0)
+    assert.equal(await listExpanded(page), true)
+    assert.equal(await scheduleEntry(page, "Daily review old").count(), 0)
+    assert.equal(await page.getByText("Daily review old", { exact: true }).count(), 0, "neither the list nor the field shows the late schedule")
   } finally { release(); await page.close() }
 })
 
@@ -324,6 +341,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
   await page.route("**/workspaces/**/instance/api/**", route => { unexpected.push(route.request().url()); return route.fulfill({ json: {} }) })
   try {
     await page.goto(url)
+    await expandList(page)
     const eye = await readAll(page, "Daily review live")
     await eye.click()
     const reader = page.locator(".mission-reader")
@@ -354,7 +372,7 @@ test("native calendar archive event updates visible reader/list once; hidden con
     await page.evaluate(() => window.passageHistory.scheduleChanged("rec_live", 6))
     await page.waitForTimeout(130)
     assert.equal(reads, hiddenReads, "no consumer visible: retain cache without background reads or a UI scheduler")
-    assert.equal(await page.getByRole("button", { name: "Daily review live", exact: true }).count(), 1, "hidden list retains confirmed data")
+    assert.equal(await scheduleEntry(page, "Daily review live").count(), 1, "hidden list retains confirmed data")
     await page.evaluate(() => { window.passageHistory.activate(true); window.passageHistory.readerVisible(true) })
     await reader.getByRole("heading", { name: "Archived result 2", exact: true }).waitFor()
     assert.equal(reads, hiddenReads + 1, "activation coalesces reader/list demand into one authoritative revalidation")

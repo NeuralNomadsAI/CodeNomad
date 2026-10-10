@@ -67,6 +67,10 @@ async function setup(value = mission()) {
   await treeTask(page).waitFor()
   return { page, errors, mutations, requests, replace: (next: MissionMap) => { current = next } }
 }
+/** The task reader derives task conversations from one bounded read of the coordinator's
+ * delegation calls; anything else under /session is navigation hydration. */
+const DERIVATION = "GET /workspaces/task-reader/instance/api/session/coordinator/message"
+const sessionReads = (requests: string[]) => requests.filter(request => request.includes("/session") && request !== DERIVATION)
 const treeTask = (page: Page, key = "work") => page.locator(`.mission-tree li[data-task-key="${key}"] > button.mission-tree-task`)
 const show = (page: Page, id = "task") => page.evaluate(id => (window as any).taskReader.show(id), id)
 const article = (page: Page, label: string) => page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: label, exact: true }) })
@@ -92,7 +96,9 @@ test("the task tree is the single task view: one-line icon+title nodes, measured
       ["before", "work", "after"], "retired work stays in the dependency tree, in topological order")
     assert.equal(await f.page.locator('.mission-tree li[data-task-key="before"]').getAttribute("data-state"), "retired")
     assert.equal(await f.page.locator('.mission-tree li[data-task-key="work"]').getAttribute("data-state"), "done")
-    assert.equal(await f.page.locator(".mission-checklist, .mission-route-list, .mission-disclosure").count(), 0, "no duplicate checklist or Work list")
+    assert.equal(await f.page.locator(".mission-checklist, .mission-route-list").count(), 0, "no duplicate checklist or Work list")
+    assert.equal(await f.page.locator(".mission-disclosure").count(), 1, "the tree itself is the only (collapsible) task group")
+    assert.equal(await f.page.locator(".mission-tree > h3 .mission-disclosure-trigger small").innerText(), "3", "the group counts every declared task")
     const row = f.page.locator('.mission-tree li[data-task-key="work"]')
     assert.equal(await row.locator("summary, details, .mission-execution, .mission-task-dependencies, p").count(), 0)
     assert.equal(await row.locator(".mission-tree-mark svg").count(), 1, "the status is an icon")
@@ -203,7 +209,7 @@ test("task reader session link uses authorized catalog navigation and never writ
   const f = await setup()
   try {
     await show(f.page)
-    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
     await f.page.locator(".mission-reader").waitFor({ state: "detached" })
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "actor")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
@@ -221,7 +227,8 @@ test(`task reader never falls back to the coordinator for ${actor ?? "missing"} 
     await expand(f.page, "Technical details")
     assert.equal(await reader.getByRole("button", { name: /^Open / }).count(), 0)
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "coordinator")
-    assert.deepEqual(f.requests.filter(request => request.includes("/session/")), [])
+    assert.deepEqual(sessionReads(f.requests), [], "no coordinator or session hydration fallback")
+    assert(f.requests.filter(request => request === DERIVATION).length <= 1, "at most one bounded delegation read")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })
@@ -235,7 +242,7 @@ test(`late native session preparation cannot navigate or publish cache after ${t
     await f.page.route("**/instance/api/session/actor", async route => { reached(); await held; await route.fulfill({ json: { data: nativeSession("actor") } }) })
     await f.page.evaluate(() => (window as any).taskReader.removeActor())
     await show(f.page)
-    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
     await started
     if (transition === "target-aba") { await show(f.page, "before"); await show(f.page) }
     if (transition === "directory-aba") {
@@ -271,14 +278,14 @@ test("cold task session navigation hydrates only its native ID and parent chain,
   try {
     await f.page.evaluate(() => (window as any).taskReader.removeActor())
     await show(f.page)
-    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
     await f.page.locator(".mission-reader").waitFor({ state: "detached" })
     const snapshot = await f.page.evaluate(() => (window as any).taskReader.snapshot())
     assert.equal(snapshot.active, "actor")
     assert.equal(snapshot.actor.parentId, "native-parent")
     assert.deepEqual(snapshot.actor.location, { directory: "/fixture/native-worktree" })
     assert.equal(snapshot.parent.id, "native-parent")
-    assert.deepEqual(f.requests.filter(request => request.includes("/session")), [
+    assert.deepEqual(sessionReads(f.requests), [
       "GET /workspaces/task-reader/instance/api/session/actor", "GET /workspaces/task-reader/instance/api/session/native-parent",
     ])
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
@@ -295,7 +302,7 @@ for (const deleted of [false, true]) test(`cold task session ${deleted ? "delete
       await route.fulfill(deleted ? { json: { data: nativeSession("actor") } } : { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } })
     })
     await f.page.evaluate(() => (window as any).taskReader.removeActor()); await show(f.page)
-    await f.page.locator(".mission-reader").getByRole("button", { name: "Open Native actor", exact: true }).click(); await started
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click(); await started
     if (deleted) await f.page.evaluate(() => (window as any).taskReader.deleteActor())
     const response = f.page.waitForResponse(response => response.url().endsWith("/instance/api/session/actor"))
     release(); await response
