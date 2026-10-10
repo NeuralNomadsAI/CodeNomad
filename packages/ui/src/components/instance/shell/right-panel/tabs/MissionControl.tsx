@@ -40,7 +40,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const selectedMissionId = () => missionProjectView(scope()).selected
   const selectedSchedule = () => missionProjectView(scope()).selectedRecurrence
-  const setSelectedMissionId = (selected: string) => updateMissionProjectView(scope(), { selected })
   const [editor, setEditor] = createSignal<MissionEditorAction & { current: () => boolean }>()
   const [navigationError, setNavigationError] = createSignal(false)
   const [recurrenceRefresh, setRecurrenceRefresh] = createSignal(0)
@@ -87,22 +86,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // Visibility owns demand; fetching state must not retrigger this effect.
     untrack(() => activateMissionDemand(instanceId))
     onCleanup(() => deactivateMissionDemand(instanceId))
-  })
-
-  let previousRelated = ""
-  createEffect(() => {
-    const available = missions()
-    if (selectedSchedule() || state().status !== "ready" || available.length === 0) return
-    const current = untrack(selectedMissionId)
-    const activeSession = props.activeSessionId()
-    const matches = activeSession ? available.filter(value => includesSession(value, activeSession)) : []
-    const related = matches.find(value => value.id === current) ?? (matches.length === 1 ? matches[0] : undefined)
-    const relation = JSON.stringify([activeSession, related?.id])
-    const changed = relation !== previousRelated
-    previousRelated = relation
-    // Only arriving in a Mission's conversation selects it; nothing is selected by default.
-    if (!related || !changed || related.id === current) return
-    setSelectedMissionId(related.id)
   })
 
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
