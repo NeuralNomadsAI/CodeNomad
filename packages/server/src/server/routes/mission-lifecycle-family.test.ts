@@ -3,6 +3,7 @@ import test from "node:test"
 import { applyMissionLifecycle } from "./mission-lifecycle"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readNativeControlFamily } from "../../missions/native-session-family"
+import { interruptNativeMissionFamily } from "../../missions/native-family-interrupt"
 
 /** A native-like family: 3 levels x fan-out 3 of busy background subagents.
  * Interrupting a child delivers its "Subagent cancelled" result to the parent
@@ -46,7 +47,7 @@ function fixture(action: "pause" | "stop" | "start", options: { stuck?: string }
         // Asynchronous native delivery that resumes the parent.
         if (was && parentID) queueMicrotask(() => {
           delivered++
-          inboxes.get(parentID)!.push({ id: `inb_result_${sessionID}`, type: "synthetic",
+          inboxes.get(parentID)!.push({ id: `inb_result_${sessionID}_${delivered}`, type: "synthetic",
             payload: { text: "Subagent cancelled", metadata: { source: "subagent", childID: sessionID, state: "cancelled" } } })
           running.add(parentID)
         })
@@ -129,6 +130,101 @@ test("Play tells the coordinator which sub-agent conversations were interrupted"
   if (ack.disposition !== "start-admitted") throw new Error("Wrong ACK")
   assert.match(ack.admission.payload.text, /task build \(ses_coordinator_1\)/)
   assert.match(ack.admission.payload.text, /ses_coordinator_2_0/)
+})
+
+for (const action of ["pause", "stop"] as const) {
+  test(`${action}: a sub-agent launched by a still-running parent during the passes is interrupted too`, async () => {
+    const f = fixture(action)
+    const interrupt = f.client.session.interrupt
+    f.client.session.interrupt = async (input: any) => {
+      const result = await interrupt(input)
+      // Its cancelled child's result makes ses_coordinator_0 re-delegate before its own interrupt.
+      if (input.sessionID === "ses_coordinator_0_0" && !f.native.has("ses_coordinator_0_late")) {
+        f.native.set("ses_coordinator_0_late", { id: "ses_coordinator_0_late", parentID: "ses_coordinator_0", projectID: "project", location: { directory: "/repo" } })
+        f.running.add("ses_coordinator_0_late")
+      }
+      return result
+    }
+    const ack = (await f.send()).nativeAcknowledgement
+    if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+    assert.equal(f.running.has("ses_coordinator_0_late"), false, "the late sub-agent was stopped")
+    assert.equal(f.running.size, 0)
+    assert.equal(ack.descendants?.complete, true, "complete only after a quiet family read")
+    assert.equal(ack.descendants?.observed, 40)
+  })
+
+  test(`${action}: a sub-agent the root launched just before its own interrupt is caught by the post-root recheck`, async () => {
+    const f = fixture(action)
+    const interrupt = f.client.session.interrupt
+    f.client.session.interrupt = async (input: any) => {
+      if (input.sessionID === "ses_coordinator" && !f.native.has("ses_root_late")) {
+        f.native.set("ses_root_late", { id: "ses_root_late", parentID: "ses_coordinator", projectID: "project", location: { directory: "/repo" } })
+        f.running.add("ses_root_late")
+      }
+      return interrupt(input)
+    }
+    const ack = (await f.send()).nativeAcknowledgement
+    if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+    assert.equal(f.running.has("ses_root_late"), false)
+    assert.equal(f.running.size, 0, "its cancelled result re-woke the root, which settled again")
+    assert.equal(ack.descendants?.complete, true)
+    assert.ok(ack.descendants?.sessions.includes("ses_root_late"))
+  })
+
+  test(`${action}: a sub-agent that keeps relaunching is never reported as a complete stop`, async () => {
+    const f = fixture(action)
+    const interrupt = f.client.session.interrupt
+    let serial = 0
+    f.client.session.interrupt = async (input: any) => {
+      const result = await interrupt(input)
+      if (input.sessionID.startsWith("ses_coordinator_2")) {
+        const id = `ses_coordinator_2_respawn_${++serial}`
+        f.native.set(id, { id, parentID: "ses_coordinator_2", projectID: "project", location: { directory: "/repo" } })
+        f.running.add(id)
+      }
+      return result
+    }
+    const ack = (await f.send()).nativeAcknowledgement
+    if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+    assert.equal(ack.descendants?.complete, false)
+    assert.ok((ack.descendants?.unconfirmed ?? 0) > 0)
+  })
+
+  test(`${action}: a failed family read still interrupts the coordinator and reports a partial stop`, async () => {
+    const f = fixture(action)
+    const active = f.client.session.active
+    let reads = 0
+    f.client.session.active = async () => { if (++reads === 1) throw new Error("native active unavailable"); return active() }
+    const ack = (await f.send()).nativeAcknowledgement
+    if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+    assert.ok(f.calls.some(call => call.kind === "interrupt" && call.sessionID === "ses_coordinator"))
+    assert.equal(ack.descendants?.complete, false)
+  })
+}
+
+test("the family deadline also bounds a wide level and a hung native interrupt", { timeout: 10_000 }, async () => {
+  const f = fixture("pause")
+  const root = await f.client.session.get({ sessionID: "ses_coordinator" })
+  for (const id of [...f.native.keys()]) if (id !== root.id) { f.native.delete(id); f.running.delete(id) }
+  for (let index = 0; index < 40; index++) {
+    const id = `ses_wide_${index}`
+    f.native.set(id, { id, parentID: "ses_coordinator", projectID: "project", location: { directory: "/repo" } })
+    f.running.add(id)
+  }
+  let started = 0
+  f.client.session.interrupt = (async ({ sessionID }: any, { signal }: { signal: AbortSignal }) => {
+    started++
+    if (sessionID === "ses_wide_0") return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))
+    await new Promise(resolve => setTimeout(resolve, 100))
+    f.running.delete(sessionID)
+    return { interrupted: true }
+  }) as never
+  const begin = Date.now()
+  const { descendants } = await interruptNativeMissionFamily({ client: f.client as never, root, action: "pause", signal: new AbortController().signal,
+    current: () => {}, checkpoint: async () => {}, deadline: Date.now() + 300 })
+  assert.ok(Date.now() - begin < 2_000, `bounded by the deadline: ${Date.now() - begin} ms`)
+  assert.ok(started < 40, `workers stopped picking new sessions within the level: ${started}`)
+  assert.equal(descendants.complete, false)
 })
 
 test("the control family reader is cycle-safe and reports an exhausted budget", async () => {

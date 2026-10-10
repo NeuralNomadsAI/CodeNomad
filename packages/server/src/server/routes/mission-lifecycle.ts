@@ -12,11 +12,12 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
 import { prepareMissionAuthority, assertMissionAuthorityCurrent, missionInstructionClient, type MissionAuthorityCheckpoint } from "./mission-authority-checkpoint"
-import { interruptNativeMissionFamily, isSubagentDelivery, settleInterruptedRoot, type NativeInboxItem } from "../../missions/native-family-interrupt"
+import { interruptNativeMissionFamily, isSubagentDelivery, recheckNativeMissionFamily, settleInterruptedRoot, type NativeInboxItem } from "../../missions/native-family-interrupt"
 import { readNativeControlFamily } from "../../missions/native-session-family"
 
 /** Leaves headroom for the root interrupt inside the bridge's lifecycle timeout. */
 const FAMILY_CONTROL_BUDGET_MS = 50_000
+const FAMILY_RECHECK_BUDGET_MS = 10_000
 
 const schema = z.object({ kind: z.literal("lifecycle"), input: z.object({
   missionID: z.string().min(1).max(100), operationID: z.string().min(1).max(100), sessionID: z.string().regex(/^ses_/).max(240),
@@ -203,16 +204,23 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
           }
         }
       }
+      // The root ran until its interrupt and may have launched sub-agents after
+      // the family passes: interrupt them before settling the root they re-wake.
+      const recheck = (control: typeof descendants, interrupt: boolean) => recheckNativeMissionFamily({ client, root, action, signal,
+        current, checkpoint, deadline: Date.now() + FAMILY_RECHECK_BUDGET_MS }, control, interrupt)
+      const caught = await recheck(descendants, true)
       // Pause leaves queued deliveries parked behind resume:false until Play.
       const settled = await settleInterruptedRoot({ client, root, action, signal, current, checkpoint,
         ...(action === "stop" ? { cancel: cancellable, onCancelled: (inboxID: string) => {
           if (cancellations.length < 128 && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition: "native-acknowledged" })
         } } : {}) })
+      // Only a whole, quiet family read after the root settled confirms a full stop.
+      const verified = await recheck(caught, false)
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
-      const family = settled ? descendants
-        : { ...descendants, unconfirmed: descendants.unconfirmed + 1, complete: false }
+      const family = settled ? verified
+        : { ...verified, unconfirmed: verified.unconfirmed + 1, complete: false }
       return reply({ ...ackIdentity, disposition: "interrupt-observed", interrupt, cancellations, descendants: family })
     }
   } finally { release() }
