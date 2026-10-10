@@ -50,6 +50,7 @@ async function fixture() {
   const app = Fastify({ logger: false })
   registerMissionRoutes(app, { workspaceManager: {
     get: () => state.workspace, getServiceLocation: () => location,
+    getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
     ownsLocation: async (_id: string, target: typeof location) => state.owned && target.directory === location.directory,
     getSharedServiceConnection: async () => state.available ? { client, assertCurrent() { if (!state.connected) throw new Error("Connection replaced") } } : undefined,
   } as never, worktreeDeletionFence: fence })

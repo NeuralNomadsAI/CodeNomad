@@ -10,9 +10,10 @@ import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../mission
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { requestAdmission } from "../request-admission"
 
-type Deps = { workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation">;
+type Deps = { workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath">;
   worktreeDeletionFence?: WorktreeDeletionFence }
 type Params = { id: string; scheduleID: string; passageID?: string }
 type NativeCurrent = Omit<MissionRecurrenceCurrent, "activity"> & { projectCanonical: string; location: { directory: string; workspaceID?: string } }
@@ -32,10 +33,11 @@ export function registerMissionRecurrenceCurrent(app: FastifyInstance, deps: Dep
     const lifetime = requestAdmission(request, reply), manager = deps.workspaceManager
     const workspace = manager.get(params.data.id), owned = manager.getServiceLocation(params.data.id)
     if (!workspace || !owned) { lifetime.dispose(); return reply.code(404).send({ error: "Workspace unavailable" }) }
-    const deletionCurrent = deps.worktreeDeletionFence?.captureDisplay([owned.directory])
+    const deletionCapture = captureDisplayIdentities(deps.worktreeDeletionFence, manager, params.data.id, [owned.directory])
     try {
       const connection = await lifetime.wait(manager.getSharedServiceConnection(params.data.id))
       if (!connection) return reply.code(503).send({ error: "Mission service unavailable" })
+      const deletionCurrent = await lifetime.wait(deletionCapture)
       const current = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (deletionCurrent && !deletionCurrent() || manager.get(params.data.id) !== workspace
@@ -82,7 +84,8 @@ export function registerMissionRecurrenceCurrent(app: FastifyInstance, deps: Dep
       let activity: MissionRecurrenceCurrent["activity"]
       if (result.mission) {
         const mission = result.mission
-        const actorCurrent = deps.worktreeDeletionFence?.captureDisplay(mission.actors.map(actor => actor.location.directory))
+        const actorCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, manager, params.data.id,
+          mission.actors.map(actor => actor.location.directory)))
         activity = await lifetime.wait(projectMissionActivity({ client, workspaceID: params.data.id,
           snapshot: { version: 1, projectID: result.projectID, generatedAt: Date.now(), missions: [mission], discardedEvents: 0 },
           ownsLocation: manager.ownsLocation.bind(manager), isCurrent: () => {

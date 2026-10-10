@@ -8,6 +8,7 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { readMissionMutationError } from "../../missions/rpc-errors"
 import { projectMissionActivity } from "../../missions/activity"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { prepareMissionCreation, MissionCreationPreparationError } from "./mission-creation-pipeline"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
@@ -51,7 +52,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     const ownedLocation = deps.workspaceManager.getServiceLocation(parsed.data.id)
     if (!ownedLocation) { lifetime.dispose(); return unavailable("workspace-unavailable") }
     const workspace = deps.workspaceManager.get(parsed.data.id)
-    const displayCurrent = deps.worktreeDeletionFence?.captureDisplay([ownedLocation.directory])
+    const displayCapture = captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, parsed.data.id, [ownedLocation.directory])
     const location = { directory: ownedLocation.directory }
     const options = locationRequestOptions(ownedLocation)
 
@@ -76,22 +77,21 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
         reply.code(502)
         return unavailable("plugin-unavailable")
       }
+      const displayCurrent = await lifetime.wait(displayCapture)
+      const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, parsed.data.id, [
+        ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
+      ]))
       const activity = await projectMissionActivity({
         client,
         snapshot,
         workspaceID: parsed.data.id,
         ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager),
-        isCurrent: (() => {
-          const deletionCurrent = deps.worktreeDeletionFence?.captureDisplay([
-            ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
-          ])
-          return () => {
-            if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
-              || deps.workspaceManager.get(parsed.data.id) !== workspace
-              || !sameLocation(deps.workspaceManager.getServiceLocation(parsed.data.id) ?? { directory: "" }, ownedLocation)) return false
-            try { connection.assertCurrent(); return true } catch { return false }
-          }
-        })(),
+        isCurrent: () => {
+          if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
+            || deps.workspaceManager.get(parsed.data.id) !== workspace
+            || !sameLocation(deps.workspaceManager.getServiceLocation(parsed.data.id) ?? { directory: "" }, ownedLocation)) return false
+          try { connection.assertCurrent(); return true } catch { return false }
+        },
       })
       return { available: true, ...snapshot, activity }
     } catch (error) {
