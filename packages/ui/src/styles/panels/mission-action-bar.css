@@ -1,8 +1,8 @@
 /* Selected Mission/schedule icon toolbar above its task tree (mission-action-bar.tsx),
    with the picker's [+][✎][−] icon geometry. */
 .mission-action-bar { display: flex; align-items: center; gap: 2px; min-width: 0; }
-/* One blank line before the task group's separator. */
-.mission-control .mission-action-bar { margin-block-end: 1lh; }
+/* The same gap before the task group's separator. */
+.mission-control .mission-action-bar { margin-block-end: var(--space-sm); }
 .mission-action-feedback { display: grid; color: var(--text-muted); font-size: var(--font-size-xs); }
 .mission-action-feedback:empty { display: none; }
 .mission-action-feedback small[role="alert"] { color: var(--status-warning); }

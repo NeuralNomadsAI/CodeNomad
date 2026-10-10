@@ -40,9 +40,9 @@
 .mission-picker :is(.mission-picker-expander, .mission-picker-field):focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .mission-picker-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mission-picker-actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
-/* Margins are one blank line: above the toolbar and between it and the mission line. */
-.mission-control-header > .mission-picker { margin-block-start: 1lh; }
-.mission-picker > .mission-picker-actions { margin-block-end: 1lh; }
+/* Margins match the mission line / toolbar gap: above the toolbar and between it and the mission line. */
+.mission-control-header > .mission-picker { margin-block-start: var(--space-sm); }
+.mission-picker > .mission-picker-actions { margin-block-end: var(--space-sm); }
 .mission-picker-trailing { display: flex; align-items: center; gap: 2px; margin-inline-start: auto; }
 
 /* Small square status mark; the full state is in the tooltip and screen-reader text. */
