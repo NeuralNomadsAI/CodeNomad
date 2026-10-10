@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
 import type { MissionListResponse, MissionMap, MissionSnapshot } from "../../missions/model"
@@ -16,6 +16,7 @@ import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot
 import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
 import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
+import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
 
 interface MissionRouteDeps {
@@ -123,90 +124,54 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     const parsed = UpdateSchema.safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission update request" })
-    const setup = await mutationLocation(params.data.id, undefined, deps, reply)
-    if (!setup) return
-    try {
-      const result = await setup.client.rpc(CODENOMAD_MISSIONS_RPC).update({
+    return mutate(request, reply, deps, params.data.id, async (rpc, options) => {
+      const result = await rpc.update({
         missionID: params.data.missionID, requestID: parsed.data.requestId, objective: parsed.data.objective,
         ...(parsed.data.notes === undefined ? {} : { notes: parsed.data.notes }), expectedRevision: parsed.data.expectedRevision,
-      }, setup.options) as { mission: MissionMap }
+      }, options) as { mission: MissionMap }
       return { mission: result.mission }
-    } catch (error) { return mutationError(reply, error) }
+    })
   })
 
   app.post<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/control", async (request, reply) => {
     const parsed = z.object({ action: z.enum(["start", "pause", "stop"]), expectedRevision: z.number().int().positive(), requestId: RequestID }).strict().safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission control request" })
-    const setup = await mutationLocation(params.data.id, undefined, deps, reply)
-    if (!setup) return
-    try {
-      return await setup.client.rpc(CODENOMAD_MISSIONS_RPC).lifecycle({
-        missionID: params.data.missionID, requestID: parsed.data.requestId, action: parsed.data.action, expectedRevision: parsed.data.expectedRevision,
-      }, setup.options) as { mission: MissionMap }
-    } catch (error) { return mutationError(reply, error) }
+    return mutate(request, reply, deps, params.data.id, async (rpc, options) => await rpc.lifecycle({
+      missionID: params.data.missionID, requestID: parsed.data.requestId, action: parsed.data.action, expectedRevision: parsed.data.expectedRevision,
+    }, options) as { mission: MissionMap })
   })
 
   app.delete<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
     const parsed = DeleteSchema.safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission deletion request" })
-    const setup = await mutationLocation(params.data.id, undefined, deps, reply)
-    if (!setup) return
-    try {
-      return await setup.client.rpc(CODENOMAD_MISSIONS_RPC).delete({
-        missionID: params.data.missionID, requestID: parsed.data.requestId, expectedRevision: parsed.data.expectedRevision,
-        ...(parsed.data.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: parsed.data.deleteManagedSessions }),
-      }, setup.options) as { deleted: true }
-    } catch (error) { return mutationError(reply, error) }
+    return mutate(request, reply, deps, params.data.id, async (rpc, options) => await rpc.delete({
+      missionID: params.data.missionID, requestID: parsed.data.requestId, expectedRevision: parsed.data.expectedRevision,
+      ...(parsed.data.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: parsed.data.deleteManagedSessions }),
+    }, options) as { deleted: true })
   })
 
   app.post<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/recover", async (request, reply) => {
     const parsed = z.object({ expectedRevision: z.number().int().positive(), target: z.enum(["coordinator", "report"]), taskKey: z.string().min(1).max(100).optional() }).strict().safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission recovery request" })
-    const setup = await mutationLocation(params.data.id, undefined, deps, reply)
-    if (!setup) return
-    try {
-      return await setup.client.rpc(CODENOMAD_MISSIONS_RPC).recover({ missionID: params.data.missionID, ...parsed.data }, setup.options)
-    } catch (error) { return mutationError(reply, error) }
+    return mutate(request, reply, deps, params.data.id, async (rpc, options) =>
+      await rpc.recover({ missionID: params.data.missionID, ...parsed.data }, options))
   })
 }
 
-async function mutationLocation(workspaceID: string, requestedDirectory: string | undefined, deps: MissionRouteDeps, reply: import("fastify").FastifyReply) {
-  if (!deps.workspaceManager.get(workspaceID)) {
-    reply.code(404).send({ error: "Workspace unavailable" })
-    return
-  }
-  const base = deps.workspaceManager.getServiceLocation(workspaceID)
-  if (!base) {
-    reply.code(404).send({ error: "Workspace unavailable" })
-    return
-  }
+async function mutate(request: FastifyRequest, reply: FastifyReply, deps: MissionRouteDeps, workspaceID: string,
+  call: Parameters<Awaited<ReturnType<typeof prepareMissionMapMutation>>["run"]>[0]) {
+  const lifetime = requestAdmission(request, reply)
   try {
-    const client = await deps.workspaceManager.getSharedServiceClient()
-    const location = requestedDirectory ? { directory: requestedDirectory } : base
-    if (!await deps.workspaceManager.ownsLocation(workspaceID, location, client)) {
-      reply.code(403).send({ error: "Mission directory does not belong to workspace" })
-      return
-    }
-    const resolved = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))
-    const baseResolved = await client.location.get({ location: { directory: base.directory } }, locationRequestOptions(base))
-    if (resolved.project.id !== baseResolved.project.id) {
-      reply.code(403).send({ error: "Mission directory belongs to another project" })
-      return
-    }
-    const inventory = await client.plugin.list({ location: { directory: location.directory } }, locationRequestOptions(location))
-    const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
-    if (!plugin || plugin.state.status !== "active") {
-      reply.code(503).send({ error: "Mission plugin unavailable" })
-      return
-    }
-    return { client, projectID: resolved.project.id, options: { location: { directory: location.directory }, ...locationRequestOptions(location) } }
-  } catch {
-    reply.code(503).send({ error: "Mission plugin unavailable" })
-    return
-  }
+    const prepared = await prepareMissionMapMutation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
+      workspaceID, signal: lifetime.signal, wait: lifetime.wait })
+    return await prepared.run(call)
+  } catch (error) {
+    if (error instanceof MissionMapMutationError) return reply.code(error.status).send({ error: error.message })
+    return mutationError(reply, error)
+  } finally { lifetime.dispose() }
 }
 
 function mutationError(reply: import("fastify").FastifyReply, error: unknown) {

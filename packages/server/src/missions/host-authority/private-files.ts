@@ -7,11 +7,12 @@ import { MAX_BYTES, validateScope } from "../../host-lifetime/protocol"
 import { verifyPrivateSync as verifyStorageSync } from "../../host-lifetime/private-storage-sync"
 import { canonicalAuthority, authorityDigest } from "../authority-protocol"
 import { deny, HostAuthorityError, parseDocument, type HostAuthorityDescriptor, type HostDocument } from "./model"
+import { physical } from "../physical-path"
+export { physical }
 
 const FILE = "missions-authority.json"
 const IDENTITY = "missions-authority.identity"
 const LOCK = "missions-authority-cas"
-export const physical = (value: string) => process.platform === "win32" ? path.normalize(value).toLowerCase() : path.normalize(value)
 
 /** Same Windows owner/DACL/reparse evaluator as privateStorage, but synchronous
  * for the mandatory final publication fence. No cached asynchronous approval. */

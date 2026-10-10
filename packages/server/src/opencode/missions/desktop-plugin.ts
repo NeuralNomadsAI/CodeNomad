@@ -7,10 +7,11 @@ import { sendMissionInput } from "../automation-plugin"
 import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
 import { retainMissionWork } from "./lifetime"
-import { NativeMissionAuthorityStore } from "../../missions/authority-store"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 
-export function desktopPlugin(presenceDirectory: string | readonly string[], ownerReady: (ready: boolean) => void = () => {}, humanGate?: NativeHumanAnswerGate): Plugin.Plugin {
+/** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
+ * reads, creates or repairs the retired `authority-v2` namespace. */
+export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: async ctx => {
@@ -22,9 +23,6 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], own
         .catch(async error => { await disposeBusiness(); throw error })
       let disposePresence: (() => Promise<void>) | undefined
       try { disposePresence = await followPresence(presenceDirectory, async () => {
-        ownerReady(false)
-        try { await new NativeMissionAuthorityStore(ctx.storage, ctx.location.project.id, ctx.location.project.canonical).initialize(); ownerReady(true) }
-        catch { ownerReady(false) } // Damaged authority cannot take down independent one-shot Missions.
         try {
           const dispose = await setupMissionsPlugin(ctx, {
           prompt: (coordinatorID, input) => sendMissionInput(coordinatorID, "prompt", input),
@@ -42,8 +40,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], own
             ordinary = selected
           }, beforeTool: async () => {}, beforeJournalWrite: async () => {} },
           (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false)
-          return async () => { ordinary = undefined; ownerReady(false); await dispose() }
-        } catch (error) { ordinary = undefined; ownerReady(false); throw error }
+          return async () => { ordinary = undefined; await dispose() }
+        } catch (error) { ordinary = undefined; throw error }
       }, console.error, () => retainMissionWork(() => journal.snapshot())) }
       catch (error) { await disposeBusiness(); await promptHook.dispose(); throw error }
       return async () => { ordinary = undefined; await disposeBusiness(); await promptHook.dispose();

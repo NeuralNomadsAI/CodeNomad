@@ -70,8 +70,9 @@ function manager(options: {
 
 function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
+  const workspace = { id: "workspace-1" }
   const value = {
-    get: (id: string) => id === "workspace-1" ? { id } : undefined,
+    get: (id: string) => id === "workspace-1" ? workspace : undefined,
     getServiceLocation: (id: string) => id === "workspace-1" ? { directory: "/owned/repo" } : undefined,
     ownsLocation: async (_id: string, location: { directory: string }) => {
       calls.push({ method: "owns", value: location })
@@ -191,7 +192,7 @@ test("rejects unknown workspaces before touching OpenCode", async () => {
 test("targeted recovery exposes only strict explicit inputs at the owned location", async () => {
   const fake = mutationManager()
   const app = Fastify({ logger: false })
-  registerMissionRoutes(app, { workspaceManager: fake.value })
+  registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
   const url = "/api/workspaces/workspace-1/missions/msn_1/recover"
   const payload = { expectedRevision: 3, target: "report", taskKey: "review" }
   const response = await app.inject({ method: "POST", url, payload })
@@ -259,7 +260,7 @@ test("maps only declared native mutation codes and keeps opaque plugin failures 
   ] as const) {
     const app = Fastify()
     try {
-      registerMissionRoutes(app, { workspaceManager: mutationManager({ error }).value })
+      registerMissionRoutes(app, { workspaceManager: mutationManager({ error }).value, worktreeDeletionFence: new WorktreeDeletionFence() })
       const response = await app.inject({ method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1",
         payload: { requestId: "edit", objective: "Edited", expectedRevision: 1 } })
       assert.equal(response.statusCode, status)
@@ -272,7 +273,7 @@ test("maps only declared native mutation codes and keeps opaque plugin failures 
 test("forwards only an explicit boolean session-cleanup option through the typed delete RPC", async () => {
   const fake = mutationManager()
   const app = Fastify()
-  registerMissionRoutes(app, { workspaceManager: fake.value })
+  registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
   try {
     for (const option of [true, false]) {
       const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace-1/missions/msn_1",
@@ -296,7 +297,7 @@ test("forwards only an explicit boolean session-cleanup option through the typed
 test("explicit lifecycle routes validate controls and preserve retry identity at the owned location", async () => {
   const app = Fastify()
   const fixture = mutationManager()
-  registerMissionRoutes(app, { workspaceManager: fixture.value as never })
+  registerMissionRoutes(app, { workspaceManager: fixture.value as never, worktreeDeletionFence: new WorktreeDeletionFence() })
   try {
     const url = "/api/workspaces/workspace-1/missions/msn_1/control"
     const payload = { action: "pause", requestId: "pause-request", expectedRevision: 7 }
@@ -317,7 +318,7 @@ test("cleanup-pending crosses the route as a retryable declared failure", async 
   const app = Fastify()
   registerMissionRoutes(app, { workspaceManager: mutationManager({
     error: { type: "mission.rejected", message: "Mission deleted; retry cleanup", data: { code: "cleanup-pending" } },
-  }).value })
+  }).value, worktreeDeletionFence: new WorktreeDeletionFence() })
   try {
     const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace-1/missions/msn_1",
       payload: { requestId: "delete-1", expectedRevision: 2, deleteManagedSessions: true } })

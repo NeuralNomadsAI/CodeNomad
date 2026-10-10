@@ -6,12 +6,15 @@ import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { z } from "zod"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { HUMAN_ANSWER_HEADER, HUMAN_ANSWER_RPC, assertHumanAnswerFresh, humanAnswerBindingSchema,
-  humanAnswerProof, humanAnswerProofSchema, humanAnswerResultSchema } from "../../missions/human-answer"
+  humanAnswerProof, humanAnswerProofSchema, humanAnswerResultSchema, type HumanAnswerPrincipal } from "../../missions/human-answer"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isRemoteRequest, remoteDeviceOf } from "../../remote-control/request-origin"
+import type { RemoteControlManager } from "../../remote-control/manager"
 
 type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
-type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string }
+type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string
+  /** Live Remote Control device authorization; absent means no remote principal qualifies. */
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }
 const answerSchema = z.object({ answer: z.record(z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])) }).strict()
 
 /** Called INSIDE the normal proxy's owned native-session/request/deletion and
@@ -37,15 +40,39 @@ export async function replyMissionHumanAnswer(request: FastifyRequest, workspace
   return humanAnswerResultSchema.parse(await rpc.reply({ body, proof: humanAnswerProof(body, deps.bridgeToken) }, nativeOptions))
 }
 
+/** The authenticated human behind this exact request, revalidated on every check:
+ * a live local cookie session (auth enabled), or a paired Remote Control device
+ * that is still authorized. Socket membership decides which; never a header. */
+function requestPrincipal(request: FastifyRequest, deps: Deps): { principal: HumanAnswerPrincipal; username: string } | undefined {
+  if (isRemoteRequest(request)) {
+    const deviceID = remoteDeviceOf(request), human = deps.auth.getSessionFromRequest(request)
+    if (!deviceID || !human || !deps.remoteDevices?.isDeviceAuthorized(deviceID)) return undefined
+    return { principal: { kind: "remote-device", deviceID }, username: human.username }
+  }
+  const human = deps.auth.getSessionFromRequest(request)
+  if (!deps.auth.isAuthEnabled() || !human || human.sessionId === "auth-disabled") return undefined
+  return { principal: { kind: "cookie", sessionID: human.sessionId }, username: human.username }
+}
+
 async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: string, sessionID: string,
   formID: string, deps: Deps, connection: ServiceConnection, signal: AbortSignal) {
   const workspace = deps.manager.get(workspaceID), profile = deps.settings.getProfileScope()
   const distro = deps.manager.getServiceWslDistro(workspaceID), client = connection.client
+  // Without an authenticated UI principal no mark can be written: answer ordinarily.
+  const human = requestPrincipal(request, deps)
+  if (!human) return undefined
+  const current = () => {
+    signal.throwIfAborted(); connection.assertCurrent()
+    const fresh = requestPrincipal(request, deps)
+    if (!fresh || canonicalAuthority(fresh) !== canonicalAuthority(human)
+      || deps.manager.get(workspaceID) !== workspace || deps.manager.getServiceWslDistro(workspaceID) !== distro
+      || canonicalAuthority(deps.settings.getProfileScope()) !== canonicalAuthority(profile)) throw new Error("Human answer admission changed")
+  }
   let id = sessionID, ownedLocation: { directory: string; workspaceID?: string } | undefined
   const seen = new Set<string>()
-  let missionRoot = false
+  let missionRoot = false, root: string | undefined
   for (let depth = 0; depth <= 32; depth++) {
-    signal.throwIfAborted(); connection.assertCurrent()
+    current()
     if (seen.has(id)) throw new Error("Human answer ancestry cycle")
     seen.add(id)
     const session = await client.session.get({ sessionID: id }, { signal })
@@ -57,28 +84,19 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
     if (session.parentID) { id = session.parentID; continue }
     const marker = session.metadata?.["codenomad.mission"]
     missionRoot = !!marker && typeof marker === "object" && !Array.isArray(marker)
+    root = id
     break
   }
-  // Ordinary conversations never take the mark path, nor write a mark.
-  if (!missionRoot) return undefined
-  // The mark is bound to a local cookie session that the bridge callback can
-  // re-verify; a paired Remote Control device has none, so it answers ordinarily.
-  if (isRemoteRequest(request)) return undefined
-  const human = deps.auth.getSessionFromRequest(request)
-  if (!deps.auth.isAuthEnabled() || !human || human.sessionId === "auth-disabled") return undefined
-  const current = () => {
-    signal.throwIfAborted(); connection.assertCurrent()
-    const fresh = deps.auth.getSessionFromRequest(request)
-    if (!deps.auth.isAuthEnabled() || fresh?.sessionId !== human.sessionId || fresh.username !== human.username
-      || deps.manager.get(workspaceID) !== workspace || deps.manager.getServiceWslDistro(workspaceID) !== distro
-      || canonicalAuthority(deps.settings.getProfileScope()) !== canonicalAuthority(profile)) throw new Error("Human answer admission changed")
-  }
+  if (!root) throw new Error("Human answer ancestry unavailable")
   current()
   const options = { location: { directory: ownedLocation!.directory }, ...locationRequestOptions(ownedLocation!), signal }
   const rpc = client.rpc(HUMAN_ANSWER_RPC)
   let rawBinding
+  // A root without Mission metadata (an attached existing coordinator) is a
+  // member only if the plugin finds it in the durable one-time journal; an
+  // ordinary conversation gets a null binding and never writes a mark.
   try { rawBinding = await rpc.binding({ sessionID, formID, profileID: profile.key,
-    executionHost: distro ? `wsl:${distro}` : "local" }, options) }
+    executionHost: distro ? `wsl:${distro}` : "local", ...(missionRoot ? {} : { rootSessionID: root }) }, options) }
   catch {
     // Without a binding there is no mark; the caller falls back to the ordinary reply.
     return undefined
@@ -87,7 +105,7 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
   if (rawBinding === null) return undefined
   const binding = humanAnswerBindingSchema.parse(rawBinding)
   if (binding.sessionID !== sessionID || binding.formID !== formID || !sameLocation(binding.location, ownedLocation!)) throw new Error("Human answer Form changed")
-  const body = humanAnswerProofSchema.parse({ ...binding, workspaceID, cookieSessionID: human.sessionId,
+  const body = humanAnswerProofSchema.parse({ ...binding, workspaceID, principal: human.principal,
     username: human.username, issuedAt: Date.now(), answer: answerSchema.parse(request.body).answer })
   current()
   // The plugin commits only the mark before replying; no signed receipt or
@@ -101,11 +119,15 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
 export async function verifyMissionHumanAnswer(raw: unknown, deps: Omit<Deps, "bridgeToken">, signal: AbortSignal) {
   const body = humanAnswerProofSchema.parse(raw)
   assertHumanAnswerFresh(body); signal.throwIfAborted()
+  const principal = body.principal
+  const authenticated = () => {
+    if (principal.kind === "remote-device") return deps.remoteDevices?.isDeviceAuthorized(principal.deviceID) === true
+    const human = deps.auth.getSessionFromHeaders({ cookie: `${deps.auth.getCookieName()}=${encodeURIComponent(principal.sessionID)}` })
+    return deps.auth.isAuthEnabled() && human?.sessionId === principal.sessionID && human.username === body.username
+  }
   const current = () => {
     signal.throwIfAborted(); assertHumanAnswerFresh(body)
-    const human = deps.auth.getSessionFromHeaders({ cookie: `${deps.auth.getCookieName()}=${encodeURIComponent(body.cookieSessionID)}` })
-    if (!deps.auth.isAuthEnabled() || human?.sessionId !== body.cookieSessionID || human.username !== body.username
-      || deps.settings.getProfileScope().key !== body.profileID
+    if (!authenticated() || deps.settings.getProfileScope().key !== body.profileID
       || body.executionHost !== (deps.manager.getServiceWslDistro(body.workspaceID) ? `wsl:${deps.manager.getServiceWslDistro(body.workspaceID)}` : "local"))
       throw new Error("Human answer authentication changed")
   }

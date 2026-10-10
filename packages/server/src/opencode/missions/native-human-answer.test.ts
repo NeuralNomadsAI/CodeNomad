@@ -11,13 +11,14 @@ import { AuthManager } from "../../auth/manager"
 import { stableToken, MissionJournal, type MissionStorage } from "../../missions/journal"
 import { MissionControl } from "../../missions/control"
 import { buildAssignmentPrompt } from "../../missions/recipes"
-import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
+import { HUMAN_MARK_STORAGE_PREFIX } from "../../missions/human-answer"
 import { createAutomationBridgeRegistration, publishAutomationBridge } from "../automation-plugin"
 import { registerAutomationPluginRoute } from "../../server/routes/automation-plugin"
 import { registerInstanceProxyRoutes } from "../../server/http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import type { NativeDecisionEvidenceRequest } from "../../missions/native-human-evidence"
 import { acquireNativeHumanAnswers } from "./native-human-answer"
+import { attachRemoteDevice, markRemoteSocket } from "../../remote-control/request-origin"
 
 const encode = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 async function fixture() {
@@ -80,8 +81,18 @@ async function fixture() {
     catch (error) { db.exec("ROLLBACK"); throw error }
   }) } }
   const graph = Context.make(databaseTag, database).pipe(Context.add(locationTag, location), Context.add(formTag, forms))
-  const native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location } as never), graph))
-  const markKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/human-marks/${stableToken(`project\0${directory}`, 24)}/ses_child/${form.id}`
+  const storage: MissionStorage = { get: async key => get(key), set: async (key, value, current) => { current?.(); put(key, value) },
+    scan: async ({ prefix, after, limit = 100 }) => {
+      const rows = db.prepare("SELECT key,value FROM kv WHERE substr(key,1,?)=? AND key>? ORDER BY key LIMIT ?")
+        .all(encode(prefix).length, encode(prefix), encode(after ?? prefix), limit + 1) as { key: string; value: string }[]
+      const entries = rows.slice(0, limit).map(row => ({ key: row.key.slice(encode("").length), value: JSON.parse(row.value) }))
+      return { entries, ...(rows.length > limit ? { next: entries.at(-1)!.key } : {}) }
+    } }
+  // Native plugin storage is Effect-based; the journal membership read uses it read-only.
+  const nativeStorage = { get: (key: string) => Effect.promise(() => storage.get(key)),
+    scan: (options: Parameters<MissionStorage["scan"]>[0]) => Effect.promise(() => storage.scan(options)) }
+  const native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location, storage: nativeStorage } as never), graph))
+  const markKey = `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`project\0${directory}`, 24)}/ses_child/${form.id}`
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
   const cookie = auth.createSession("human")
   let ordinary = false
@@ -101,9 +112,19 @@ async function fixture() {
     ownsDirectory: async (_: string, requested: string) => requested === directory, ownsPath: async () => false }
   const settings = { getProfileScope: () => ({ key: "profile" }) }
   const app = Fastify(), registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
-  registerAutomationPluginRoute(app, { authManager: auth, bridgeToken: registration.token, workspaceManager: manager, settings, nativeParent: {}, developerCdp: {} } as never)
+  // Stand-in for the Remote Control ingress + gate: socket membership and the
+  // authenticated device, never a header the proxy itself trusts.
+  const devices = { authorized: true }
+  const remoteDevices = { isDeviceAuthorized: (id: string) => id === "device-1" && devices.authorized }
+  app.addHook("onRequest", async request => {
+    const device = request.headers["x-fixture-remote-device"]
+    if (typeof device !== "string") return
+    markRemoteSocket(request.raw.socket)
+    if (device) attachRemoteDevice(request, device)
+  })
+  registerAutomationPluginRoute(app, { authManager: auth, bridgeToken: registration.token, workspaceManager: manager, settings, nativeParent: {}, developerCdp: {}, remoteDevices } as never)
   registerInstanceProxyRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence(80), logger: pino({ level: "silent" }),
-    humanAnswers: { auth, manager, settings, bridgeToken: registration.token } } as never)
+    humanAnswers: { auth, manager, settings, bridgeToken: registration.token, remoteDevices } } as never)
   await app.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}/api/opencode-plugin/automation`
   const disposeBridge = await publishAutomationBridge(registration)
@@ -111,19 +132,16 @@ async function fixture() {
     nativeCall: { generation: 1, parentSessionID: "ses_root", parentMessageID: "msg_delegate", toolCallID: "call_delegate" },
     sessionID: "ses_child", formID: form.id, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0",
     projectID: "project", directory, delegationToolName: "subagent", question: "Choose the seam?", answer: "Module" }
-  const storage: MissionStorage = { get: async key => get(key), set: async (key, value, current) => { current?.(); put(key, value) },
-    scan: async ({ prefix, after, limit = 100 }) => {
-      const rows = db.prepare("SELECT key,value FROM kv WHERE substr(key,1,?)=? AND key>? ORDER BY key LIMIT ?")
-        .all(encode(prefix).length, encode(prefix), encode(after ?? prefix), limit + 1) as { key: string; value: string }[]
-      const entries = rows.slice(0, limit).map(row => ({ key: row.key.slice(encode("").length), value: JSON.parse(row.value) }))
-      return { entries, ...(rows.length > limit ? { next: entries.at(-1)!.key } : {}) }
-    } }
   return { native, db, get, put, markKey, decision, form, part, storage, nativeGet, directory, finish,
     secrets: [cookie.id, registration.token],
     counts: () => replies, expire: () => { expired = true }, fail: (value = true) => { failReply = value }, lose: () => { loseReply = true }, defer: () => { complete = false },
     changeState: (status: string) => { state.status = status },
     submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
       headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) }, payload: { answer: { q0: answer } } }),
+    devices,
+    /** A Remote Control dock answer: no local cookie, only the ingress device identity ("" = unpaired). */
+    submitRemote: (device = "device-1") => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
+      headers: { "x-codenomad-human-answer": "1", "x-fixture-remote-device": device }, payload: { answer: { q0: "Module" } } }),
     dispose: async () => { await disposeBridge(); await app.close(); db.close(); await rm(directory, { recursive: true, force: true }) } }
 }
 
@@ -137,6 +155,8 @@ test("dock header writes a secret-free mark before native reply and gate accepts
     assert.equal(mark.form.fields[0].type, "string")
     if (mark.form.fields[0].type === "string") assert.deepEqual(mark.form.fields[0].options, f.form.fields[0].options)
     assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%recurrence-signer%'").get()!.count, 0)
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%codenomad-missions/authority-%'").get()!.count, 0, "no retired authority-v2 key")
+    assert.ok(f.get(f.markKey), "the mark lives under its own simple namespace")
     assert.equal(JSON.stringify(mark).includes("cookie"), false)
     assert.equal(JSON.stringify(mark).includes("signature"), false)
     for (const secret of f.secrets) assert.equal(JSON.stringify(mark).includes(secret), false)
@@ -303,9 +323,49 @@ test("gate refuses foreign Form/session/message/tool/field and provider-hosted e
   } finally { await f.dispose() }
 })
 
-test("one-time Wayfinder finalizes through the same dock mark without signing keys or passage ledger", async () => {
+const attached = (f: Awaited<ReturnType<typeof fixture>>) => f.db.prepare("UPDATE session_v2 SET metadata='{}' WHERE id='ses_root'").run()
+
+for (const [name, setup, answer] of [
+  ["a new metadata root, local login", () => {}, (f: Awaited<ReturnType<typeof fixture>>) => f.submit()],
+  ["an attached existing root without metadata, local login", attached, (f: Awaited<ReturnType<typeof fixture>>) => f.submit()],
+  ["a new metadata root, paired Remote Control device", () => {}, (f: Awaited<ReturnType<typeof fixture>>) => f.submitRemote()],
+  ["an attached existing root, paired Remote Control device", attached, (f: Awaited<ReturnType<typeof fixture>>) => f.submitRemote()],
+] as const) test(`one-time Wayfinder finalizes through the dock mark: ${name}`, async () => {
   const f = await fixture()
   try {
+    setup(f)
+    await finalizeWayfinder(f, () => answer(f))
+    assert.equal(f.get(f.markKey)?.state, "confirmed")
+  } finally { await f.dispose() }
+})
+
+test("a metadata-less root outside the durable journal is an ordinary conversation, locally and remotely", async () => {
+  for (const submit of ["local", "remote"] as const) {
+    const f = await fixture()
+    try {
+      attached(f)
+      assert.equal((await (submit === "local" ? f.submit() : f.submitRemote())).statusCode, 200)
+      assert.equal(f.counts(), 1, "the human answer still lands through the ordinary native reply")
+      assert.equal(f.get(f.markKey), undefined, submit)
+    } finally { await f.dispose() }
+  }
+})
+
+test("unpaired or revoked Remote Control requests answer ordinarily and never mint a mark", async () => {
+  for (const mode of ["unpaired", "revoked", "unknown-device"] as const) {
+    const f = await fixture()
+    try {
+      if (mode === "revoked") f.devices.authorized = false
+      const response = await f.submitRemote(mode === "unpaired" ? "" : mode === "unknown-device" ? "device-2" : "device-1")
+      assert.equal(response.statusCode, 200, mode); assert.equal(f.counts(), 1)
+      assert.equal(f.get(f.markKey), undefined, mode)
+      await assert.rejects(f.native.verify(f.decision))
+    } finally { await f.dispose() }
+  }
+})
+
+async function finalizeWayfinder(f: Awaited<ReturnType<typeof fixture>>, respond: () => Promise<{ statusCode: number }>) {
+  {
     const control = new MissionControl({ storage: f.storage, project: { id: "project", canonical: f.directory, location: { directory: f.directory } },
       sessions: { get: f.nativeGet, create: async () => { throw new Error("No ghost root") }, prompt: async () => {}, synthetic: async () => {} }, humanGate: request => f.native.verify(request) })
     const made = await control.create({ requestID: "wayfinder", objective: "Choose the seam", template: "wayfinder", coordinatorSessionID: "ses_root" })
@@ -319,11 +379,11 @@ test("one-time Wayfinder finalizes through the same dock mark without signing ke
     const report = { missionID: mission.id, taskKey: "decision", outcome: "completed" as const, summary: "Human chose the seam", evidence: [], next: [], final: false,
       artifact: { kind: "decision", question, answer, provenance } }
     await assert.rejects(control.report("ses_root", report))
-    assert.equal((await f.submit()).statusCode, 200); f.expire()
+    assert.equal((await respond()).statusCode, 200); f.expire()
     assert.equal((await control.report("ses_root", report)).disposition, "reported")
     const current = (await control.snapshot()).missions[0]
     await journal.append({ version: 1, id: "decision_returned", type: "task.native-returned", missionID: mission.id, projectID: "project", createdAt: current.updatedAt + 1,
       taskKey: "decision", childSessionID: "ses_child", binding: f.decision.nativeCall })
     assert.equal((await control.report("ses_root", { ...report, final: true })).disposition, "finished")
-  } finally { await f.dispose() }
-})
+  }
+}
