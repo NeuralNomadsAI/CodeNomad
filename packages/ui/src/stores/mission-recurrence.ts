@@ -11,6 +11,8 @@ import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
 import { copyMissionProfiles } from "./mission-creation-drafts"
+import { sessionListRestored } from "./session-list-restoration"
+import { eventRefreshDue, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 
 export type RecurrenceDraft = Parameters<typeof serverApi.createMissionRecurrence>[1]
 const heldDrafts = new Map<string, Readonly<RecurrenceDraft>>()
@@ -35,7 +37,11 @@ interface RecurrenceEntry {
   stopped: boolean
   controller?: AbortController
   timer?: ReturnType<typeof setTimeout>
+  due?: number
   trailing: boolean
+  /** Activity arrived during a read: reschedule from its settlement, at the bounded rate. */
+  activityTrailing?: boolean
+  settledAt?: number
 }
 const cache = new Map<string, RecurrenceEntry>()
 const stoppedInstances = new Set<string>()
@@ -54,6 +60,7 @@ function cancel(entry: RecurrenceEntry): void {
   if (entry.timer) clearTimeout(entry.timer)
   entry.timer = undefined
   entry.trailing = false
+  entry.activityTrailing = false
   entry.controller?.abort()
   entry.controller = undefined
   changed()
@@ -89,19 +96,31 @@ function read(entry: RecurrenceEntry): void {
   }).finally(() => {
     if (entry.controller !== controller) return
     entry.controller = undefined
-    const trailing = entry.trailing
+    entry.settledAt = Date.now()
+    const trailing = entry.trailing, activity = entry.activityTrailing
     entry.trailing = false
+    entry.activityTrailing = false
     changed()
     if (trailing) read(entry)
+    else if (activity) scheduleRefresh(entry, "activity")
   })
 }
-function scheduleRefresh(entry: RecurrenceEntry): void {
+function scheduleRefresh(entry: RecurrenceEntry, urgency: RefreshUrgency = "urgent"): void {
   if (!entry.demand || !current(entry)) return
+  if (entry.controller) {
+    if (urgency === "urgent") entry.trailing = true
+    else entry.activityTrailing = true
+    return
+  }
+  const now = Date.now(), due = eventRefreshDue(urgency, now, entry.settledAt)
+  // Continuous activity never postpones an earlier pending read.
+  if (entry.timer && entry.due! <= due) return
   if (entry.timer) clearTimeout(entry.timer)
+  entry.due = due
   entry.timer = setTimeout(() => {
     entry.timer = undefined
     read(entry)
-  }, 50)
+  }, due - now)
 }
 
 /** List and visible central reader share one demand/read per project directory. */
@@ -114,7 +133,7 @@ function useRecurrenceRead(props: ReadDemand) {
   const binding = createMemo(() => {
     const instanceId = props.instanceId()
     return { instanceId, projectID: props.projectID(), directory: props.directory(), scheduleID: props.scheduleID?.(),
-      active: props.active() && (!props.scheduleID || Boolean(props.scheduleID())),
+      active: props.active() && (!props.scheduleID || Boolean(props.scheduleID())) && sessionListRestored(instanceId),
       actualDirectory: instances().get(instanceId)?.folder, actualProjectID: instances().get(instanceId)?.metadata?.project?.id,
       client: instances().get(instanceId)?.client, generation: getOpenCodeInstanceGeneration(instanceId) }
   }, undefined, { equals: (a, b) => Boolean(a && a.instanceId === b.instanceId && a.projectID === b.projectID
@@ -178,11 +197,14 @@ export function useMissionCurrentPassage(props: ReadDemand & { scheduleID: () =>
 serverEvents.on("instance.event", event => {
   if (event.type !== "instance.event") return
   const schedule = readRecurrenceScheduleChanged(event.event), plugin = event.event.type === "plugin.updated"
-  const passage = isMissionActivityEvent(event.event) || isMissionChangedEvent(event.event)
+  const changedJournal = isMissionChangedEvent(event.event), passage = changedJournal || isMissionActivityEvent(event.event)
   if (!schedule && !plugin && !passage) return
   // The native relay already validates placement; filesystem aliases are not UI authority.
-  for (const entry of cache.values()) if (entry.instanceId === event.instanceId
-    && (plugin || schedule && (!entry.scheduleID || entry.scheduleID === schedule.scheduleID) || passage && entry.scheduleID)) scheduleRefresh(entry)
+  for (const entry of cache.values()) {
+    if (entry.instanceId !== event.instanceId) continue
+    if (plugin || schedule && (!entry.scheduleID || entry.scheduleID === schedule.scheduleID) || changedJournal && entry.scheduleID) scheduleRefresh(entry)
+    else if (passage && entry.scheduleID) scheduleRefresh(entry, "activity")
+  }
 })
 serverEvents.on("instance.eventStatus", event => {
   if (event.type !== "instance.eventStatus" || event.status !== "connected") return

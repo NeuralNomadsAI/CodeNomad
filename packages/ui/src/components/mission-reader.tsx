@@ -1,4 +1,4 @@
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
@@ -12,6 +12,7 @@ import { createMissionViewFence } from "../lib/mission-view-fence"
 import { instances } from "../stores/instances"
 import { activeSessionId, activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
+import { sessionListRestored } from "../stores/session-list-restoration"
 import { missionIncludesSession } from "./mission-attention-model"
 import { missionTaskConversation } from "./mission-task-navigation"
 import { demandMissionTaskSessions, missionDerivedSessionIncludes, missionDerivedTaskSession } from "../stores/mission-task-sessions"
@@ -235,8 +236,11 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       }
     }
   })
+  // A restored reader waits for session-list restoration before its first read.
+  createEffect(() => {
+    if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence") untrack(() => void missionStore.ensure(props.instanceId))
+  })
   onMount(() => {
-    if (!target()?.recurrence && target()?.kind !== "recurrence") void missionStore.ensure(props.instanceId)
     if (document.activeElement instanceof HTMLElement) returnFocus = document.activeElement
     closeButton?.focus()
   })

@@ -12,8 +12,10 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { setSessions } from "../../../src/stores/session-state"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("fixture")
 addInstance({ id: "fixture", folder: "/fixture", port: 0, pid: 0, proxyPath: "/workspaces/fixture/instance", status: "ready",
   client: sdkManager.createClient("fixture", "/workspaces/fixture/instance", () => true),
   metadata: { project: { id: "project", directory: "/fixture", canonical: "/fixture" } } })

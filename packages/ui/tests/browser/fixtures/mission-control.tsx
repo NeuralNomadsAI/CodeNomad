@@ -16,8 +16,10 @@ import { activeSessionId, setSessions } from "../../../src/stores/session-state"
 import { missionStore } from "../../../src/stores/missions"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("fixture")
 function Fixture() {
   const { t } = useI18n()
   const config = useConfig()

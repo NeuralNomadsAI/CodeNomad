@@ -13,8 +13,10 @@ import { sseManager } from "../../../src/lib/sse-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("fixture", "replacement")
 for (const id of ["fixture", "replacement"]) {
   const proxyPath = `/workspaces/${id}/instance`
   const client = sdkManager.createClient(id, proxyPath, () => true)

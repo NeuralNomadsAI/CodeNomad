@@ -11,6 +11,7 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { missionStore } from "../../../src/stores/missions"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
+import { setSessionListFetching } from "./session-list-restored"
 
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
@@ -26,6 +27,8 @@ function Fixture() {
     mount: setMounted,
     demanded: () => missionStore.demandedInstanceIds(),
     state: () => missionStore.state(instance.id),
+    // Startup order: restoration has not begun, is running, then settles.
+    restoration: (fetching: boolean) => setSessionListFetching(fetching, instance.id),
     event: (type: string) => (serverEvents as any).dispatchBatch([
       { type: "instance.event", instanceId: instance.id, event: { type, data: { sessionID: "visibility-actor", status: { type: "busy" } } } },
     ]),
