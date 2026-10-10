@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "फोल्डर मार्ग टाइप गर्नुहोस् वा टाँस्नुहोस्",
   "directoryBrowser.openCurrent": "खोल्नुहोस्",
   "directoryBrowser.goTo": "फोल्डरमा जानुहोस्",
+  "directoryBrowser.goToTypedPath": "यो फोल्डरमा जानुहोस् (Enter)",
   "directoryBrowser.goToParent": "माथिल्लो फोल्डर",
   "directoryBrowser.goToHome": "गृह",
   "directoryBrowser.goToRoot": "कार्यस्थलको मूल डाइरेक्टरी",

@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "输入或粘贴文件夹路径",
   "directoryBrowser.openCurrent": "打开",
   "directoryBrowser.goTo": "前往文件夹",
+  "directoryBrowser.goToTypedPath": "转到此文件夹（Enter）",
   "directoryBrowser.goToParent": "上级文件夹",
   "directoryBrowser.goToHome": "家目录",
   "directoryBrowser.goToRoot": "工作区根目录",
