@@ -54,7 +54,8 @@ export async function missionEntryStatus(page: Page, title: string | RegExp): Pr
 /** Select a Mission/schedule by title through the transient popup and wait for its detail. */
 export async function selectMission(page: Page, title: string | RegExp): Promise<Locator> {
   const field = missionPickerField(page)
-  await field.waitFor()
+  // Often the first wait after navigation: allow for a cold page boot late in a long serial run.
+  await field.waitFor({ timeout: 60_000 })
   const current = await field.locator(".mission-picker-title").count()
     ? await field.locator(".mission-picker-title").innerText() : undefined
   const matches = current !== undefined && (typeof title === "string" ? current === title : title.test(current))

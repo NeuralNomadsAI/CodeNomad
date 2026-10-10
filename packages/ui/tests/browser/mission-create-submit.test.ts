@@ -236,7 +236,8 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    // First wait after navigation: allow for a cold page boot late in a long serial run.
+    await page.getByRole("button", { name: "Create mission", exact: true }).click({ timeout: 60_000 })
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Review yesterday's merged changes and summarize risks.")
     await form.getByLabel("Every day at", { exact: true }).check()
