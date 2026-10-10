@@ -4,7 +4,16 @@
 .mission-control .mission-flow { margin-inline: calc(-1 * var(--space-sm)); }
 /* The flow is the scroll container, so the absolute dependency overlay scrolls
    with the rows it measures (mission-graph.css keeps it position: relative). */
-.mission-tree .mission-flow { max-height: min(48rem, 100vh); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.mission-tree .mission-flow { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+/* The panel is a fixed-height column: the task group takes the remaining height
+   down to the window bottom and is the only scroller (no outer second scrollbar). */
+.mission-control { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
+.mission-control > * { flex-shrink: 0; }
+.mission-control > .mission-detail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.mission-control > .mission-detail > * { flex-shrink: 0; }
+.mission-control > .mission-detail > .mission-tree { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 8rem; }
+.mission-control .mission-tree > div:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.mission-control .mission-tree .mission-flow { flex: 1 1 auto; min-height: 0; }
 /* Separates the task group from the selected mission's toolbar above it. */
 .mission-control .mission-tree { border-top: 1px solid var(--border-base); padding-top: var(--space-xs); }
 .mission-tree > h3 .mission-disclosure-trigger > small { font-variant-numeric: tabular-nums; }
