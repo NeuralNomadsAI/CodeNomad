@@ -269,7 +269,10 @@ Only Forms whose session belongs to a Mission family (root `codenomad.mission`
 metadata) take the mark path. Every other Form uses the ordinary native reply
 unchanged and gets no mark. When the mark cannot be prepared before forwarding
 (auth disabled, plugin/binding unavailable), the answer falls back to the
-ordinary reply without a mark; the user is never blocked from answering. Only a
+ordinary reply without a mark; the user is never blocked from answering. A
+paired Remote Control device has no local cookie session for the bridge to
+re-verify, so it also answers ordinarily without a mark rather than widening the
+mark's trust to tunnelled requests. Only a
 dispatched mark reply with a lost outcome is reported as uncertain.
 
 There are no signatures or reserved/replied/settled answer receipts.
