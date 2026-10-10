@@ -605,6 +605,36 @@ test("playbook task policy can inherit again without resetting profiles or other
   } finally { await page.close() }
 })
 
+test("reset then a Flexible-only exception save keeps other Mission types unchanged after reload", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles: {}, taskMode: "independent" }] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
+    assert.equal(await mode.inputValue(), "independent", "an old global Flexible record still reads as global")
+    await page.getByRole("button", { name: await text(page, "missions.defaults.reset"), exact: true }).click()
+    await page.locator(".mission-preferences-scope select").selectOption("custom")
+    await mode.selectOption("independent")
+    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
+    assert.deepEqual(fixture.writes.at(-1)!.settings.missionProfileDefaults, [
+      { template: "all", profiles: {} }, { template: "custom", profiles: {}, taskMode: "independent" },
+    ])
+    await page.reload(); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("create"))
+    await ensureOptions(page)
+    const template = page.getByLabel(await text(page, "missions.control.template"), { exact: true })
+    assert.equal(await mode.inputValue(), "independent", "Flexible keeps its exception")
+    for (const other of ["debug", "wayfinder"]) {
+      await template.selectOption(other)
+      assert.equal(await mode.inputValue(), "native", `${other} is unchanged by a Flexible exception`)
+    }
+    assert.equal(fixture.creates.length, 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 test("native task defaults and independent preference edits keep global CAS drafts across remount without mutating existing Missions", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
