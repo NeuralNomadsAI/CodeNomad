@@ -42,6 +42,7 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "Развернуть сессию",
   "sessionList.expand.collapseTitle": "Свернуть",
   "sessionList.expand.expandTitle": "Развернуть",
+  "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "Новая сессия",
   "sessionList.actions.newSession.title": "Новая сессия",
   "sessionList.actions.copyId.ariaLabel": "Скопировать ID сессии",

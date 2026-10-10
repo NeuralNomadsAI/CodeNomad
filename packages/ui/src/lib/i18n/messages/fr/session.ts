@@ -42,6 +42,7 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "Développer la session",
   "sessionList.expand.collapseTitle": "Réduire",
   "sessionList.expand.expandTitle": "Développer",
+  "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "Nouvelle session",
   "sessionList.actions.newSession.title": "Nouvelle session",
   "sessionList.actions.copyId.ariaLabel": "Copier l'ID de session",

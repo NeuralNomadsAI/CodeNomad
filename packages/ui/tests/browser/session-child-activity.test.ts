@@ -22,44 +22,60 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-test("busy subsessions show a dot on their collapsed parent without reshaping the list", async () => {
+test("a collapsed parent's chevron carries its busy subsessions without reshaping the list", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   const rows = () => page.locator(".session-item-base").evaluateAll(elements => elements.map(el => el.getAttribute("data-session-id")))
-  const dot = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-child-activity`)
+  const chevron = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-item-expander`)
+  const color = (sessionId: string) => chevron(sessionId).evaluate(el => getComputedStyle(el).color)
+  // The chevron transitions its colour; wait until it settles on the status token.
+  const settlesOn = (sessionId: string, token: string) => page.waitForFunction(([id, name]) => {
+    const probe = document.createElement("span")
+    probe.style.color = `var(${name})`
+    document.body.append(probe)
+    const expected = getComputedStyle(probe).color
+    probe.remove()
+    return getComputedStyle(document.querySelector(`[data-session-id="${id}"] .session-item-expander`)!).color === expected
+  }, [sessionId, token] as const)
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.locator('[data-session-id="other"]').waitFor()
     assert.deepEqual(await rows(), ["work", "other"])
     const workBox = await page.locator('[data-session-id="work"]').boundingBox()
+    const idleColor = await color("other")
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Expand session")
 
-    // A subsession of another conversation starts: nothing opens, the collapsed parent gets a dot.
+    // A subsession of another conversation starts: nothing opens, the collapsed parent's chevron is coloured.
     await page.evaluate(() => (window as any).fixture.status("other-grandchild", "working"))
-    await dot("other").waitFor()
+    await page.waitForFunction(() => document.querySelector('[data-session-id="other"] .session-item-expander')?.getAttribute("data-child-activity") === "working")
     assert.deepEqual(await rows(), ["work", "other"])
     assert.deepEqual(await page.locator('[data-session-id="work"]').boundingBox(), workBox)
-    assert.equal(await dot("other").getAttribute("aria-label"), "1 subsession working")
-    assert.equal(await dot("other").getAttribute("data-child-activity"), "working")
-    // The dot is separate from the parent's own status and carries no label text.
-    assert.equal(await page.locator('[data-session-id="other"] .session-item-status-label').count(), 0)
-    assert.equal((await dot("other").innerText()).trim(), "")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Expand session — 1 subsession working")
+    assert.equal(await chevron("other").getAttribute("title"), "Expand — 1 subsession working")
+    await settlesOn("other", "--session-status-working-fg")
+    assert.notEqual(await color("other"), idleColor)
+    assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "pulse")
+    // No extra badge: the parent's own status area is untouched.
+    assert.equal(await page.locator('[data-session-id="other"] .session-item-badges > *').count(), 0)
 
-    // Input requests outrank work and are counted in the tooltip.
+    // Input requests outrank work, stay steady and are counted in the label.
     await page.evaluate(() => (window as any).fixture.permission("other-child", true))
-    await page.waitForFunction(() => document.querySelector('[data-session-id="other"] .session-child-activity')?.getAttribute("data-child-activity") === "permission")
-    assert.equal(await dot("other").getAttribute("title"), "1 subsession needs input, 1 subsession working")
-    const colors = await dot("other").locator(".status-dot").evaluate(el => getComputedStyle(el).backgroundColor)
-    assert.notEqual(colors, "rgba(0, 0, 0, 0)")
+    await page.waitForFunction(() => document.querySelector('[data-session-id="other"] .session-item-expander')?.getAttribute("data-child-activity") === "permission")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Expand session — 1 subsession needs input, 1 subsession working")
+    await settlesOn("other", "--session-status-permission-fg")
+    assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "none")
     if (process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE })
 
-    // Expanding hands the information to the child rows themselves.
-    await page.locator('[data-session-id="other"] .session-item-expander').click()
+    // Expanding restores a plain chevron; the child rows show their own state.
+    await chevron("other").click()
     await page.locator('[data-session-id="other-child"]').waitFor()
-    assert.equal(await dot("other").count(), 0)
-    assert.equal(await dot("other-child").count(), 1)
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Collapse session")
+    assert.equal(await chevron("other-child").getAttribute("data-child-activity"), "working")
 
     // A subsession of the viewed conversation is revealed below it.
     await page.evaluate(() => (window as any).fixture.status("work-child", "working"))

@@ -42,6 +42,7 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "सत्र विस्तार गर्नुहोस्",
   "sessionList.expand.collapseTitle": "संकुचित गर्नुहोस्",
   "sessionList.expand.expandTitle": "विस्तार गर्नुहोस्",
+  "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "नयाँ सत्र",
   "sessionList.actions.newSession.title": "नयाँ सत्र",
   "sessionList.actions.copyId.ariaLabel": "सत्र ID प्रतिलिपि गर्नुहोस्",

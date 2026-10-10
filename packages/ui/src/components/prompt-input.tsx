@@ -93,11 +93,14 @@ export default function PromptInput(props: PromptInputProps) {
     { name: "btw", description: t("promptInput.btw.commandDescription") },
     ...getCommands(props.instanceId).filter(command => command.name !== "btw"),
   ]
-  initializePromptInputHeight()
+  initializePromptInputHeight(props.instanceId)
+  createEffect(on(() => props.instanceId, (instanceId) => initializePromptInputHeight(instanceId), { defer: true }))
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
-  const inputHeight = promptInputHeight
-  const setInputHeight = setPromptInputHeight
+  const inputHeight = () => promptInputHeight(props.instanceId)
+  const setInputHeight = (value: Parameters<typeof setPromptInputHeight>[1]) => setPromptInputHeight(props.instanceId, value)
+  const persistInputHeight = (...value: [] | [Parameters<typeof persistPromptInputHeight>[1]]) =>
+    persistPromptInputHeight(props.instanceId, ...value)
   const [isResizing, setIsResizing] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
@@ -128,7 +131,7 @@ export default function PromptInput(props: PromptInputProps) {
   createEffect(() => {
     const saved = inputHeight()
     if (!props.interruptionExpanded && typeof saved === "number" && viewport().height > 0) {
-      persistPromptInputHeight(heightPreference(saved))
+      persistInputHeight(heightPreference(saved))
     }
   })
   const effectiveInputHeight = () => {
@@ -447,7 +450,7 @@ export default function PromptInput(props: PromptInputProps) {
     event.preventDefault()
     resizeDragState = undefined
     setIsResizing(false)
-    persistPromptInputHeight()
+    persistInputHeight()
     textareaRef?.focus()
   }
 
@@ -471,7 +474,7 @@ export default function PromptInput(props: PromptInputProps) {
             : null
     if (next === null) return
     event.preventDefault()
-    persistPromptInputHeight(heightPreference(next))
+    persistInputHeight(heightPreference(next))
   }
 
   onCleanup(() => {
@@ -548,7 +551,7 @@ export default function PromptInput(props: PromptInputProps) {
     const refreshHistory = () => recordHistoryEntry(historyEntry)
     const previousInputHeight = inputHeight()
 
-    persistPromptInputHeight(null)
+    persistInputHeight(null)
     if (isKnownSlashCommand && retainedImageTokens().length) setPrompt(retainedImageTokens().join(" "))
     else clearPrompt()
     clearHistoryDraft()
@@ -598,7 +601,7 @@ export default function PromptInput(props: PromptInputProps) {
       restoredQueuedPayload = undefined
     } catch (error) {
       log.error("Failed to send message:", error)
-      if (inputHeight() === null) persistPromptInputHeight(previousInputHeight)
+      if (inputHeight() === null) persistInputHeight(previousInputHeight)
       if (prompt() === retainedDraft) {
         setPrompt(draftText)
         restoredQueuedPayload = restoredPayload
@@ -637,7 +640,7 @@ export default function PromptInput(props: PromptInputProps) {
   function handleResizeMaximize(event: MouseEvent) {
     event.preventDefault()
     if (props.interruptionExpanded) return
-    persistPromptInputHeight(heightPreference(computeMaxFieldHeight()))
+    persistInputHeight(heightPreference(computeMaxFieldHeight()))
     textareaRef?.focus()
   }
 

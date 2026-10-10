@@ -76,6 +76,73 @@ test("transient minimized viewport sizes do not overwrite the chosen drawer widt
   } finally { await page.close() }
 })
 
+const pinned = (page: Page) => page.evaluate(() => ({
+  left: Boolean(document.querySelector(".session-sidebar-container")),
+  right: Boolean(document.querySelector(".session-right-panel")),
+  floating: document.querySelectorAll(".session-floating-drawer .MuiDrawer-paper").length,
+}))
+const waitForPinned = (page: Page, left: boolean, right: boolean) => page.waitForFunction(({ left, right }) =>
+  Boolean(document.querySelector(".session-sidebar-container")) === left
+  && Boolean(document.querySelector(".session-right-panel")) === right, { left, right })
+
+test("touch tablets remember drawers per orientation; portrait opens closed", async () => {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 1024 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), true)
+    await waitForPinned(page, true, true)
+
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await waitForPinned(page, false, false)
+    assert.deepEqual(await pinned(page), { left: false, right: false, floating: 0 }, "portrait leaves the conversation uncovered")
+
+    // Opening the sessions drawer in portrait is remembered for portrait only.
+    await page.locator(".session-header-drawer-toggle--left button").click()
+    await waitForPinned(page, true, false)
+    await page.setViewportSize({ width: 1366, height: 1024 })
+    await waitForPinned(page, true, true)
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await waitForPinned(page, true, false)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("a drawer closed by rotation hands keyboard focus to its toggle", async () => {
+  // Tablet sizes on both sides of the 1280 px desktop breakpoint.
+  for (const [width, height] of [[1180, 820], [1366, 1024]]) {
+    const context = await browser.newContext({ viewport: { width, height }, hasTouch: true, isMobile: true })
+    const page = await context.newPage()
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await waitForPinned(page, true, true)
+      await page.locator(".session-sidebar-container button").first().focus()
+      await page.setViewportSize({ width: height, height: width })
+      await waitForPinned(page, false, false)
+      await page.waitForFunction(() => document.activeElement?.closest(".session-header-drawer-toggle--left") !== null)
+    } finally { await context.close() }
+  }
+})
+
+test("pointer devices keep drawers open in a tall window", async () => {
+  const page = await browser.newPage({ viewport: { width: 1366, height: 1024 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, true, true)
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await page.waitForTimeout(300)
+    assert.deepEqual(await pinned(page), { left: true, right: true, floating: 0 })
+  } finally { await page.close() }
+})
+
 test("real viewport changes constrain only display and restoring space recovers the selected width", async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
   const errors: string[] = []

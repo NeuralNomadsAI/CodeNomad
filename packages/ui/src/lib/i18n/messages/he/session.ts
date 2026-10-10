@@ -42,6 +42,7 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "פרוס סשן",
   "sessionList.expand.collapseTitle": "כווץ",
   "sessionList.expand.expandTitle": "פרוס",
+  "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "סשן חדש",
   "sessionList.actions.newSession.title": "סשן חדש",
   "sessionList.actions.copyId.ariaLabel": "העתק מזהה סשן",

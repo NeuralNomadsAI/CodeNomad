@@ -6,7 +6,7 @@ import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
-import SessionChildActivity from "./session-child-activity"
+import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -584,6 +584,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     const isActive = () => props.activeSessionId === sessionId()
+    // A collapsed parent's chevron carries its busy subsessions' state.
+    const childActivity = () => rowProps.hasChildren && !rowProps.expanded ? descendantActivity().get(sessionId()) : undefined
+    const expanderLabel = (key: string) => {
+      const label = t(`sessionList.expand.${key}`)
+      const activity = childActivity()
+      return activity ? t("sessionList.expand.withChildActivity", { action: label, activity: childActivityLabel(t, activity) }) : label
+    }
     const title = () => rowProps.session.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, sessionId())
     const interrupted = () => rowProps.session.generationRecovery === "interrupted"
@@ -725,10 +732,9 @@ const SessionList: Component<SessionListProps> = (props) => {
               class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
               onClick={() => rowProps.onToggleExpand?.()}
               aria-expanded={Boolean(rowProps.expanded)}
-              aria-label={
-                rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")
-              }
-              title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
+              aria-label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
+              title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
+              data-child-activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
             >
               <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
             </button>
@@ -745,9 +751,6 @@ const SessionList: Component<SessionListProps> = (props) => {
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             <span class="session-item-badges">
-              <Show when={rowProps.hasChildren && !rowProps.expanded && descendantActivity().get(sessionId())}>
-                {(activity) => <SessionChildActivity activity={activity()} />}
-              </Show>
               <Show when={showStatus()}>
                 <span
                   class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
