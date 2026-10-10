@@ -1,4 +1,4 @@
-import type { MissionActorActivity, MissionReport, MissionTask } from "../../../server/src/api-types"
+import type { MissionActorActivity, MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { missionTaskExecutionEvidence } from "../../../server/src/missions/execution-evidence"
 
 export type MissionNativeTask = Pick<MissionTask, "status" | "executionMode" | "contractGeneration" | "nativeBinding" | "nativeExecution" | "actorSessionId" | "admissionId" | "report" | "lateReports" | "outstandingExecution">
@@ -45,4 +45,14 @@ export function missionReportNotificationKey(report: MissionReportDelivery): str
   if (report.delivery === "coordinator-readout") return undefined
   if (report.delivery === "native-return" && report.notificationStatus === "pending") return "missions.control.report.notification.nativeReturnPending"
   return `missions.control.report.notification.${report.notificationStatus ?? "unknown"}`
+}
+
+/** The latest Pause/Stop could not confirm that every native sub-agent stopped
+ * (incomplete inventory or a session still observed active). Older receipts
+ * without a family summary claim nothing either way. */
+export function partialInterrupt(mission: Pick<MissionMap, "control">): boolean {
+  const control = mission.control
+  if (!control || control.action === "start") return false
+  return Boolean(control.receipts?.some(receipt => receipt.nativeAcknowledgement?.disposition === "interrupt-observed"
+    && receipt.nativeAcknowledgement.descendants?.complete === false))
 }

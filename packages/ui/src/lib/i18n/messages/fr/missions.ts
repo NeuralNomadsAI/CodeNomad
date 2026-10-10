@@ -360,6 +360,7 @@ export const missionMessages = {
   "missions.control.run.paused": "En pause",
   "missions.control.status.stopped": "Arrêtée",
   "missions.control.run.error": "Action pas encore confirmée. Vérifiez l’état avant de réessayer.",
+  "missions.control.run.partialInterrupt": "Certains sous-agents sont peut-être encore actifs.",
   "missions.control.openCoordinator": "Ouvrir le coordinateur",
   "missions.control.mutation.error": "La modification n'a pas pu être enregistrée. Votre saisie a été conservée.",
   "missions.control.mutation.conflict": "Cette mission a changé. Fermez l'éditeur et rouvrez-le pour modifier la dernière version.",

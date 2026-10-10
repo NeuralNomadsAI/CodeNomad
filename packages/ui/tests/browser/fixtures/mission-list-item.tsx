@@ -29,7 +29,7 @@ function Fixture() {
   const [omitRecovery, setOmitRecovery] = createSignal(false)
   const [lastSelection, setLastSelection] = createSignal("")
   const [lastHover, setLastHover] = createSignal("")
-  const recovery = createMissionRecoveryAction({ instanceId: "fixture", mission, target: "coordinator", activity: "unknown", onAdmitted: () => {} })
+  const recovery = createMissionRecoveryAction({ instanceId: "fixture", mission, target: "coordinator", activity: "idle-without-report", onAdmitted: () => {} })
   ;(window as any).missionListFixture = { width: setWidth, compact: setCompact, status: setStatus, disabled: setDisabled, focusAction: setFocusAction,
     refresh: () => setGeneration(value => value + 1), reverse: setReverse, checked: setChecked, omitRecovery: setOmitRecovery }
   const selected = () => {

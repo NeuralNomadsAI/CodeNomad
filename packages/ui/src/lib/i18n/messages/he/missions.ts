@@ -360,6 +360,7 @@ export const missionMessages = {
   "missions.control.run.paused": "מושהית",
   "missions.control.status.stopped": "נעצרה",
   "missions.control.run.error": "הפעולה עדיין לא אושרה. בדקו את המצב לפני ניסיון נוסף.",
+  "missions.control.run.partialInterrupt": "ייתכן שחלק מתתי-הסוכנים עדיין פועלים.",
   "missions.control.openCoordinator": "פתיחת המתאם",
   "missions.control.mutation.error": "לא ניתן לשמור את השינוי. הקלט נשמר.",
   "missions.control.mutation.conflict": "המשימה הזו השתנתה. יש לסגור את העורך ולפתוח אותו מחדש כדי לערוך את הגרסה העדכנית.",

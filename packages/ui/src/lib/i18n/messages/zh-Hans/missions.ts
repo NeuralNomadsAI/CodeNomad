@@ -360,6 +360,7 @@ export const missionMessages = {
   "missions.control.run.paused": "已暂停",
   "missions.control.status.stopped": "已停止",
   "missions.control.run.error": "操作尚未确认。重试前请检查状态。",
+  "missions.control.run.partialInterrupt": "部分子代理可能仍在运行。",
   "missions.control.openCoordinator": "打开协调者",
   "missions.control.mutation.error": "无法保存更改。您的输入已保留。",
   "missions.control.mutation.conflict": "此任务已更改。请关闭编辑器并重新打开，以编辑最新版本。",

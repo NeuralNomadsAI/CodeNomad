@@ -31,7 +31,7 @@ async function setup(page: Page) {
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
 }
 
-test("unknown projection permits explicit verification only; clicks, refresh and remount never replay admitted recovery", async () => {
+test("idle-without-report permits explicit verification only; clicks, refresh and remount never replay admitted recovery", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 390, height: 700 } })
   try {
     await setup(page)
@@ -144,10 +144,15 @@ test("lifecycle, native waits and unadmitted or resolved tasks suppress recovery
     await call(page, "runtime", "working")
     assert.equal(await page.getByRole("button").count(), 2, "historical actor status cannot overrule the native idle projection")
     await call(page, "activity", "unknown")
-    assert.equal(await page.getByRole("button").count(), 2, "unknown requires explicit backend verification, not a stale local-status veto")
+    // A report may still ask the backend to verify unknown activity, but the
+    // coordinator (Play's slot) is never offered recovery without observed idle:
+    // an oversized background subagent tree projects as unknown.
+    assert.equal(await page.locator('[data-target="report"] button').count(), 1, "unknown report activity permits explicit backend verification")
+    assert.equal(await page.locator('[data-target="coordinator"] button').count(), 0, "unknown never offers coordinator recovery")
     await call(page, "runtime", "idle")
     await call(page, "activity")
-    assert.equal(await page.getByRole("button").count(), 2)
+    assert.equal(await page.locator('[data-target="coordinator"] button').count(), 0, "absent activity is not observed idle")
+    assert.equal(await page.locator('[data-target="report"] button').count(), 1)
     await call(page, "task", { admissionId: null })
     assert.equal(await page.locator('[data-target="report"] button').count(), 0)
     await call(page, "task", { admissionId: "msg_admitted", report: { id: "report" } })

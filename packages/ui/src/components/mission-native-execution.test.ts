@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { canRecoverMissionReport, hasUnreturnedNativeInvocation, missionActivityKey, missionNativeCallKey, missionReportNotificationKey, missionTaskStatusKey, type MissionNativeTask } from "./mission-native-execution-model.ts"
+import { canRecoverMissionReport, hasUnreturnedNativeInvocation, missionActivityKey, missionNativeCallKey, missionReportNotificationKey, missionTaskStatusKey, partialInterrupt, type MissionNativeTask } from "./mission-native-execution-model.ts"
 
 const binding = { generation: 2, parentSessionID: "parent", parentMessageID: "message", toolCallID: "call" }
 const task = (patch: Partial<MissionNativeTask> = {}): MissionNativeTask => ({ status: "queued", contractGeneration: 2,
@@ -78,4 +78,18 @@ test("native-parent report readout never promises an automatic coordinator outbo
 test("coordinator business readout has no notification projection, even with a stale status", () => {
   for (const notificationStatus of [undefined, "pending", "admitted"] as const)
     assert.equal(missionReportNotificationKey({ delivery: "coordinator-readout", notificationStatus }), undefined)
+})
+
+test("only an explicit incomplete family summary on the latest Pause/Stop reports sub-agents that may still run", () => {
+  const ack = (complete?: boolean) => ({ missionID: "m", operationID: "op", sessionID: "c", action: "stop" as const, disposition: "interrupt-observed" as const,
+    interrupt: { interrupted: true }, cancellations: [], ...(complete === undefined ? {} : {
+      descendants: { observed: 3, interrupted: 3, cancelled: 0, unconfirmed: complete ? 0 : 1, complete, sessions: [] } }) })
+  const control = (action: "start" | "pause" | "stop", complete?: boolean) => ({ control: { id: "op", missionID: "m", requestID: "r", expectedRevision: 1, action,
+    targets: [], pending: [], receipts: [{ receiptID: "x", sessionID: "c", acknowledgementState: "known" as const, nativeAcknowledgement: ack(complete) as never }] } })
+  assert.equal(partialInterrupt({}), false)
+  assert.equal(partialInterrupt(control("stop", false)), true)
+  assert.equal(partialInterrupt(control("pause", false)), true)
+  assert.equal(partialInterrupt(control("stop", true)), false)
+  assert.equal(partialInterrupt(control("stop")), false, "legacy receipts claim nothing")
+  assert.equal(partialInterrupt(control("start", false)), false)
 })

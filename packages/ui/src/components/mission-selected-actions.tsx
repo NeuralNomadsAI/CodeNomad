@@ -28,9 +28,10 @@ export function MissionSelectedActions(props: {
     get disabled() { return props.disabled || !props.active }, onAdmitted: () => props.onAdmitted() })
   const unregister = props.registerRetry?.({ pending: lifecycle.retryable, reconcile: async () => {}, resend: lifecycle.resend })
   onCleanup(() => unregister?.())
-  // A running Mission whose coordinator is not observed working offers
-  // recovery in Play's place; otherwise Pause keeps the slot.
-  const stuck = () => props.coordinatorActivity === "idle-without-report" || props.coordinatorActivity === "unknown"
+  // A running Mission whose coordinator is observed idle without a report (no
+  // active descendants) offers recovery in Play's place. Unknown activity, e.g.
+  // a large background subagent tree, keeps Pause: it is not evidence of idle.
+  const stuck = () => props.coordinatorActivity === "idle-without-report"
   const primary = (): MissionPrimaryAction | undefined => {
     const current = lifecycle.primary(), recover = recovery.action()
     if (current?.key !== "pause" || !recover || !stuck()) return current

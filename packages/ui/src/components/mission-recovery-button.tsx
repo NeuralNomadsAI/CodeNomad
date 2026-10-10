@@ -58,7 +58,10 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
     const sessionId = props.target === "report" ? task?.actorSessionId : mission.coordinatorSessionId
     const actor = mission.actors.find(actor => actor.sessionId === sessionId)
     if (!actor) return false
-    // Unknown projection is not idle. An explicit click asks the backend to verify.
+    // Unknown projection is not idle. A report recovery may still ask the backend
+    // to verify; coordinator recovery is offered only on observed idle-without-report
+    // (which already excludes active descendants), never on unknown.
+    if (props.target === "coordinator" && props.activity !== "idle-without-report") return false
     if (props.activity && !["unknown", "idle-without-report"].includes(props.activity)) return false
     // Legacy/local actor status can be stale after detachment. The native
     // sidecar wins; unknown still requires authoritative verification on click.

@@ -7,6 +7,7 @@ import { missionStore } from "../stores/missions"
 import { instances } from "../stores/instances"
 import { showConfirmDialog } from "../stores/alerts"
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
+import { partialInterrupt } from "./mission-native-execution-model"
 export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; onSelect: () => void | Promise<void> }
 
 /** Explicit refresh-then-resend of a selected item's unconfirmed control, owned
@@ -111,6 +112,9 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   const resend = () => retryable() ? act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
   const feedback = <>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
+    <Show when={!busy() && !unresolved() && partialInterrupt(props.mission)}>
+      <small role="status">{t("missions.control.run.partialInterrupt")}</small>
+    </Show>
     <Show when={!busy() && (unresolved() || (full() && !terminal()))}><small role="alert">{t("missions.control.run.error")}</small></Show>
   </>
   return { primary, stop, retryable, resend, feedback }

@@ -360,6 +360,7 @@ export const missionMessages = {
   "missions.control.run.paused": "一時停止中",
   "missions.control.status.stopped": "停止済み",
   "missions.control.run.error": "操作はまだ確認されていません。再試行する前に状態を確認してください。",
+  "missions.control.run.partialInterrupt": "一部のサブエージェントがまだ実行中の可能性があります。",
   "missions.control.openCoordinator": "コーディネーターを開く",
   "missions.control.mutation.error": "変更を保存できませんでした。入力内容は保持されています。",
   "missions.control.mutation.conflict": "このミッションは変更されました。エディターを閉じて開き直し、最新バージョンを編集してください。",

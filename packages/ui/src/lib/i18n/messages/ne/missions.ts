@@ -360,6 +360,7 @@ export const missionMessages = {
   "missions.control.run.paused": "विराममा",
   "missions.control.status.stopped": "रोकिएको",
   "missions.control.run.error": "कार्य अझै पुष्टि भएको छैन। पुनः प्रयास गर्नुअघि स्थिति जाँच्नुहोस्।",
+  "missions.control.run.partialInterrupt": "केही उप-एजेन्टहरू अझै चलिरहेका हुन सक्छन्।",
   "missions.control.openCoordinator": "समन्वयकर्ता खोल्नुहोस्",
   "missions.control.mutation.error": "परिवर्तन सेभ गर्न सकिएन। तपाईंको इनपुट राखिएको छ।",
   "missions.control.mutation.conflict": "यो मिसन परिवर्तन भयो। नवीनतम संस्करण सम्पादन गर्न सम्पादक बन्द गरेर फेरि खोल्नुहोस्।",

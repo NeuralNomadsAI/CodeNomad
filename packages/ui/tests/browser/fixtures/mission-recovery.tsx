@@ -17,7 +17,7 @@ const initial: MissionMap = {
 }
 function Fixture() {
   const [mission, setMission] = createSignal(initial)
-  const [activity, setActivity] = createSignal<MissionActorActivity["state"] | undefined>("unknown")
+  const [activity, setActivity] = createSignal<MissionActorActivity["state"] | undefined>("idle-without-report")
   const [mounted, setMounted] = createSignal(true)
   const [disabled, setDisabled] = createSignal(false)
   const refreshes: string[] = []

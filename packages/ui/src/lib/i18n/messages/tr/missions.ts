@@ -360,6 +360,7 @@ export const missionMessages = {
   "missions.control.run.paused": "Duraklatıldı",
   "missions.control.status.stopped": "Durduruldu",
   "missions.control.run.error": "İşlem henüz doğrulanmadı. Yeniden denemeden önce durumu kontrol edin.",
+  "missions.control.run.partialInterrupt": "Bazı alt ajanlar hâlâ çalışıyor olabilir.",
   "missions.control.openCoordinator": "Koordinatörü aç",
   "missions.control.mutation.error": "Değişiklik kaydedilemedi. Girdiniz korundu.",
   "missions.control.mutation.conflict": "Bu görev değişti. En son sürümü düzenlemek için düzenleyiciyi kapatıp yeniden açın.",
