@@ -16,6 +16,7 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
+import { markSessionListsRestored } from "./session-list-restored"
 import "../../../src/index.css"
 
 // Production whole-InstanceShell foundation, independent of the concurrent
@@ -35,12 +36,14 @@ const initial = definitions.map(([name, parent]) => ({ id: `ses_${name}`, instan
 setSessions(previous => new Map(previous).set(id, new Map(initial.map(session => [session.id, session]))))
 setSessionPage(id, ["ses_A", "ses_B", "ses_outside"], false, true)
 seedRestoredSessionSelection(id, "ses_B", "ses_B")
+// Settle restoration only after the simulated first page and selection exist.
+markSessionListsRestored(id)
 await ensureWorktreesLoaded(id)
 const emit = (event: V2Event) => (serverEvents as unknown as { dispatchBatch(events: WorkspaceEventPayload[]): void }).dispatchBatch([
   { type: "instance.event", instanceId: id, event } as WorkspaceEventPayload,
 ])
 const snapshot = () => ({ session: activeSessionId().get(id), root: activeParentSessionId().get(id),
-  heightPreference: promptInputHeight(),
+  heightPreference: promptInputHeight(id),
   selectedMission: missionProjectView(scope).selected, drafts: Object.fromEntries(initial.map(session => [session.id, getSessionDraftPrompt(id, session.id)])) })
 async function measureComposer() {
   await document.fonts.ready
