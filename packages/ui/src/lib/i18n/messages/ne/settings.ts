@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "प्राथमिकताहरू तिनको विन्डोमा खोल्न सकिएन। CodeNomad एप पुनः सुरु गर्नुहोस् वा अद्यावधिक गर्नुहोस्, त्यसपछि फेरि प्रयास गर्नुहोस्।",
   "settings.accounts.current": "सक्रिय खाता",
   "settings.accounts.title": "खाताहरू",
   "settings.accounts.add": "खाता थप्नुहोस्",
