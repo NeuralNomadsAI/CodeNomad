@@ -12,7 +12,7 @@ import solid from "vite-plugin-solid"
 import { marked } from "marked"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { clickMissionAction } from "./mission-actions"
+import { clickMissionAction, missionToolbarAction, selectMission } from "./mission-actions"
 import type { NativeMissionCapture } from "./fixtures/native-mission-integration"
 
 let browser: Browser, server: ViteDevServer, url: string, capture: NativeMissionCapture
@@ -106,7 +106,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
-const taskRow = (page: Page, key: string) => page.locator(`.mission-route-task[data-task-key="${key}"]`)
+const taskRow = (page: Page, key: string) => page.locator(`section.mission-detail .mission-tree-node[data-task-key="${key}"]`)
 async function assertFrame(page: Page, frame: NativeMissionCapture["frames"][number]) {
   const mission = capturedMission(frame)
   await page.waitForFunction(expected => JSON.stringify(window.nativeMissionIntegration.snapshot().missions) === expected, JSON.stringify([mission]))
@@ -166,6 +166,8 @@ test("captured actual-native mission frames render dependencies, reports and exa
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean(window.nativeMissionIntegration))
+    // The capture holds exactly one coordinator Mission; the picker never selects implicitly.
+    await selectMission(page, /./)
     const expectedTransitions: Record<string, Record<string, string>> = {
       initial: { investigate: "ready", implement: "blocked", verify: "blocked" },
       "native-success-unreported": { investigate: "ready", implement: "blocked", verify: "blocked" },
@@ -186,11 +188,15 @@ test("captured actual-native mission frames render dependencies, reports and exa
       await page.screenshot({ path: path.join(outputDirectory, `${label}.png`), fullPage: true })
     }
     const finalMission = capturedMission(capture.frames.find(frame => frame.label === "finished")!)
-    await page.getByRole("button", { name: "Technical details", exact: true }).click()
-    await page.getByRole("button", { name: "Reports", exact: true }).click()
     for (const report of finalMission.reports) {
-      const row = page.locator(".mission-advances > li > .mission-list-item").filter({ has: page.getByTitle(report.summary, { exact: true }) })
-      await clickMissionAction(row, "Read in chat area")
+      // Reports are folded at the bottom of the central overview reader, one link per report.
+      const summary = missionToolbarAction(page, "Summary")
+      if (await summary.getAttribute("aria-pressed") !== "true") await summary.click()
+      const fold = page.locator(".mission-reader details.mission-report-technical").filter({ has: page.locator(":scope > summary", { hasText: /^Reports$/ }) })
+      if (!await fold.evaluate(element => (element as HTMLDetailsElement).open)) await fold.locator(":scope > summary").click()
+      const title = finalMission.tasks.find(task => task.key === report.taskKey)?.title ?? (report.taskKey || "Overview")
+      await fold.locator("li").filter({ has: page.locator(`time[datetime="${new Date(report.createdAt).toISOString()}"]`) })
+        .getByRole("button", { name: title, exact: true }).click()
       await page.waitForFunction(reportID => window.nativeMissionIntegration.snapshot().reader?.itemId === reportID, report.id)
       const articles = page.locator(".mission-reader article")
       await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Summary", exact: true }) }), report.summary)
@@ -204,18 +210,16 @@ test("captured actual-native mission frames render dependencies, reports and exa
       await page.getByRole("button", { name: "Back to chat", exact: true }).click()
     }
     assert(finalMission.reports.length >= 3, "All three actual native task reports must be captured")
-    const actors = page.locator(".mission-disclosure").filter({ has: page.locator(".mission-activity-intro") }).first()
-    // Actors initially collapse; locate its header by the real translated title.
-    const actorsTrigger = page.locator(".mission-disclosure-trigger").filter({ hasText: "Conversations" }).first()
-    if (await actorsTrigger.getAttribute("aria-expanded") !== "true") await actorsTrigger.click()
-    for (const actor of finalMission.actors) {
-      const actorRow = actors.locator(`.mission-conversation-node[data-session-id="${actor.sessionId}"] > .mission-activity-actor > .mission-list-item`)
-      await actorRow.waitFor()
-      if (actor.sessionId === finalMission.coordinatorSessionId) {
-        assert.equal(await actorRow.getByRole("button", { name: `Open ${actor.title}`, exact: true }).count(), 0, "coordinator link lives once in the mission index")
-        await clickMissionAction(page.locator(".mission-control-index > .mission-list-item"), "Open coordinator")
-      } else await clickMissionAction(actorRow, `Open ${actor.title}`)
-      assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, actor.sessionId)
+    // The selected Mission's toolbar supplies the single coordinator link; task rows
+    // link only their exact owned non-coordinator actor.
+    await clickMissionAction(page, "Open conversation")
+    assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, finalMission.coordinatorSessionId)
+    for (const task of finalMission.tasks) {
+      const open = taskRow(page, task.key).locator(".mission-tree-open")
+      // Tasks without their own worker may only link a derived native delegation; descendants are covered below.
+      if (!task.actorSessionId || task.actorSessionId === finalMission.coordinatorSessionId) continue
+      await open.click()
+      assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, task.actorSessionId)
     }
     const inventory = capturedSessions(capture.frames.find(frame => frame.label === "finished")!)
     const children = inventory.filter(session => session.parentID)
