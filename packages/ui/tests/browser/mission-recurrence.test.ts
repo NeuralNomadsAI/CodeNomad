@@ -13,7 +13,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
 import { clickMissionAction, inlineMissionEntry, missionDetail, missionEntryStatus, missionPicker, missionRefresh, missionToolbarAction,
-  selectMission, selectedMissionTitle } from "./mission-actions"
+  missionPickerField, selectMission, selectedMissionTitle } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -104,9 +104,11 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
   })
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 })
-    // The open conversation is the one-time coordinator, so that Mission (only) is selected with its detail.
-    await selectedMissionTitle(page).filter({ hasText: /^One-time review$/ }).waitFor()
+    // The open conversation is the one-time coordinator, yet only the picker selects a Mission.
     await (await inlineMissionEntry(page, "One-time review")).waitFor()
+    assert.equal(await missionPickerField(page).locator(".mission-picker-placeholder").innerText(), "No mission selected")
+    assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
+    await selectMission(page, "One-time review")
     await captureMissionView(page, "unified-list-desktop")
     const entry = await inlineMissionEntry(page, TITLE)
     // A running entry says Daily, its state, its next run and its rule.
@@ -204,9 +206,11 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await waitForEntryStatus(page, TITLE, /Next: /)
     assert.match(await missionEntryStatus(page, TITLE), /^Daily · Running · Next: /, "a running entry names its state, then its next run")
-    // The open coordinator conversation selects its Mission, whose toolbar owns its primary control.
+    // The picker selects the Mission (not its open coordinator conversation); its toolbar owns its primary control.
     await waitForEntryStatus(page, "One-time review", /^Prepared · /)
     const once = await inlineMissionEntry(page, "One-time review")
+    assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
+    await once.click()
     const detail = missionDetail(page)
     await detail.waitFor()
     assert.equal(await once.getAttribute("aria-current"), "true")

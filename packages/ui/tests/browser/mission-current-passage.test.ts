@@ -142,7 +142,10 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await evidence.locator("input[type=number]").press("Enter")
     await evidence.getByText(/Evidence:end/).waitFor()
     assert.ok(sourceReads.some(input => input.kind === "report" && input.itemId === "rpt_first" && input.section === "evidence" && input.page === 1))
-    assert.ok((await evidence.locator("pre").innerText()).length <= 9_001)
+    // Current pages keep the backend's bounded Markdown presentation, like archived passages.
+    assert.equal(await evidence.locator(".markdown-body").count(), 1, "the paged current source renders as Markdown")
+    assert.equal(await evidence.locator("pre").count(), 0)
+    assert.ok((await evidence.locator(".markdown-body").innerText()).length <= 9_001)
     await captureMissionView(page, "current-report-desktop")
     if (process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE) {
       await mkdir(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, { recursive: true })
