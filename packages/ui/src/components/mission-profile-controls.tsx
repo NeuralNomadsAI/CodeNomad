@@ -23,6 +23,8 @@ export function MissionProfileControls(props: {
   const [catalog, setCatalog] = createSignal<{ key: string; agents: ProfileAgent[]; models: ProfileModel[] }>()
   const [failed, setFailed] = createSignal(false), [loading, setLoading] = createSignal(false)
   const [refresh, setRefresh] = createSignal(0)
+  // Technical cause for the failure notice's tooltip; the notice itself stays plain.
+  const [failure, setFailure] = createSignal("")
   const instanceClient = createMemo(() => instances().get(props.instanceId)?.client)
   const identity = () => JSON.stringify([props.instanceId, props.directory])
   const demanded = () => props.active() && !props.disabled
@@ -52,7 +54,7 @@ export function MissionProfileControls(props: {
       setLoading(true); setFailed(false)
       try {
         const native = getRootClient(instanceId), request = { location: toRequestLocation(location) }
-        const options = { ...requestLocationOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) }
+        const options = { ...requestLocationOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]) }
         const [agents, models] = await Promise.all([native.agent.list(request, options), native.model.list(request, options)])
         if (!current()) return
         // The native list includes every known (often disabled) model; bound only the usable ones.
@@ -60,7 +62,10 @@ export function MissionProfileControls(props: {
         if (agents.data.length > 512 || usable.length > 4096) throw new Error("Oversized mission catalog")
         setCatalog({ key, agents: agents.data.map(({ id, mode, hidden }) => ({ id, mode, hidden })),
           models: usable.map(({ providerID, id, variants }) => ({ providerID, id, variants: variants.map(({ id }) => ({ id })) })) })
-      } catch { if (current()) setFailed(true) }
+      } catch (error) {
+        if (!current()) return
+        setFailed(true); setFailure(error instanceof Error ? error.message : String(error))
+      }
       finally { if (current()) setLoading(false) }
     }, 50)
     onCleanup(() => { alive = false; clearTimeout(timer); controller.abort(); setLoading(false) })
@@ -130,6 +135,6 @@ export function MissionProfileControls(props: {
       <For each={props.template === "debug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
     </details></Show>
     <Show when={loading()}><p role="status">{t("missions.control.profiles.loading")}</p></Show>
-    <Show when={failed()}><p role="status">{t("missions.control.profiles.error")}</p></Show>
+    <Show when={failed()}><p role="status" title={failure() || undefined}>{t("missions.control.profiles.error")}</p></Show>
   </section>
 }
