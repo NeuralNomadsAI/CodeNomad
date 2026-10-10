@@ -95,6 +95,14 @@ export const readNativeRecurrenceClock = Effect.fn("missions.readNativeRecurrenc
   return status === undefined ? undefined : status === "running"
 })
 
+/** Positive evidence of the one-Job contract for a running schedule: its daily Job
+ * runs and no settlement-only Job remains. Unknown or partial reads are not proof. */
+export const observeNativeRecurrenceScheduleOnly = Effect.fn("missions.observeNativeRecurrenceScheduleOnly")(function* (input: RecurrenceClockPlacement) {
+  if ((yield* readNativeRecurrenceClockStatus(input)) !== "running") return false
+  const settle = yield* readNativeRecurrenceClockStatus(input, "settle")
+  return settle !== undefined && settle !== "running"
+})
+
 /** Native publishes an execution terminal from its `settled` hook BEFORE the session
  * leaves `Session.active`; wait briefly so the woken observation sees it inactive. */
 const SETTLED_EVENT_DEBOUNCE_MS = 3_000
