@@ -6,7 +6,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { setTimeout as delay } from "node:timers/promises"
@@ -19,7 +19,8 @@ const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute existing isolated CLI")
 const temporary = path.join(os.tmpdir(), "opencode")
 await mkdir(temporary, { recursive: true })
-const root = await mkdtemp(path.join(temporary, "missions-native-family-"))
+// Physical path: Windows runners report an 8.3 temp path, but missions are keyed by the resolved project.
+const root = await realpath(await mkdtemp(path.join(temporary, "missions-native-family-")))
 const project = path.join(root, "project"), config = path.join(root, "config")
 const requests = [], gates = [], holds = new Map(), released = new Set()
 const receipt = { status: "running", cli, artifacts: root, gates,
