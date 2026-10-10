@@ -192,7 +192,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(await page.locator(".mission-tree").count(), 0, "settlement after the final session event removes the former passage tree through native invalidation")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("What should the mission do?", { exact: true }).fill("One-shot from recurring")
-    await page.getByRole("button", { name: "Create without starting", exact: true }).click()
+    await page.getByRole("button", { name: "Create", exact: true }).click()
     await page.locator(".mission-control-index").getByRole("button", { name: "One-shot from recurring", exact: true }).waitFor()
     const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("/fixture").selectedRecurrence)
     assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")

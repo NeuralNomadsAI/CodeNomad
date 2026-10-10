@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
-  MAX_MISSION_MODELS, normalizeMissionModels, parseMissionModel, removeMissionModelRecord, saveMissionModelRecord,
+  MAX_MISSION_MODELS, missionRecordedBrief, normalizeMissionModels, parseMissionModel, removeMissionModelRecord, saveMissionModelRecord,
   type UserMissionModel,
 } from "./mission-model-library"
 import { LEGACY_DEBUG_TEMPLATE_ID } from "../../../server/src/missions/template-id"
@@ -168,5 +168,17 @@ describe("immutable Mission model library edits", () => {
     assert.deepEqual(removeMissionModelRecord(current, model(21).id), current)
     assert.deepEqual(removeMissionModelRecord([], model().id), [])
     assert.deepEqual(current, snapshot)
+  })
+
+  it("projects only a finished Mission's recorded brief inputs into a valid brief", () => {
+    const profiles = { coordinator: execution, roles: { specialist: execution } }
+    const mission = { id: "msn_done", projectID: "project", title: "Audit", objective: "Audit dependencies", notes: "  keep verbatim\n",
+      template: "custom" as const, profiles, taskMode: "independent" as const, status: "completed", runState: "stopped",
+      coordinatorSessionId: "ses_coordinator", revision: 7, summary: "Done", reports: [{ taskKey: "x" }], actors: [], tasks: [] }
+    const brief = missionRecordedBrief(mission)
+    assert.deepEqual(brief, { objective: "Audit dependencies", notes: "  keep verbatim\n", template: "custom", profiles, taskMode: "independent" })
+    assert.notEqual(brief.profiles, profiles, "profiles are copied, not shared with the snapshot")
+    assert.deepEqual(parseMissionModel({ ...model(), ...brief }).notes, "  keep verbatim\n")
+    assert.deepEqual(missionRecordedBrief({ objective: "Historical", template: "wayfinder" }), { objective: "Historical", notes: "", template: "wayfinder" })
   })
 })

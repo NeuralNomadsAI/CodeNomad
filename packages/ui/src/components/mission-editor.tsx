@@ -26,8 +26,6 @@ import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
 import { MissionConversationPicker } from "./mission-conversation-picker"
-import { playCreatedSchedule, startCreatedMission } from "../lib/mission-create-start"
-import { showToastNotification } from "../lib/notifications"
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionMap }
 type FieldError = { field: "objective" | "when" | "zone" | "profiles" | "followed"; message: string }
@@ -100,7 +98,6 @@ export function MissionEditor(props: {
   const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
   const [deleteAttempted, setDeleteAttempted] = createSignal(false)
   const [pending, setPending] = createSignal(false)
-  const [starting, setStarting] = createSignal(false)
   const [error, setError] = createSignal("")
   const [fieldError, setFieldError] = createSignal<FieldError>()
   const fail = (field: FieldError["field"], message: string) => {
@@ -154,16 +151,10 @@ export function MissionEditor(props: {
     finally { if (current()) setDefaultsRefreshing(false) }
   }
 
-  /** Created first; one explicit start afterwards. A failed or unconfirmed start
-   * leaves the created item with its normal Start/Play action, never a resend. */
-  function startWarning(key: "missions.create.startUncertain" | "missions.create.playUncertain", name: string) {
-    showToastNotification({ message: t(key, { title: name }), variant: "warning", duration: 10_000 })
-  }
-
+  // Creation only creates: one-time Missions and schedules start through their explicit Play.
   async function save(event: SubmitEvent) {
     event.preventDefault()
     if (locked() || !isActive()) return
-    const startAfter = kind === "create" && (event.submitter as HTMLElement | null)?.dataset.start === "true"
     setFieldError(undefined)
     const recurrence = kind === "create" && mode() === "recurring"
     if (recurrence) {
@@ -197,11 +188,7 @@ export function MissionEditor(props: {
       const instanceId = props.instanceId
       setPending(true); setError("")
       try {
-        const { schedule } = await serverApi.createMissionRecurrence(instanceId, { ...payload, requestID: requestId })
-        if (startAfter && current()) {
-          setStarting(true)
-          if (await playCreatedSchedule(instanceId, schedule.id, schedule.revision, payload.directory) !== "started") startWarning("missions.create.playUncertain", payload.title)
-        }
+        await serverApi.createMissionRecurrence(instanceId, { ...payload, requestID: requestId })
         if (current()) props.onRecurrenceSaved?.()
       } catch (error) {
         if (error instanceof HttpResponseError && error.status === 503 && error.code === "recurrence-capacity") {
@@ -220,7 +207,7 @@ export function MissionEditor(props: {
         holdRecurrence(scope, { ...payload, requestID: requestId });
         retainSubmittedMissionModel(requestId, selectedModel())
         if (current()) setUncertain(true)
-      } finally { if (current()) { setPending(false); setStarting(false) } }
+      } finally { if (current()) setPending(false) }
       return
     }
     // A hold learned after this editor opened still cannot become a new logical
@@ -271,10 +258,6 @@ export function MissionEditor(props: {
         const result = kind === "edit" && original
           ? await serverApi.editMission(instanceId, original.id, { objective: fields.objective, notes: fields.notes, expectedRevision: original.revision, requestId })
           : await serverApi.createMission(instanceId, { ...fields, directory, requestId })
-        if (startAfter && current()) {
-          setStarting(true)
-          if (await startCreatedMission(instanceId, result.mission) !== "started") startWarning("missions.create.startUncertain", fields.title ?? "")
-        }
         if (current()) props.onSaved(result.mission)
         else if (identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }
@@ -303,7 +286,7 @@ export function MissionEditor(props: {
         if (kind === "create" && isUncertainCreation(error)) setUncertain(true)
         else setError(t(missionMutationErrorKey(error)))
       }
-    } finally { if (current()) { setPending(false); setStarting(false) } }
+    } finally { if (current()) setPending(false) }
   }
 
   const inlineError = (field: FieldError["field"], id: string) =>
@@ -445,9 +428,8 @@ export function MissionEditor(props: {
         <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && !objective().trim())}>
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
         </button>}>
-        <button type="submit" class="button-secondary" data-start="false" disabled={createDisabled()}>{t("missions.create.submitOnly")}</button>
-        <button type="submit" class="button-primary" data-start="true" disabled={createDisabled()}>
-          {t(starting() ? "missions.create.starting" : pending() ? "missions.control.mutation.pending" : "missions.create.submitStart")}
+        <button type="submit" class="button-primary" disabled={createDisabled()}>
+          {t(pending() ? "missions.control.mutation.pending" : "missions.create.submit")}
         </button>
       </Show>
     </footer>

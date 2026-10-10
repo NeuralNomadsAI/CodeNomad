@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "Tercihler kendi penceresinde açılamadı. CodeNomad uygulamasını yeniden başlatın veya güncelleyin, ardından tekrar deneyin.",
   "settings.accounts.current": "Etkin hesap",
   "settings.accounts.title": "Hesaplar",
   "settings.accounts.add": "Hesap ekle",

@@ -29,7 +29,7 @@ const ensureOptions = async (page: Page) => { const summary = page.locator("form
 const openProfiles = async (page: Page) => { await ensureOptions(page); await page.locator("summary").filter({ hasText: await text(page, "missions.create.agents") }).click() }
 const openModels = ensureOptions
 const toggleOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
-const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create without starting"
+const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
 const pickBrief = async (page: Page, id: string) => page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).selectOption(id)
 const nameBrief = async (page: Page, name: string) => {
   await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).click()

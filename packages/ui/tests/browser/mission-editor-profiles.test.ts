@@ -12,7 +12,7 @@ import type {} from "./fixtures/mission-editor-lifetime"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 
 let server: ViteDevServer, browser: Browser, url: string
-const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create without starting"
+const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
 const openOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
 const openAgents = async (page: Page) => {
   const agents = page.locator("form.mission-editor summary").filter({ hasText: /^Agents and models$/ })

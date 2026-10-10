@@ -12,13 +12,13 @@ function primaryIcon(key?: string): JSX.Element {
 /** One row of icon buttons above the selected Mission/schedule's task tree:
  * contextual Play/Pause (or recovery), Stop and, for schedules only, Run now;
  * a separator, then summary reader, coordinator conversation, edit and delete.
- * Inapplicable buttons stay in place, disabled. An available update request is
- * a compact text button below the toolbar, hidden otherwise. */
+ * Inapplicable buttons stay in place, disabled. An available update request and
+ * optional secondary text actions share one compact row below the toolbar. */
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader: () => void
   primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
-  runNow?: MissionPrimaryAction; feedback?: JSX.Element
+  runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
 }) {
   const { t } = useI18n()
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
@@ -53,9 +53,14 @@ export function MissionActionBar(props: {
       <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
         disabled={!props.onDelete || props.deleteDisabled} onClick={() => props.onDelete?.()}><Trash2 class="h-4 w-4" aria-hidden="true" /></button>
     </div>
-    <Show when={props.request}>{request =>
-      <button type="button" class="window-text-button mission-action-request" title={request().ariaLabel}
-        disabled={request().disabled} onClick={() => void request().onSelect()}>{request().label}</button>}
+    <Show when={props.request || props.secondary}>
+      <div class="mission-action-texts">
+        <Show when={props.request}>{request =>
+          <button type="button" class="window-text-button mission-action-request" title={request().ariaLabel}
+            disabled={request().disabled} onClick={() => void request().onSelect()}>{request().label}</button>}
+        </Show>
+        {props.secondary}
+      </div>
     </Show>
     <div class="mission-action-feedback">{props.feedback}</div>
   </>

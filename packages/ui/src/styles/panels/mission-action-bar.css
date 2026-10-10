@@ -4,9 +4,13 @@
 .mission-action-separator { flex: 0 0 auto; align-self: center; width: 1px; height: 1rem; margin-inline: var(--space-xs); background: var(--border-base); }
 /* The same gap before the task group's separator. */
 .mission-control .mission-action-bar { margin-block-end: var(--space-sm); }
-/* The update request sits below the toolbar, left-aligned, with the same gap before the separator. */
-.mission-action-request { align-self: flex-start; justify-self: start; width: fit-content; max-width: 100%; text-align: start; }
-.mission-control .mission-action-request { margin-block-end: var(--space-sm); }
+/* Text actions (update request, Save as brief) share a wrapping row below the toolbar,
+   left-aligned, with the same gap before the separator. */
+.mission-action-texts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); min-width: 0; }
+.mission-control .mission-action-texts { margin-block-end: var(--space-sm); }
+.mission-action-request { width: fit-content; max-width: 100%; text-align: start; }
+.mission-action-texts .mission-brief-save { margin-inline-end: 0; }
+.mission-action-texts .mission-brief-save input { width: 10em; min-width: 0; flex: 1 1 8em; }
 .mission-action-feedback { display: grid; color: var(--text-muted); font-size: var(--font-size-xs); }
 .mission-action-feedback:empty { display: none; }
 .mission-action-feedback small[role="alert"] { color: var(--status-warning); }

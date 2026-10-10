@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "Die Einstellungen konnten nicht in ihrem Fenster geöffnet werden. Starten oder aktualisieren Sie die CodeNomad-App und versuchen Sie es erneut.",
   "settings.accounts.current": "Aktives Konto",
   "settings.accounts.title": "Konten",
   "settings.accounts.add": "Konto hinzufügen",
