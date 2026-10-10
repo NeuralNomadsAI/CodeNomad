@@ -33,6 +33,13 @@ export function normalizeMissionDefaults(value: unknown): MissionProfileDefault[
   return result
 }
 
+/** Document to write: a Flexible exception always travels with the explicit global
+ * entry, so the legacy decoding above never turns it into the global default. */
+export function encodeMissionDefaults(value: readonly MissionProfileDefault[]): MissionProfileDefault[] {
+  const flexibleOnly = value.some(item => item.template === "custom") && !value.some(item => item.template === "all")
+  return normalizeMissionDefaults(flexibleOnly ? [{ template: "all", profiles: {} }, ...value] : value)
+}
+
 export function validMissionDefaults(value: unknown): boolean {
   return value === undefined || (Array.isArray(value) && (value.length === 0 || normalizeMissionDefaults(value).length === value.length))
 }
