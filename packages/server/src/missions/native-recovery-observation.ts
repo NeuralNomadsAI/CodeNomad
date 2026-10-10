@@ -1,14 +1,24 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { assertMissionRecoveryReady } from "./recovery-readiness"
 import { MissionControlError } from "./control-error"
-import { readNativeMissionFamily } from "./native-session-family"
+import { observeActiveDescendant, readNativeMissionFamily } from "./native-session-family"
 import { runningMissionShellRelation } from "./native-shell-correlation"
 
 // Read-only, bounded and deliberately conservative. This never resumes a tree or
 // cancels a permission/Form; the caller still owns authorization and admission.
 export async function assertNativeMissionRecoveryReady(client: OpenCodeClient, target: SessionInfo, signal: AbortSignal): Promise<void> {
   try {
-    const ids = await readNativeMissionFamily(client, target, signal)
+    let ids: Set<string>
+    try { ids = await readNativeMissionFamily(client, target, signal) }
+    catch (error) {
+      signal.throwIfAborted()
+      // A family too large for the bounded read may still prove ongoing work.
+      const active = await client.session.active({ signal })
+      if (active[target.id] || await observeActiveDescendant(client, target.id, active, signal)) {
+        assertMissionRecoveryReady({ active: true, inboxCount: 0, pendingForms: 0, pendingPermissions: 0, runningShells: 0, runningChildren: 0 })
+      }
+      throw error
+    }
     const location = { directory: target.location.directory }
     const [active, inboxes, shells, forms, permissions] = await Promise.all([
       client.session.active({ signal }),

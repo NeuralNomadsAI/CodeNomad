@@ -1,6 +1,7 @@
 import type { MissionEvent, MissionLocation, MissionMap } from "./model"
 import type { SessionInboxSynthetic, SessionInterruptResponse } from "@opencode/client"
 import { hasInvalidControlHistory, isControlReceipt } from "./receipt-identity"
+import type { MissionDescendantControl } from "./native-family-interrupt"
 
 export type MissionAction = "start" | "pause" | "stop"
 export type MissionRunState = "prepared" | "running" | "paused" | "stopped"
@@ -13,7 +14,9 @@ interface MissionNativeAcknowledgementIdentity {
 export type MissionNativeAcknowledgement = MissionNativeAcknowledgementIdentity & (
   | { action: "start"; disposition: "start-admitted"; admission: SessionInboxSynthetic }
   | { action: "pause" | "stop"; disposition: "interrupt-observed"; interrupt: SessionInterruptResponse
-      cancellations: Array<{ inboxID: string; disposition: "native-acknowledged" | "observed-absent" }> }
+      cancellations: Array<{ inboxID: string; disposition: "native-acknowledged" | "observed-absent" }>
+      /** Recursive native subagent interruption under this target; absent on older receipts. */
+      descendants?: MissionDescendantControl }
   | { action: "pause" | "stop"; disposition: "target-missing" }
 )
 export interface MissionLifecycleReceipt {

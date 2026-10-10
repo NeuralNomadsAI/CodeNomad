@@ -497,3 +497,16 @@ test("cross-mission native parent edges cannot fill holes in complete catalogs o
     assert.deepEqual(result.missions[1].family, { state: "unknown", members: [] })
   }
 })
+
+test("a family beyond the display cap with an active descendant is background, and recovery is busy rather than unknown", async () => {
+  const sessions: Record<string, { parentID?: string }> = { coordinator: {} }
+  for (let index = 0; index < 40; index++) sessions[`child-${index}`] = { parentID: "coordinator" }
+  sessions["grandchild"] = { parentID: "child-39" }
+  const active = { grandchild: { type: "running" as const } }
+  assert.deepEqual(await states({ sessions, active }, [actor("coordinator", "coordinator")]), { coordinator: "background" })
+  assert.deepEqual(await states({ sessions }, [actor("coordinator", "coordinator")]), { coordinator: "unknown" },
+    "without positive evidence an oversized family stays unknown")
+  const client = native({ sessions, active })
+  await assert.rejects(assertNativeMissionRecoveryReady(client, await client.session.get({ sessionID: "coordinator" }), new AbortController().signal),
+    error => Boolean(error && typeof error === "object" && "code" in error && error.code === "recovery-busy"))
+})

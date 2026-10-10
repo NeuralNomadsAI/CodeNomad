@@ -2,7 +2,7 @@ import { isSessionNotFoundError, type LocationRef, type OpenCodeClient, type She
 
 import { locationRequestOptions, sameLocation } from "../opencode/compatibility/location"
 import { MISSION_MAX_ACTORS, MISSION_MAX_MISSIONS, MISSION_MAX_TASKS, type MissionActivityProjection, type MissionSnapshot } from "./model"
-import { MAX_MISSION_DESCENDANTS, readNativeMissionFamilyTree, type NativeMissionFamilyTree } from "./native-session-family"
+import { MAX_MISSION_DESCENDANTS, observeActiveDescendant, readNativeMissionFamilyTree, type NativeMissionFamilyTree } from "./native-session-family"
 import { projectMissionFamily } from "./mission-family-projection"
 import { runningMissionShellRelation } from "./native-shell-correlation"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
@@ -21,6 +21,10 @@ interface ActorRead {
   tree?: NativeMissionFamilyTree
   missing?: true
   failed?: true
+  /** Owned root whose bounded family read failed, e.g. more than 32 descendants. */
+  familyFailed?: true
+  /** Positive ancestry evidence of an active descendant despite that failure. */
+  activeDescendant?: boolean
 }
 
 interface LocationRead {
@@ -100,7 +104,7 @@ export async function projectMissionActivity(input: {
     authorizedLocations.set(locationKey(read.session.location), read.session.location)
     const family = await settle(() => readNativeMissionFamilyTree(input.client, read.session!, signal, { assertCurrent,
       consumeRead: () => { if (++familyReads > MAX_FAMILY_READS) throw new Error("Mission family read budget exceeded") } }))
-    if (!family.ok) { read.failed = true; return }
+    if (!family.ok) { read.failed = true; read.familyFailed = true; return }
     read.tree = family.value
     read.family = new Set(family.value.keys())
   })
@@ -119,6 +123,13 @@ export async function projectMissionActivity(input: {
   }
 
   const activeResult = await settle(() => observe(() => input.client.session.active({ signal })))
+  if (activeResult.ok) {
+    for (const [sessionID, read] of actorReads) {
+      if (!read.familyFailed || activeResult.value[sessionID]) continue
+      const probe = await settle(() => observe(() => observeActiveDescendant(input.client, sessionID, activeResult.value, signal, { maxReads: 128 })))
+      read.activeDescendant = probe.ok && probe.value
+    }
+  }
 
   const locationReads = new Map<string, LocationRead>()
   await readBounded([...authorizedLocations.entries()], async ([key, location]) => {
@@ -184,6 +195,12 @@ export async function projectMissionActivity(input: {
         if (!actorReads.has(actor.sessionId)) return { sessionId: actor.sessionId, state: "unknown" as const }
         const read = actorReads.get(actor.sessionId)!
         if (read.missing) return { sessionId: actor.sessionId, state: "missing" as const }
+        // An oversized/partial family is still positive evidence of ongoing work:
+        // never let it read as unknown and invite recovery of a busy mission.
+        if (read.familyFailed && activeResult.ok && read.session && sameLocation(read.session.location, actor.location)) {
+          if (activeResult.value[actor.sessionId]) return { sessionId: actor.sessionId, state: "running" as const }
+          if (read.activeDescendant) return { sessionId: actor.sessionId, state: "background" as const }
+        }
         if (read.failed || !read.session || !read.inbox || !read.family || !activeResult.ok
           || !sameLocation(read.session.location, actor.location)) {
           return { sessionId: actor.sessionId, state: "unknown" as const }

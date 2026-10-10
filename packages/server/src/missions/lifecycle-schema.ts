@@ -3,14 +3,22 @@ import { isDeepStrictEqual } from "node:util"
 import type { MissionAction, MissionLifecycleInput, MissionNativeAcknowledgement, MissionLifecycleOperation } from "./lifecycle-model"
 import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
+import { MAX_CONTROL_FAMILY_SESSIONS } from "./native-session-family"
+import { MAX_REPORTED_DESCENDANTS } from "./native-family-interrupt"
 
 const id = z.string().min(1).max(240)
 const identity = { missionID: id, operationID: id, sessionID: id }
 const recurrence = z.object({ grantID: id, passageID: id, messageID: id, coordinatorSessionID: id }).strict()
 const cancellation = z.object({ inboxID: id, disposition: z.enum(["native-acknowledged", "observed-absent"]) }).strict()
+const count = z.number().int().nonnegative().max(MAX_CONTROL_FAMILY_SESSIONS)
+const descendants = z.object({ observed: count, interrupted: count, cancelled: z.number().int().nonnegative().max(1_000_000),
+  unconfirmed: z.number().int().nonnegative().max(MAX_CONTROL_FAMILY_SESSIONS + 1), complete: z.boolean(),
+  sessions: z.array(id).max(MAX_REPORTED_DESCENDANTS) }).strict()
+  .refine(value => value.interrupted <= value.observed && value.sessions.length <= value.interrupted
+    && new Set(value.sessions).size === value.sessions.length && (!value.complete || value.unconfirmed === 0))
 const interruptAcknowledgement = z.object({ ...identity, action: z.enum(["pause", "stop"]),
   disposition: z.literal("interrupt-observed"), interrupt: z.object({ interrupted: z.boolean() }).strict(),
-  cancellations: z.array(cancellation).max(128) }).strict()
+  cancellations: z.array(cancellation).max(128), descendants: descendants.optional() }).strict()
 const startAcknowledgement = z.object({ ...identity, action: z.literal("start"), disposition: z.literal("start-admitted"),
   admission: z.object({ id, sessionID: id, type: z.literal("synthetic"), delivery: z.literal("queue"),
     time: z.object({ created: z.number().finite().nonnegative() }).strict(),
@@ -121,6 +129,10 @@ export const nativeAcknowledgementSchema = { oneOf: [
     interrupt: { type: "object", properties: { interrupted: { type: "boolean" } }, required: ["interrupted"], additionalProperties: false },
     cancellations: { type: "array", maxItems: 128, items: { type: "object", properties: { inboxID: ackIdentityProperties.sessionID,
       disposition: { enum: ["native-acknowledged", "observed-absent"] } }, required: ["inboxID", "disposition"], additionalProperties: false } },
+    descendants: { type: "object", properties: { observed: { type: "integer", minimum: 0 }, interrupted: { type: "integer", minimum: 0 },
+      cancelled: { type: "integer", minimum: 0 }, unconfirmed: { type: "integer", minimum: 0 }, complete: { type: "boolean" },
+      sessions: { type: "array", maxItems: MAX_REPORTED_DESCENDANTS, items: ackIdentityProperties.sessionID } },
+    required: ["observed", "interrupted", "cancelled", "unconfirmed", "complete", "sessions"], additionalProperties: false },
   }, required: [...ackIdentityRequired, "interrupt", "cancellations"], additionalProperties: false },
   { type: "object", properties: { ...ackIdentityProperties, action: { enum: ["pause", "stop"] }, disposition: { const: "target-missing" } },
     required: ackIdentityRequired, additionalProperties: false },

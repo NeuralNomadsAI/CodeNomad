@@ -16,7 +16,7 @@ function fixture(action: "start" | "pause" | "stop") {
   }
   const state = { owned: true, current: true, environmentFails: false, variables: { TEST: "first" }, afterEnvironment: () => {} }
   const effects = { afterSynthetic: () => {}, afterInterrupt: () => {}, afterCancel: () => {},
-    interruptReply: { interrupted: true } as unknown, running: true }
+    interruptReply: { interrupted: true } as unknown, running: true, stayRunning: false }
   const calls: Array<{ kind: string; input: any }> = []
   let inbox = [
     { id: "inb_mission", type: "user", payload: { metadata: { "codenomad.mission": { missionID: mission.id } } } },
@@ -36,8 +36,13 @@ function fixture(action: "start" | "pause" | "stop") {
         id: input.id, sessionID: input.sessionID, type: "synthetic", delivery: "queue", time: { created: 100 },
         payload: { text: input.text, description: input.description, metadata: input.metadata },
       } },
-      interrupt: async (input: any) => { calls.push({ kind: "interrupt", input }); effects.afterInterrupt(); return effects.interruptReply },
+      interrupt: async (input: any) => {
+        calls.push({ kind: "interrupt", input }); effects.afterInterrupt()
+        if (!effects.stayRunning) effects.running = false
+        return effects.interruptReply
+      },
       active: async () => effects.running ? { ses_actor: { type: "running" } } : {},
+      list: async () => ({ data: [], cursor: { next: null } }),
       inbox: {
         list: async () => inbox,
         cancel: async (input: any) => { calls.push({ kind: "cancel", input }); inbox = inbox.filter(item => item.id !== input.inboxID); effects.afterCancel() },
@@ -116,9 +121,12 @@ test("missing roots can acknowledge interruption but are not recreated by Play",
 test("native interrupted:false is retained even while separately observed activity remains running", async () => {
   const f = fixture("pause")
   f.effects.interruptReply = { interrupted: false }
+  f.effects.stayRunning = true
   const result = await f.send()
+  // Still observed running after bounded re-interrupts: never claim a full stop.
   assert.deepEqual(result.nativeAcknowledgement, { missionID: f.mission.id, operationID: "evt_control", sessionID: "ses_actor",
-    action: "pause", disposition: "interrupt-observed", interrupt: { interrupted: false }, cancellations: [] })
+    action: "pause", disposition: "interrupt-observed", interrupt: { interrupted: false }, cancellations: [],
+    descendants: { observed: 0, interrupted: 0, cancelled: 0, unconfirmed: 1, complete: false, sessions: [] } })
   assert.deepEqual(await f.client.session.active(), { ses_actor: { type: "running" } })
   assert.equal("applied" in result, false)
 })

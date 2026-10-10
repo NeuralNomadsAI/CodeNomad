@@ -75,8 +75,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
+    // Lifecycle Pause/Stop walks and interrupts a whole native subagent family;
+    // it stays below the plugin's 95 s bridge timeout.
+    const lifecycle = body?.command && typeof body.command === "object" && "kind" in body.command && body.command.kind === "lifecycle"
     const signal = body.mode === "mission-input"
-      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]) : lifetime.signal
+      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
     let location
     try {

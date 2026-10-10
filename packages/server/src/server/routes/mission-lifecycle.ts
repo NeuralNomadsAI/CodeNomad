@@ -12,6 +12,11 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
 import { prepareMissionAuthority, assertMissionAuthorityCurrent, missionInstructionClient, type MissionAuthorityCheckpoint } from "./mission-authority-checkpoint"
+import { interruptNativeMissionFamily, isSubagentDelivery, settleInterruptedRoot, type NativeInboxItem } from "../../missions/native-family-interrupt"
+import { readNativeControlFamily } from "../../missions/native-session-family"
+
+/** Leaves headroom for the root interrupt inside the bridge's lifecycle timeout. */
+const FAMILY_CONTROL_BUDGET_MS = 50_000
 
 const schema = z.object({ kind: z.literal("lifecycle"), input: z.object({
   missionID: z.string().min(1).max(100), operationID: z.string().min(1).max(100), sessionID: z.string().regex(/^ses_/).max(240),
@@ -123,10 +128,15 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await checkCoordinator()
       await checkOperation()
       current()
+      const interrupted = target.sessionID === coordinatorID ? await interruptedConversations(client, await checkTarget(), mission.tasks, signal, current) : ""
+      await checkTarget()
+      await checkCoordinator()
+      await checkOperation()
+      current()
       const admitted = await client.session.synthetic({
         sessionID: target.sessionID, id: controlResumeAdmissionID(operation.id, target.sessionID),
         text: target.sessionID === coordinatorID
-          ? `Start or resume existing mission ${mission.id}. Inspect its map and playbook, use saved results, and continue coordination autonomously. Do not create a replacement mission. Resume existing queued assignments rather than duplicate them.`
+          ? `Start or resume existing mission ${mission.id}. Inspect its map and playbook, use saved results, and continue coordination autonomously. Do not create a replacement mission. Resume existing queued assignments rather than duplicate them.${interrupted}`
           : `Resume your interrupted assignments in existing mission ${mission.id}. Inspect the mission map and your transcript first; continue unfinished work without repeating completed actions, then report normally.`,
         description: "CodeNomad mission start/resume", delivery: "queue", resume: true,
         metadata: { "codenomad.mission": { version: 1, missionID: mission.id, kind: "lifecycle", operationID: operation.id } },
@@ -137,23 +147,41 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await checkOperation()
       return reply({ ...ackIdentity, disposition: "start-admitted", admission: admitted })
     } else {
-      await prepareMissionAuthority(authority)
-      await checkTarget()
-      await checkCoordinator()
-      await checkOperation()
+      const action = operation.action
+      const checkpoint = async () => {
+        await prepareMissionAuthority(authority)
+        await checkTarget()
+        await checkCoordinator()
+        await checkOperation()
+        current()
+      }
+      await checkpoint()
+      const root = await checkTarget()
       current()
+      // Background subagents at any depth belong to this mission family. Stop
+      // them deepest first before the root, best effort and honestly counted.
+      const { descendants } = await interruptNativeMissionFamily({ client, root, action, signal, current, checkpoint,
+        deadline: Date.now() + FAMILY_CONTROL_BUDGET_MS })
+      await checkpoint()
       const interrupt = await client.session.interrupt({ sessionID: target.sessionID, resume: false }, { signal })
       current()
       if (!interrupt || typeof interrupt.interrupted !== "boolean" || Object.keys(interrupt).length !== 1) throw new Error("Unknown native interrupt acknowledgement")
       const cancellations: Array<{ inboxID: string; disposition: "native-acknowledged" | "observed-absent" }> = []
+      // A stopped root must not be re-woken by its mission inputs or by the
+      // cancelled results of its own native subagents.
+      const cancellable = (item: NativeInboxItem) => {
+        if (item.type !== "user" && item.type !== "synthetic") return false
+        const metadata = item.payload.metadata?.["codenomad.mission"]
+        return Boolean(metadata && typeof metadata === "object" && !Array.isArray(metadata) && metadata.missionID === mission.id)
+          || isSubagentDelivery(item)
+      }
       if (operation.action === "stop") {
         const inbox = await client.session.inbox.list({ sessionID: target.sessionID }, { signal })
         current()
         if (inbox.length > 128 || new Set(inbox.map(item => item.id)).size !== inbox.length) throw new Error("Incomplete native inbox observation")
         for (const item of inbox) {
           if (item.type !== "user" && item.type !== "synthetic") continue
-          const metadata = item.payload.metadata?.["codenomad.mission"]
-          if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || metadata.missionID !== mission.id) continue
+          if (!cancellable(item)) continue
           await prepareMissionAuthority(authority)
           await checkTarget()
           await checkCoordinator()
@@ -175,10 +203,37 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
           }
         }
       }
+      // Pause leaves queued deliveries parked behind resume:false until Play.
+      const settled = await settleInterruptedRoot({ client, root, action, signal, current, checkpoint,
+        ...(action === "stop" ? { cancel: cancellable, onCancelled: (inboxID: string) => {
+          if (cancellations.length < 128 && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition: "native-acknowledged" })
+        } } : {}) })
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
-      return reply({ ...ackIdentity, disposition: "interrupt-observed", interrupt, cancellations })
+      const family = settled ? descendants
+        : { ...descendants, unconfirmed: descendants.unconfirmed + 1, complete: false }
+      return reply({ ...ackIdentity, disposition: "interrupt-observed", interrupt, cancellations, descendants: family })
     }
   } finally { release() }
+}
+
+const MAX_LISTED_INTERRUPTIONS = 32
+
+/** Natively interrupted descendant conversations, so the coordinator can
+ * decide what to re-delegate. Advisory: a partial read lists what it saw. */
+async function interruptedConversations(client: Parameters<typeof readNativeControlFamily>[0], root: Parameters<typeof readNativeControlFamily>[1],
+  tasks: MissionSnapshot["missions"][number]["tasks"], signal: AbortSignal, current: () => void): Promise<string> {
+  const family = await readNativeControlFamily(client, root, signal, { assertCurrent: current, deadline: Date.now() + 15_000 })
+  const ids = [...family.members.values()].filter(({ session }) => session.id !== root.id && session.outcome === "interrupted")
+    .map(({ session }) => session.id)
+  if (!ids.length) return ""
+  const listed = ids.slice(0, MAX_LISTED_INTERRUPTIONS).map(id => {
+    const task = tasks.find(task => task.actorSessionId === id)
+    return task ? `task ${task.key} (${id})` : id
+  })
+  const more = ids.length > listed.length ? ` and ${ids.length - listed.length} more` : ""
+  const partial = family.complete ? "" : " The sub-agent inventory was incomplete; inspect the mission map for others."
+  return `\n\nThese sub-agent conversations were interrupted when the mission was paused: ${listed.join(", ")}${more}.`
+    + ` Re-delegate or continue their unfinished tasks as needed; do not assume their work completed.${partial}`
 }
