@@ -3,8 +3,9 @@ import test from "node:test"
 import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { canonicalAuthority } from "./authority-protocol"
-import { RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_STORAGE_PREFIX,
+import { RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_STORAGE_PREFIX, recurrenceResultSchema,
   type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceResult } from "./recurrence-contract"
+import { recurrenceSnapshotOutput } from "./recurrence-control-contract"
 import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "./recurrence-runner"
 import { NativeMissionRecurrenceStore } from "./recurrence-store"
 import { latestDailyDue } from "./recurrence-clock"
@@ -105,13 +106,13 @@ test("removing and readding watched conversations preserves their cursors withou
   assert.equal(await f.runner().tick(doc.id), "not-due")
 })
 
-test("failed/stopped settlement never turns supplied read cursor claims into handled source work", async () => {
+test("failed/ended-without-report settlement never turns supplied read cursor claims into handled source work", async () => {
   const f = await fixture()
   assert.equal(await f.runner().tick("daily_review"), "accepted")
   let doc = (await f.store.read("daily_review"))!
   doc = await f.store.finish(doc.id, terminal(doc), f.now, current)
   const original = structuredClone(doc.cursors)
-  for (const outcome of ["failed", "stopped"] as const) {
+  for (const outcome of ["failed", "ended-without-report"] as const) {
     f.now += 86_400_000
     assert.equal(await f.runner().tick(doc.id), "accepted")
     doc = (await f.store.read(doc.id))!
@@ -122,6 +123,21 @@ test("failed/stopped settlement never turns supplied read cursor claims into han
     assert.equal("outcome" in result && result.outcome, outcome)
     assert.equal(doc.pending, null, "a qualified terminal failure retires its passage without consuming sources")
   }
+})
+
+test("passage results have no stopped outcome; a stopped schedule state remains valid", async () => {
+  const f = await fixture()
+  assert.equal(await f.runner().tick("daily_review"), "accepted")
+  let doc = (await f.store.read("daily_review"))!
+  const result = { ...terminal(doc), outcome: "stopped" } as unknown as RecurrenceResult
+  assert.equal(recurrenceResultSchema.safeParse(result).success, false)
+  const wire = recurrenceSnapshotOutput.properties.schedules.items.properties
+  assert.deepEqual(wire.latestResult.properties.outcome.enum, ["completed", "failed", "ended-without-report"])
+  assert.deepEqual(wire.state.enum, ["paused", "running", "interrupted", "stopped"])
+  await assert.rejects(f.store.finish(doc.id, result, f.now, current))
+  assert(doc.pending, "the rejected outcome archives nothing")
+  doc = await f.store.setState(doc.id, doc.revision, "stopped", current)
+  assert.equal((await f.store.read(doc.id))!.state, "stopped")
 })
 
 test("remembered watch capacity rejects new scopes before dispatch rather than losing deduplication", async () => {

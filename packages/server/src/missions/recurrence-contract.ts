@@ -67,7 +67,7 @@ const cursorListSchema = z.array(z.object({ conversationID: id, messageID: id,
   locationDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict())
   .refine(items => new Set(items.map(item => item.conversationID)).size === items.length)
 export const recurrenceResultSchema = z.object({ passageID: recurrenceIDSchema, messageID: recurrenceIDSchema,
-  missionID: id, conversationID: id, outcome: z.enum(["completed", "failed", "stopped", "ended-without-report"]),
+  missionID: id, conversationID: id, outcome: z.enum(["completed", "failed", "ended-without-report"]),
   /** `interrupted`: a restart cut the turn and nothing resumed it (ended-without-report).
    * `not-started`: the original start message was never admitted and cannot be (failed). */
   reason: z.enum(["interrupted", "not-started"]).optional(),

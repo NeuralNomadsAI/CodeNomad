@@ -1,6 +1,5 @@
 import { z } from "zod"
 import { recurrenceIDSchema } from "./recurrence-contract"
-import { recurrenceNativeControlWire, recurrenceControlRequestWire } from "./recurrence-control-contract"
 
 export const RECURRENCE_READER_SECTIONS = 32
 export const RECURRENCE_READER_MAX_SECTIONS = 8_400
@@ -24,39 +23,8 @@ export type MissionRecurrenceReadPage = z.infer<typeof recurrenceReadPage>
 const id = { type: "string", minLength: 1, maxLength: 240 } as const
 const recurrenceID = { type: "string", minLength: 3, maxLength: 100 } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
-const timestamp = { ...counter, maximum: Date.parse("9999-12-28T00:00:00Z") } as const
-const nullableID = { anyOf: [recurrenceID, { type: "null" }] } as const
 const location = { type: "object", properties: { directory: { type: "string", minLength: 1, maxLength: 4096 }, workspaceID: id },
   required: ["directory"], additionalProperties: false } as const
-const receiptProperties = { passageID: recurrenceID, messageID: recurrenceID, dueAt: timestamp, settledAt: timestamp } as const
-const receiptRequired = ["passageID", "messageID", "dueAt", "settledAt", "status"] as const
-const receipt = { type: "object", oneOf: [
-  { type: "object", properties: { ...receiptProperties, status: { type: "string", const: "rejected-before-effect" } },
-    required: receiptRequired, additionalProperties: false },
-  { type: "object", properties: { ...receiptProperties, status: { type: "string", enum: ["completed", "failed", "stopped"] },
-    missionID: id, conversationID: id, artifactMessageIDs: { type: "array", maxItems: 8, uniqueItems: true, items: id } },
-    required: [...receiptRequired, "missionID", "conversationID", "artifactMessageIDs"], additionalProperties: false },
-] } as const
-
-/** The single registered native output contract: bounded references, no permissive additionalProperties. */
-export const recurrenceSnapshotOutput = { type: "object", properties: {
-  version: { type: "integer", const: 1 }, projectID: id, projectCanonical: { type: "string", minLength: 1, maxLength: 4096 }, location,
-  schedules: { type: "array", maxItems: 64, items: { type: "object", properties: {
-    id: recurrenceID, revision: counter, scheduleRevision: counter,
-    state: { type: "string", enum: ["running", "paused", "interrupted", "unavailable", "stopped"] },
-    epoch: { anyOf: [counter, { type: "null" }] },
-    controlCapability: { type: "object", properties: { version: { type: "integer", const: 1 },
-      actions: { type: "array", maxItems: 3, uniqueItems: true, items: { type: "string", enum: ["play", "pause", "stop"] } } },
-      required: ["version", "actions"], additionalProperties: false },
-    nativeControl: recurrenceNativeControlWire,
-    controlRetry: { ...recurrenceControlRequestWire, properties: { ...recurrenceControlRequestWire.properties,
-      action: { type: "string", enum: ["pause", "stop"] } } }, controlsComplete: { type: "boolean" },
-    clock: { type: "object", properties: { time: { type: "string", minLength: 5, maxLength: 5 }, zone: { type: "string", minLength: 1, maxLength: 240 } }, required: ["time", "zone"], additionalProperties: false },
-    pendingPassageID: nullableID, pendingStatus: { type: ["string", "null"], enum: ["unknown", "admitted", null] },
-    pendingAdmission: { anyOf: [{ type: "null" }, { type: "object", properties: { missionID: id, conversationID: id }, required: ["missionID", "conversationID"], additionalProperties: false }] },
-    settledCount: counter, latestResult: { anyOf: [receipt, { type: "null" }] }, history: { type: "array", maxItems: 30, items: receipt },
-  }, required: ["id", "revision", "scheduleRevision", "state", "clock", "pendingPassageID", "pendingStatus", "pendingAdmission", "settledCount", "latestResult", "history"], additionalProperties: false } },
-}, required: ["version", "projectID", "projectCanonical", "location", "schedules"], additionalProperties: false } as const
 
 export const recurrencePassageReadWire = {
   input: { type: "object", properties: { scheduleID: recurrenceID, passageID: recurrenceID,
