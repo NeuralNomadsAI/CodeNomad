@@ -57,11 +57,11 @@ export async function withProductRuntime(cli, prepare, run) {
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(output.slice(-3000))
       await delay(25)
     }
-    const client = OpenCode.make({ baseUrl: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],
-      headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` },
-      fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) }),
-    })
-    await run({ client, root, requests })
+    const endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
+    const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
+    const client = OpenCode.make({ baseUrl: endpoint.url,
+      headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` }, fetch: boundedFetch })
+    await run({ client, root, requests, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
     if (providerError) throw providerError
   } finally {
     try { await stopFixtureChild(child, stopped) } finally {

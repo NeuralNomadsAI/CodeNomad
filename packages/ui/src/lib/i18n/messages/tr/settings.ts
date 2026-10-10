@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "Tercihler kendi penceresinde açılamadı. CodeNomad uygulamasını yeniden başlatın veya güncelleyin, ardından tekrar deneyin.",
   "settings.accounts.current": "Etkin hesap",
   "settings.accounts.title": "Hesaplar",
   "settings.accounts.add": "Hesap ekle",
@@ -234,6 +235,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "Yapılandırma Dosyaları",
   "settings.nav.info": "Bilgi",
+  "settings.nav.missions": "Görevler",
   "settings.scope.device": "Bu cihaz",
   "settings.scope.server": "Sunucu ayarı",
   "settings.common.enabled": "Etkin",

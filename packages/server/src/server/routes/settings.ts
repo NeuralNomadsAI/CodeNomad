@@ -6,6 +6,8 @@ import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
 import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
+import { applyConditionalMissionPreferences, MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
+import { SettingsReadError } from "../../settings/yaml-doc-store"
 
 interface RouteDeps {
   settings: SettingsService
@@ -72,12 +74,28 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
   })
 
-  app.get<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request) => {
-    return sanitizeConfigOwner(request.params.owner, deps.settings.getOwner("config", request.params.owner))
+  app.get<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
+    try {
+      const owner = request.params.owner
+      return sanitizeConfigOwner(owner, owner === "ui"
+        ? deps.settings.getRawConfigOwner(owner)
+        : deps.settings.getOwner("config", owner))
+    } catch (error) {
+      if (!(error instanceof SettingsReadError)) throw error
+      reply.code(503)
+      return { error: error.message }
+    }
   })
 
-  app.patch<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
+  app.patch<{ Params: { owner: string }; Querystring: { conditional?: unknown } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
+      if (Object.prototype.hasOwnProperty.call(request.query, "conditional")) {
+        if (request.query.conditional !== "missions-v1") throw new Error("Unknown conditional patch mode")
+        return sanitizeConfigOwner(
+          request.params.owner,
+          applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body),
+        )
+      }
       const currentOwner = request.params.owner === "server"
         ? deps.settings.getOwner("config", "server")
         : undefined
@@ -89,7 +107,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         deps.settings.mergePatchOwner("config", request.params.owner, processed),
       )
     } catch (error) {
-      reply.code(400)
+      reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })

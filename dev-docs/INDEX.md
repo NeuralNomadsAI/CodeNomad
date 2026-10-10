@@ -28,6 +28,11 @@ Start with [README](../README.md) for installation and usage, then
 - [Panel extensions](PANEL_EXTENSIONS.md): distribution, trust, consent and sandbox/API boundaries.
 - [Palette sources](PALETTE_SOURCES.md): color provenance and validation.
 
+## Missions
+
+- [Missions](MISSIONS.md): one-time Mission maps, native admission, Wayfinder/Debugging playbooks and validation.
+- [Recurring Missions](MISSIONS_RECURRING_SIMPLE.md): simple native schedule contract; [qualification](MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md) records the isolated native runs.
+
 ## Desktop automation and validation
 
 - [Desktop instrumentation](DEVELOPER_MODE.md): always-available automation and authenticated transport; no Developer Mode gate.

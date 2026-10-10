@@ -5,6 +5,7 @@ import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
 const gitFocusBoundaryInitScript = String.raw`(() => {
@@ -34,6 +35,7 @@ const gitFocusBoundaryInitScript = String.raw`(() => {
   }, { once: true })
 })()`
 
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 test("large Changes inventories keep the reader controls responsive", async () => {
   const page = await browser.newPage({ viewport: { width: 2000, height: 1120 } })
   try {
@@ -241,7 +243,9 @@ test("returning after a cancelled child refresh revalidates expanded Workspace d
 
 before(async () => {
   prepareGitPrototypeAssets()
+  cache = await createFixtureCache()
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+    cacheDir: cache.cacheDir,
     publicDir: fileURLToPath(new URL("../../src/renderer/public", import.meta.url)),
     plugins: [solid(), { name: "git-history-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
@@ -255,7 +259,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
 test("Changes restores independent disclosures and Git actions above the staged files", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
@@ -297,11 +301,34 @@ test("Changes restores independent disclosures and Git actions above the staged 
     assert.equal(await input.inputValue(), "Rétablir les sections Git")
     await submit.click()
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "submit" && call.message === "Rétablir les sections Git"))
+    // The mock records admission, not completion of the real hook's status
+    // refresh. Wait for the cleared draft and settled commit/refresh controls.
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLTextAreaElement>('.git-change-commit-input')
+      const submit = document.querySelector<HTMLButtonElement>('.git-change-commit-button')
+      const refresh = document.querySelector<HTMLButtonElement>('.files-header-icon-button')
+      return input?.value === "" && submit?.textContent === "Valider" && refresh?.disabled === false
+    })
     await stagedHeader.click()
     await unstagedHeader.click()
+    assert.equal(await stagedHeader.getAttribute("aria-expanded"), "false")
+    assert.equal(await unstagedHeader.getAttribute("aria-expanded"), "true")
+    await unstaged.locator('.git-panel-file-main').waitFor({ state: "visible" })
     // A collapsed section keeps its header as a real pointer drop target.
-    const source = await unstaged.locator('.git-panel-file-main').boundingBox()
-    const target = await stagedHeader.boundingBox()
+    // A trailing invalidation can replace file rows between Locator's lookup
+    // and boundingBox call. Read both current nodes in one DOM turn instead.
+    const { source, target } = await page.evaluate(() => {
+      const sections = document.querySelectorAll('.git-drop-zone')
+      const [source, target] = [
+        sections[1].querySelector('.git-panel-file-main'),
+        sections[0].querySelector('.git-change-section-header'),
+      ].map(element => {
+        if (!element) return null
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return width > 0 && height > 0 ? { x, y, width, height } : null
+      })
+      return { source, target }
+    })
     assert.ok(source && target)
     await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
     await page.mouse.down()

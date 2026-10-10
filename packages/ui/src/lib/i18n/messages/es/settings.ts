@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "No se pudieron abrir las preferencias en su ventana. Reinicia o actualiza la aplicación CodeNomad e inténtalo de nuevo.",
   "settings.accounts.current": "Cuenta activa",
   "settings.accounts.title": "Cuentas",
   "settings.accounts.add": "Añadir cuenta",
@@ -242,6 +243,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "Archivos de configuración",
   "settings.nav.info": "Info",
+  "settings.nav.missions": "Misiones",
   "settings.scope.device": "Este dispositivo",
   "settings.scope.server": "Configuración del servidor",
   "settings.common.enabled": "Activado",

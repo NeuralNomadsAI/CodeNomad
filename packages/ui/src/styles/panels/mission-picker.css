@@ -1,0 +1,118 @@
+/* Mission picker (mission-picker.tsx): a right-aligned toolbar of general actions
+   (create, settings, refresh) above the full-width "current mission"
+   line (chevron, selected title field). */
+.mission-control-header > .mission-picker { display: grid; flex: 1 1 auto; gap: var(--space-xs); min-width: 0; }
+.mission-picker-control { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mission-picker-expander {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  opacity: 0.8;
+}
+.mission-picker-expander:hover:not(:disabled) { opacity: 1; background: var(--surface-hover-overlay); }
+.mission-picker-expander:disabled { opacity: 0.35; cursor: default; }
+.mission-picker-field {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  min-height: var(--control-height-sm);
+  padding-inline: var(--space-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: start;
+  background: transparent;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+}
+.mission-picker-field:hover:not(:disabled) { background: var(--surface-hover-overlay); }
+.mission-picker-field[aria-expanded="true"] { border-color: var(--accent-primary); }
+.mission-picker-field:disabled { cursor: default; }
+.mission-picker-placeholder { color: var(--text-muted); }
+.mission-picker :is(.mission-picker-expander, .mission-picker-field):focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-picker-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mission-picker-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
+/* Margins match the mission line / toolbar gap: above the toolbar and between it and the mission line. */
+.mission-control-header > .mission-picker { margin-block-start: var(--space-sm); }
+.mission-picker > .mission-picker-actions { margin-block-end: var(--space-sm); }
+
+/* Small square status mark; the full state is in the tooltip and screen-reader text. */
+.mission-picker-mark { flex: 0 0 auto; width: 6px; height: 6px; background: var(--text-muted); }
+.mission-picker-mark[data-mark="running"] { background: var(--accent-primary); }
+.mission-picker-mark[data-mark="working"] { background: var(--session-status-working-fg); animation: pulse 1.5s ease-in-out infinite; }
+.mission-picker-mark[data-mark="permission"] { background: var(--session-status-permission-fg); }
+.mission-picker-mark[data-mark="failed"] { background: var(--status-error); }
+.mission-picker-mark[data-mark="completed"] { background: var(--status-success); }
+.mission-picker-mark:is([data-mark="paused"], [data-mark="interrupted"]) { background: var(--status-warning); }
+
+/* Rows: bounded native scrolling and the session list's row states. */
+.mission-picker-list { display: grid; gap: var(--space-xs); min-width: 0; }
+.mission-picker-search { min-height: var(--control-height-sm); }
+.mission-picker-options { max-height: min(16rem, 45vh); margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.mission-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--touch-target-size-compact);
+  padding: 2px 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition: color 150ms, background-color 150ms;
+}
+.mission-picker-option:hover, .mission-picker-option-active { color: var(--text-primary); background-color: var(--surface-hover-overlay); }
+.mission-picker-option-selected {
+  color: var(--text-primary);
+  background-color: var(--list-item-highlight-bg);
+  box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
+}
+.mission-picker-option-selected:is(:hover, .mission-picker-option-active) {
+  background-color: var(--list-item-highlight-bg);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
+button.mission-picker-option:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-picker-empty { padding: var(--space-xs) 6px; color: var(--text-muted); font-size: var(--font-size-xs); }
+
+/* Inline list spans the panel edge to edge, like the session list. */
+.mission-picker-inline { margin-block-start: var(--space-xs); margin-inline: calc(-1 * var(--space-sm)); }
+.mission-picker-inline .mission-picker-search { margin-inline: var(--space-sm); width: auto; }
+.mission-picker-popup {
+  position: absolute;
+  inset-block-start: calc(100% + 2px);
+  inset-inline: 0;
+  z-index: 1000;
+  padding: 2px;
+  color: var(--text-primary);
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  box-shadow: var(--popover-shadow);
+}
+.mission-picker-popup .mission-picker-search { margin: 2px; width: auto; }
+
+/* Chevron attention among the other missions, aliasing session-child-activity.css. */
+.mission-picker-expander[data-attention] { opacity: 1; color: var(--mission-attention-color); }
+.mission-picker-expander[data-attention="permission"] { --mission-attention-color: var(--session-status-permission-fg); }
+.mission-picker-expander[data-attention="failed"] { --mission-attention-color: var(--status-error); }
+.mission-picker-expander[data-attention="working"] { --mission-attention-color: var(--session-status-working-fg); }
+.mission-picker-expander[data-attention="working"] .disclosure-chevron { animation: pulse 1.5s ease-in-out infinite; }
+.mission-picker-expander[data-attention] .disclosure-chevron { stroke-width: 3; }
+
+@media (pointer: coarse) {
+  .mission-picker-expander { width: var(--touch-target-size); height: var(--touch-target-size); }
+  .mission-picker-field { min-height: var(--touch-target-size); }
+  .mission-picker-option { min-height: var(--touch-target-size); }
+}

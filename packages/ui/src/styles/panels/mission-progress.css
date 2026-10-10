@@ -1,0 +1,25 @@
+.mission-progress { padding: var(--space-sm) 0; font-size: var(--font-size-sm); }
+.mission-progress h3 { font-size: inherit; font-weight: 600; margin: 0; }
+.mission-progress p { margin: var(--space-xs) 0; color: var(--text-secondary); }
+.mission-progress .mission-progress-state { color: var(--text-primary); }
+.mission-progress-label { display: block; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-advance-summary { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mission-progress-tasks { display: grid; gap: 0.25rem; margin-block-start: 0.5rem; }
+.mission-progress-tasks > span { color: var(--text-secondary); }
+.mission-progress-tasks button { text-align: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-advances { list-style: none; margin: 0; padding: 0; }
+.mission-advances li { border-block-end: 1px solid var(--border-base); }
+.mission-advances time, .mission-advances small { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-advances strong { font-weight: 500; }
+.mission-advance-summary { color: var(--text-secondary); }
+.mission-progress button:hover { background: var(--surface-hover-overlay); }
+.mission-progress button:focus-visible { outline: 1px solid var(--text-primary); outline-offset: 2px; }
+.mission-task-reader details { margin-block: 0.75rem; }
+.mission-task-reader summary { cursor: pointer; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.mission-task-reader details[open] summary { margin-block-end: 0.75rem; }
+.mission-route-task[data-archived="true"] .mission-task-title { color: var(--text-secondary); font-weight: 400; }
+.mission-flow .mission-list-item-compact { grid-template-columns: minmax(7em, 1fr) minmax(0, max-content); }
+.mission-flow .mission-list-item-compact .mission-list-text { min-width: 7em; }
+.mission-flow .mission-list-status { max-width: 7em; }
+.mission-flow .mission-list-status > span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.mission-progress .mission-tracking-finish { color: var(--status-warning); }

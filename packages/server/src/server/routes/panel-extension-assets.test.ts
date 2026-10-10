@@ -14,7 +14,7 @@ test("asset routes require explicit API2 consent, exact digest and owned session
   const pkg=await readPanelExtensionArchive(fixtureArchive("<p>Assets</p>",{apiVersion:2,permissions:["session.context","session.assets.read"]}))
   let calls=0, owned=true, revoke=false, move=false, directoryNow="/repo", output:unknown={status:"page",entries:[],cursor:null}
   const client={session:{get:async()=>({location:{directory:directoryNow}})},rpc:{call:async()=>{calls++;if(revoke)await store.activate(pkg.manifest.id,pkg.digest,false);if(move)directoryNow="/moved";return{output}}}}
-  registerPanelExtensionAssetRoutes(app,{store,workspaceManager:{getSharedServiceClient:async()=>client as any,ownsLocation:async()=>owned}})
+  registerPanelExtensionAssetRoutes(app,{store,workspaceManager:{getSharedServiceConnection:async()=>({client,assertCurrent(){}}) as any,ownsLocation:async()=>owned}})
   const body={instanceId:"i",digest:pkg.digest,sessionID:"s"}
   const send=(extra={})=>app.inject({method:"POST",url:`/api/panel-extensions/${pkg.manifest.id}/assets`,payload:{...body,...extra}})
   try {
@@ -46,7 +46,7 @@ test("final session/ownership reads cannot return asset bytes after disable, rep
       if (++sessions === 2 && boundary === "session") { started(); await held }
       return { location: { directory: "/repo" } }
     } }, rpc: { call: async () => ({ output: { status: "asset", mime: "text/plain", uri: "data:text/plain;base64,c2VjcmV0" } }) } }
-    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: { getSharedServiceClient: async () => client as any, ownsLocation: async () => {
+    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: { getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, ownsLocation: async () => {
       if (++ownership === 2 && boundary === "ownership") { started(); await held }
       return true
     } } })
@@ -62,6 +62,36 @@ test("final session/ownership reads cannot return asset bytes after disable, rep
       release()
       const result = await response
       assert.equal(result.statusCode, { disable: 403, replace: 409, remove: 404 }[mutation], `${boundary}: ${mutation}`)
+      assert.equal(result.body.includes("c2VjcmV0"), false)
+    } finally { release(); await app.close(); await rm(directory, { recursive: true, force: true }) }
+  }
+})
+
+test("asset bytes from a superseded OpenCode connection never reach the response", async () => {
+  for (const boundary of ["rpc", "final ownership"] as const) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "opencode-assets-connection-")), app = Fastify(), store = new PanelExtensionStore(directory)
+    const pkg = await readPanelExtensionArchive(fixtureArchive("<p>Assets</p>", { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
+    let current = true, ownership = 0, release!: () => void, started!: () => void
+    const admitted = new Promise<void>(resolve => { started = resolve })
+    const held = new Promise<void>(resolve => { release = resolve })
+    const client = { session: { get: async () => ({ location: { directory: "/repo" } }) }, rpc: { call: async () => {
+      if (boundary === "rpc") { started(); await held }
+      return { output: { status: "asset", mime: "text/plain", uri: "data:text/plain;base64,c2VjcmV0" } }
+    } } }
+    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+      getSharedServiceConnection: async () => ({ client, assertCurrent() { if (!current) throw new Error("OpenCode connection changed") } }) as any,
+      ownsLocation: async () => { if (++ownership === 2 && boundary === "final ownership") { started(); await held } return true },
+    } })
+    try {
+      await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+      const response = app.inject({ method: "POST", url: `/api/panel-extensions/${pkg.manifest.id}/assetRead`, payload: {
+        instanceId: "i", digest: pkg.digest, sessionID: "s", target: { messageID: "m", part: 0, index: 0, digest: "a".repeat(64) },
+      } }).then(value => value)
+      await admitted
+      current = false
+      release()
+      const result = await response
+      assert.equal(result.statusCode, 503, boundary)
       assert.equal(result.body.includes("c2VjcmV0"), false)
     } finally { release(); await app.close(); await rm(directory, { recursive: true, force: true }) }
   }

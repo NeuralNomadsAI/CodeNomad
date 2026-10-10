@@ -24,6 +24,21 @@ test("current and future supported releases preserve info, authentication and bo
   }
 })
 
+test("info translation is GET-only and does not probe alternate routes on failure", async () => {
+  const endpoint = { url: "http://127.0.0.1:4321" }
+  rememberRuntime(endpoint, { version: "2.0.7", pid: 123, discovery: "info" })
+  const seen: string[] = []
+  const fetch = createRuntimeFetch(endpoint, async (input, init) => {
+    const path = new URL(String(input)).pathname
+    seen.push(`${init?.method ?? "GET"} ${path}`)
+    return path === "/openapi.json" ? Response.json(modernContractFixture) : new Response(null, { status: 404 })
+  })
+  const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
+  await assert.rejects(client.server.info())
+  await fetch(`${endpoint.url}/api/status`, { method: "POST" })
+  assert.deepEqual(seen, ["GET /api/info", "POST /api/status"])
+})
+
 test("retired runtime contracts never dispatch even through the direct transport", async () => {
   for (const version of ["2.0.0", "2.0.3", "2.0.4", "2.0.6", "0.0.0-beta-19271"]) {
     const endpoint = { url: "http://127.0.0.1:4321" }

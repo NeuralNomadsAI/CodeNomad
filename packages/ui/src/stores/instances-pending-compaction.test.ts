@@ -4,6 +4,7 @@ import type { OpenCodeClient, PermissionRequest, SessionActiveOutput } from "@op
 import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
+import { getToastHistory } from "../lib/notifications"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, reconcilePendingRequestLiveness,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied, hasRepliedPermission, sendPermissionResponse,
@@ -106,6 +107,8 @@ async function history(h: ReturnType<typeof harness>) {
 }
 
 test("loaded-only scans defer across instances and recover idle/global Forms only after the last overlapping compaction", async () => {
+  const warnings = () => getToastHistory().filter((item) => item.message.includes("Question and permission recovery is incomplete")).length
+  const before = warnings()
   const a = harness(), b = harness()
   await history(b)
   compact(a, "started")
@@ -118,6 +121,7 @@ test("loaded-only scans defer across instances and recover idle/global Forms onl
   const draft = getFormQueue(b.id)[0]
   await Promise.all([syncPendingRequests(a.id), syncPendingRequests(b.id), syncPendingRequests(b.id)])
   assert.equal(brokerReads, 0)
+  assert.equal(warnings(), before, "compaction deferral does not notify")
   assert.deepEqual([...a.reads, ...b.reads], [])
   assert.equal(getFormQueue(b.id)[0], draft)
   await sendPermissionResponse(b.id, "ignored", "live", "once")

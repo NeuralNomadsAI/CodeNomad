@@ -101,6 +101,12 @@ export class RemoteDeviceRegistry {
     return publicDevice(device)
   }
 
+  /** Read-only revalidation of a previously authenticated device; never refreshes lastSeen. */
+  isPaired(id: string): boolean {
+    const device = this.state.devices.find((candidate) => candidate.id === id)
+    return device !== undefined && !this.isExpired(device)
+  }
+
   list(): RemoteControlDevice[] {
     this.pruneExpired()
     return this.state.devices.map(publicDevice)

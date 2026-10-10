@@ -3,6 +3,7 @@ import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
 import { sdkManager } from "../lib/sdk-manager"
+import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -23,6 +24,7 @@ import {
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
 } from "./sessions"
+import { forgetSessionListRestoration } from "./session-list-restoration"
 import {
   ensureWorktreesLoaded,
   getWorktrees,
@@ -248,6 +250,7 @@ const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
+const successfulPendingRecoveries = new Map<string, number>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
 const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
@@ -636,6 +639,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   const sessionHydration = startInstanceSessionHydration(descriptor.id)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
   initialWorkspaceMetadataHydrations.set(descriptor.id, sessionHydration.workspaceMetadata)
+  const recovered = successfulPendingRecoveries.get(descriptor.id)
   const hydration = hydrateInstanceData(descriptor.id, {
     propagateErrors: true,
     sessionHydration: sessionHydration.sessions,
@@ -644,6 +648,9 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   initialHydrations.set(descriptor.id, hydration)
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
+    if (initialHydrations.get(descriptor.id) === hydration
+      && instances().get(descriptor.id)?.client === client
+      && successfulPendingRecoveries.get(descriptor.id) === recovered) markPendingRecovery(descriptor.id, true, true)
   })
 }
 
@@ -769,6 +776,10 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
       const currentRequired = requiredDirectories()
+      const reported = new Set(next.directories.map((entry) => normalizeWorkspacePath(entry.directory)))
+      for (const directory of batch) if (!reported.has(normalizeWorkspacePath(directory))) {
+        snapshot.directories.push({ directory, status: "error" })
+      }
       for (const entry of next.directories) {
         if (entry.status !== "excluded") snapshot.directories.push(entry)
         else if (!optional.includes(entry.directory) || currentRequired.has(normalizeWorkspacePath(entry.directory))) {
@@ -948,6 +959,7 @@ async function runPendingRequestSync(
   token: { cancelled: boolean },
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  const startingClient = instances().get(instanceId)?.client
   for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
     if (!targetLocations && deferPendingDiscovery(instanceId)) return
     const epoch = (pendingRequestSyncEpochs.get(instanceId) ?? 0) + 1
@@ -968,7 +980,10 @@ async function runPendingRequestSync(
         syncPendingForms(instanceId, true, isCurrent, snapshot, targetLocations),
       ])
       for (const result of results) if (result.status === "rejected") throw result.reason
-      if (!targetLocations && isCurrent()) markPendingRecovery(instanceId, false)
+      if (!targetLocations && isCurrent()) {
+        successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
+        markPendingRecovery(instanceId, false)
+      }
       return
     } catch (error) {
       if (isCurrent()) markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded)
@@ -977,6 +992,9 @@ async function runPendingRequestSync(
     }
   }
   if (!token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
+    if (instances().get(instanceId)?.client === startingClient) {
+      markPendingRecovery(instanceId, true, true)
+    }
     throw new Error("Pending request sync did not stabilize")
   }
 }
@@ -1475,6 +1493,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   abortPendingRequestWork(id)
   pendingRequestLiveness.delete(id)
   pendingRequestSyncGenerations.delete(id)
+  successfulPendingRecoveries.delete(id)
   markPendingRecovery(id, false)
   resumePendingDiscovery()
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
@@ -1488,6 +1507,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
+  forgetSessionListRestoration(id)
   clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
@@ -2044,14 +2064,16 @@ async function sendPermissionResponse(
   }
 }
 
-async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer): Promise<void> {
+async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer, interaction?: FormAnswerInteraction): Promise<void> {
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
+  const humanSubmit = form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
+  const options = formRequestOptions(form)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
     await getRootClient(instanceId).session.form.reply(
       { sessionID: form.sessionID, formID: form.id, answer },
-      formRequestOptions(form),
+      humanSubmit ? { ...options, headers: { ...options?.headers, "x-codenomad-human-answer": "1" } } : options,
     )
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)

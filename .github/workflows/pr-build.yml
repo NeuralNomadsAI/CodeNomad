@@ -144,7 +144,7 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [minimum, latest]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -156,6 +156,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
+      - run: npm run build:missions --workspace @neuralnomads/codenomad
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
@@ -174,6 +175,23 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Shipped Missions bundle: loading, model-visible tools through the
+          # ordinary prompt loop, journal RPC and recurrence capability.
+          node scripts/test-missions-native-contract.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-missions-native-family-control.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Only this fixture's own test-harness plugin drives tool executors
+          # through ctx.tool.list, which postdates 2.0.7; the product does not
+          # consume it, so the minimum is covered by the contract fixture above.
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-missions-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            # Parallel siblings, a recursive grandchild and coordinator readout
+            # (same ctx.tool.list harness constraint as above).
+            node scripts/test-missions-native-trajectory.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-fork-native.mjs $cli
@@ -182,6 +200,12 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Recurring schedule journeys (~6.5 min) qualify the latest stable
+          # only; the contract fixture qualifies the recurrence graph on both.
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-recurring-simple-native.mjs $cli ABCD
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
 
   tests:
     needs: authorize
@@ -226,6 +250,9 @@ jobs:
       - name: Build bundled automation integration
         run: npm run build:automation --workspace @neuralnomads/codenomad
 
+      - name: Build bundled mission integration
+        run: npm run build:missions --workspace @neuralnomads/codenomad
+
       - name: Test desktop packaging invariants
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs
 
@@ -269,6 +296,7 @@ jobs:
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/hooks/use-electron-folder-launch.test.ts
           packages/ui/src/lib/launch-errors.test.ts
+          packages/ui/src/lib/i18n/messages/missions.test.ts
           packages/ui/src/lib/clipboard.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
@@ -300,6 +328,7 @@ jobs:
           packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/message-v2/message-window.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
+          packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
@@ -311,9 +340,50 @@ jobs:
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/lib/browser-history.test.ts
+          packages/ui/src/lib/keyboard-offset.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts
           packages/ui/src/types/session.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
+
+      - name: Test Missions UI units
+        run: >-
+          node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/components/mission-attention.test.ts
+          packages/ui/src/lib/native/preferences-window.test.ts
+          packages/ui/src/components/mission-briefing-locales.test.ts
+          packages/ui/src/components/mission-briefing-model.test.ts
+          packages/ui/src/components/mission-execution.test.ts
+          packages/ui/src/components/mission-native-execution-locales.test.ts
+          packages/ui/src/components/mission-native-execution.test.ts
+          packages/ui/src/components/mission-picker-model.test.ts
+          packages/ui/src/components/mission-profile-controls-data.test.ts
+          packages/ui/src/components/mission-profile-summary-data.test.ts
+          packages/ui/src/components/mission-progress-model.test.ts
+          packages/ui/src/components/mission-reader-locales.test.ts
+          packages/ui/src/components/mission-task-navigation.test.ts
+          packages/ui/src/lib/compatibility-click.test.ts
+          packages/ui/src/lib/event-refresh-scheduler.test.ts
+          packages/ui/src/lib/i18n/messages/missions-panel.test.ts
+          packages/ui/src/lib/mission-cleanup.test.ts
+          packages/ui/src/lib/mission-defaults.test.ts
+          packages/ui/src/lib/mission-display.test.ts
+          packages/ui/src/lib/mission-lifecycle-request.test.ts
+          packages/ui/src/lib/mission-markdown-pages.test.ts
+          packages/ui/src/lib/mission-model-library.test.ts
+          packages/ui/src/lib/mission-mutation-locales.test.ts
+          packages/ui/src/lib/mission-mutation.test.ts
+          packages/ui/src/lib/mission-preferences-document.test.ts
+          packages/ui/src/lib/mission-recurrence-control.test.ts
+          packages/ui/src/lib/mission-task-sessions.test.ts
+          packages/ui/src/lib/mission-view-fence.test.ts
+          packages/ui/src/lib/native-mission-preferences.test.ts
+          packages/ui/src/lib/storage-owner-read-fence.test.ts
+          packages/ui/src/stores/mission-creation-drafts.test.ts
+          packages/ui/src/stores/mission-lifecycle-intents.test.ts
+          packages/ui/src/stores/mission-task-session-reads.test.ts
+          packages/ui/src/stores/missions.test.ts
+          packages/ui/src/stores/session-generation-recovery-integration.test.ts
+          packages/ui/src/stores/session-list-restoration.test.ts
 
       - name: Test restore ownership integration
         run: >-

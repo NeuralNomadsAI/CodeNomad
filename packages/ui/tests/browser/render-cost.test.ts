@@ -51,8 +51,79 @@ async function open(query: string, run: (page: Page) => Promise<void>) {
   try {
     await page.goto(`${url}?${query}`)
     await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => {
+      const events: unknown[] = []
+      ;(window as any).renderCostFailureEvents = events
+      for (const kind of ["pointerdown", "pointerup", "pointermove", "gotpointercapture", "lostpointercapture", "mouseover", "mouseout", "focusin", "focusout", "keydown", "keyup"]) {
+        document.addEventListener(kind, event => {
+          if (event instanceof KeyboardEvent && event.key !== "Escape") return
+          const pointer = event instanceof PointerEvent ? event : undefined
+          const mouse = event instanceof MouseEvent ? event : undefined
+          events.push({ kind, at: performance.now(), prevented: event.defaultPrevented, trusted: event.isTrusted,
+            x: mouse?.clientX, y: mouse?.clientY, buttons: mouse?.buttons, button: mouse?.button, pointerId: pointer?.pointerId,
+            path: event.composedPath().filter(node => node instanceof Element).slice(0, 5).map(node => {
+              const element = node as Element
+              return { tag: element.tagName, classes: (element.getAttribute("class") ?? "").slice(0, 160),
+                hover: element.matches(":hover"), focusWithin: element.matches(":focus-within"),
+                captured: pointer ? element.hasPointerCapture(pointer.pointerId) : undefined }
+            }) })
+          if (events.length > 64) events.shift()
+        }, { passive: true })
+      }
+    }).catch(() => {})
     await run(page)
     assert.deepEqual(errors, [])
+  } catch (error) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const snapshot = await Promise.race([page.evaluate(() => {
+        const tool = document.querySelector<HTMLElement>('.tool-call[data-part-id="step-0"]') ?? document.querySelector<HTMLElement>(".tool-call")
+        const header = tool?.querySelector<HTMLElement>(":scope > .tool-call-header")
+        const copy = header?.querySelector<HTMLButtonElement>(".tool-call-header-copy:not(.action-overflow-trigger)")
+        const stream = document.querySelector<HTMLElement>(".message-stream")
+        const rect = copy?.getBoundingClientRect()
+        const x = rect ? rect.x + rect.width / 2 : undefined, y = rect ? rect.y + rect.height / 2 : undefined
+        const hit = x !== undefined && y !== undefined ? document.elementFromPoint(x, y) : null
+        const hitPath: unknown[] = []
+        for (let node = hit; node && hitPath.length < 5; node = node.parentElement) {
+          hitPath.push({ tag: node.tagName, classes: (node.getAttribute("class") ?? "").slice(0, 160) })
+        }
+        const events = ((window as any).renderCostFailureEvents ?? []) as Array<{ pointerId?: number }>
+        const pointerIds = [...new Set(events.map(event => event.pointerId).filter(id => id !== undefined))].slice(-8)
+        return { observedAtFailure: performance.now(), fonts: document.fonts.status, focused: document.hasFocus(), visibility: document.visibilityState,
+          viewport: { width: innerWidth, height: innerHeight }, desktopPointer: matchMedia("(hover: hover) and (pointer: fine)").matches,
+          selection: tool?.getAttribute("data-part-id") === "step-0" ? "step-0" : tool ? "first-tool" : "absent",
+          activeElement: { tag: document.activeElement?.tagName, classes: (document.activeElement?.getAttribute("class") ?? "").slice(0, 160) },
+          header: { hover: header?.matches(":hover"), focusWithin: header?.matches(":focus-within"),
+            contentOverflow: header?.dataset.contentOverflow, actionOverflow: header?.dataset.actionOverflow },
+          copyCenter: { x, y, inViewport: x !== undefined && y !== undefined && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight }, hitPath,
+          elements: [tool, header, copy, stream, document.body, document.documentElement].map(element => {
+            if (!element) return null
+            const style = getComputedStyle(element), bounds = element.getBoundingClientRect()
+            return { tag: element.tagName, classes: (element.getAttribute("class") ?? "").slice(0, 160),
+              rect: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+              opacity: style.opacity, pointerEvents: style.pointerEvents, visibility: style.visibility, display: style.display, cursor: style.cursor,
+              inert: element.inert, inertAncestor: Boolean(element.closest("[inert]")), disabled: element.matches(":disabled"), scrollTop: element.scrollTop,
+              capturedPointers: pointerIds.filter(id => element.hasPointerCapture(id!)) }
+          }),
+          originalStepSame: Boolean(tool && tool === (window as any).originalStep),
+          originalScrollerSame: Boolean(tool?.querySelector(".tool-call-markdown") && tool.querySelector(".tool-call-markdown") === (window as any).originalScroller),
+          outputScrollTop: tool?.querySelector(".tool-call-markdown")?.scrollTop, routingCursor: stream?.style.cursor, events }
+      }), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Failure diagnostic unavailable")), 2000) })])
+      const record = { source: "render-cost.open", originalError: { name: error instanceof Error ? error.name.slice(0, 128) : typeof error,
+        message: error instanceof Error ? error.message.split("\n", 1)[0].slice(0, 1024) : "Non-Error failure" }, snapshot, omittedEvents: 0 }
+      while (Buffer.byteLength(JSON.stringify(record), "utf8") > 32 * 1024 && snapshot.events.length) { snapshot.events.shift(); record.omittedEvents++ }
+      if (Buffer.byteLength(JSON.stringify(record), "utf8") > 32 * 1024) throw new Error("Failure diagnostic exceeded bound")
+      console.error("render-cost-failure", JSON.stringify(record))
+    } catch (diagnosticError) {
+      try {
+        console.error("render-cost-failure", JSON.stringify({ source: "render-cost.open", originalError: {
+          name: error instanceof Error ? error.name.slice(0, 128) : typeof error,
+          message: error instanceof Error ? error.message.split("\n", 1)[0].slice(0, 1024) : "Non-Error failure" },
+          diagnosticError: diagnosticError instanceof Error ? diagnosticError.name.slice(0, 128) : typeof diagnosticError }))
+      } catch {}
+    } finally { if (timer) clearTimeout(timer) }
+    throw error
   } finally { await page.close() }
 }
 const step = (page: Page, index = 0) => page.locator(`.tool-call[data-part-id="step-${index}"]`)
@@ -342,3 +413,30 @@ test("timeline exact extent, bounded DOM and active highlight updates do not mou
   await page.locator('.message-timeline-segment[data-message-id="message-0"]').first().click()
   assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).selected, "marker-0")
 }))
+
+test("failure-only diagnostics retain the originating error and close the page even when the snapshot fails", async () => {
+  const originalConsoleError = console.error
+  const records: string[] = []
+  console.error = (...args) => { if (args[0] === "render-cost-failure") records.push(String(args[1])); else originalConsoleError(...args) }
+  try {
+    for (const closed of [false, true]) {
+      const originatingError = new Error("Owned diagnostic failure check")
+      let ownedPage: Page | undefined
+      await assert.rejects(open("mode=task&count=1", async page => {
+        ownedPage = page
+        if (closed) await page.close()
+        throw originatingError
+      }), error => error === originatingError)
+      assert.equal(ownedPage!.isClosed(), true)
+      const record = JSON.parse(records.at(-1)!)
+      assert.equal(record.originalError.message, originatingError.message)
+      assert.ok(Buffer.byteLength(records.at(-1)!, "utf8") <= 32 * 1024)
+      if (closed) assert.equal(record.diagnosticError, "Error")
+      else {
+        assert.match(record.snapshot.selection, /^(step-0|first-tool)$/)
+        assert.ok(Array.isArray(record.snapshot.events) && record.snapshot.events.length <= 64)
+      }
+    }
+    assert.equal(records.length, 2)
+  } finally { console.error = originalConsoleError }
+})

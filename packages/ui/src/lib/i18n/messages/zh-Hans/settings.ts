@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "无法在设置窗口中打开偏好设置。请重启或更新 CodeNomad 应用后重试。",
   "settings.accounts.current": "活动账户",
   "settings.accounts.title": "账户",
   "settings.accounts.add": "添加账户",
@@ -242,6 +243,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "配置文件",
   "settings.nav.info": "信息",
+  "settings.nav.missions": "任务",
   "settings.scope.device": "此设备",
   "settings.scope.server": "服务器设置",
   "settings.common.enabled": "已启用",

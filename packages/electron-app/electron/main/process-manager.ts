@@ -20,7 +20,7 @@ import {
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./process-exit"
 import { getUserShellEnv, supportsUserShell } from "./user-shell"
-import { resolveShellEnvironment } from "./shell-environment"
+import { resolveShellEnvironment, restoreDesktopProfileEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 import { startNativeService } from "./native-service-start"
 import { BACKEND_PROFILE_ENVIRONMENT } from "./data-profile"
@@ -140,7 +140,20 @@ export declare interface CliProcessManager {
   on(event: "error", listener: (error: Error) => void): this
 }
 
+let backendProfileScope: { profile: string; configIdentity: string } | undefined
+
+/** Records the resolved data profile the backend uses as its Mission profile scope
+ * (`CODENOMAD_UPDATE_CHANNEL`/`CODENOMAD_PROFILE_CONFIG_IDENTITY` on the backend only). */
+export function setBackendProfileScope(scope: { profile: string; configIdentity: string }): void {
+  backendProfileScope = { ...scope }
+}
+
 export class CliProcessManager extends EventEmitter {
+  private readonly desktopProfile = {
+    CODENOMAD_UPDATE_CHANNEL: backendProfileScope?.profile,
+    CODENOMAD_PROFILE_CONFIG_IDENTITY: backendProfileScope?.configIdentity,
+    CLI_CONFIG: process.env.CLI_CONFIG,
+  }
   private child?: ChildProcess
   private childStartIdentity?: Promise<string | undefined>
   private status: CliStatus = { state: "stopped" }
@@ -225,6 +238,7 @@ export class CliProcessManager extends EventEmitter {
       }
       if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
     }
+    restoreDesktopProfileEnvironment(env, this.desktopProfile)
     env.ELECTRON_RUN_AS_NODE = "1"
     env.CODENOMAD_NATIVE_PARENT = "1"
     // The host's resolved profile wins over any value captured from the user's shell.

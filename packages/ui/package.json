@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:browser": "node --import tsx --test --test-concurrency=1 tests/browser/*.test.ts",
+    "qualify:browser:native-mission-replay": "node --import tsx --test --test-concurrency=1 tests/browser/native-mission-integration.qualification.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

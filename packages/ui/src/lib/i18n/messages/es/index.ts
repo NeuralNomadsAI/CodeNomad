@@ -9,6 +9,11 @@ import { loadingScreenMessages } from "./loadingScreen"
 import { logMessages } from "./logs"
 import { markdownMessages } from "./markdown"
 import { messagingMessages } from "./messaging"
+import { missionMessages } from "./missions"
+import { missionRecoveryMessages } from "./mission-recovery"
+import { missionsPanelMessages } from "./missions-panel"
+import { missionConversationMessages } from "./mission-conversations"
+import { missionCreateMessages } from "./missions-create"
 import { permissionReceiptMessages } from "./permission-receipts"
 import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
@@ -30,6 +35,11 @@ export const esMessages = mergeMessageParts(
   logMessages,
   sessionMessages,
   messagingMessages,
+  missionMessages,
+  missionRecoveryMessages,
+  missionsPanelMessages,
+  missionConversationMessages,
+  missionCreateMessages,
   permissionReceiptMessages,
   toolCallMessages,
   markdownMessages,

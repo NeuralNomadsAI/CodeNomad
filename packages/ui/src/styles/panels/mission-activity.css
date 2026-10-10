@@ -1,0 +1,39 @@
+.mission-activity-intro {
+  margin: 0;
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--border-base);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.mission-activity-list,
+.mission-conversation-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.mission-conversation-children {
+  margin-inline-start: var(--space-md);
+  border-inline-start: 1px solid var(--border-base);
+  padding-inline-start: var(--space-xs);
+}
+
+.mission-conversation-node,
+.mission-activity-actor { min-width: 0; }
+
+.mission-activity-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.mission-activity-copy strong,
+.mission-activity-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-activity-copy strong { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.mission-activity-copy span { color: var(--text-muted); font-size: var(--font-size-xs); }
+
+@media (pointer: coarse) {
+  .mission-conversation-children { margin-inline-start: var(--space-sm); }
+}

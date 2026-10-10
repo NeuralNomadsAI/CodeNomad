@@ -86,6 +86,12 @@ export class OpenCodeSharedService {
     return this.connect()
   }
 
+  // Observation only: registration can precede profile/plugin preparation.
+  // Requests retain the connection's normal contract and generation fences.
+  existingConnection(): ServiceConnection | undefined {
+    return this.connected
+  }
+
   async headers(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<ReturnType<typeof Service.headers>> {
     return this.dependencies.headers(await this.endpoint(options, requestOptions))
   }

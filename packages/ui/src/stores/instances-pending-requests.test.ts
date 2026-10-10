@@ -294,12 +294,14 @@ test("real SSE background permissions and Forms use cold native authority, not W
         assert.equal(getPermissionQueue(h.id).length, 2)
         assert.equal(getFormQueue(h.id).length, 3)
         serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: host, status: "ok", locations: [] }] })
-        await syncPendingRequests(h.id)
+        await assert.rejects(syncPendingRequests(h.id), "missing native coverage is still incomplete")
         assert.equal(getPermissionQueue(h.id).length, 2, "an outer UI alias is not native coverage")
         assert.equal(getFormQueue(h.id).length, 3, "empty placement provenance cannot clear Forms")
         serverApi.getPendingRequests = async (_id, directories) => {
           candidates = directories
-          return { supported: true, directories: [{ directory: host, status: "ok", locations: [emptyLocation(native)] }] }
+          return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const,
+            locations: [emptyLocation(native)],
+          })) }
         }
         await syncPendingRequests(h.id)
         assert.deepEqual(candidates, [host, native], "known permissions retain their native recovery candidate until authoritative coverage settles them")
@@ -475,7 +477,12 @@ test("unsupported and failed snapshots retain queues without loading cold worktr
     assert.equal(incompletePendingRecovery().has(h.id), true)
     invalidatePendingRequestSync(h.id)
     updateInstance(h.id, { client: { ...h.client } as OpenCodeClient })
-    serverApi.getPendingRequests = async () => snapshot(h.directory, [permission("active")], [form("global")])
+    serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
+      directory, status: "ok" as const, locations: [{ location: { directory },
+        permissions: directory === h.directory ? [permission("active")] : directory === "/background" ? [permission("background")] : [],
+        forms: directory === h.directory ? [form("global")] : directory === "/background" ? [form("background")] : [],
+      }],
+    })) })
     await syncPendingRequests(h.id)
     assert.equal(incompletePendingRecovery().has(h.id), false)
     assert.deepEqual(h.calls, [])

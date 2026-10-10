@@ -1,12 +1,13 @@
-import { For, Show, createMemo, createSignal, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, onCleanup, type Component } from "solid-js"
 import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode/client"
 import { useI18n } from "../lib/i18n"
 import { getFormAnswer, isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
 import { isWebSearchProviderForm } from "../lib/websearch-form"
+import { createFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 
 interface FormRequestProps {
   form: FormInfo
-  onReply: (answer: FormAnswer) => Promise<void>
+  onReply: (answer: FormAnswer, interaction?: FormAnswerInteraction) => Promise<void>
   onCancel: () => Promise<void>
 }
 
@@ -62,9 +63,11 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   const update = (key: string, value: FormValue | undefined) => {
     setValues((current) => ({ ...current, [key]: value }))
   }
+  const interaction = createFormAnswerInteraction(() => props.form, () => getFormAnswer(props.form.fields, values()))
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault()
+    const originatingInput = interaction.take()
     if (submitting()) return
     const form = event.currentTarget as HTMLFormElement
     if (!form.reportValidity()) return
@@ -84,7 +87,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
     setSubmitting(true)
     setError(null)
     try {
-      await props.onReply(getFormAnswer(props.form.fields, values()))
+      await props.onReply(getFormAnswer(props.form.fields, values()), originatingInput)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("formRequest.errors.reply"))
     } finally {
@@ -105,7 +108,8 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   }
 
   return (
-    <form class="form-request" onSubmit={submit} aria-label={title()} data-websearch-provider={webSearchProvider() || undefined}>
+    <form class="form-request" onSubmit={submit} ref={element => onCleanup(interaction.attach(element))}
+      aria-label={title()} data-websearch-provider={webSearchProvider() || undefined}>
       <fieldset class="form-request-fields" disabled={submitting()} onFocusIn={event => {
         const scroller = event.currentTarget
         const control = event.target

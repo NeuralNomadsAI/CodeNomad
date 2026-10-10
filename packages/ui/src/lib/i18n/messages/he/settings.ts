@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "לא ניתן היה לפתוח את ההעדפות בחלון שלהן. הפעילו מחדש או עדכנו את אפליקציית CodeNomad ונסו שוב.",
   "settings.accounts.current": "חשבון פעיל",
   "settings.accounts.title": "חשבונות",
   "settings.accounts.add": "הוספת חשבון",
@@ -242,6 +243,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "קובצי הגדרות",
   "settings.nav.info": "מידע",
+  "settings.nav.missions": "משימות",
   "settings.scope.device": "מכשיר זה",
   "settings.scope.server": "הגדרת שרת",
   "settings.common.enabled": "מופעל",

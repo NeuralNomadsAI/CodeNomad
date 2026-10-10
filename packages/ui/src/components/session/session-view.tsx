@@ -4,6 +4,9 @@ import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
+import { MissionReader } from "../mission-reader"
+import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
+import { missionStore } from "../../stores/missions"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -104,11 +107,30 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const missionReader = () => props.isActive ? missionProjectView(props.instanceFolder).reader : undefined
+  const readingMission = () => Boolean(missionReader())
+  // A layout-restored reader for a one-time Mission the loaded map no longer
+  // contains has nothing to show: release the central surface to the transcript.
+  createEffect(() => {
+    const target = missionReader()
+    if (!target || target.kind === "recurrence" || target.recurrence) return
+    const state = missionStore.state(props.instanceId)
+    if ((state.status === "ready" || state.status === "unavailable") && !state.missions.some(mission => mission.id === target.missionId))
+      updateMissionProjectView(props.instanceFolder, { reader: undefined })
+  })
   const filePreview = createMemo(() => {
     const target = getFilePreview(props.instanceId)
     return target?.sessionId === props.sessionId ? target : null
   })
   createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
+  const centralPreview = () => props.isActive !== false && preview()?.mode === "preview" && !filePreview() && !readingMission()
+  // The latest explicit reader selection owns the central surface. Opening one
+  // must not leave the other mounted invisibly above it; editor drafts live in
+  // their own store and the composer stays outside both readers.
+  createEffect(on(filePreview, target => {
+    if (target && props.isActive) updateMissionProjectView(props.instanceFolder, { reader: undefined })
+  }, { defer: true }))
+  createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -623,18 +645,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         </div>
       }
     >
-      <div ref={rootRef} class="session-view">
+      <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
         <Show when={preview()}>
           <SessionPreviewView
             preview={preview()!}
-            active={props.isActive !== false && preview()?.mode === "preview" && !filePreview()}
+            active={centralPreview()}
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
         <Show when={props.isActive !== false}>
+        {/* The active web preview owns the central flex space; the transcript surface yields it. */}
+        <div class="mission-transcript-surface" style={{ display: centralPreview() ? "none" : undefined }}>
+        <div class="mission-transcript-content" inert={readingMission()}
+          style={{ visibility: readingMission() ? "hidden" : undefined }}>
         <Show when={filePreview()} fallback={
         <Show
-          when={preview()?.mode !== "preview"}
+          when={preview()?.mode !== "preview" || readingMission()}
         >
             <MessageSection
               timelineMount={timelineMount()}
@@ -655,7 +681,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
               onRevert={handleRevert}
               onFork={handleFork}
-              isActive={props.isActive}
+              // Hidden beneath a reader, the stream defers scroll restore/follow
+              // and re-applies them, against live geometry, once it is shown again.
+              isActive={props.isActive && !readingMission()}
               registerScrollToBottom={(fn) => {
                 scrollToBottomHandle = fn ?? undefined
               }}
@@ -671,6 +699,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             />
         </Show>
         }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
+
+        </div>
+        <Show when={readingMission()}>
+          <MissionReader instanceId={props.instanceId} scope={props.instanceFolder} />
+        </Show>
+        </div>
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar
@@ -713,7 +747,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
           registerPromptInputApi={registerPromptInputApi}
         />
-        <div class="session-timeline-slot" ref={setTimelineMount} />
+        <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
         </Show>
       </div>
     </Show>

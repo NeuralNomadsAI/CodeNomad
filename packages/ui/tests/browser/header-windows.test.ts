@@ -11,31 +11,50 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
+async function disposeFixture() {
+  try { await browser?.close() }
+  finally {
+    if (server) await server.close()
+    else await cache?.dispose()
+  }
+}
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "header-windows-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: {
-      // The middleware HTML is invisible to Vite's file scanner. Scan its real
-      // fixture entry instead of prebundling the unrelated application pages.
-      entries: ["tests/browser/fixtures/header-windows.tsx"],
-      exclude: ["lucide-solid"],
-    },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  // Compile the fixture before starting the action deadline. Transform errors
-  // still fail setup; this neither retries navigation nor extends its timeout.
-  await server.transformRequest("/tests/browser/fixtures/header-windows.tsx")
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  try {
+    cache = await createFixtureCache()
+    const shutdown = createFixtureShutdown(cache)
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+      cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "header-windows-fixture", configureServer(s) {
+        s.middlewares.use("/fixture", async (_req, res) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
+        })
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: {
+        // The middleware HTML is invisible to Vite's file scanner. Scan its real
+        // fixture entry instead of prebundling the unrelated application pages.
+        entries: ["tests/browser/fixtures/header-windows.tsx"],
+        exclude: ["lucide-solid"],
+      },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+    })
+    shutdown.own(server)
+    await server.listen()
+    await prepareInterruptionDock(server, "/tests/browser/fixtures/header-windows.tsx")
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) {
+    try { await disposeFixture() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Header fixture setup and cleanup failed") }
+    throw error
+  }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(disposeFixture)
 
 test("the real shell badge reopens the selected question with a same-session permission queued", async (t) => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
@@ -186,6 +205,9 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         await page.goto(url)
         await page.waitForFunction(() => Boolean((window as any).fixture))
         await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+        const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+        // Saving the locale does not await its lazily imported dictionary.
+        await worktree.filter({ hasText: "Espace de travail" }).waitFor()
         const input = page.locator("textarea.prompt-input")
         await input.fill("Brouillon mobile conservé")
         const geometry = await page.evaluate(() => {
@@ -210,7 +232,6 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         assert.equal(new Set(geometry.selectors).size, 1, "selectors retain one compact row")
         assert.ok(Math.abs(geometry.actionsY - geometry.selectors[0]) <= 1, "actions and selectors always share one row")
         if (width === 390) {
-          const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
           assert.match(await worktree.innerText(), /Espace de travail/)
           await worktree.focus()
           await page.keyboard.press("ArrowDown")
@@ -230,6 +251,32 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
     })
   })
 }
+
+test("composer locale settles after a held French dictionary import without losing its draft", { timeout: 20000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const requested = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/messages/fr/index.ts*", async route => {
+      requested.resolve()
+      await release.promise
+      await route.continue()
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    await input.fill("Brouillon conservé pendant le chargement")
+    await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+    await requested.promise
+    const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+    assert.match(await worktree.innerText(), /Workspace/)
+    assert.equal(await input.inputValue(), "Brouillon conservé pendant le chargement")
+    release.resolve()
+    await worktree.filter({ hasText: "Espace de travail" }).waitFor()
+    assert.match(await worktree.innerText(), /Espace de travail/)
+    assert.equal(await input.inputValue(), "Brouillon conservé pendant le chargement")
+  } finally { release.resolve(); await page.close() }
+})
 
 for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`timeline visibility follows conversation width on ${device}, independently of header density and height`, async () => {
   const page = await browser.newPage({ ...devices[device], viewport: { width: 1100, height: 1000 } })

@@ -185,7 +185,7 @@ unchanged wire types or a passing rerun as proof of untested behavior.
 
 ### Previous stable target: 2.0.18
 
-Server/UI client, bundled plugin and recommendation advance together to **2.0.18**;
+Server/UI client, bundled plugins and recommendation advance together to **2.0.18**;
 the demonstrated minimum remains **2.0.7**. The published 2.0.16→2.0.18 client
 adds `server.pair()`, `server.connect()` and optional `Shell.Info.signal`.
 The native authenticated 2.0.18 schema has 115 paths: the existing 113 paths are

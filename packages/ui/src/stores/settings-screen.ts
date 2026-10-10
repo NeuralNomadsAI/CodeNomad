@@ -12,6 +12,7 @@ export type SettingsSectionId =
   | "remote"
   | "opencode"
   | "providers"
+  | "missions"
   | "sidecars"
   | "config-files"
   | "advanced"
@@ -21,6 +22,11 @@ const [settingsOpen, setSettingsOpen] = createSignal(false)
 const [activeSettingsSection, setActiveSettingsSection] = createSignal<SettingsSectionId>("general")
 const log = getLogger("actions")
 
+/** Every Settings entry point shares this route. Local desktop windows always
+ * reuse/focus the single native Preferences window with the active project
+ * context; only browser and remote windows use the embedded screen. A native
+ * rejection (for example an older host lacking a section) is reported, never
+ * answered with a second, embedded Settings surface. */
 export async function openSettings(section?: SettingsSectionId, toggle = false) {
   if (toggle && settingsOpen()) {
     if (await confirmSettingsDiscard()) setSettingsOpen(false)
@@ -37,10 +43,12 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
         request.location = getActiveCatalogLocation(instanceId)
       }
       await openNativePreferences(request, toggle, section === undefined)
-      return
     } catch (error) {
-      log.warn("Native Preferences failed; opening settings in this window", error)
+      log.warn("Native Preferences rejected the request", error)
+      const [{ showToastNotification }, { tGlobal }] = await Promise.all([import("../lib/notifications"), import("../lib/i18n")])
+      showToastNotification({ message: tGlobal("settings.native.openFailed"), variant: "error" })
     }
+    return
   }
   setSettingsOpen(true)
 }

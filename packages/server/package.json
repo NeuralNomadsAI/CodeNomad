@@ -18,13 +18,14 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "npm run clean && npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run build:pruning && npm run build:automation && npm run build:remote-tunnel",
+    "build": "npm run clean && npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run build:pruning && npm run build:automation && npm run build:missions && npm run build:remote-tunnel",
     "build:pruning": "node ./scripts/build-session-pruning.mjs",
     "build:automation": "node ./scripts/build-automation-plugin.mjs",
+    "build:missions": "node ./scripts/build-missions-plugin.mjs",
     "build:remote-tunnel": "node ./scripts/build-remote-tunnel.mjs",
     "build:ui": "npm run build --prefix ../ui",
     "prepare-ui": "node ./scripts/copy-ui-dist.mjs",
-    "dev": "npm run build:pruning && npm run build:automation && cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 CLI_HTTPS=false CLI_HTTP=true tsx src/index.ts",
+    "dev": "npm run build:pruning && npm run build:automation && npm run build:missions && cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 CLI_HTTPS=false CLI_HTTP=true tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

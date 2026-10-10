@@ -3,6 +3,7 @@ import { serverApi } from "../lib/api-client"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { readClientLayoutValue, writeClientLayoutValue } from "./client-state"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
+import { updateMissionProjectView } from "./mission-view-state"
 
 interface SessionPreviewRecord extends PreviewSession {
   mode: "preview" | "chat"
@@ -132,6 +133,8 @@ async function openSessionPreview(sessionId: string, url: string, instanceFolder
     return next
   })
   storePreview(record.storageKey, record)
+  // Mission readers are project-scoped; an explicit browser open owns the central surface.
+  updateMissionProjectView(instanceFolder, { reader: undefined })
   if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
   return record
 }
@@ -172,6 +175,7 @@ function restoreSessionPreview(sessionId: string, instanceFolder = ""): Promise<
 function showSessionPreview(storageKey: string) {
   const current = sessionPreviews().get(storageKey)
   if (!current) return
+  updateMissionProjectView(current.instanceFolder, { reader: undefined })
   setSessionPreviews((prev) => {
     const next = new Map(prev)
     next.set(storageKey, { ...current, mode: "preview" })
@@ -181,14 +185,26 @@ function showSessionPreview(storageKey: string) {
 }
 
 function showSessionChat(storageKey: string) {
+  // A reader/chat gesture wins over an earlier in-flight browser open or restore.
+  beginOperation(storageKey)
   const current = sessionPreviews().get(storageKey)
-  if (!current) return
+  if (!current) {
+    initializeStorage()
+    const stored = storedPreviews.get(storageKey)
+    if (stored) storePreview(storageKey, { ...stored, mode: "chat" })
+    return
+  }
   setSessionPreviews((prev) => {
     const next = new Map(prev)
     next.set(storageKey, { ...current, mode: "chat" })
     return next
   })
   storePreview(current.storageKey, { ...current, mode: "chat" })
+}
+
+/** Return one session's central surface to chat, including a preview still being opened or restored. */
+function showSessionChatFor(sessionId: string, instanceFolder = "") {
+  showSessionChat(previewKey(sessionId, instanceFolder))
 }
 
 function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
@@ -239,6 +255,7 @@ export {
   updateSessionPreviewLocation,
   showSessionPreview,
   showSessionChat,
+  showSessionChatFor,
   closeSessionPreview,
 }
 export { DEFAULT_PREVIEW_URL }

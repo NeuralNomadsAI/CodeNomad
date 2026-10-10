@@ -20,7 +20,7 @@ serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${instanceId}/instance`, status: "ready", client })
 setSessions(previous => new Map(previous).set(instanceId, new Map([["session", {
-  id: "session", instanceId, parentId: null, title: "Session", location: { directory: "/repo" },
+  id: "session", instanceId, parentId: null, title: "Current conversation", location: { directory: "/repo" },
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 1 },
 } as any]])))
 addPermissionToQueue(instanceId, current)

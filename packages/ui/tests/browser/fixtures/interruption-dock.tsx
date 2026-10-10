@@ -18,6 +18,8 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadMessageAnchor } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
+import { openFilePreview, getFilePreview } from "../../../src/stores/files-preview"
+import { updateMissionProjectView, missionProjectView } from "../../../src/stores/mission-view-state"
 import { getQuestionToolSearchText } from "../../../src/components/tool-call/search-text"
 import "../../../src/index.css"
 import { installActivationFrameGate } from "./activation-frame-gate"
@@ -26,7 +28,7 @@ const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
 let messageId = "msg_0000"
 const model = { providerID: "fixture", id: "fixture" }
 let time = 1000, fail = false, hold = false, release: (() => void) | undefined
-const replies: any[] = [], windows: any[] = []
+const replies: any[] = [], replyOptions: any[] = [], windows: any[] = []
 let completed: string[][] | undefined
 const longQuestions = [
   { header: "Deployment", question: "How should we deploy the updated interruption dock to existing workspaces?", options: [
@@ -60,8 +62,9 @@ const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async ({ sessionID }: any) => ({ id: sessionID, title: sessionID, location: { directory: "/fixture" }, time: { created: 1, updated: time } }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
-    form: { reply: async (input: any) => {
+    form: { reply: async (input: any, options: any) => {
       replies.push(input)
+      replyOptions.push(options ?? null)
       if (hold) await new Promise<void>(resolve => { release = resolve })
       if (fail) throw new Error("Reply failed")
       if (input.formID === "question") {
@@ -119,11 +122,11 @@ const [conversationFocus, setConversationFocus] = createSignal(false)
 const [phone, setPhone] = createSignal(false)
 let focusHandled = 0
 function App() {
-   const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId) ?? null} />
+  const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId) ?? null} />
   return <main style={{ display: "flex", "flex-direction": "column", height: "100vh", width: "100%" }}>
     <Toaster />
     <PermissionNotificationBanner instanceId={instanceId} onClick={() => focusInterruption(instanceId)} />
-     <For each={[activeSessionId().get(instanceId) ?? sessionId]}>{id => <SessionView
+    <For each={[activeSessionId().get(instanceId) ?? sessionId]}>{id => <SessionView
       sessionId={id} instanceId={instanceId} instanceFolder="/fixture" activeSessions={sessions().get(instanceId)!}
       escapeInDebounce={false} isActive={active()} isPhoneLayout={phone()} focusConversationOnActivate={conversationFocus()}
       onConversationFocusHandled={() => { focusHandled++ }}
@@ -135,7 +138,7 @@ const store = messageStoreBus.getOrCreate(instanceId)
 ;(window as any).fixture = {
   activationFrames, active: setActive, conversationFocus: setConversationFocus, phone: setPhone,
   focusHandled: () => focusHandled,
-  replies, windows,
+  replies, replyOptions, windows,
   notifications: getToastHistory,
   invalidateRecovery: () => { clearReloadableInstanceState(instanceId); invalidatePendingRequestSync(instanceId) },
   theme: setThemePreference,
@@ -164,17 +167,26 @@ const store = messageStoreBus.getOrCreate(instanceId)
   global: () => addPendingForm(instanceId, { ...form("global-question", "global"), location: { directory: "/fixture" } }),
   refresh: () => addPendingForm(instanceId, { ...form(), title: "Questions refreshed" }),
   focus: (id = "question") => focusInterruption(instanceId, undefined, id),
+  focusScoped: (id: string, session = sessionId, kind?: "form" | "permission") => focusInterruption(instanceId, session, id, kind),
+  collidingPermission: () => addPermissionToQueue(instanceId, { id: "question", sessionID: "other", action: "bash", resources: ["other-scope.txt"], metadata: {} }),
+  sameScopePermission: () => addPermissionToQueue(instanceId, { id: "question", sessionID: sessionId, action: "bash", resources: ["same-scope.txt"], metadata: {} }),
   switch: (id: string | null) => setActiveSession(instanceId, id),
   permission: () => addPermissionToQueue(instanceId, { id: "permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {} }),
+  preview: () => openFilePreview(instanceId, { sessionId, slug: instanceId, directory: "/fixture", path: "example.ts", kind: "workspace" }),
+  hasPreview: () => Boolean(getFilePreview(instanceId)),
+  missionReader: () => updateMissionProjectView("/fixture", { reader: { missionId: "mission", kind: "overview" } }),
+  hasMissionReader: () => Boolean(missionProjectView("/fixture").reader),
   remoteReply: () => emit("form.replied", { id: "question", answer: { q0: "Another client" } }),
   fail: (value: boolean) => { fail = value }, hold: () => { hold = true }, release: () => { hold = false; release?.() },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
   rehydrate: () => loadMessageAnchor(instanceId, sessionId, messageId),
   snapshot: () => ({ ids: store.getSessionMessageIds(sessionId), forms: getFormQueue(instanceId).map(item => item.id), question: store.getMessage(messageId) }),
-  recover: async (supported: boolean) => {
-    serverApi.getPendingRequests = async () => supported ? { supported: true, directories: [{ directory: "/fixture", status: "ok", locations: [{
+  recover: async (coverage: "complete" | "unsupported" | "empty" | "error") => {
+    serverApi.getPendingRequests = async () => coverage === "complete" ? { supported: true, directories: [{ directory: "/fixture", status: "ok", locations: [{
       location: { directory: "/fixture" }, permissions: getPermissionQueue(instanceId), forms: getFormQueue(instanceId),
-    }] }] } : { supported: false }
+    }] }] } : coverage === "empty" ? { supported: true, directories: [] }
+      : coverage === "error" ? { supported: true, directories: [{ directory: "/fixture", status: "error" }] }
+      : { supported: false }
     await syncPendingRequests(instanceId).catch(() => {})
   },
 }

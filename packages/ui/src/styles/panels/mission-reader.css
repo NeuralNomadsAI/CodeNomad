@@ -1,0 +1,31 @@
+.mission-transcript-surface { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.mission-transcript-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.mission-reader { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--surface-base); }
+.mission-reader .window-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-reader .window-action { display: flex; gap: var(--space-xs); align-items: center; flex-shrink: 0; }
+.mission-reader article { min-width: 0; max-width: 90ch; margin-block: var(--space-lg); margin-inline: 0; overflow-wrap: anywhere; }
+.mission-reader pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mission-reader-pagination { display: flex; align-items: center; gap: var(--space-sm); }
+.mission-reader-pagination > span { white-space: nowrap; }
+.mission-reader-pagination input { min-width: 3.5em; padding: var(--space-xs); border: 1px solid var(--border-base); background: var(--surface-base); color: var(--text-primary); }
+.mission-reader article > .window-toolbar { flex-wrap: wrap; }
+.mission-reader .window-toolbar > label { display: flex; align-items: center; gap: var(--space-sm); }
+.mission-report-technical { margin-block: var(--space-md); }
+.mission-report-technical > summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.mission-report-technical[open] > summary { margin-block-end: var(--space-md); }
+.mission-editor { border: 1px solid var(--border-base); margin: var(--space-md) 0; }
+.mission-editor label { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
+.mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
+.mission-editor textarea { min-height: 6em; resize: vertical; }
+.mission-editor p { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.mission-editor .mission-delete-sessions { display: flex; align-items: flex-start; font-size: var(--font-size-sm); }
+.mission-delete-sessions input { flex-shrink: 0; margin-top: 3px; }
+.mission-editor .window-body { padding: var(--space-sm); }
+.mission-editor .window-header, .mission-editor .window-footer { padding: var(--space-sm); }
+.mission-editor .mission-editor-start-hint { margin-block: var(--space-sm) 0; font-size: var(--font-size-xs); }
+/* Schedule reader: rule, selected run, the run list, identifiers folded last. */
+.mission-recurrence-reader { display: grid; gap: var(--space-sm); }
+.mission-recurrence-reader > p, .mission-recurrence-reader h3 { margin: 0; }
+.mission-recurrence-rule { color: var(--text-secondary); }
+.mission-recurrence-runs { display: grid; margin: 0; padding: 0; list-style: none; }
+.mission-recurrence-failure { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }

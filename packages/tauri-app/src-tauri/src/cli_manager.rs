@@ -185,6 +185,16 @@ const CLI_STOP_GRACE_SECS: u64 = 30;
 const CLI_WINDOWS_FORCE_GRACE_MS: u64 = 2_000;
 const CLI_FORCE_CONFIRM_GRACE_SECS: u64 = 2;
 
+fn configure_backend_profile(command: &mut Command, channel: &str, config_identity: &str, original_config: Option<&str>) {
+    command.env("CODENOMAD_UPDATE_CHANNEL", channel);
+    command.env("CODENOMAD_PROFILE_CONFIG_IDENTITY", config_identity);
+    if let Some(original_config) = original_config {
+        command.env("CLI_CONFIG", original_config);
+    } else {
+        command.env_remove("CLI_CONFIG");
+    }
+}
+
 #[cfg(unix)]
 fn configure_posix_process_group(command: &mut Command) {
     // Ensure the CLI runs in its own process group so we can terminate wrapper
@@ -815,6 +825,9 @@ fn cli_exit_error(status: &CliStatus, exit: &std::process::ExitStatus) -> String
 
 #[derive(Debug, Clone)]
 pub struct CliProcessManager {
+    channel: String,
+    config_identity: String,
+    original_config: Option<String>,
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
     stdin: Arc<Mutex<Option<std::process::ChildStdin>>>,
@@ -831,6 +844,9 @@ pub struct CliProcessManager {
 impl CliProcessManager {
     pub fn new() -> Self {
         Self {
+            channel: std::env::var("CODENOMAD_UPDATE_CHANNEL").unwrap_or_default(),
+            config_identity: std::env::var("CODENOMAD_PROFILE_CONFIG_IDENTITY").unwrap_or_default(),
+            original_config: std::env::var("CLI_CONFIG").ok(),
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
             stdin: Arc::new(Mutex::new(None)),
@@ -843,6 +859,14 @@ impl CliProcessManager {
             generation: Arc::new(AtomicU64::new(0)),
             accepting_spawns: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    pub(crate) fn with_profile(channel: String, config_identity: String, original_config: Option<String>) -> Self {
+        let mut manager = Self::new();
+        manager.channel = channel;
+        manager.config_identity = config_identity;
+        manager.original_config = original_config;
+        manager
     }
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
@@ -1191,6 +1215,10 @@ impl CliProcessManager {
                 .env_remove("NPM_CONFIG_PREFIX")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            // Both initial and replacement spawns pass through this path. It
+            // comes after Unix shell_env's env_clear, and the Windows launcher
+            // inherits it before it starts Node.
+            configure_backend_profile(&mut c, &manager.channel, &manager.config_identity, manager.original_config.as_deref());
             #[cfg(windows)]
             c.env("CODENOMAD_NATIVE_PARENT", "1");
             // The host's resolved profile wins over any value captured from the user's shell.
@@ -1908,11 +1936,80 @@ fn normalize_path(path: PathBuf) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::sync::Mutex as StdMutex;
 
-    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+    pub(crate) static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn resolved_original_config_drives_listening_reader_for_tilde_json_yaml_and_directory() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        let old = std::env::var("CLI_CONFIG").ok();
+        for raw in ["~/Émilie/custom.json", "~\\Émilie/custom.yaml", "~"] {
+            let selected = crate::identity::resolve_selected_config(Some(raw), home, home).unwrap();
+            std::env::set_var("CLI_CONFIG", &selected);
+            let (yaml, json) = resolve_config_locations();
+            let expected_base = if raw == "~" { home.to_path_buf() } else { home.join("Émilie") };
+            assert_eq!(yaml.parent().unwrap(), expected_base);
+            assert_eq!(json.parent().unwrap(), expected_base);
+            fs::create_dir_all(&expected_base).unwrap();
+            if raw.ends_with("json") {
+                assert_eq!(json, PathBuf::from(&selected));
+                assert_ne!(yaml, PathBuf::from(&selected));
+                fs::write(&json, r#"{"server":{"listeningMode":"all"}}"#).unwrap();
+            } else {
+                fs::write(&yaml, "server:\n  listeningMode: all\n").unwrap();
+            }
+            assert_eq!(resolve_listening_mode(), "all");
+        }
+        let main = include_str!("main.rs");
+        assert!(main.contains("std::env::set_var(\"CLI_CONFIG\", config)"));
+        if let Some(value) = old { std::env::set_var("CLI_CONFIG", value); }
+        else { std::env::remove_var("CLI_CONFIG"); }
+    }
+
+    #[test]
+    fn packaged_dev_v2_channel_is_forwarded_to_initial_and_replacement_backend() {
+        let cwd = std::env::current_dir().unwrap();
+        for extension in ["json", "yaml"] {
+            let original = format!("isolated-profile/custom.{extension}");
+            let selected = crate::identity::resolve_selected_config(Some(&original), &cwd, &cwd).unwrap();
+            // The dev-v2 data profile (legacy channel alias) is the backend's Mission profile scope.
+            let scope = crate::identity::resolve_scope("dev-v2", Some(&original), &cwd, &cwd, &cwd);
+            assert_eq!(std::path::Path::new(&selected), cwd.join(&original));
+            assert_ne!(std::path::Path::new(&selected), cwd.join("different-backend-cwd").join(&original));
+            assert_eq!(scope.profile, "dev-v2");
+            let expected = format!(
+                "{:x}",
+                Sha256::digest(format!("{}\0{}", scope.profile, scope.config_identity))
+            );
+            assert_ne!(
+                expected,
+                format!("{:x}", Sha256::digest(format!("stable\0{}", scope.config_identity)))
+            );
+            if extension == "json" {
+                assert_ne!(selected, scope.config_identity, "legacy JSON source must remain selected");
+            }
+            for _replacement in [false, true] {
+                let mut command = Command::new("node");
+                command.env_remove("CODENOMAD_UPDATE_CHANNEL");
+                configure_backend_profile(&mut command, &scope.profile, &scope.config_identity, Some(&selected));
+                let env_value = |key| command.get_envs().find(|(name, _)| *name == key).and_then(|(_, value)| value);
+                assert_eq!(env_value("CODENOMAD_UPDATE_CHANNEL"), Some(std::ffi::OsStr::new("dev-v2")));
+                assert_eq!(env_value("CODENOMAD_PROFILE_CONFIG_IDENTITY"), Some(std::ffi::OsStr::new(&scope.config_identity)));
+                assert_eq!(env_value("CLI_CONFIG"), Some(std::ffi::OsStr::new(&selected)));
+            }
+        }
+        let default = crate::identity::resolve_scope("stable", None, &cwd, &cwd, &cwd);
+        let mut command = Command::new("node");
+        command.env("CLI_CONFIG", "shell-injected-path");
+        configure_backend_profile(&mut command, &default.profile, &default.config_identity, None);
+        assert_eq!(command.get_envs().find(|(name, _)| *name == "CLI_CONFIG").and_then(|(_, value)| value), None);
+    }
 
     #[test]
     fn bounded_line_reader_discards_oversized_lines_without_losing_the_next_line() {

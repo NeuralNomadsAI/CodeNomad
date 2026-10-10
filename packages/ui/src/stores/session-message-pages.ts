@@ -8,6 +8,8 @@ export interface MessageWindowPage {
 }
 
 const MAX_WINDOW_PAGES = 1_000
+// Native `message.list` rejects limits above 200; larger windows page.
+const NATIVE_PAGE_LIMIT = 200
 
 async function listMessageWindow(
   client: OpenCodeClient,
@@ -24,7 +26,7 @@ async function listMessageWindow(
   for (let page = 0; page < MAX_WINDOW_PAGES && messages.length < options.limit; page += 1) {
     options.signal?.throwIfAborted()
     if (!isAuthoritative()) return null
-    const remaining = options.limit - messages.length
+    const remaining = Math.min(options.limit - messages.length, NATIVE_PAGE_LIMIT)
     const response = await client.message.list(cursor
       ? { sessionID: sessionId, limit: remaining, cursor }
       : { sessionID: sessionId, limit: remaining, order: options.forward ? "asc" : "desc" }, { signal: options.signal })

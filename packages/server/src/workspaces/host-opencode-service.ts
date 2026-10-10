@@ -31,10 +31,27 @@ export class HostOpenCodeService extends OpenCodeCliService {
   }
 }
 
+/** Never inherited by the shared daemon: its storage roots, and the desktop host's
+ * profile/config scope and backend hand-offs. The daemon outlives and is shared by every
+ * profile; its shells must not pin a desktop launched from them to this backend's profile. */
+const DAEMON_EXCLUDED_ENVIRONMENT = [
+  "OPENCODE_DB",
+  "XDG_STATE_HOME",
+  "CODENOMAD_PROFILE",
+  "CODENOMAD_UPDATE_CHANNEL",
+  "CODENOMAD_PROFILE_CONFIG_IDENTITY",
+  "CODENOMAD_DESKTOP_PROFILE",
+  "CODENOMAD_PROFILE_SELECTION_CLEANUP",
+  "CODENOMAD_PROFILE_SELECTION_ANSWER",
+  "CLI_CONFIG",
+  "CODENOMAD_NATIVE_PARENT",
+  "ELECTRON_RUN_AS_NODE",
+]
+
 export function daemonProcessEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const environment = { ...process.env, ...overrides }
   for (const key of Object.keys(environment)) {
-    if (["OPENCODE_DB", "XDG_STATE_HOME"].includes(key.toUpperCase())) delete environment[key]
+    if (DAEMON_EXCLUDED_ENVIRONMENT.includes(key.toUpperCase())) delete environment[key]
   }
   return environment
 }

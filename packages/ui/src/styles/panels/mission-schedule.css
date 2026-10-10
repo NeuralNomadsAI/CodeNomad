@@ -1,0 +1,4 @@
+/* Selected schedule detail (a `.mission-detail`): its one-sentence stuck/failure
+   notices precede the current passage tree and the compact past-run list. */
+.mission-schedule-detail > p.mission-control-stale { margin: 0; color: var(--status-warning); }
+.mission-schedule-detail > .mission-schedule-notice { padding: var(--space-xs) var(--space-sm); color: var(--text-primary); background: var(--status-starting-bg); border-inline-start: 2px solid var(--status-warning); }

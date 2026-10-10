@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
-import { mkdir, readFile, rename, rm, writeFile, utimes } from "node:fs/promises"
+import { constants } from "node:fs"
+import { lstat, mkdir, open, readFile, rename, rm, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { PRESENCE_INTERVAL_MS } from "./desktop-plugin-presence"
@@ -13,7 +14,7 @@ export interface DesktopPluginPaths {
   nativeData?: string
   resolveNativePath?: (directory: string, assertCurrent: () => void) => Promise<DesktopPluginNativePath>
 }
-export type DesktopPluginFeature = "session-pruning" | "automation"
+export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
 
 // Only parse our exact generated entry shape. Older backend leases remain
 // readable during migration, but new heartbeats must leave the watched root.
@@ -92,6 +93,35 @@ export async function installDesktopPluginPresence(
   await writeFile(plugin, bundle, { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "EEXIST") throw error
   })
+  const handle = await open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ELOOP") throw new Error("Managed plugin bundle differs from its digest")
+    throw error
+  })
+  let identity: { dev: number; ino: number }
+  try {
+    const info = await handle.stat(), named = await lstat(plugin)
+    if (!info.isFile() || !named.isFile() || named.isSymbolicLink() || info.nlink !== 1
+      || info.dev !== named.dev || info.ino !== named.ino || info.size !== bundle.byteLength) {
+      throw new Error("Managed plugin bundle differs from its digest")
+    }
+    identity = { dev: info.dev, ino: info.ino }
+    const actual = createHash("sha256"), chunk = Buffer.alloc(64 * 1024)
+    for (let offset = 0; offset < bundle.byteLength;) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, bundle.byteLength - offset), offset)
+      if (!bytesRead) throw new Error("Managed plugin bundle is incomplete")
+      actual.update(chunk.subarray(0, bytesRead))
+      offset += bytesRead
+    }
+    if (actual.digest("hex") !== hash || (await handle.read(chunk, 0, 1, bundle.byteLength)).bytesRead) {
+      throw new Error("Managed plugin bundle differs from its digest")
+    }
+  } finally { await handle.close() }
+  const assertBundlePath = async () => {
+    const named = await lstat(plugin)
+    if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || named.size !== bundle.byteLength
+      || named.dev !== identity.dev || named.ino !== identity.ino) throw new Error("Managed plugin bundle differs from its digest")
+  }
+  await assertBundlePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
   try {
@@ -102,6 +132,7 @@ export async function installDesktopPluginPresence(
       try {
         await writeFile(temporary, source)
         assertCurrent()
+        await assertBundlePath()
         await rename(temporary, entry)
       } finally { await rm(temporary, { force: true }) }
     }

@@ -39,6 +39,13 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
+import { registerMissionRoutes } from "./routes/missions"
+import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
+import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
+import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
+import { registerMissionRecurrenceControlStatus } from "./routes/mission-recurrence-control-status"
+import { registerMissionRecurrenceManual } from "./routes/mission-recurrence-manual"
+import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import type { PanelExtensionStore } from "../panel-extensions/store"
@@ -46,6 +53,8 @@ import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { WebSearchSettings } from "../opencode/websearch-settings"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
+import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
+import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -332,6 +341,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
+  registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   const accounts = new ProviderAccountsService(deps.settings)
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
@@ -364,13 +374,23 @@ export function createHttpServer(deps: HttpServerDeps) {
   const developerCdp = new DeveloperCdp()
   registerAutomationPluginRoute(app, {
     authManager: deps.authManager,
+    settings: deps.settings,
     bridgeToken: deps.automationBridgeToken,
+    worktreeDeletionFence,
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
+    remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
+    auth: deps.authManager, bridgeToken: deps.automationBridgeToken })
+  registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
+  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence })
+  registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
@@ -388,7 +408,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   if (deps.permissionReceipts) registerPermissionReceiptRoutes(app, deps.permissionReceipts)
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts })
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts,
+    humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
+      remoteDevices: deps.remoteControlManager } })
 
 
   if (deps.uiDevServerUrl) {
@@ -475,6 +497,7 @@ interface InstanceProxyDeps {
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
   permissionReceipts?: PermissionReceipts
+  humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
 }
 
 interface SideCarProxyDeps {
@@ -641,6 +664,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
         permissionReceipts: deps.permissionReceipts,
+        humanAnswers: deps.humanAnswers,
         pathSuffix: "",
         logger: deps.logger,
       })
@@ -657,6 +681,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
         permissionReceipts: deps.permissionReceipts,
+        humanAnswers: deps.humanAnswers,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
@@ -673,6 +698,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
         permissionReceipts: deps.permissionReceipts,
+        humanAnswers: deps.humanAnswers,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
         logger: deps.logger,
       })
@@ -695,6 +721,7 @@ interface InstanceProxyRequestArgs {
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
   permissionReceipts?: PermissionReceipts
+  humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
   logger: Logger
   pathSuffix?: string
 }
@@ -920,16 +947,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     targetUrl.searchParams.set("path", translated)
   }
   const mutationIdentities = new Set<string>()
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    for (const directory of requestLocations.directories) {
-      const identity = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, directory))
-      if (!identity) {
-        reply.code(403).send({ error: "Location does not belong to workspace" })
-        return
-      }
-      mutationIdentities.add(identity)
-    }
-  }
+  const mutationPlacements = new Map<string, string>()
+  const mutationDirectories = new Set(requestLocations.directories)
   const serviceBody = replaceRequestDirectories(targetUrl, imported.body, translatedDirectories, pathname, request.method)
   if (promptFiles.invalid || !(await wait(allPathsOwned(workspaceManager, workspaceId, promptFiles.paths)))) {
     reply.code(promptFiles.invalid ? 400 : 403).send({ error: "Prompt file does not belong to workspace" })
@@ -969,6 +988,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         reply.code(403).send({ error: "PTY does not belong to workspace" })
         return
       }
+      mutationDirectories.add(pty.data.cwd)
     } catch (error) {
       if (isPtyNotFoundError(error)) {
         reply.code(404).send({ error: "PTY not found" })
@@ -993,6 +1013,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         reply.code(403).send({ error: "Shell does not belong to workspace" })
         return
       }
+      mutationDirectories.add(shell.data.cwd)
     } catch (error) {
       if (isShellNotFoundError(error)) {
         reply.code(404).send({ error: "Shell not found" })
@@ -1033,10 +1054,26 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         return
       }
       mutationIdentities.add(sessionWorktree)
+      mutationPlacements.set(session.location.directory, sessionWorktree)
     }
   }
 
-  const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
+  const defaultLocation = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
+  const body = defaultLocation.body
+  if (defaultLocation.directory) mutationDirectories.add(defaultLocation.directory)
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    // Resolve every effective effect location, including server-supplied defaults
+    // and a native resource's actual cwd, BEFORE entering the deletion fence.
+    for (const directory of mutationDirectories) {
+      const identity = await workspaceManager.getWorktreeIdentityForPath(workspaceId, directory)
+      if (!identity) {
+        reply.code(403).send({ error: "Location does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(identity)
+      mutationPlacements.set(directory, identity)
+    }
+  }
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
   signal.throwIfAborted()
   const releaseFence = request.method === "GET" || request.method === "HEAD"
@@ -1049,10 +1086,29 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
   const releaseAccount = connection && request.method !== "GET" && request.method !== "HEAD"
     && /^\/api\/(?:credential|integration)(?:\/|$)/.test(pathname) ? args.accounts?.manual(connection) : undefined
-  const releaseMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
+  const releasePhysicalMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
+  const releaseMutation = releasePhysicalMutation
 
   try {
     connection?.assertCurrent()
+    const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/?$/)
+    if (formReply && sessionId && sessionId !== "global" && connection && args.humanAnswers
+      && request.headers[HUMAN_ANSWER_HEADER] === "1") {
+      grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
+      try {
+        const result = await replyMissionHumanAnswer(request, workspaceId, sessionId, decodeURIComponent(formReply[1]),
+          args.humanAnswers, connection, signal)
+        if (result) {
+          releaseMutation?.()
+          // Native form replies succeed with an empty 204; the generated
+          // client rejects any other status as UnexpectedStatus.
+          return reply.code(204).send()
+        }
+      } catch {
+        releaseMutation?.()
+        return reply.code(409).send({ error: "Human answer outcome unavailable; do not replay the native answer" })
+      }
+    }
     const permissionReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/permission\/([^/]+)\/reply\/?$/)
     const permissionBody = body as { decision?: unknown; message?: unknown } | undefined
     const confirmPermission = permissionReply && connection && args.permissionReceipts && sessionId
@@ -1239,6 +1295,7 @@ function sanitizeInstanceProxyRequestHeaders(
     "proxy-authorization", "proxy-connection", "set-cookie", "te", "trailer", "transfer-encoding", "upgrade",
     "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
     LOCATION_CONTEXT_HEADER,
+    HUMAN_ANSWER_HEADER,
   ])
   const connection = headers.connection
   for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())
@@ -1263,6 +1320,7 @@ export function redactSecrets(value: unknown): unknown {
   if (typeof value !== "object") return value
   if (Buffer.isBuffer(value)) return "<redacted>"
   if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return "<redacted>"
+  if (isRecurrenceProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
     /(authorization|cookie|key|code|token|password|secret)/i.test(key) ? "<redacted>" : redactSecrets(entry),
@@ -1289,22 +1347,22 @@ function applyDefaultWorkspaceLocation(
   directory: string,
   hasLocation: boolean,
   sessionRoute: boolean,
-): unknown {
-  if (hasLocation || sessionRoute) return body
+): { body: unknown; directory?: string } {
+  if (hasLocation || sessionRoute) return { body }
   if (/^\/api\/(?:credential|project)(?:\/|$)/.test(targetUrl.pathname)
-    || /^\/api\/permission\/saved(?:\/|$)/.test(targetUrl.pathname)) return body
+    || /^\/api\/permission\/saved(?:\/|$)/.test(targetUrl.pathname)) return { body }
   if (targetUrl.pathname === "/api/session" && method === "GET") {
     targetUrl.searchParams.set("directory", directory)
-    return body
+    return { body, directory }
   }
   if (targetUrl.pathname === "/api/session" && method === "POST") {
     const input = body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)
       ? body as Record<string, unknown>
       : {}
-    return { ...input, location: { directory } }
+    return { body: { ...input, location: { directory } }, directory }
   }
   targetUrl.searchParams.set("location[directory]", directory)
-  return body
+  return { body, directory }
 }
 
 function getSessionRouteId(pathname: string): string | null {

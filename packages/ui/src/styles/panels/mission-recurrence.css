@@ -1,0 +1,27 @@
+.mission-recurrence-clock { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
+.mission-editor .mission-recurrence-clock input, .mission-editor input:not([type="checkbox"]) {
+  min-width: 0; width: 100%; min-height: var(--touch-target-size-compact); padding: var(--space-xs);
+  color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0;
+}
+.mission-recurrence-list { display: grid; gap: var(--space-xs); padding: 0 var(--space-sm) var(--space-sm); font-size: var(--font-size-sm); }
+.mission-recurrence-list p { margin: 0; color: var(--text-secondary); }
+.mission-recurrence-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); padding-block: var(--space-sm); border-block-start: 1px solid var(--border-base); overflow-wrap: anywhere; }
+.mission-recurrence-item strong { font-size: var(--font-size-sm); }
+.mission-recurrence-item > .window-text-button { min-width: 0; text-align: start; }
+.mission-recurrence-item small { grid-column: 1 / -1; color: var(--text-muted); word-break: break-all; }
+.mission-recurrence-item span { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.mission-recurrence-item > span { grid-column: 1 / -1; }
+.mission-recurrence-read { justify-self: end; }
+.mission-recurrence-decisions { grid-column: 1 / -1; display: grid; gap: var(--space-xs); }
+.mission-recurrence-history { padding-inline-start: var(--space-lg); display: grid; gap: var(--space-sm); }
+.mission-recurrence-history h4 { margin: 0 0 var(--space-xs); font-size: var(--font-size-sm); }
+.mission-recurrence-history dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-xs) var(--space-sm); font-size: var(--font-size-xs); }
+.mission-recurrence-history dt { color: var(--text-secondary); }
+.mission-recurrence-history dd { margin: 0; overflow-wrap: anywhere; }
+@container mission-panel (max-width: 300px) {
+  .mission-recurrence-clock { grid-template-columns: minmax(0, 1fr); }
+}
+.mission-conversation-picker { display: grid; gap: var(--space-xs); }
+.mission-conversation-results { max-height: 12rem; overflow-y: auto; }
+.mission-editor .mission-conversation-option { display: flex; flex-direction: row; align-items: center; gap: var(--space-xs); padding-block: var(--space-xs); }
+.mission-conversation-option span { min-width: 0; overflow-wrap: anywhere; }

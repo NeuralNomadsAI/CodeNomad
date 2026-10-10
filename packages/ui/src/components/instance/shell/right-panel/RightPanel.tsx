@@ -29,6 +29,7 @@ import {
   type RightPanelTabModule,
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
+import { createMissionsRightPanelModule } from "./missions-plugin"
 import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 import { useI18n } from "../../../../lib/i18n"
@@ -86,6 +87,7 @@ interface RightPanelProps {
 
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
+  onRestoreConversation?: () => void
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
@@ -191,8 +193,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (index === -1) return
 
     let target: RightPanelTabModule | undefined
-    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
-    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
+    const direction = event.currentTarget instanceof HTMLElement && getComputedStyle(event.currentTarget).direction === "rtl" ? -1 : 1
+    if (event.key === "ArrowLeft") target = tabs[(index - direction + tabs.length) % tabs.length]
+    if (event.key === "ArrowRight") target = tabs[(index + direction + tabs.length) % tabs.length]
     if (event.key === "Home") target = tabs[0]
     if (event.key === "End") target = tabs[tabs.length - 1]
     if (!target) return
@@ -220,6 +223,16 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     onCustomizationChange: updateRightPanelCustomization,
     extraStatusSections: () => extraStatusSections(),
   })
+  const missionsModule = createMissionsRightPanelModule({
+    instanceId: props.instanceId,
+    t: props.t,
+    activeSessionId: props.activeSessionId,
+    isActive: () => props.isActive() && rightPanelTab() === "missions",
+    revealConversation: restoreChat => {
+      if (restoreChat) props.onRestoreConversation?.()
+      if (props.isPhoneLayout()) props.onCloseRightDrawer()
+    },
+  })
 
   const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
   const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
@@ -229,7 +242,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
     }] }
   }))
-  const rightPanelModules = createMemo(() => [coreModule, ...externalModules()])
+  const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(

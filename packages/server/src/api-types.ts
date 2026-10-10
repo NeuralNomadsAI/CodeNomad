@@ -9,6 +9,77 @@ import type {
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
+export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
+
+export type {
+  MissionActor,
+  MissionActorActivity,
+  MissionActorActivityState,
+  MissionActorRuntimeStatus,
+  MissionActivityProjection,
+  MissionListAvailableResponse,
+  MissionListResponse,
+  MissionListUnavailableResponse,
+  MissionMap,
+  MissionBriefing,
+  MissionBriefingItem,
+  MissionReport,
+  MissionReportOutcome,
+  MissionSnapshot,
+  MissionStatus,
+  MissionTask,
+  MissionTaskStatus,
+  MissionTemplateId,
+} from "./missions/model"
+
+/** Deliberately excludes private config, authority receipts and native Job metadata. */
+export interface MissionRecurrenceSnapshot {
+  version: 1
+  projectID: string
+  schedules: Array<{
+    id: string
+    revision: number
+    title: string
+    state: "running" | "paused" | "interrupted" | "stopped"
+    clock: { time: string; zone: string }
+    nextDueAt: number | null
+    interruptionReason?: "service-restart" | "error"
+    /** Non-blocking display warning: the latest wake failed and is being retried. */
+    lastError?: { code: "wake-failed" | "admission-failed" | "settlement-failed"; at: number }
+    pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
+      trigger?: "daily" | "manual"; reason?: "not-observed" | "admission-failing"
+      missionID?: string; conversationID?: string } | null
+    actions: Array<"play" | "pause" | "stop" | "resume" | "run-now" | "check">
+    controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
+    latestResult: MissionRecurrenceReceipt | null
+    history: MissionRecurrenceReceipt[]
+  }>
+}
+
+export interface MissionRecurrenceCurrent {
+  version: 1
+  projectID: string
+  scheduleID: string
+  passageID: string | null
+  mission?: import("./missions/model").MissionMap
+  activity?: import("./missions/model").MissionActivityProjection
+}
+export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
+
+/** Bounded native reference receipts only; never the standing instructions, native transcript or authority. */
+export interface MissionRecurrenceReceipt {
+  passageID: string
+  dueAt: number
+  settledAt: number
+  outcome: "completed" | "failed" | "ended-without-report"
+  /** `interrupted`: a service restart cut the passage and nothing resumed it.
+   * `not-started`: its start message was never admitted and cannot be. */
+  reason?: "interrupted" | "not-started"
+  /** Daily schedule or an explicit Run now. */
+  trigger?: "daily" | "manual"
+  missionID?: string
+  conversationID?: string
+}
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -343,6 +414,14 @@ export type PluginConfigScope = PluginControlScope | "other" | "virtual"
 export interface PluginControlLocation {
   directory: string
   workspaceID?: string
+}
+
+export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
+export interface SubagentDepthSnapshot {
+  location: PluginControlLocation
+  capability: SubagentDepthCapability | null
+  effectiveDepth: number | null
+  project: { path: string; depth: number | null; expectation: string } | null
 }
 
 export type PluginRuntimeSource =

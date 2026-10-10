@@ -6,7 +6,17 @@ import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../develope
 import type { NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { admitMissionInput } from "./mission-input"
+import { createManagedMissionRoot } from "./mission-root-creation"
+import { requestAdmission } from "../request-admission"
+import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
+import { missionRecoveryRejection } from "../../missions/recovery-error"
+import { verifyMissionHumanAnswer } from "./mission-human-answer"
+import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
+import type { SettingsService } from "../../settings/service"
+import type { RemoteControlManager } from "../../remote-control/manager"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -14,6 +24,9 @@ interface AutomationPluginRouteDeps {
   nativeParent: NativeParent
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
+  worktreeDeletionFence?: WorktreeDeletionFence
+  settings?: Pick<SettingsService, "getProfileScope">
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
 }
 
 interface DeveloperNativeStatus {
@@ -42,24 +55,71 @@ export function isAutomationPluginRequest(
 
 export function registerAutomationPluginRoute(app: FastifyInstance, deps: AutomationPluginRouteDeps): void {
   const inspectedTargets = new DeveloperInspectionTargets()
-  app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 32 * 1024 }, async (request, reply) => {
+  app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 512 * 1024 }, async (request, reply) => {
+    const lifetime = requestAdmission(request, reply)
+    try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode))
+    if (body?.mode === "human-answer-verify") {
+      if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
+      try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
+        { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices }, lifetime.signal) }) }
+      catch { return reply.code(403).send({ error: "Human answer admission unavailable" }) }
+    }
+    if (body?.mode === "recurrence-control-verify") {
+      try {
+        return reply.send({ result: await verifyHumanRecurrenceRequest(body.command, {
+          auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings,
+        }, lifetime.signal) })
+      } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
+    }
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
+    // Lifecycle Pause/Stop walks and interrupts a whole native subagent family;
+    // it stays below the plugin's 95 s bridge timeout.
+    const lifecycle = body?.command && typeof body.command === "object" && "kind" in body.command && body.command.kind === "lifecycle"
+    const signal = body.mode === "mission-input"
+      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
     let location
     try {
-      location = (await (await deps.workspaceManager.getSharedServiceClient()).session.get({ sessionID: body.sessionID })).location
+      signal.throwIfAborted()
+      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient())
+      signal.throwIfAborted()
+      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }))).location
     } catch {
       return reply.code(404).send({ error: "Session not found" })
     }
-    const owned = (await Promise.all(deps.workspaceManager.list().map((workspace) =>
-      deps.workspaceManager.ownsLocation(workspace.id, location).catch(() => false),
-    ))).some(Boolean)
+    // One validated owner is sufficient. Waiting for every unrelated inventory
+    // can exceed the plugin's discovery deadline despite a ready local owner.
+    const owned = await lifetime.wait(Promise.any(deps.workspaceManager.list().map(async workspace => {
+      if (!await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, signal)) throw new Error("Not an owner")
+      return true
+    }))).catch(() => false)
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
+
+    if (body.mode === "mission-input") {
+      if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
+      try {
+        // Desktop-only, journal-keyed creation capability. Durable admission
+        // does not use this bridge or gain a new native API fallback.
+        const creation = body.command && typeof body.command === "object" && "kind" in body.command && body.command.kind === "create-root"
+        const result = creation
+          ? await createManagedMissionRoot(deps.workspaceManager, deps.worktreeDeletionFence, body.sessionID, body.command, signal)
+          : await admitMissionInput(deps.workspaceManager, deps.worktreeDeletionFence, body.sessionID, body.command, signal)
+        return reply.send({ result })
+      } catch (error) {
+        if (error instanceof MissionCreationHoldError) {
+          return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })
+        }
+        // Native errors can contain environment snapshots or provider credentials.
+        const recovery = missionRecoveryRejection(error)
+        if (recovery) return reply.code(recovery.status).send({ error: recovery.message, code: recovery.code })
+        return reply.code(502).send({ error: "Mission admission failed" })
+      }
+    }
 
     if (body.mode === "browser-claim") return reply.send({ result: { available: true } })
     if (body.mode === "browser-probe") {
@@ -153,5 +213,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
+    } finally { lifetime.dispose() }
   })
 }

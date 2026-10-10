@@ -438,6 +438,56 @@ describe("instance proxy location enforcement", () => {
     assert.equal(deleted, true)
   })
 
+  it("fences the effective default location of session, Shell, PTY and global Form writes", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness()
+    await worktreeDeletionFence.run("workspace:root", ["workspace:root"], async () => {
+      for (const route of ["session", "shell", "pty", "session/global/form/form/reply"]) {
+        const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}`, payload: {} })
+        assert.equal(response.statusCode, 409, route)
+      }
+      assert.equal(requestCount(), 0)
+    })
+  })
+
+  it("retains default-location admission until the actual upstream response body ends", async () => {
+    const { app, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    const mutation = app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-delay-upstream-body": "1" }, payload: {} })
+    await delayedUpstreamStarted
+    let deleted = false
+    const deletion = worktreeDeletionFence.run("workspace:root", ["workspace:root"], async () => { deleted = true })
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      assert.equal(deleted, false)
+    } finally { releaseDelayedUpstream() }
+    assert.equal((await mutation).statusCode, 200)
+    await deletion
+    assert.equal(deleted, true)
+  })
+
+  it("fences native resource cwd as well as the request's default location", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {},
+      { terminal: "/repo/worktree" }, { background: "/repo/worktree" })
+    await worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], async () => {
+      for (const route of ["pty/terminal", "shell/background"]) {
+        const response = await app.inject({ method: "DELETE", url: `/workspaces/workspace/instance/api/${route}` })
+        assert.equal(response.statusCode, 409, route)
+      }
+      assert.equal(requestCount(), 0)
+    })
+  })
+
+  it("rejects a default write whose mutation identity cannot be established without affecting reads", async () => {
+    const { app, manager, requestCount } = await harness()
+    manager.getWorktreeIdentityForPath = async () => undefined
+    const write = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session", payload: {} })
+    assert.equal(write.statusCode, 403)
+    assert.equal(requestCount(), 0)
+    const read = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/location" })
+    assert.equal(read.statusCode, 200)
+    assert.equal(requestCount(), 1)
+  })
+
   it("holds mutation admission until the upstream response body ends", async () => {
     const { app, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
     const mutation = app.inject({

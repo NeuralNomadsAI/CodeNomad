@@ -1,0 +1,42 @@
+/* One-screen Mission creation: objective, title, schedule, then one Options disclosure. */
+.mission-create .window-body > label:first-child { margin-block-end: 0; }
+.mission-create .window-body > textarea { width: 100%; min-height: 7em; }
+.mission-create-field-error { display: block; color: var(--status-error-fg); font-size: var(--font-size-xs); margin-block: var(--space-xs); }
+
+.mission-create-when {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm);
+  border: 0; padding: 0; margin: var(--space-sm) 0; min-inline-size: 0;
+}
+.mission-create-when > legend { float: inline-start; width: 100%; padding: 0; margin-block-end: var(--space-xs); }
+.mission-editor .mission-create-when .mission-create-choice {
+  display: inline-flex; flex-direction: row; align-items: center; gap: var(--space-xs); margin: 0;
+  min-height: var(--touch-target-size-compact); white-space: nowrap;
+}
+/* Opt out of the editor's full-width text-input rule. */
+.mission-editor .mission-create-when input[type="radio"] { width: auto; min-height: 0; padding: 0; margin: 0; flex: none; }
+.mission-editor .mission-create-when input.mission-create-time { width: auto; }
+.mission-create-zone {
+  display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: center; gap: var(--space-xs);
+  color: var(--text-secondary); font-size: var(--font-size-xs);
+}
+
+.mission-create-options > summary { font-weight: 500; }
+.mission-create-options[open] { border-top: 1px solid var(--border-base); padding-top: var(--space-xs); }
+.mission-create-option { margin-block: var(--space-sm); }
+.mission-create-option-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+
+.mission-create .window-footer { flex-wrap: wrap; }
+
+/* Saved briefs: one loading select atop Options, and an inline footer name prompt. */
+.mission-brief-picker { margin-block: var(--space-sm); }
+.mission-brief-picker > label { display: block; margin-block: 0 var(--space-xs); }
+.mission-brief-picker-row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+.mission-editor .mission-brief-picker-row select { flex: 1 1 auto; min-width: 0; }
+.mission-brief-picker-row .action-overflow-trigger {
+  display: inline-flex; flex: none; align-items: center; justify-content: center;
+  min-width: var(--touch-target-size-compact); min-height: var(--touch-target-size-compact);
+  padding-inline: var(--space-xs); color: var(--text-secondary); background: transparent; border-radius: 0;
+}
+.mission-brief-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-inline-end: auto; min-width: 0; }
+.mission-editor .mission-brief-save input { width: 12em; min-width: 0; flex: 1 1 8em; }
+.mission-brief-save > p { flex-basis: 100%; margin: 0; font-size: var(--font-size-xs); }

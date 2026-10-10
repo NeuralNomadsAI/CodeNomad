@@ -46,6 +46,7 @@ type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
   acquire?: () => Promise<import("./opencode-service").ServiceConnection>
+  existingConnection?: () => import("./opencode-service").ServiceConnection | undefined
   fetch?: () => Promise<typeof fetch>
   endpoint: (options?: OpenCodeSharedServiceOptions) => Promise<Endpoint>
   client: (options?: OpenCodeSharedServiceOptions) => Promise<OpenCodeClient>
@@ -267,6 +268,11 @@ export class WorkspaceManager {
     return this.sharedService.acquire?.()
   }
 
+  getExistingSharedServiceConnection(id: string): import("./opencode-service").ServiceConnection | undefined {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    return this.sharedService.existingConnection?.()
+  }
+
   invalidateSharedServiceConnection(): void {
     this.sharedService.invalidate?.()
   }
@@ -320,10 +326,10 @@ export class WorkspaceManager {
     return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
-  async getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined> {
+  async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
-    const owned = await this.resolveOwnedWorktree(record, directory)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
     if (!owned) return undefined
     return canonicalWorktreeIdentity(owned.worktreeDirectory)
   }
@@ -356,12 +362,19 @@ export class WorkspaceManager {
     return await this.resolveWslHostDirectory(servicePath, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
-  private async nativeWorktreeContext(id: string) {
+  private async nativeWorktreeContext(id: string, purpose: "request" | "event" = "request") {
     const record = this.workspaces.get(id)
     const location = this.getServiceLocation(id)
     if (!record || !location) throw new Error("Workspace has no native location")
+    // An adapter without connection lifecycle (no acquire/observation) only wraps an
+    // already-connected client, so its client cannot start or provision OpenCode.
+    const lifecycle = Boolean(this.sharedService.acquire || this.sharedService.existingConnection)
+    const client = purpose === "event" && lifecycle
+      ? this.getExistingSharedServiceConnection(id)?.client
+      : await this.getSharedServiceClient()
+    if (!client) throw new Error("OpenCode has no existing connection")
     return {
-      client: await this.getSharedServiceClient(), location, workspacePath: record.path,
+      client, location, workspacePath: record.path,
       toHost: async (directory: string) => record.wslDistro
         ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
         : directory,
@@ -384,10 +397,10 @@ export class WorkspaceManager {
     return this.worktreeInventory.read(id, mode)
   }
 
-  // Registered-only reads cannot join discovery scans. They retain all native,
+  // Registered-only reads cannot acquire a connection or join discovery scans. They retain all native,
   // physical Git, mutation and disposal checks used by the ordinary catalogue.
   private readonly eventWorktreeInventory = new WorktreeInventory({
-    load: (id) => this.nativeWorktreeContext(id).then(context => listNativeWorktrees(context, { refresh: false })),
+    load: (id) => this.nativeWorktreeContext(id, "event").then(context => listNativeWorktrees(context, { refresh: false })),
     changed: (id) => {
       invalidateWorktreeCache(`event:${id}`)
       this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
@@ -1113,7 +1126,7 @@ export class WorkspaceManager {
   async getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>> {
     const record = this.workspaces.get(id)
     if (!record || record.status !== "ready") throw new Error("Workspace is not ready")
-    const configured = this.options.settings.getOwner("config", "server").environmentVariables
+    const configured = await this.options.settings.readEnvironmentForAdmission(signal)
     return sessionEnvironment(configured, { distro: record.wslDistro, platform: this.options.platform, signal })
   }
 

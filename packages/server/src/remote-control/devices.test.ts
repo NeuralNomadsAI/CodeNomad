@@ -117,3 +117,18 @@ test("device names summarize the browser user agent", () => {
   assert.equal(deviceNameFromUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36 Edg/140.0"), "Windows · Edge")
   assert.equal(deviceNameFromUserAgent(undefined), "Device · Browser")
 })
+
+test("isPaired revalidates a device without refreshing it, and fails after revocation or idle expiry", (t) => {
+  const { open, advance } = fixture(t)
+  const registry = open()
+  const paired = registry.exchange(registry.createPairing().code, "Phone")!
+  assert.equal(registry.isPaired(paired.device.id), true)
+  assert.equal(registry.isPaired("unknown"), false)
+  advance(DEVICE_IDLE_EXPIRY_MS - 1)
+  assert.equal(registry.isPaired(paired.device.id), true)
+  advance(1)
+  assert.equal(registry.isPaired(paired.device.id), false, "revalidation never extends the idle lifetime")
+  const other = registry.exchange(registry.createPairing().code, "Tablet")!
+  registry.revoke(other.device.id)
+  assert.equal(registry.isPaired(other.device.id), false)
+})

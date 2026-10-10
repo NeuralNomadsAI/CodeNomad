@@ -1754,9 +1754,17 @@ fn main() {
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
     let cli_config = std::env::var("CLI_CONFIG").ok();
+    let backend_config = identity::resolve_selected_config(cli_config.as_deref(), &cwd, &home);
+    // Native listening/certificate readers and every backend spawn must select
+    // this same ORIGINAL source, resolved before any startup cwd can change.
     // Process-wide set_var happens while the process is still single-threaded: before the profile
     // question may start heartbeat or dialog-toolkit threads. Only the Windows-only WebView2
     // variables below follow it, where environment access is OS-synchronized.
+    if let Some(config) = backend_config.as_deref() {
+        std::env::set_var("CLI_CONFIG", config);
+    } else {
+        std::env::remove_var("CLI_CONFIG");
+    }
     configure_developer_environment();
     let profile = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
     let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
@@ -1849,7 +1857,11 @@ fn main() {
             },
         ))
         .manage(AppState {
-            manager: CliProcessManager::new(),
+            manager: CliProcessManager::with_profile(
+                setup_scope.profile.clone(),
+                setup_scope.config_identity.clone(),
+                backend_config.clone(),
+            ),
             developer_mode,
             browser_controller: browser_controller::BrowserController::new(
                 setup_scope.webview_data_directory.join("browser"),

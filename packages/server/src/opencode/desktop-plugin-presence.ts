@@ -60,6 +60,7 @@ export async function followPresence(
   directory: string | readonly string[],
   register: () => Promise<() => void | Promise<void>>,
   onError: (error: unknown) => void = console.error,
+  retainWithoutPresence: () => Promise<boolean> = async () => false,
 ) {
   const readers = [...new Set(typeof directory === "string" ? [directory] : directory)].map(acquireSnapshot)
   let dispose: (() => void | Promise<void>) | undefined
@@ -72,7 +73,7 @@ export async function followPresence(
     pending = (async () => {
       const active = !stopped && (await Promise.all(readers.map(reader => reader.read()))).some(Boolean)
       if (active && !dispose && !stopped) dispose = await register()
-      if ((!active || stopped) && dispose) {
+      if (dispose && (stopped || (!active && !await retainWithoutPresence()))) {
         await dispose()
         dispose = undefined
       }

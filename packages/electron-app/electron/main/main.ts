@@ -23,11 +23,11 @@ import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
-import { CliProcessManager } from "./process-manager"
+import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, profileDisplayName } from "./data-profile"
 import { LOCK_HEARTBEAT_MS } from "./profile-transition"
 import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
@@ -45,6 +45,13 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const scope = resolveStorageScope({
     profileKey, cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
+  // The backend must use the exact desktop data profile for paused Mission metadata. It is
+  // handed to the backend command only: in this host CODENOMAD_UPDATE_CHANNEL is a legacy
+  // profile alias that a relaunch would read back as an explicit profile.
+  setBackendProfileScope({ profile: scope.profile, configIdentity: scope.configIdentity })
+  const originalConfig = resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
+  if (originalConfig) process.env.CLI_CONFIG = originalConfig
+  else delete process.env.CLI_CONFIG
   const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })

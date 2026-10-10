@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "設定ウィンドウを開けませんでした。CodeNomad アプリを再起動または更新してから、もう一度お試しください。",
   "settings.accounts.current": "有効なアカウント",
   "settings.accounts.title": "アカウント",
   "settings.accounts.add": "アカウントを追加",
@@ -242,6 +243,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "設定ファイル",
   "settings.nav.info": "情報",
+  "settings.nav.missions": "ミッション",
   "settings.scope.device": "このデバイス",
   "settings.scope.server": "サーバー設定",
   "settings.common.enabled": "有効",

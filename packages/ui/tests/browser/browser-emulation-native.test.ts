@@ -27,6 +27,9 @@ test("native Chromium emulation applies mobile media, UA, density and orientatio
       args: ["--no-sandbox", fileURLToPath(new URL("fixtures/browser-emulation-electron.cjs", import.meta.url))], env })
     const page = await app.firstWindow()
     await page.waitForLoadState()
+    // The first load can precede Chromium's resize to the native menu/content area.
+    const contentSize = await app.evaluate(() => (globalThis as any).emulationFixture.contentSize())
+    await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, contentSize)
     const snapshot = () => app!.evaluate(() => (globalThis as any).emulationFixture.snapshot())
     const baseline = await snapshot()
     const dimensions = { mobile: [390, 844], mobileLandscape: [844, 390] }

@@ -202,6 +202,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
     }
     const { version, pid } = payload as { version: string; pid: number }
+    this.remaining(deadlineAt, `${kind} validation`)
     rememberRuntime(endpoint, { version, pid, discovery: kind })
   }
 
@@ -260,7 +261,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     const timeoutMs = this.remaining(deadlineAt, label)
     let timer: NodeJS.Timeout | undefined
     try {
-      return await Promise.race([
+      const result = await Promise.race([
         operation,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
@@ -269,6 +270,8 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
           )
         }),
       ])
+      this.remaining(deadlineAt, label)
+      return result
     } finally {
       if (timer) clearTimeout(timer)
     }

@@ -1,13 +1,18 @@
-import { randomBytes } from "node:crypto"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 import { execFileSync, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
+import { MissionControlError } from "../missions/control-error"
+import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
+import { missionRecoveryError } from "../missions/recovery-error"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
 const PROBE_TIMEOUT_MS = 5_000
+// Mission ownership may require a cold, validated linked-worktree inventory.
+const MISSION_PROBE_TIMEOUT_MS = 30_000
 const INSPECTION_TIMEOUT_MS = 15_000
 const RECONNECT_INTERVAL_MS = 250
 const MAX_REGISTRATIONS = 64
@@ -50,6 +55,7 @@ interface AutomationPluginContext {
 interface BridgeResponse {
   result?: unknown
   error?: string
+  code?: unknown
 }
 
 interface ProbedBridge {
@@ -260,7 +266,23 @@ export function parseBrowserAction(input: unknown): BrowserAction {
   }
 }
 
-async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
+/** Fixed human-answer proof callback. The cookie exists only in this private
+ * transport envelope; native storage/model output never receives it. */
+export async function verifyHumanAnswerBridge(body: import("../missions/human-answer").HumanAnswerProof, proof: string): Promise<boolean> {
+  const { assertHumanAnswerFresh, humanAnswerProof } = await import("../missions/human-answer")
+  assertHumanAnswerFresh(body)
+  for (const registration of await registrations()) {
+    if (humanAnswerProof(body, registration.token) !== proof) continue
+    try {
+      const result = await callBridge(registration, { mode: "human-answer-verify", sessionID: body.sessionID, command: body })
+      assertHumanAnswerFresh(body)
+      return result.status === 200 && (result.body.result as { admitted?: unknown } | undefined)?.admitted === true
+    } catch { return false }
+  }
+  return false
+}
+
+async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const directories = automationBridgeDirectories()
   for (const [directoryIndex, directory] of directories.entries()) {
@@ -288,7 +310,7 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
       const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
       if (!registration) continue
       if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
-        await rm(target, { force: true }).catch(() => undefined)
+        if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
       if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && directoryIndex > 0) registration[WINDOWS_INTEROP] = true
@@ -296,6 +318,22 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
     }
   }
   return found.sort((left, right) => right.startedAt - left.startedAt).slice(0, MAX_REGISTRATIONS)
+}
+
+/** An HMAC alone could identify an old registration. Demand a fresh response
+ * from the selected live backend's existing authenticated bridge as well. */
+export async function verifyRecurrenceBridge(body: RecurrenceControlProofBody, proof: string): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/.test(proof)) return false
+  for (const registration of await registrations(false)) {
+    const digest = Buffer.from(signNativeRecurrenceControl(body, registration.token), "hex")
+    if (!timingSafeEqual(digest, Buffer.from(proof, "hex"))) continue
+    try {
+      const reply = await callBridge(registration, { mode: "recurrence-control-verify", sessionID: body.sessionID, command: body })
+      if (reply.status === 200 && reply.body.result && typeof reply.body.result === "object"
+        && "admitted" in reply.body.result && reply.body.result.admitted === true) return true
+    } catch { /* Missing backend is not a reusable human grant. */ }
+  }
+  return false
 }
 
 async function callBridge(
@@ -445,12 +483,13 @@ async function probeBrowserBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
   mode: "browser-claim" | "browser-probe",
+  timeoutMs = PROBE_TIMEOUT_MS,
 ): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        return (await callBridge(registration, { mode, sessionID })).status === 200 ? registration : undefined
+        return (await callBridge(registration, { mode, sessionID }, timeoutMs)).status === 200 ? registration : undefined
       } catch {
         return undefined
       }
@@ -460,6 +499,18 @@ async function probeBrowserBridges(
     }
   }
   return found.slice(0, 2)
+}
+
+export async function sendMissionInput(sessionID: string, kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root", input: unknown): Promise<unknown> {
+  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS)
+  if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+  const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
+  if (response.status !== 200) {
+    const recovery = missionRecoveryError(response.body.code)
+    if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
+    throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+  }
+  return response.body.result
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {

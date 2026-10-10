@@ -82,6 +82,7 @@ function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachmen
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
   const asideId = createUniqueId()
+  const helpId = createUniqueId()
   const aside = usePromptAside({
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
@@ -947,6 +948,7 @@ export default function PromptInput(props: PromptInputProps) {
           >
             <div
               class="prompt-input-field"
+              data-prompt-help={shouldShowOverlay()}
               style={fieldHeightStyle()}
             >
               <textarea
@@ -954,6 +956,7 @@ export default function PromptInput(props: PromptInputProps) {
                 class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""}`}
                 dir="auto"
                 placeholder={getPlaceholder()}
+                aria-describedby={shouldShowOverlay() ? helpId : undefined}
                 value={prompt()}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
@@ -969,7 +972,7 @@ export default function PromptInput(props: PromptInputProps) {
                 style={textareaHeightStyle()}
               />
               <Show when={shouldShowOverlay()}>
-                <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
+                <div id={helpId} role="note" tabIndex={0} class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
                     when={props.escapeInDebounce}
                     fallback={

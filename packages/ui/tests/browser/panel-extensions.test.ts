@@ -40,11 +40,12 @@ before(async () => {
   registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
   registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
     ownsLocation: async (id, location) => id === "first" && location.directory === "/first",
-    getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/first" } }) }, rpc: { call: async ({ method, input }: any) => {
+    // Asset reads are fenced to one current connection; this fixture's never changes.
+    getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: { session: { get: async () => ({ location: { directory: "/first" } }) }, rpc: { call: async ({ method, input }: any) => {
       assetReads++; if (holdAssets) await holdAssets()
       return { output: method === "assets" ? { status: "page", entries: input.sessionID === "session-a" ? [{ name: "Native image", mime: "image/png", tool: "mcp.paint", available: true,
         target: { messageID: "m", part: 0, index: 0, digest: "a".repeat(64) } }] : [], cursor: null } : { status: "asset", mime: "image/png", uri: assetUri } }
-    } } }) as any,
+    } } } }) as any,
   } })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",

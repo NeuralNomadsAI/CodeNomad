@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.native.openFailed": "Preferences could not open in their window. Restart or update the CodeNomad desktop app, then try again.",
   "settings.accounts.current": "Active account",
   "settings.accounts.title": "Accounts",
   "settings.accounts.add": "Add account",
@@ -243,6 +244,7 @@ export const settingsMessages = {
   "settings.nav.opencode": "OpenCode",
   "settings.nav.configFiles": "Config Files",
   "settings.nav.info": "Info",
+  "settings.nav.missions": "Missions",
   "settings.scope.device": "This device",
   "settings.scope.server": "Server setting",
   "settings.common.enabled": "Enabled",
