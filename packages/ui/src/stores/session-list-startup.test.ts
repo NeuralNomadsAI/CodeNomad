@@ -26,7 +26,6 @@ function fixture(id: string) {
   let reads = 0
   const client: any = { session: {
     active: async () => ({}),
-    get: async ({ sessionID }: { sessionID: string }) => page(sessionID).data[0],
     list: async () => ++reads === 1 ? first.promise : page("current"),
   } }
   ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
