@@ -34,30 +34,32 @@ independent actors retain correlated report notifications and native queue deliv
 
 Mission Control separates mission lifecycle (an **open** mission, not a claim of
 activity), the dated coordinator project briefing, and observed native activity.
-Open native Forms/permissions ("Your response is needed") are
+Open native Forms/permissions ("Needs you") are
 the only human-response alerts. Returned blocked reports are obstacles to read,
 not an assertion that the user must decide something. Retired or replaced blockers
 remain readable in the historical results but are not current requests.
-Actionable requests precede the project briefing controls. Without a briefing, the
+Actionable requests precede the task tree. Without a briefing, the
 overview reader exposes bounded exact current task achievements/obstacles, not an
 invented synthesis; absent evidence is not replaced by old attempts. The side
-panel retains compact observed activity and the complete declared dependency graph,
-without repeating task prose or a second remaining-work list.
-Counts describe the declared plan, never a product completion percentage. All
+panel shows the selected mission's action toolbar, "Needs you" and the complete
+declared dependency tree, without repeating task prose or a second remaining-work
+list. There is no conversation/ancestry view: the toolbar's "Open conversation"
+opens the coordinator, and task rows open only their exact owned actor.
+Declared task counts are never shown as a product completion percentage. All
 declared tasks being complete does not imply that the mission has been finalized.
 The single canonical report list (including current, previous and late results),
-native conversations and plan-change history are
-progressive details, not competing top-level tracking surfaces. Cleanup receipts
-appear in one disclosure at the bottom; successful historical cleanup is collapsed,
-without a second nested cleanup section. Pending receipts keep explicit retry and
-their original mutation identity. Empty plan history and unusable terminal guidance
-are omitted. Settled terminal lifecycle commands disappear; unresolved control
-receipts remain available.
+plan-change history and settled cleanup history fold at the bottom of the overview
+reader, not competing top-level tracking surfaces. Only cleanup awaiting an
+explicit retry stays in the panel, in one disclosure without a second nested
+cleanup section. Pending receipts keep explicit retry and their original mutation
+identity. Empty plan history is omitted. Settled terminal lifecycle commands
+disappear; unresolved control receipts remain available.
 
 ### On-demand project briefing
 
 The 2026-10-06 tracking simplification is source-only, not a new installed build.
-Qualification includes the real Solid browser fixtures: briefing/control/cleanup/
+(Its guidance forms and shared mission rows were later removed from the panel; the
+dated counts below describe that earlier surface.) Qualification includes the real Solid browser fixtures: briefing/control/cleanup/
 guidance/shared rows and lifecycle revisions (60 passing across the latest runs), result/task readers and report delivery
 (23 passing), plus tracking/briefing/view-fence unit and locale checks (18 passing)
 and the UI typecheck. Captures were read at 440/280 px panels and a 390 px viewport,
@@ -71,10 +73,11 @@ require its disappearance while retaining the exact request/revision assertions.
 The full lifecycle/shared-row rerun passed 18/18. A fixture-start timeout seen in the
 preceding combined run did not recur; no timeout extension or automatic retry was added.
 
-“Make a status check” composes a fixed application-authored request with the exact
-mission ID, a unique request ID and the UI language. The user does not write a
-prompt. It follows the same ordinary coordinator prompt admission as guidance:
-fresh owned snapshot, exact project/coordinator, view/connection/lifecycle fences,
+“Request an update” (a text button below the selected mission's toolbar) composes
+a fixed application-authored request with the exact mission ID, a unique request ID
+and the UI language. The user does not write a prompt. It is the only coordinator
+message the panel sends (`lib/mission-coordinator-message.ts`), through ordinary
+coordinator prompt admission: fresh owned snapshot, exact project/coordinator, view/connection/lifecycle fences,
 targeted hydration and native profile preservation. No session selection, composer
 edit, plan mutation, task dispatch/replay, model switch or implicit Play is added.
 It does admit a normal native coordinator turn, not a separate read-only LLM;
@@ -92,12 +95,11 @@ assessed journal prefix. Durable-plugin publication keeps the existing authority
 grant and signer gates; it does not enable persistent-host rollout.
 
 The latest briefing is plainly attributed to the coordinator, not labeled as an
-observed execution fact. The panel shows its date, freshness and request controls,
-not a second copy of the narrative. Its pinned eye opens the complete briefing in
-the central message-area reader; the highlighted eye hides it on a second click.
-The mission overview eye shares that exact target and highlight. Task/report/plan
-revision eyes follow the same toggle convention and remain visible at narrow widths,
-outside the overflow of secondary actions. Closing the reader clears the highlights.
+observed execution fact. The panel shows no briefing text; the selected mission
+toolbar's Summary eye opens the overview reader in the central message area, which
+carries the complete briefing with its date and stale notice. The highlighted eye
+hides it on a second click; clicking a task-tree node toggles that task's reader the
+same way. Closing the reader clears the highlights.
 Source buttons in the full briefing open the exact task result/brief reader.
 New current task results since the assessed snapshot are counted; other map
 changes produce a separate stale-map notice, not a fabricated progress delta.
@@ -113,8 +115,9 @@ validation differs. There is still no timer, per-tool briefing or hidden request
 Report and briefing summaries are written for the human (user's language, 3–5
 plain sentences, outcome first; IDs, tool/fixture names and commands only in
 `evidence`); the final report states delivered/remaining/decision in ≤6 sentences.
-Recurring passage coordinators receive the same guidance through their actor
-context; the frozen passage start text remains the verbatim instructions.
+Recurring passage coordinators receive the same milestone and summary
+instructions through their actor context; the frozen passage start text remains
+the verbatim instructions. Schedules have no "Request an update" button.
 
 Request admission is visibly distinct from receiving the matching request-ID
 briefing. Pending/uncertain requests survive mission navigation and remount in
@@ -132,17 +135,18 @@ general planning quality, semantic freshness of every source report, or model
 consumption. An older plugin cannot publish this event: the fixed prompt forbids a
 substitute task and asks it to explain the missing tool in the conversation.
 
-“Ask a question” is a separate initially collapsed explanation form, with its own
-identity-scoped draft. It reuses the ordinary admission and uncertain-send fences,
-asks for an explanation from existing evidence rather than changing priorities or
-executing work, and offers an exact coordinator conversation link after admission.
-It does not claim to refresh the briefing. “Give direction” remains distinct for
-intent/task-context steering. Both still use the native coordinator, not a new
-read-only sandbox or a second execution/planning engine.
+The panel has no direction or question form. To steer a mission or ask the
+coordinator something, the user opens the coordinator conversation ("Open
+conversation" in the selected mission's toolbar) and writes in the ordinary
+composer. That is an ordinary native prompt under native admission,
+permissions and the per-send profile environment, not a Mission-specific channel:
+it changes no plan or profile by itself, and its admission is not proof of model
+consumption. For a recurring schedule, the same action opens the admitted passage's
+coordinator.
 
-Work and task readers link only to an exact owned non-coordinator task actor when
-recorded. Missing bindings produce no generic coordinator substitute. The mission
-index keeps its single coordinator action. Native ancestry or text mentioning a
+Task-tree rows and task readers link only to an exact owned non-coordinator task
+actor when recorded. Missing bindings produce no generic coordinator substitute. The
+selected mission's toolbar keeps the single coordinator action. Native ancestry or text mentioning a
 child session never manufactures a task/actor association. Task readers show the
 current result/evidence/next steps first; the brief and native technical metadata
 are separate collapsed details. A historical late attempt must not replace a
@@ -154,31 +158,13 @@ or oversized fence contexts fall back to literal source pages. Copy always uses
 the complete original section, not synthesized Markdown. Arbitrary list/table/quote
 excerpts are not a promise of full-document Markdown pagination equivalence.
 
-"Give direction" is a collapsed, explicit ordinary user prompt, with optional
-priority/constraint/alternative intent and exact task context. It uses
-native `steer` delivery through the existing authorized session proxy and its
-per-send profile environment. It preserves the coordinator's native agent/model,
-does not switch the selected conversation or edit the main composer, and is
-separate from objective/shared technical-note metadata edits. Mission identity,
-connection, view lifetime and current running state are rechecked during
-preparation/admission; paused/prepared/terminal missions cannot be sent from this
-surface. These UI checks are not an atomic Mission lifecycle/native prompt
-transaction and do not replace native ownership or execution gates.
-
-Drafts are in-memory and scoped by instance, project/directory, mission and
-coordinator; they survive navigation/remount, not application restart. Confirmation
-means prompt admission only, never model consumption or execution of the requested
-change. An uncertain send preserves its draft and disables another attempt until
-the user explicitly discards it and starts anew after checking the conversation.
-No automatic resume, report recovery, assignment replay or failed-prompt retry is
-added. Late acknowledgements settle the original draft, not the currently viewed
-mission. Browser fixtures exercise real Solid components/generated clients against
-isolated HTTP responses; they never send instructions to a user's live Mission.
+Browser fixtures exercise real Solid components/generated clients against
+isolated HTTP responses; they never send a request to a user's live Mission.
 
 ### Defaults, reusable briefs and separate executions
 
-The initially collapsed Preferences section at the bottom of the Missions tab
-owns the global requested coordinator/task profiles, rather than general Settings. The
+The Missions section of the Settings/Preferences window (opened by the Missions
+panel header's gear) owns the global requested coordinator/task profiles. The
 all-scenarios selection supplies the baseline; scenario-specific choices override it.
 The creation form waits for preferences before freezing its initial choices,
 shows the requested choices and keeps individual overrides collapsed. Opening a
@@ -408,17 +394,24 @@ native agent/project permissions and do not inherit a coordinator's child rules.
 
 ## Mission Centre presentation
 
-The mission index is a bounded vertical list with two-line objectives, semantic
-state colors and inline reader/coordinator/edit/delete icons. A compact toolbar
-supplies create and refresh. The selected mission puts genuine native requests
-and the dated briefing before its initially open Work graph. Reports, Conversations
-and non-empty Plan changes sit under initially collapsed Technical details.
-Preferences stays initially collapsed at the bottom, including empty/error states.
-Explicit per-window disclosure choices take precedence. Work retains completed
-and retired tasks in stable dependency order; its measured rail draws only declared
-`blockedBy` edges, never inferred native ancestry or paths through unrelated nodes.
+The panel header has a compact toolbar (create, the preferences gear opening the
+Settings window's Missions section, refresh) above one "current mission" picker:
+rows show only a title and a status mark, with full state in the tooltip and
+screen-reader text. Nothing is selected by default. A selected mission or schedule
+gets a separate detail below the list: its action toolbar (Play/Pause, Stop, the
+Summary eye, Open conversation, edit, delete), the "Request an update" text button
+for one-time missions, "Needs you" for open native Forms/permissions, then the task
+tree. The tree retains completed and retired tasks in stable dependency order; its
+measured graph draws only declared `blockedBy` edges, never inferred native
+ancestry or paths through unrelated nodes.
 
-The panel is a navigation surface: one-line excerpts and a shared eye action open individual objectives, briefs, reports or plan changes in the reader above the transcript. Evidence, next steps, artifacts and full text remain in that reader. Task details retain dependency navigation, replacement lineage and native execution comparison. Counts are secondary; actor/history sections initially collapse and attention appears only when there is a live request or recorded blockage. Native layout identities still preserve explicit disclosure, selection and reader gestures across refresh/remount.
+The panel is a navigation surface without result prose, conversation lists or
+explanatory notes. The Summary eye opens the overview reader above the transcript
+and a tree node opens its task reader. Evidence, next steps, artifacts and full
+text remain in those readers; the overview folds Plan changes, Reports, cleanup
+history and Technical details at its bottom. Task readers retain dependency
+navigation, replacement lineage and native execution comparison. Native layout
+identities preserve selection and reader gestures across refresh/remount.
 
 ## Distribution and environment
 
