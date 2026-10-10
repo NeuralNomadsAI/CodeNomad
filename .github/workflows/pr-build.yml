@@ -180,6 +180,8 @@ jobs:
           if ('${{ matrix.runtime }}' -eq 'latest') {
             node scripts/test-missions-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            node scripts/test-missions-native-family-control.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
