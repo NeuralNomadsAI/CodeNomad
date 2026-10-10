@@ -59,7 +59,7 @@ export function MissionTaskTree(props: {
           })
           const recover = () => props.onRecoveryAdmitted ? recovery.action() : undefined
           return <li class="mission-tree-node" data-task-key={task().key} data-status={task().status} data-state={state()}>
-            <button type="button" class="mission-tree-task icon-toggle" aria-pressed={props.reading(task())}
+            <button type="button" class="mission-tree-task" aria-pressed={props.reading(task())}
               title={`${task().title} · ${word()}`} onClick={() => props.onRead(task())}>
               <span class="mission-tree-mark" data-graph-anchor aria-hidden="true"><Dynamic component={ICONS[state()]} class="h-3.5 w-3.5" /></span>
               <span class="mission-tree-title">{task().title}</span>
