@@ -8,7 +8,8 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { listMessageWindow } from "./session-message-pages"
 
 // Only the latest coordinator messages are scanned: older delegations stay unlinked.
-const COORDINATOR_MESSAGE_BOUND = 400
+// Long real coordinators exceed 1,000 messages; read lazily, once per revision.
+const COORDINATOR_MESSAGE_BOUND = 3_000
 
 interface Entry { stamp: string; sessions: Map<string, string[]> }
 const [entries, setEntries] = createSignal(new Map<string, Entry>())
@@ -29,7 +30,8 @@ export function demandMissionTaskSessions(instanceId: string, mission: MissionMa
   void listMessageWindow(getRootClient(instanceId), mission.coordinatorSessionId, { limit: COORDINATOR_MESSAGE_BOUND, isAuthoritative: current })
     .then(page => {
       if (!page || !current()) return
-      const sessions = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, page.messages)
+      const taskKeys = new Set(mission.tasks.map(task => task.key))
+      const sessions = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, page.messages, taskKeys)
       setEntries(previous => new Map(previous).set(key, { stamp, sessions }))
     })
     .catch(error => getLogger("session").warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }))
