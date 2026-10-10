@@ -11,13 +11,17 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
-import { addInstance, updateInstance } from "../../../src/stores/instances"
+import { addInstance, setActiveInstanceId, updateInstance } from "../../../src/stores/instances"
+import { SettingsScreen } from "../../../src/components/settings-screen"
+import { settingsOpen } from "../../../src/stores/settings-screen"
 import { activeSessionId, setSessions } from "../../../src/stores/session-state"
 import { missionStore } from "../../../src/stores/missions"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
 
 await initializeClientState()
+// The real shell opens Settings for the active project; its Missions section reads that Location.
+setActiveInstanceId("fixture")
 function Fixture() {
   const { t } = useI18n()
   const config = useConfig()
@@ -36,6 +40,7 @@ function Fixture() {
     connectCatalog: () => addInstance({ id: "fixture", folder: "fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: getRootClient("fixture") }),
     directory: (folder: string) => updateInstance("fixture", { folder }),
     selectedSession: () => activeSessionId().get("fixture"),
+    settingsOpen,
     snapshot: () => missionStore.state("fixture"),
     seedCoordinators: (ids: string[]) => setSessions(previous => new Map(previous).set("fixture", new Map(ids.map(id => [id, {
       id, instanceId: "fixture", parentId: null, title: id, status: "idle", runtimeStatusKnown: true,
@@ -58,6 +63,8 @@ function Fixture() {
       <Show when={missionProjectView("fixture").reader}><MissionReader instanceId="fixture" scope="fixture" /></Show>
     </main>
     <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId="fixture" activeSessionId={() => "ses_fixture"} isActive={active} t={t} /></Show></aside>
+    {/* As in App: without a native Preferences window, the gear opens Settings in this window. */}
+    <SettingsScreen />
     <AlertDialog />
   </div>
 }

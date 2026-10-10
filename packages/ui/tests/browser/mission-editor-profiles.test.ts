@@ -167,7 +167,8 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     assert.deepEqual((await page.evaluate(() => window.missionEditorLifetime.held()))!.profiles, expected)
     // Later preferences are mutable defaults, not the identity of this admitted
     // request. Restoring its held draft must not consult or replay them.
-    const changedDefaults = [{ template: "custom", profiles: { coordinator: { agent: "all", model: { providerID: "p", id: "m", variant: "low" } }, roles: { specialist: { agent: "all" } } } }]
+    // A lone legacy `custom` entry now decodes as the explicit global `all`.
+    const changedDefaults = [{ template: "all", profiles: { coordinator: { agent: "all", model: { providerID: "p", id: "m", variant: "low" } }, roles: { specialist: { agent: "all" } } } }]
     assert.deepEqual(await page.evaluate(async defaults => {
       const preferencesPath = "/src/stores/preferences.tsx", { updatePreferences, preferences } = await import(preferencesPath)
       const updated = await updatePreferences({ missionProfileDefaults: defaults })

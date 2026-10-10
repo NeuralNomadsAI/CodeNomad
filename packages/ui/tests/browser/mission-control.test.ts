@@ -8,7 +8,8 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
-import { clickMissionAction } from "./mission-actions"
+import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionRefresh,
+  missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 import { createFixtureShutdown } from "./fixture-shutdown"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -59,9 +60,12 @@ async function setup(page: Page) {
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
 }
 const fixtureCall = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
-const missionRows = (page: Page) => page.locator(".mission-control-index > .mission-index-entry")
-/** The selected Mission's detail: a separate section below the list. */
+/** The selected Mission's detail: a separate section below the picker. */
 const selectedCard = (page: Page) => page.locator("section.mission-detail")
+/** Screen-reader status ("State · time") of the Mission shown in the current-mission field. */
+const selectedStatus = (page: Page, state: string) => missionPickerField(page).locator(".sr-only").filter({ hasText: new RegExp(`^${state} · `) })
+/** The selected Mission's contextual Play/Pause/Check control: the toolbar's first button. */
+const primaryControl = (page: Page) => selectedCard(page).locator(".mission-action-bar > button").first()
 const taskRow = (page: Page, key: string) => page.locator(`.mission-tree li[data-task-key="${key}"]`)
 const taskButton = (page: Page, key: string) => taskRow(page, key).locator(".mission-tree-task")
 const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree li[data-task-key="${key}"][data-state="${state}"]`)
@@ -69,10 +73,25 @@ const readAll = (page: Page) => selectedCard(page).locator(".mission-overview-to
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
 async function localizedPreferences(page: Page, name: string) {
-  const preferences = page.getByRole("button", { name, exact: true })
+  const preferences = missionGeneralAction(page, name)
   await preferences.waitFor()
   return preferences
 }
+/** Preferences are no longer inline: the panel gear opens Settings at its Missions section
+ * (in this window, as the real shell does when no native Preferences window exists). */
+const settingsShell = (page: Page) => page.locator(".settings-screen-shell")
+async function openMissionSettings(page: Page, label = "Preferences") {
+  await missionGeneralAction(page, label).click()
+  const shell = settingsShell(page)
+  await shell.locator(".mission-preferences").waitFor()
+  assert.equal(await shell.locator('.settings-nav-button[aria-current="page"]').innerText(), await fixtureText(page, "settings.nav.missions"))
+  return shell
+}
+async function closeMissionSettings(page: Page) {
+  await settingsShell(page).locator(".settings-screen-close").filter({ visible: true }).first().click()
+  await settingsShell(page).waitFor({ state: "detached" })
+}
+const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").evaluate(element => element.scrollWidth <= element.clientWidth)
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {
@@ -86,7 +105,7 @@ async function openTaskTechnicalDetails(page: Page) {
   await page.locator(".mission-task-reader > details").filter({ has: page.locator("summary", { hasText: "Technical details" }) }).locator("summary").click()
 }
 
-test("Missions preferences stay in the panel, retain dirty CAS drafts and fence hidden catalog demand without closing the reader", async () => {
+test("Missions preferences open in Settings from the panel gear, retain dirty CAS drafts and fence hidden catalog demand without closing the reader", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   const errors: string[] = [], catalogReads: string[] = [], writes: any[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -113,20 +132,22 @@ test("Missions preferences stay in the panel, retain dirty CAS drafts and fence 
     await page.goto(url)
     await fixtureCall(page, "connectCatalog")
     await page.waitForFunction(() => (window as any).missionFixture.loaded())
-    const preferences = page.getByRole("button", { name: await fixtureText(page, "missions.preferences.title"), exact: true })
-    assert.equal(await preferences.getAttribute("aria-expanded"), "false")
+    const preferences = missionGeneralAction(page, await fixtureText(page, "missions.preferences.title"))
+    await preferences.waitFor()
+    assert.equal(await page.locator(".mission-preferences").count(), 0, "preferences are not inline in the panel")
+    assert.equal(await fixtureCall(page, "settingsOpen"), false)
     await page.waitForTimeout(100)
     assert.equal(catalogReads.length, 0)
     await readAll(page).click()
     const reader = page.locator(".mission-reader")
     await reader.waitFor()
     await reader.evaluate(element => { (window as any).savedPreferenceReader = element })
-    await preferences.click()
+    await openMissionSettings(page)
     const agent = page.getByLabel("Coordinator · Agent", { exact: true })
     await agent.locator('option[value="build"]').waitFor({ state: "attached" })
     await agent.selectOption("build")
     await page.getByText("Unsaved changes", { exact: true }).waitFor()
-    await preferences.click()
+    await closeMissionSettings(page)
     const reads = catalogReads.length
     await page.evaluate(async () => {
       const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
@@ -137,23 +158,22 @@ test("Missions preferences stay in the panel, retain dirty CAS drafts and fence 
     await fixtureCall(page, "active", false)
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
     await fixtureCall(page, "active", true)
-    assert.equal(await preferences.getAttribute("aria-expanded"), "false")
-    await preferences.click()
+    assert.equal(await page.locator(".mission-preferences").count(), 0, "panel remounts never reopen Settings")
+    await openMissionSettings(page)
     assert.equal(await agent.inputValue(), "build")
     assert.equal(await reader.evaluate(element => element === (window as any).savedPreferenceReader), true)
     assert.equal(await readAll(page).getAttribute("aria-pressed"), "true")
     await agent.focus(); await fixtureCall(page, "refresh")
     assert.equal(await agent.evaluate(element => element === document.activeElement), true)
-    for (const width of [440, 280, 390]) {
-      await fixtureCall(page, "panelWidth", `${width}px`)
-      if (width === 390) await page.setViewportSize({ width, height: 850 })
-      await preferences.scrollIntoViewIfNeeded()
-      assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+    for (const width of [1100, 640, 390]) {
+      await page.setViewportSize({ width, height: 850 })
+      await page.locator(".mission-preferences-actions").scrollIntoViewIfNeeded()
+      assert.equal(await settingsFits(page), true)
       const actions = await page.locator(".mission-preferences-actions > button").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top))
       assert.equal(new Set(actions).size, 1, "Save/Reset/Reload share one logical row")
-      await page.locator(".mission-preferences").scrollIntoViewIfNeeded()
       await page.screenshot({ path: screenshotPath(`mission-preferences-en-${width}`) })
     }
+    await page.setViewportSize({ width: 1100, height: 850 })
     owner = { settings: { missionProfileDefaults: [{ template: "custom", profiles: { coordinator: { agent: "other-window" } } }], unrelated: "keep" } }
     await page.locator(".mission-preferences-actions").getByRole("button", { name: "Save", exact: true }).click()
     await page.getByText(await fixtureText(page, "missions.defaults.error"), { exact: true }).waitFor()
@@ -168,7 +188,7 @@ test("Missions preferences stay in the panel, retain dirty CAS drafts and fence 
   } finally { await page.close() }
 })
 
-test("empty Missions exposes collapsed preferences and narrow localized controls without settings-card chrome", async () => {
+test("empty Missions reaches localized preferences through the gear, without settings-card chrome", async () => {
   for (const locale of ["fr-FR", "he-IL"]) {
     const page = await browser.newPage({ locale, viewport: { width: 1000, height: 850 } })
     try {
@@ -177,17 +197,20 @@ test("empty Missions exposes collapsed preferences and narrow localized controls
       await page.goto(url); await fixtureCall(page, "panelWidth", "280px")
       await page.waitForFunction(() => (window as any).missionFixture.loaded())
       await page.waitForFunction(language => document.documentElement.lang === language, locale.split("-")[0])
-      const preferences = await localizedPreferences(page, locale === "fr-FR" ? "Préférences" : "העדפות")
-      assert.equal(await preferences.getAttribute("aria-expanded"), "false")
-      await page.screenshot({ path: screenshotPath(`mission-empty-${locale}`) })
-      await preferences.click()
-      assert.equal(await page.locator(".mission-control .settings-card").count(), 0)
+      const label = locale === "fr-FR" ? "Préférences" : "העדפות"
+      await localizedPreferences(page, label)
+      assert.equal(await page.locator(".mission-preferences").count(), 0)
       assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+      await page.screenshot({ path: screenshotPath(`mission-empty-${locale}`) })
+      const settings = await openMissionSettings(page, label)
+      assert.equal(await settings.locator(".mission-preferences > header h4").innerText(), await fixtureText(page, "missions.defaults.title"))
+      assert.equal(await settings.locator(".mission-preferences .settings-card").count(), 0, "compact Mission controls, not wide settings cards")
+      assert.equal(await settingsFits(page), true)
       const actions = await page.locator(".mission-preferences-actions > button").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top))
       assert.equal(new Set(actions).size, 1)
-      await page.screenshot({ path: screenshotPath(`mission-preferences-${locale}-280`) })
-      await preferences.click()
-      await page.getByRole("button", { name: await fixtureText(page, "missions.control.create"), exact: true }).click()
+      await page.screenshot({ path: screenshotPath(`mission-preferences-${locale}`) })
+      await closeMissionSettings(page)
+      await missionGeneralAction(page, await fixtureText(page, "missions.control.create")).click()
       await page.locator("form.mission-editor").waitFor()
       await page.locator("aside").evaluate(element => { element.scrollTop = 0 })
       assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
@@ -231,11 +254,12 @@ for (const failBeforeRelease of [false, true]) test(`localized Missions preferen
       release.resolve()
       const preferences = await ready
       assert.equal(await fixtureText(page, "missions.preferences.title"), "Préférences")
-      assert.equal(await preferences.getAttribute("aria-expanded"), "false")
+      assert.equal(await page.locator(".mission-preferences").count(), 0)
       await preferences.click()
-      assert.equal(await preferences.getAttribute("aria-expanded"), "true")
-      await preferences.click()
-      assert.equal(await preferences.getAttribute("aria-expanded"), "false")
+      await settingsShell(page).locator(".mission-preferences").waitFor()
+      assert.equal(await settingsShell(page).locator(".mission-preferences > header h4").innerText(), await fixtureText(page, "missions.defaults.title"))
+      await settingsShell(page).getByRole("button", { name: "Fermer les paramètres", exact: true }).filter({ visible: true }).first().click()
+      await settingsShell(page).waitFor({ state: "detached" })
     } catch (error) { failed = true; failure = error }
     finally {
       release.resolve()
@@ -275,8 +299,7 @@ test("Delegation depth reads only on demand, keeps its original Location draft a
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await page.waitForFunction(() => (window as any).missionFixture.loaded())
     assert.equal(reads, 0)
-    const preferences = page.getByRole("button", { name: "Preferences", exact: true })
-    await preferences.click()
+    await openMissionSettings(page)
     const controls = page.locator(".mission-depth"), input = controls.getByRole("spinbutton", { name: "Maximum depth", exact: true })
     await controls.getByText("fixture/opencode.jsonc", { exact: true }).waitFor()
     assert.equal(await input.getAttribute("min"), "0")
@@ -289,16 +312,16 @@ test("Delegation depth reads only on demand, keeps its original Location draft a
     await input.fill(""); await input.press("-")
     assert.equal(await controls.getByRole("button", { name: "Save Location depth", exact: true }).isDisabled(), true, "incomplete numeric input must not delete the override")
     await input.fill("0")
-    await preferences.click(); await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true); await preferences.click()
+    await closeMissionSettings(page); await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true); await openMissionSettings(page)
     assert.equal(await input.inputValue(), "0")
     assert.equal(reads, 1, "dirty drafts never rebase the saved file expectation")
-    for (const width of [440, 280, 390]) {
-      await fixtureCall(page, "panelWidth", `${width}px`)
-      if (width === 390) await page.setViewportSize({ width, height: 850 })
+    for (const width of [1100, 640, 390]) {
+      await page.setViewportSize({ width, height: 850 })
       await controls.scrollIntoViewIfNeeded()
-      assert.equal(await page.locator("aside").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+      assert.equal(await settingsFits(page), true)
       await page.screenshot({ path: screenshotPath(`mission-delegation-depth-${width}`) })
     }
+    await page.setViewportSize({ width: 1100, height: 850 })
     await controls.getByRole("button", { name: "Save Location depth", exact: true }).click()
     await controls.getByText("Configuration saved. OpenCode was not reloaded.", { exact: true }).waitFor()
     assert.deepEqual(mutations[0].body, { location: { directory: "fixture" }, depth: 0, expectation: "original-file" })
@@ -338,8 +361,8 @@ test("visible clean depth revalidates after config and connection changes while 
       return route.fulfill({ status: 503, json: { error: "Acknowledgement unknown" } })
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
-    const preferences = page.getByRole("button", { name: "Preferences", exact: true }), input = page.locator(".mission-depth input")
-    await preferences.click(); await page.getByText("Effective depth: 1", { exact: true }).waitFor()
+    const input = page.locator(".mission-depth input")
+    await openMissionSettings(page); await page.getByText("Effective depth: 1", { exact: true }).waitFor()
     depth = 4; expectation = "changed"
     await invalidate(); await page.getByText("Effective depth: 4", { exact: true }).waitFor()
     assert.equal(reads, 2)
@@ -351,7 +374,7 @@ test("visible clean depth revalidates after config and connection changes while 
     await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
     await invalidate(); await page.waitForTimeout(150)
     assert.equal(reads, 3); assert.equal(writes, 1, "unknown admission is not retried or silently refreshed")
-    await preferences.click(); await invalidate(true); await page.waitForTimeout(150)
+    await closeMissionSettings(page); await invalidate(true); await page.waitForTimeout(150)
     assert.equal(reads, 3, "hidden preference demand stays closed")
   } finally { await page.close() }
 })
@@ -375,7 +398,7 @@ test("config invalidation fences an admitted stale depth response and keeps edit
       return route.fulfill({ json: snapshot })
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
-    await page.getByRole("button", { name: "Preferences", exact: true }).click()
+    await openMissionSettings(page)
     await page.getByText("Effective depth: 1", { exact: true }).waitFor()
     await page.evaluate(() => {
       const bad: string[] = []; (window as any).staleDepthPublications = bad
@@ -413,19 +436,21 @@ test("depth uncertainty stays at its original Location through pending navigatio
       return route.fulfill({ status: 503, json: { error: "Acknowledgement unknown" } })
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
-    await page.getByRole("button", { name: "Preferences", exact: true }).click()
+    await openMissionSettings(page)
     const input = page.locator(".mission-depth input"), save = page.getByRole("button", { name: "Save Location depth", exact: true })
     await page.locator(".mission-depth-path").waitFor(); await input.fill("2")
     await save.click(); await started
     assert.equal(await page.getByRole("button", { name: "Refresh Location depth", exact: true, includeHidden: true }).isDisabled(), true)
+    // The open Settings section follows the project's Location while the save is still pending.
     await fixtureCall(page, "directory", "other")
-    await page.getByRole("button", { name: "Preferences", exact: true }).click()
     await page.locator(".mission-depth-path").getByText("other/opencode.jsonc", { exact: true }).waitFor()
     assert.equal(await input.inputValue(), "9", "the new Location cannot inherit the old dirty draft")
     release()
     await fixtureCall(page, "directory", "fixture")
     await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
+    await closeMissionSettings(page)
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
+    await openMissionSettings(page)
     assert.equal(await input.inputValue(), "2")
     assert.equal(await save.isDisabled(), true)
     assert.equal(writes, 1)
@@ -560,10 +585,10 @@ test("mission journey exposes honest progress, real human requests and result-fi
       } finally { if (mobile) await target.close() }
     }
     await page.goto(url)
-    await missionRows(page).first().locator(".mission-index-meta").getByText("Prepared", { exact: true }).waitFor()
+    await selectedStatus(page, "Prepared").waitFor({ state: "attached" })
     await checklist.getByText("Ready to start. Start the mission to build its plan.", { exact: true }).waitFor()
-    assert.equal(await card.locator("form, textarea, .mission-disclosure").count(), 0, "no coordinator field or secondary disclosure in the panel")
-    assert.equal(await missionRows(page).first().getByRole("button", { name: "Start mission", exact: true }).innerText(), "Start")
+    assert.equal(await card.locator("form, textarea, .mission-disclosure:not(.mission-tree)").count(), 0, "no coordinator field or secondary disclosure besides the task tree")
+    assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
     assert.equal(await page.locator(".mission-needs").count(), 0)
     await capture("before-wide", 1280, "440px")
 
@@ -666,7 +691,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     value.status = "completed"
     value.summary = "Desktop navigation shipped with an independent review and preserved evidence."
     await refresh()
-    await missionRows(page).first().locator(".mission-index-meta").getByText("Completed", { exact: true }).waitFor()
+    await selectedStatus(page, "Completed").waitFor({ state: "attached" })
     assert.equal(await card.getByText(value.summary, { exact: true }).count(), 0, "the result is read centrally")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText(value.summary, { exact: true }).waitFor()
@@ -757,39 +782,44 @@ test("one Play control starts and resumes; partial Pause survives remount and St
       return route.fulfill({ json: { mission: current } })
     })
     await page.goto(url)
-    const row = missionRows(page).first(), play = row.locator(".mission-index-primary")
+    const play = primaryControl(page), stop = missionToolbarAction(page, "Stop mission permanently")
+    await play.waitFor()
     assert.equal(await play.getAttribute("aria-label"), "Start mission")
-    assert.equal(await play.innerText(), "Start")
     await play.click()
-    await row.getByRole("button", { name: "Pause mission", exact: true }).waitFor()
-    await page.waitForFunction(() => !(document.querySelector('[aria-label="Pause mission"]') as HTMLButtonElement)?.disabled)
-    await row.getByRole("button", { name: "Pause mission", exact: true }).click()
+    await missionToolbarAction(page, "Pause mission").waitFor()
+    await page.waitForFunction(() => !(document.querySelector('.mission-action-bar [aria-label="Pause mission"]') as HTMLButtonElement)?.disabled)
+    await missionToolbarAction(page, "Pause mission").click()
     await page.getByRole("alert").getByText("Action not yet confirmed. Check status before retrying.").waitFor()
     await fixtureCall(page, "mount", false)
     await fixtureCall(page, "mount", true)
     assert.equal(await play.getAttribute("aria-label"), "Check control status", "an unresolved request offers a status check, never a second Pause")
-    await clickMissionAction(missionRows(page).first(), "Retry last action")
-    await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('[aria-label="Resume mission"]'); return Boolean(button && !button.disabled) })
+    // The explicit panel refresh reconciles first, then resends the unconfirmed control with its original identity.
+    assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh and resend the unconfirmed action")
+    await missionRefresh(page).click()
+    await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-action-bar [aria-label="Resume mission"]'); return Boolean(button && !button.disabled) })
     assert.equal(calls[1].requestId, calls[2].requestId)
     assert.equal(calls[1].expectedRevision, calls[2].expectedRevision)
     assert.equal(await play.getAttribute("aria-label"), "Resume mission")
+    assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh mission map")
     assert.equal(await page.getByRole("button", { name: "Start mission", exact: true }).count(), 0)
     await play.evaluate(el => { (window as any).savedPlayControl = el })
     await play.click()
-    await page.waitForFunction(() => !(document.querySelector('[aria-label="Pause mission"]') as HTMLButtonElement)?.disabled)
+    await page.waitForFunction(() => !(document.querySelector('.mission-action-bar [aria-label="Pause mission"]') as HTMLButtonElement)?.disabled)
     assert.equal(await play.evaluate(el => el === (window as any).savedPlayControl), true)
-    await clickMissionAction(row, "Stop…")
+    await stop.click()
+    await page.getByRole("dialog").waitFor()
     assert.equal(calls.length, 4, "Stop first asks for confirmation")
     await page.getByRole("dialog").getByRole("button", { name: "Stop mission permanently", exact: true }).click()
-    await page.getByRole("button", { name: "Objective lifecycle", exact: true }).waitFor()
-    await missionRows(page).getByText("Stopped", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-index-primary").count(), 0)
+    await selectedMissionTitle(page).filter({ hasText: "Objective lifecycle" }).waitFor()
+    await selectedStatus(page, "Stopped").waitFor({ state: "attached" })
+    // Inapplicable controls stay in place, disabled: no Play/Pause and no Stop for a terminal Mission.
+    assert.equal(await play.isDisabled(), true)
+    assert.equal(await stop.isDisabled(), true, "terminal Missions cannot be stopped again")
     await fixtureCall(page, "mount", false)
     await fixtureCall(page, "mount", true)
-    assert.equal(await page.locator(".mission-index-primary").count(), 0)
-    await row.getByRole("button", { name: "More actions", exact: true }).click()
-    assert.equal(await page.getByRole("menuitem", { name: "Stop…", exact: true }).count(), 0, "terminal Missions hide Stop")
-    await page.keyboard.press("Escape")
+    assert.equal(await play.isDisabled(), true)
+    assert.equal(await stop.isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu in the panel")
     await page.screenshot({ path: screenshotPath("mission-lifecycle-stopped") })
     assert.deepEqual(calls.map(call => call.action), ["start", "pause", "pause", "start", "stop"])
   } finally { await page.close() }
@@ -803,7 +833,7 @@ test("mission selection, focus and reader survive native invalidations, remount 
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [mission("one"), { ...mission("two"), revision }], generatedAt: revision, discardedEvents: 0 } }))
     await page.goto(url)
     assert.equal(await selectedCard(page).count(), 0, "two candidate Missions: nothing is selected or detailed by default")
-    await page.getByRole("button", { name: "Objective two", exact: true }).click()
+    await selectMission(page, "Objective two")
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
     await page.locator(".mission-reader .markdown-body p").first().waitFor()
     await page.screenshot({ path: screenshotPath("mission-reader-browser") })
@@ -822,7 +852,9 @@ test("mission selection, focus and reader survive native invalidations, remount 
     await page.reload()
     await page.locator(".mission-reader").waitFor()
     await selectedCard(page).waitFor()
-    assert.equal(await missionRows(page).locator('.mission-index-select[aria-current="true"]').getAttribute("aria-label"), "Objective two")
+    assert.equal(await selectedMissionTitle(page).innerText(), "Objective two")
+    assert.equal(await (await inlineMissionEntry(page, "Objective two")).getAttribute("aria-current"), "true")
+    assert.equal(await (await inlineMissionEntry(page, "Objective one")).getAttribute("aria-current"), null)
     await page.getByRole("button", { name: "Back to chat" }).click()
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.screenshot({ path: screenshotPath("mission-control-browser"), fullPage: true })
@@ -856,7 +888,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
       return route.fulfill({ json: { available: true, missions: list.map(m => ({ ...m, revision })), cleanups, generatedAt: revision, discardedEvents: 0 } })
     })
     await page.goto(url)
-    await clickMissionAction(missionRows(page).first(), "Edit")
+    await clickMissionAction(page, "Edit selected mission", "Objective one")
     await page.locator("form.mission-editor textarea").first().fill("My edited objective")
     revision++
     await fixtureCall(page, "refresh")
@@ -866,16 +898,16 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await page.getByRole("alert").waitFor()
     assert.equal(updates[0].expectedRevision, 1)
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
-    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await missionGeneralAction(page, "Create mission").click()
     await page.locator("form.mission-editor textarea").first().fill("New mission objective")
     await page.locator("form.mission-editor button[type=submit]").first().click()
     await page.getByRole("alert").waitFor()
     failCreate = false
     await page.locator("form.mission-editor button[type=submit]").first().click()
-    await missionRows(page).locator('.mission-index-select[aria-current="true"]', { hasText: "New mission objective" }).waitFor()
+    await selectedMissionTitle(page).filter({ hasText: "New mission objective" }).waitFor()
     assert.equal(creates.length, 2)
     assert.equal(creates[0].requestId, creates[1].requestId)
-    await clickMissionAction(missionRows(page).filter({ has: page.getByRole("button", { name: "New mission objective", exact: true }) }), "Delete…")
+    await clickMissionAction(page, "Delete selected mission…", "New mission objective")
     await page.getByText("Delete this mission? The coordinator and reused conversations will be kept.").waitFor()
     const cleanup = page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" })
     assert.equal(await cleanup.isChecked(), false)
@@ -886,7 +918,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await fixtureCall(page, "refresh")
     await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
-    await missionRows(page).locator('.mission-index-select[aria-current="true"]', { hasText: "Objective one" }).waitFor()
+    await selectedMissionTitle(page).filter({ hasText: "Objective one" }).waitFor()
     assert.equal(deletions.length, 2)
     assert.equal(deletions[0].deleteManagedSessions, true)
     assert.equal(deletions[0].requestId, deletions[1].requestId)
@@ -975,7 +1007,7 @@ test("background native questions settle and requested execution remains distinc
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
     await page.getByText("Choose the scope", { exact: true }).waitFor({ state: "detached" })
     assert.equal(await page.locator(".mission-needs").count(), 0)
-    await clickMissionAction(missionRows(page).first(), "Open conversation")
+    await clickMissionAction(page, "Open conversation")
     await page.getByRole("alert").getByText("Unable to reload session").waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
     await page.locator(".mission-execution").scrollIntoViewIfNeeded()
@@ -1042,18 +1074,23 @@ test("compact mission rows retain a completed branching plan, direct readers and
     let missions = [value, { ...mission("other"), objective: "Validate desktop packaging", status: "completed" }]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
-    await missionRows(page).first().locator(".mission-index-select").click()
+    await selectMission(page, "Ship the Mission Centre")
     assert.deepEqual(await page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
     // The tree is the dependency graph: its edges are drawn with the single task view, not behind a disclosure.
     await page.locator('.mission-graph path[data-from="review"][data-to="publish"]').waitFor()
     assert.equal(await page.locator(".mission-graph path[data-from]").count(), 6)
-    assert.equal(await page.locator(".mission-checklist, .mission-route-task, .mission-detail .mission-disclosure").count(), 0, "no duplicate task list")
+    assert.equal(await page.locator(".mission-checklist, .mission-route-task, .mission-detail .mission-disclosure:not(.mission-tree)").count(), 0, "no duplicate task list")
     const lastTask = await page.locator(".mission-tree li").last().boundingBox()
     assert.ok(lastTask && lastTask.y + lastTask.height < 800, "the complete plan fits at a normal panel height")
-    const indexRows = await missionRows(page).evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
+    await inlineMissionEntry(page, "Ship the Mission Centre")
+    const indexRows = await missionPicker(page).locator(".mission-picker-inline button.mission-picker-option").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
+    assert.equal(indexRows.length, 2)
     assert.ok(indexRows[1].top >= indexRows[0].bottom)
+    await missionPickerExpander(page).click()
     assert.equal(await page.locator(".mission-control-metrics").count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Create mission", exact: true }).innerText(), "Create mission", "creation is discoverable without an icon tooltip")
+    // Creation is a labelled icon in the general toolbar (accessible name and tooltip).
+    const create = missionGeneralAction(page, "Create mission")
+    assert.equal(await create.getAttribute("title"), "Create mission")
     await page.screenshot({ path: screenshotPath("mission-compact-overview") })
     await (await openResultHistory(page)).getByRole("button", { name: "Independent review", exact: true }).click()
     await page.locator(".mission-reader").getByText("Source proof", { exact: true }).waitFor()
@@ -1100,46 +1137,61 @@ test("top-level mission rows expose short one-line titles, semantic states, read
       notes: `Full context for mission ${i}`, coordinatorSessionId: `ses_coordinator_${i}` }))
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
-    const rows = missionRows(page)
-    await rows.nth(2).waitFor()
-    for (const [index] of missions.entries()) {
-      // Derived titles keep the first clause and cut at a word boundary; the full objective stays in the reader.
-      await rows.nth(index).getByRole("button", { name: `Mission ${index}: improve the desktop navigation and keep the…`, exact: true }).waitFor()
-      assert.equal(await rows.nth(index).locator(".neutral-badge").count(), 0, "one-time rows carry no mode badge")
+    // Rows carry the whole first sentence; CSS ellipsis shortens it at the row edge and the full context stays in the reader.
+    const titleOf = (index: number) => missions[index].objective
+    const rows = []
+    for (const index of missions.keys()) rows.push(await inlineMissionEntry(page, titleOf(index)))
+    for (const row of rows) {
+      await row.waitFor()
+      assert.equal(await row.locator(".neutral-badge").count(), 0, "one-time rows carry no mode badge")
     }
     assert.equal(await page.locator(".mission-control-header h2, .mission-control-overview").count(), 0)
     assert.equal(await page.getByRole("button", { name: "Missions", exact: true }).count(), 0)
     assert.equal(await page.locator(".mission-control > .mission-disclosure").count(), 0, "no bottom disclosures")
     assert.equal(await selectedCard(page).count(), 0, "no detail until a Mission is selected")
-    // Each row is exactly two lines: title, then state · time.
-    const lines = await rows.first().locator(".mission-index-select").evaluate(el => [...el.children].map(child => child.className))
-    assert.deepEqual(lines, ["mission-index-title", "mission-index-meta"])
-    assert.match(await rows.first().locator(".mission-index-meta").textContent() ?? "", /^In progress · /)
-    const title = await rows.first().locator(".mission-index-title bdi").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
+    assert.equal(await selectedMissionTitle(page).count(), 0)
+    // Each entry is one line: a status mark and the title; the state · time stays in the tooltip and screen-reader text.
+    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.className))
+    assert.deepEqual(parts, ["mission-picker-mark", "mission-picker-title", "sr-only"])
+    assert.match(await rows[0].locator(".sr-only").textContent() ?? "", /^In progress · /)
+    assert.match(await rows[0].getAttribute("title") ?? "", new RegExp(`^${titleOf(0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} — In progress · `))
+    const title = await rows[0].locator(".mission-picker-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
     assert.deepEqual(title, { overflow: "ellipsis", wrap: "nowrap" })
-    const colors = await rows.locator(".mission-index-meta > span:first-child").evaluateAll(items => items.map(el => getComputedStyle(el).color))
-    assert.equal(new Set(colors).size, 3)
-    assert.equal(await rows.nth(1).evaluate(el => getComputedStyle(el).borderBottomWidth), "1px")
-    await rows.nth(1).locator(".mission-index-select").click()
-    // The detail follows the whole list as its own section, never inside the selected row.
+    assert.equal(await rows[0].locator(".mission-picker-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
+    const heights = await Promise.all(rows.map(row => row.evaluate(el => el.getBoundingClientRect().height)))
+    const titleHeight = await rows[0].locator(".mission-picker-title").evaluate(el => el.getBoundingClientRect().height)
+    assert.ok(heights.every(height => height < titleHeight * 2), "single-line rows")
+    const colors = await missionPicker(page).locator(".mission-picker-inline .mission-picker-mark").evaluateAll(items => items.map(el => getComputedStyle(el).backgroundColor))
+    assert.equal(new Set(colors).size, 3, "running, completed and failed carry distinct semantic marks")
+    await rows[1].click()
+    await selectedCard(page).waitFor()
+    // The detail follows the whole picker as its own section, never inside the selected row.
     assert.equal(await page.locator(".mission-control").evaluate(panel => {
-      const index = panel.querySelector(".mission-control-index")!, detail = panel.querySelector("section.mission-detail")!
+      const index = panel.querySelector(".mission-picker")!, detail = panel.querySelector("section.mission-detail")!
       return !index.contains(detail) && Boolean(index.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     }), true)
-    assert.equal(await selectedCard(page).locator("form, textarea, .mission-disclosure, .mission-result").count(), 0)
-    const selectedBackground = await rows.nth(1).evaluate(el => getComputedStyle(el).backgroundColor)
+    assert.equal(await selectedCard(page).locator("form, textarea, .mission-disclosure:not(.mission-tree), .mission-result").count(), 0)
+    assert.equal(await rows[1].getAttribute("aria-current"), "true")
+    // Measured while the pointer still rests on the selected row: hover overlays, never replaces, the highlight.
     const highlight = await page.evaluate(() => { const probe = document.createElement("div"); probe.style.background = "var(--list-item-highlight-bg)"; document.body.append(probe)
       const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color })
-    assert.equal(selectedBackground, highlight, "selection uses the shared list highlight, never the input-field surface")
+    // Rows animate their background; compare settled values, with and without the pointer over the row.
+    const settledBackground = async () => {
+      await rows[1].evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
+      return rows[1].evaluate(el => getComputedStyle(el).backgroundColor)
+    }
+    await page.mouse.move(0, 0)
+    assert.equal(await settledBackground(), highlight, "selection uses the shared list highlight, never the input-field surface")
+    await rows[1].hover()
+    await page.waitForFunction(() => Boolean(document.querySelector("button.mission-picker-option-selected:hover")))
+    assert.equal(await settledBackground(), highlight, "rollover overlays the selected highlight instead of replacing it")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText("Full context for mission 1", { exact: true }).waitFor()
-    assert.equal(await rows.nth(1).locator(".mission-index-select").getAttribute("aria-current"), "true")
-    // A second click on the selected row clears the selection and its detail.
-    await rows.nth(1).locator(".mission-index-select").click()
-    await selectedCard(page).waitFor({ state: "detached" })
-    await rows.nth(1).locator(".mission-index-select").click()
+    assert.equal(await rows[1].getAttribute("aria-current"), "true")
     await fixtureCall(page, "seedCoordinators", missions.map(mission => mission.coordinatorSessionId))
-    await clickMissionAction(rows.nth(2), "Open conversation")
+    await rows[2].click()
+    assert.equal(await rows[2].getAttribute("aria-current"), "true")
+    await clickMissionAction(page, "Open conversation")
     await page.waitForFunction(() => (window as any).missionFixture.selectedSession() === "ses_coordinator_2")
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.screenshot({ path: screenshotPath("mission-top-level-rows") })

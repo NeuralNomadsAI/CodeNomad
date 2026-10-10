@@ -1,7 +1,8 @@
 import type { Locator, Page } from "playwright"
 
-/** Exercise the same action through its inline or measured-overflow presentation. */
-export async function clickMissionAction(row: Locator, label: string): Promise<void> {
+/** Exercise a `MissionListItem` action through its inline or measured-overflow presentation
+ * (cleanup receipts and other shared list rows; the Mission picker has no row menus). */
+export async function clickListItemAction(row: Locator, label: string): Promise<void> {
   const button = row.getByRole("button", { name: label, exact: true })
   if (await button.isVisible()) {
     await button.click()
@@ -11,21 +12,73 @@ export async function clickMissionAction(row: Locator, label: string): Promise<v
   await row.page().getByRole("menuitem", { name: label, exact: true }).click()
 }
 
-/** The selected Mission's detail: a separate section below the list. */
+/** The selected Mission's detail: a separate section below the picker. */
 export const missionDetail = (page: Page) => page.locator("section.mission-detail")
 
-/** Select a list row (if not already selected) and wait for its detail section. */
-export async function selectMissionRow(row: Locator): Promise<Locator> {
-  const select = row.locator(".mission-index-select")
-  await select.waitFor()
-  if (await select.getAttribute("aria-current") !== "true") await select.click()
-  const detail = missionDetail(row.page())
+/** The Mission picker: general toolbar (create, settings, refresh), chevron and current-mission field. */
+export const missionPicker = (page: Page) => page.locator(".mission-control .mission-picker")
+export const missionPickerField = (page: Page) => missionPicker(page).getByRole("combobox", { name: "Current mission", exact: true })
+export const missionPickerExpander = (page: Page) => missionPicker(page).locator(".mission-picker-expander")
+/** Title of the currently selected Mission/schedule shown in the picker field. */
+export const selectedMissionTitle = (page: Page) => missionPickerField(page).locator(".mission-picker-title")
+
+/** The general toolbar buttons above the current-mission line. */
+export const missionGeneralAction = (page: Page, label: string) =>
+  missionPicker(page).locator(".mission-picker-actions").getByRole("button", { name: label, exact: true })
+
+/** The explicit panel refresh: read-only reconciliation, then resend of a still unconfirmed control. */
+export const missionRefresh = (page: Page) => missionPicker(page).locator(".mission-picker-actions > button").last()
+
+const exact = (title: string | RegExp) => typeof title === "string"
+  ? new RegExp(`^\\s*${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`) : title
+const titleFilter = (page: Page, title: string | RegExp) => page.locator(".mission-picker-title", { hasText: exact(title) })
+
+/** The transient popup's option for a title (the popup must be open). */
+export const missionPopupOption = (page: Page, title: string | RegExp) =>
+  missionPicker(page).locator(".mission-picker-popup [role=option]").filter({ has: titleFilter(page, title) })
+
+/** Ensure the persistent inline list is expanded and return its row button for a title. */
+export async function inlineMissionEntry(page: Page, title: string | RegExp): Promise<Locator> {
+  const expander = missionPickerExpander(page)
+  await expander.waitFor()
+  if (await expander.getAttribute("aria-expanded") !== "true") await expander.click()
+  return missionPicker(page).locator(".mission-picker-inline button.mission-picker-option").filter({ has: titleFilter(page, title) })
+}
+
+/** The entry's screen-reader status (state, attention, relative time / schedule), read from the inline list. */
+export async function missionEntryStatus(page: Page, title: string | RegExp): Promise<string> {
+  const entry = await inlineMissionEntry(page, title)
+  return (await entry.locator(".sr-only").textContent()) ?? ""
+}
+
+/** Select a Mission/schedule by title through the transient popup and wait for its detail. */
+export async function selectMission(page: Page, title: string | RegExp): Promise<Locator> {
+  const field = missionPickerField(page)
+  await field.waitFor()
+  const current = await field.locator(".mission-picker-title").count()
+    ? await field.locator(".mission-picker-title").innerText() : undefined
+  const matches = current !== undefined && (typeof title === "string" ? current === title : title.test(current))
+  if (!matches) {
+    if (await field.getAttribute("aria-expanded") !== "true") await field.click()
+    await missionPopupOption(page, title).click()
+  }
+  const detail = missionDetail(page)
   await detail.waitFor()
   return detail
 }
 
-/** Select the row, then toggle its central overview reader with the Overview eye. */
-export async function toggleMissionOverview(row: Locator): Promise<void> {
-  const detail = await selectMissionRow(row)
+/** A button of the selected item's icon toolbar (Play/Pause, Stop, Run now, Summary, Open conversation, Edit, Delete). */
+export const missionToolbarAction = (page: Page, label: string) =>
+  missionDetail(page).locator(".mission-action-bar").getByRole("button", { name: label, exact: true })
+
+/** Click a selected-item toolbar action, optionally selecting the item first. */
+export async function clickMissionAction(page: Page, label: string, title?: string | RegExp): Promise<void> {
+  if (title !== undefined) await selectMission(page, title)
+  await missionToolbarAction(page, label).click()
+}
+
+/** Select the item, then toggle its central overview reader with the Summary eye. */
+export async function toggleMissionOverview(page: Page, title: string | RegExp): Promise<void> {
+  const detail = await selectMission(page, title)
   await detail.locator(".mission-overview-toggle").first().click()
 }

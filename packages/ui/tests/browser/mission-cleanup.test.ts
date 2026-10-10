@@ -7,7 +7,7 @@ import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { cleanupBackend } from "./fixtures/mission-cleanup-backend"
-import { clickMissionAction, toggleMissionOverview } from "./mission-actions"
+import { clickListItemAction, clickMissionAction, inlineMissionEntry, toggleMissionOverview } from "./mission-actions"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -28,7 +28,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
-async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement = false, target?: string) {
+async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseAcknowledgement = false) {
   const page = await browser.newPage({ locale: "en-US" })
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: 'electron', __CODENOMAD_WINDOW_CONTEXT__: 'local', electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
@@ -44,8 +44,7 @@ async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement =
     return route.fulfill({ status: response.statusCode, json: response.json() })
   })
   await page.goto(url)
-  const entries = page.locator(".mission-control-index .mission-index-entry")
-  await clickMissionAction(target ? entries.filter({ hasText: target }) : entries.first(), "Delete…")
+  await clickMissionAction(page, "Delete selected mission…", target)
   await page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" }).check()
   return { page, requests }
 }
@@ -55,7 +54,7 @@ const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ 
 // central overview reader; only pending retries stay in the panel.
 async function openCleanupHistory(page: Page) {
   if (!await page.locator(".mission-reader").count())
-    await toggleMissionOverview(page.locator(".mission-control-index .mission-index-entry").filter({ hasText: "Private cleanup keeper" }))
+    await toggleMissionOverview(page, "Private cleanup keeper")
   const history = page.locator(".mission-reader").getByRole("button", { name: "Conversation cleanup history", exact: true })
   if (await history.getAttribute("aria-expanded") !== "true") await history.click()
   assert.equal(await history.getAttribute("aria-expanded"), "true")
@@ -66,7 +65,7 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
   const f = cleanupBackend(), mission = await f.create("remount", 2), actors = mission.actors.filter(actor => actor.kind === "specialist")
   f.failing.add(actors[0].sessionId)
   await f.create("keeper")
-  const { page, requests } = await setup(f, false, "Private cleanup remount")
+  const { page, requests } = await setup(f, "Private cleanup remount")
   try {
     await fixture(page, "seedCoordinators", [mission.coordinatorSessionId, ...actors.map(actor => actor.sessionId)])
     await submit(page)
@@ -85,7 +84,7 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
     await page.locator(".mission-cleanup").getByText("1 removed · 0 kept · 1 pending", { exact: true }).waitFor()
     assert.deepEqual((await f.control.snapshot()).missions.map(item => item.objective), ["Private cleanup keeper"])
     f.failing.clear()
-    await clickMissionAction(page.locator(".mission-control .mission-cleanup .mission-list-item"), "Try again")
+    await clickListItemAction(page.locator(".mission-control .mission-cleanup .mission-list-item"), "Try again")
     // Settled, the receipt leaves the panel for the overview reader's history.
     await page.locator(".mission-control .mission-cleanup").waitFor({ state: "detached" })
     await openCleanupHistory(page)
@@ -99,7 +98,7 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
 
 test("a lost successful HTTP acknowledgement settles by reading receipts without a second deletion", async () => {
   const f = cleanupBackend(), mission = await f.create("lost-ack")
-  const { page, requests } = await setup(f, true)
+  const { page, requests } = await setup(f, "Private cleanup lost-ack", true)
   try {
     await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
     await page.getByText("No missions yet", { exact: true }).waitFor()
@@ -114,10 +113,10 @@ test("child-bearing specialists remain intact and expose the durable retention r
   const f = cleanupBackend(), mission = await f.create("children"), actor = mission.actors.find(actor => actor.kind === "specialist")!
   f.children.add(actor.sessionId)
   await f.create("keeper")
-  const { page, requests } = await setup(f, false, "Private cleanup children")
+  const { page, requests } = await setup(f, "Private cleanup children")
   try {
     await submit(page); await page.locator("form.mission-editor").waitFor({ state: "detached" })
-    await page.locator(".mission-control-index .mission-index-entry").filter({ hasText: "Private cleanup children" }).waitFor({ state: "detached" })
+    await (await inlineMissionEntry(page, "Private cleanup children")).waitFor({ state: "detached" })
     assert.equal(await page.locator(".mission-control .mission-cleanup").count(), 0, "settled cleanup history stays out of the panel")
     await openCleanupHistory(page)
     await page.getByText("0 removed · 1 kept · 0 pending", { exact: true }).waitFor()
@@ -131,7 +130,7 @@ test("child-bearing specialists remain intact and expose the durable retention r
 test("pre-tombstone 403 and 409 errors do not claim deleted or remaining cleanup", async () => {
   for (const status of [403, 409]) {
     const f = cleanupBackend(), mission = await f.create(`denied-${status}`)
-    const { page, requests } = await setup(f)
+    const { page, requests } = await setup(f, `Private cleanup denied-${status}`)
     try {
       if (status === 403) f.state.owned = false
       else await f.control.update({ missionID: mission.id, expectedRevision: mission.revision, requestID: "external-update", objective: "Changed externally" })

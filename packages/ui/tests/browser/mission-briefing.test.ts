@@ -10,6 +10,7 @@ import type { MissionMap, MissionReport } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-navigation"
+import { inlineMissionEntry, missionEntryStatus } from "./mission-actions"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -72,8 +73,7 @@ async function setup(locale = "fr-FR") {
     return route.fulfill({ json: pathname.includes("/instance/") ? [] : {} })
   })
   await page.goto(url, { timeout: 60000 })
-  await page.getByRole("button", { name: TITLE, exact: true }).click()
-  await card(page).waitFor()
+  await choose(page, TITLE)
   const refresh = async () => {
     const response = page.waitForResponse(response => response.url().endsWith("/missions"))
     await page.getByRole("button", { name: /^(Actualiser la carte de mission|Refresh mission map)$/ }).click()
@@ -81,8 +81,12 @@ async function setup(locale = "fr-FR") {
   }
   return { page, values, writes, errors, refresh }
 }
-const row = (page: Page, title = TITLE) => page.locator("li.mission-index-entry").filter({ has: page.getByRole("button", { name: title, exact: true }) })
-// The selected Mission's detail is a separate section below the list; request
+/** Select through the persistent inline list (locale-independent; the picker field's name is localized). */
+async function choose(page: Page, title: string) {
+  await (await inlineMissionEntry(page, title)).click()
+  await card(page).waitFor()
+}
+// The selected Mission's detail is a separate section below the picker; request
 // feedback stays under its row and all prose opens in the central reader.
 const card = (page: Page) => page.locator("section.mission-detail")
 const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
@@ -112,7 +116,8 @@ test("existing mobile project keeps a prose-free detail and exact current result
     // The panel shows no summary, count or percentage; only the Overview eye and the task tree.
     assert.equal(await card(page).locator("p, .mission-result-text, .mission-more").count(), 0)
     assert.equal(await card(page).getByText(/%|Point du coordinateur|tâches terminées/).count(), 0)
-    const tree = card(page).getByRole("region", { name: "Tâches", exact: true })
+    const tree = card(page).locator(".mission-tree")
+    assert.equal(await tree.locator(".mission-disclosure-trigger > span").textContent(), "Tâches")
     assert.deepEqual(await tree.locator("li[data-task-key]").evaluateAll(rows => rows.map(row => [(row as HTMLElement).dataset.taskKey, (row as HTMLElement).dataset.state])),
       [["xcode", "done"], ["android-boot", "blocked"], ["old-xcode", "retired"], ["compile-ios", "waiting"]])
     assert.equal(await tree.locator('[data-task-key="compile-ios"] .sr-only').textContent(), "En attente")
@@ -120,8 +125,8 @@ test("existing mobile project keeps a prose-free detail and exact current result
     for (const text of ["Le démarrage Android attend la quantité de mémoire requise.", "Ancien obstacle : Xcode absent."])
       assert.equal(await page.locator(".mission-control").getByText(text, { exact: true }).filter({ visible: true }).count(), 0)
     assert.equal(await page.locator(".mission-needs").count(), 0)
-    assert.match(await row(page).locator(".mission-index-meta").textContent() ?? "", /^En cours · /)
-    assert.equal(await page.locator(".mission-control-index").getByText("Active", { exact: true }).count(), 0)
+    assert.match(await missionEntryStatus(page, TITLE), /^En cours · /)
+    assert.equal(await page.locator(".mission-picker").getByText("Active", { exact: true }).count(), 0)
     assert.deepEqual(writes, [])
     assert.deepEqual(errors, [])
     await readAll(page).click()
@@ -138,7 +143,7 @@ test("existing mobile project keeps a prose-free detail and exact current result
   } finally { await page.close() }
 })
 
-test("one menu click prepares the briefing request, preserves conversation/profile and waits for the exact returned briefing", async () => {
+test("one request click prepares the briefing request, preserves conversation/profile and waits for the exact returned briefing", async () => {
   const { page, values, writes, errors, refresh } = await setup()
   try {
     await requestUpdate(page)
@@ -174,10 +179,10 @@ test("unconfirmed briefing admission survives navigation and remount without aut
     await page.route("**/session/ses_A/prompt", route => { attempts++; return route.fulfill({ status: 503, json: { error: "lost acknowledgement" } }) })
     await requestUpdate(page)
     await feedback(page).getByRole("alert").waitFor()
-    await page.getByRole("button", { name: "Mission distincte", exact: true }).click()
-    await page.getByRole("button", { name: TITLE, exact: true }).click()
+    await choose(page, "Mission distincte")
+    await choose(page, TITLE)
     await page.evaluate(() => { window.missionNavigation.mount(false); window.missionNavigation.mount(true) })
-    await page.getByRole("button", { name: TITLE, exact: true }).click()
+    await choose(page, TITLE)
     await refresh()
     await feedback(page).getByRole("alert").waitFor()
     assert.equal(await canRequest(page), false)
@@ -203,7 +208,7 @@ test("a freshly paused mission fences the request without resuming or sending it
   } finally { await page.close() }
 })
 
-test("the panel has no coordinator field; Open conversation in the row menu reaches the exact coordinator without a request", async () => {
+test("the panel has no coordinator field; the toolbar's Open conversation reaches the exact coordinator without a request", async () => {
   const { page, writes, values, errors } = await setup()
   try {
     assert.equal(await page.locator(".mission-control").locator("form.mission-guidance, textarea").count(), 0)
@@ -276,12 +281,14 @@ test("seen exact response remains acknowledged when a later briefing supersedes 
     values[0].status = "completed"
     values[0].summary = "Résultat final : préparation validée ; aucune application livrée dans cette mission limitée."
     values[0].revision++; await refresh()
-    await row(page).locator(".mission-index-meta").getByText(/^Terminée|^Terminé/).waitFor()
+    await (await inlineMissionEntry(page, TITLE)).locator(".sr-only").filter({ hasText: /^Terminée|^Terminé/ }).waitFor()
     assert.equal(await card(page).getByText(values[0].summary, { exact: true }).count(), 0, "the result is read centrally")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText(values[0].summary, { exact: true }).waitFor()
     assert.equal(await reader(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0, "a terminal summary takes precedence")
-    assert.equal(await row(page).locator("button.mission-index-primary").count(), 0)
+    // A terminal Mission offers no lifecycle control: the toolbar keeps them in place, disabled.
+    assert.equal(await card(page).locator(".mission-action-bar button").first().isDisabled(), true)
+    assert.equal(await card(page).locator(".mission-action-bar button").nth(1).isDisabled(), true)
     assert.equal(await canRequest(page), false)
     assert.equal(prompts(writes).length, 1)
   } finally { await page.close() }

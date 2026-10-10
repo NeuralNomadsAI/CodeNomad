@@ -2,6 +2,7 @@ import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import { MissionReader } from "../../../src/components/mission-reader"
 import { MissionTaskTree } from "../../../src/components/mission-task-tree"
+import { missionTaskConversation } from "../../../src/components/mission-task-navigation"
 import type { MissionTask } from "../../../../server/src/api-types"
 import { initializeClientState } from "../../../src/stores/client-state"
 import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
@@ -55,7 +56,9 @@ function Fixture() {
     </main>
     <aside class="mission-control" style={{ overflow: "auto" }}><Show when={mission()}>{value =>
       <MissionTaskTree mission={value()} instanceId={instanceId} activity={missionStore.state(instanceId).activity?.missions[0]?.actors}
-        reading={reading} onRead={task => show(task.id)} onRecoveryAdmitted={() => missionStore.refresh(instanceId)} />
+        reading={reading} onRead={task => show(task.id)} onRecoveryAdmitted={() => missionStore.refresh(instanceId)}
+        conversation={task => missionTaskConversation(value(), task, missionStore.state(instanceId).activity?.missions[0]?.family)}
+        onOpenConversation={id => { (window as any).openedConversations = [...(window as any).openedConversations ?? [], id] }} />
     }</Show></aside>
   </div>
 }

@@ -1,6 +1,7 @@
 import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
-import { MissionRecurrenceList } from "../../../src/components/mission-recurrence-list"
+import { createMissionRecurrenceList } from "../../../src/components/mission-recurrence-list"
+import { MissionPicker } from "../../../src/components/mission-picker"
 import { MissionReader } from "../../../src/components/mission-reader"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -16,6 +17,25 @@ import "../../../src/index.css"
 await initializeClientState()
 addInstance({ id: "fixture", folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: null,
   metadata: { project: { id: "project", directory: "/fixture", canonical: "/fixture" } } })
+
+/** The recurring half of MissionControl: the shared picker and the selected schedule's detail,
+ * without one-time Mission demand. */
+function Schedules(props: { projectID: string; scope: string; active: () => boolean; refresh: number; onRead: (restoreChat?: boolean) => void }) {
+  const list = createMissionRecurrenceList({ instanceId: "fixture", get projectID() { return props.projectID }, get scope() { return props.scope },
+    active: props.active, get refresh() { return props.refresh }, get onRead() { return props.onRead },
+    get selectedSchedule() { return missionProjectView(props.scope).selectedRecurrence }, detailId: "schedule-detail" })
+  const selected = () => missionProjectView(props.scope).selectedRecurrence
+  return <>
+    <header class="mission-control-header">
+      <MissionPicker entries={list.entries()} selectedKey={selected() ? `schedule:${selected()}` : undefined}
+        expanded={missionProjectView(props.scope).listExpanded === true}
+        onExpandedChange={value => updateMissionProjectView(props.scope, { listExpanded: value || undefined })}
+        onSelect={entry => updateMissionProjectView(props.scope, { selectedRecurrence: entry.key.slice("schedule:".length) })}
+        onCreate={() => {}} createDisabled />
+    </header>
+    {list.view()}
+  </>
+}
 
 function Fixture() {
   const [active, activate] = createSignal(true), [projectID, project] = createSignal("project"), [scope, directory] = createSignal("/fixture")
@@ -38,9 +58,7 @@ function Fixture() {
   }
   return <div style={{ display: "flex", "flex-wrap": "wrap", gap: "8px" }}>
     <aside class="mission-control" style={{ width: "280px" }}>
-      <MissionRecurrenceList instanceId="fixture" projectID={projectID()} scope={scope()} active={active} refresh={refresh()}
-        selectedSchedule={missionProjectView(scope()).selectedRecurrence}
-        onSelect={id => updateMissionProjectView(scope(), { selectedRecurrence: id === missionProjectView(scope()).selectedRecurrence ? undefined : id })}
+      <Schedules projectID={projectID()} scope={scope()} active={active} refresh={refresh()}
         onRead={restoreChat => { if (restoreChat) setStatus(false) }} />
     </aside>
     <main class="mission-transcript-surface" style={{ width: "390px", height: "500px", flex: "none" }}>

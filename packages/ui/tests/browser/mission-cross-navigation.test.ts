@@ -9,7 +9,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { clickMissionAction, toggleMissionOverview } from "./mission-actions"
+import { clickMissionAction, missionPickerField, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-cross-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -63,7 +63,8 @@ async function setup(missing = false) {
   await page.route("**/private-preview-frame", route => route.fulfill({ contentType: "text/html", body: "<p>Private browser preview</p>" }))
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Objective A", exact: true }).waitFor()
+    // Loaded Missions enable the current-mission field (nothing is selected by default).
+    await missionPickerField(page).and(page.locator(":enabled")).waitFor()
     await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
   } catch (error) {
     if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests }, null, 2))
@@ -71,11 +72,10 @@ async function setup(missing = false) {
   }
   return { page, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
 }
-const row = (page: Page, id: string) => page.locator(".mission-control-index > li.mission-index-entry").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
 async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
-  if (origin === "actor") return clickMissionAction(row(page, id).locator(".mission-index-row"), "Open conversation")
-  // The overview reader belongs to the selected Mission's detail ("Overview").
-  await toggleMissionOverview(row(page, id))
+  if (origin === "actor") return clickMissionAction(page, "Open conversation", `Objective ${id}`)
+  // The overview reader belongs to the selected Mission's toolbar ("Summary" eye).
+  await toggleMissionOverview(page, `Objective ${id}`)
 }
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }
@@ -122,7 +122,11 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
       const current = window.missionCrossNavigation.snapshot()
       return current.session === "ses_A" && current.mode === "chat" && (origin === "actor" || current.reader?.missionId === "A")
     }, origin)
-    assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
+    assert.deepEqual(errors, [])
+    // The reader hides the just-opened transcript, which deactivates it and
+    // disposes only its read-only unanchored receipt page; nothing else may fail.
+    assert.deepEqual(networkErrors.filter(error => !(origin === "reader"
+      && /\/api\/workspaces\/cross-navigation\/sessions\/ses_A\/permission-receipts\?unanchored=true net::ERR_ABORTED$/.test(error))), [])
   } finally { hold.release(); await page.close() }
 })
 

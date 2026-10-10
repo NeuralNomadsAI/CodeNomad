@@ -8,6 +8,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
 
 let browser: Browser, server: ViteDevServer, url: string
 before(async () => {
@@ -44,36 +45,29 @@ function mission(id = "revision"): MissionMap {
 }
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
   (window as any).missionVisibility[method](arg), { method, arg })
-const row = (page: Page, title?: string) => title ? page.locator(".mission-control-index > li.mission-index-entry")
-  .filter({ has: page.getByRole("button", { name: title, exact: true }) }).locator(".mission-index-row") : page.locator(".mission-index-row").first()
-const pause = (page: Page, title?: string) => row(page, title).getByRole("button", { name: "Pause mission", exact: true })
+// Only the selected Mission has a lifecycle toolbar; inapplicable buttons stay disabled.
+const pause = (page: Page) => missionToolbarAction(page, "Pause mission")
 // Unresolved requests replace the contextual primary with a status check.
-const check = (page: Page, title?: string) => row(page, title).getByRole("button", { name: "Check control status", exact: true })
-async function menu(page: Page, title?: string) {
-  await row(page, title).getByRole("button", { name: "More actions", exact: true }).click()
-  const items = page.getByRole("menuitem"); await items.first().waitFor()
-  const labels = await Promise.all((await items.all()).map(async item => (await item.innerText()).trim()))
-  await page.keyboard.press("Escape"); await items.first().waitFor({ state: "detached" })
-  return labels
-}
-async function choose(page: Page, label: string, title?: string) {
-  await row(page, title).getByRole("button", { name: "More actions", exact: true }).click()
-  await page.getByRole("menuitem", { name: label, exact: true }).click()
-}
-async function retry(page: Page, title?: string) {
-  // Menu actions launch after the menu closes; wait for the actual dispatch.
+const check = (page: Page) => missionToolbarAction(page, "Check control status")
+const stop = (page: Page) => missionToolbarAction(page, "Stop mission permanently")
+// The explicit header refresh offers to resend only the selected Mission's unconfirmed exact request.
+const RESEND = "Refresh and resend the unconfirmed action"
+const retryOffered = async (page: Page) => await missionRefresh(page).getAttribute("aria-label") === RESEND
+async function retry(page: Page) {
+  assert.equal(await retryOffered(page), true)
+  // The refresh reconciles read-only first; wait for the actual resend.
   const sent = page.waitForRequest(request => request.url().endsWith("/control"))
-  await choose(page, "Retry last action", title); await sent
+  await missionRefresh(page).click(); await sent
 }
-async function open(page: Page) {
+async function open(page: Page, title = /^Lifecycle /) {
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).missionVisibility))
   await fixture(page, "activate", true)
-  await row(page).locator(".mission-index-primary").waitFor()
+  await selectMission(page, title)
 }
 async function settled(page: Page) {
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready"
-    && !document.querySelector('.mission-index-feedback [role="status"]'))
+    && !document.querySelector('.mission-action-feedback [role="status"]'))
 }
 
 test("real RightPanel discards only certified rejected intent; two revision conflicts require explicit fresh Pause", async () => {
@@ -96,7 +90,7 @@ test("real RightPanel discards only certified rejected intent; two revision conf
       return route.fulfill({ json: { mission: current } })
     })
     await open(page)
-    const retryCount = async () => (await menu(page)).filter(label => label === "Retry last action").length
+    const retryCount = async () => await retryOffered(page) ? 1 : 0
     await pause(page).click(); await settled(page)
     // Retain the original failing wire proof, rather than stop at the first UI assertion.
     if (await retryCount()) { await retry(page); await settled(page); console.info("BEFORE stale retry wire", JSON.stringify({ calls, displayRevision: current.revision })) }
@@ -134,9 +128,10 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
       await pause(page).click(); await settled(page)
       // Never a second Pause or a fresh Stop while the exact request is unresolved.
       assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
-      const labels = await menu(page)
-      assert.equal(labels.includes("Stop…"), false); assert.equal(labels.includes("Retry last action"), true)
-      await fixture(page, "event", "session.status")
+      assert.equal(await stop(page).isDisabled(), true); assert.equal(await retryOffered(page), true)
+      const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
+      await fixture(page, "event", "session.status"); await reread; await settled(page)
+      assert.equal(calls.length, 1, "native invalidation reads never resend")
       await retry(page)
       await settled(page)
       assert.equal(calls.length, 2); assert.deepEqual(calls[1], calls[0])
@@ -157,11 +152,11 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
       calls.push(route.request().postDataJSON() as Input); submitted(); await held
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
-    await open(page)
-    await pause(page, "Lifecycle one").click(); await sent
-    // Rows survive selection; unmounting the panel disposes the dispatching row.
-    await fixture(page, "mount", false); await row(page).waitFor({ state: "detached" }); await fixture(page, "mount", true)
-    await page.getByRole("button", { name: "Lifecycle two", exact: true }).click()
+    await open(page, "Lifecycle one")
+    await pause(page).click(); await sent
+    // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
+    await fixture(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" }); await fixture(page, "mount", true)
+    await selectMission(page, "Lifecycle two")
     await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
@@ -169,8 +164,9 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(reads, before, "disposed-row completion must not refresh the new context")
     for (const title of ["Lifecycle one", "Lifecycle two"]) {
-      assert.equal((await menu(page, title)).includes("Retry last action"), false)
-      assert.equal(await pause(page, title).isEnabled(), true)
+      await selectMission(page, title)
+      assert.equal(await retryOffered(page), false)
+      assert.equal(await pause(page).isEnabled(), true)
     }
     assert.equal(calls.length, 1)
   } finally { release(); await page.close() }
@@ -215,13 +211,14 @@ for (const action of ["pause", "stop"] as const) {
       await open(page)
       const sent = page.waitForRequest(request => request.url().endsWith("/control"))
       if (action === "pause") await pause(page).click()
-      else { await choose(page, "Stop…"); await page.getByRole("dialog").getByRole("button", { name: "Stop mission permanently", exact: true }).click() }
+      else { await stop(page).click(); await page.getByRole("dialog").getByRole("button", { name: "Stop mission permanently", exact: true }).click() }
       await sent; await settled(page)
       await page.reload(); await open(page)
       assert.equal(await check(page).count(), 1, "the durable partial request is checked, never resent as a fresh action")
+      assert.equal(calls.length, 1, "reload reads never resend")
       await retry(page)
-      if (action === "stop") await row(page).locator(".mission-index-primary").waitFor({ state: "detached" })
-      else await settled(page)
+      if (action === "stop") await check(page).waitFor({ state: "detached" })
+      await settled(page)
       assert.equal(calls.length, 2); assert.deepEqual(calls[1], calls[0])
       assert.equal(current.control?.pending.length, 0)
       console.info("DURABLE exact retry wire", action, JSON.stringify(calls))
@@ -242,17 +239,21 @@ test("Stop asks for confirmation in a dialog: cancel and Escape never submit; co
     })
     await open(page)
     const dialog = page.getByRole("dialog")
-    await choose(page, "Stop…"); await dialog.waitFor()
+    await stop(page).click(); await dialog.waitFor()
     assert.deepEqual(calls, [])
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     await dialog.waitFor({ state: "hidden" })
-    await choose(page, "Stop…"); await dialog.waitFor()
+    await stop(page).click(); await dialog.waitFor()
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "hidden" })
     assert.deepEqual(calls, [])
-    await choose(page, "Stop…"); await dialog.waitFor()
+    await stop(page).click(); await dialog.waitFor()
     await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
-    await row(page).locator(".mission-index-primary").waitFor({ state: "detached" })
+    // A terminal Mission keeps its lifecycle buttons in place, disabled.
+    await pause(page).waitFor({ state: "detached" })
+    await page.waitForFunction(() => [...document.querySelectorAll(".mission-action-bar button")]
+      .find(button => button.getAttribute("aria-label") === "Stop mission permanently")?.hasAttribute("disabled"))
+    assert.equal(await missionToolbarAction(page, "Start").isDisabled(), true)
     assert.equal(calls.length, 1)
     assert.equal(calls[0].action, "stop")
   } finally { await page.close() }
