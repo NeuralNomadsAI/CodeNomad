@@ -22,11 +22,11 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory"] as const) {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
-  if (mode === "timeout") await page.clock.install()
+  if (mode === "timeout" || mode === "catalog") await page.clock.install()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: `{
@@ -36,19 +36,37 @@ test(`${host} restores the active project and saved session identity before hydr
     const snapshot = { version: 1, revision: 1, savedAt: 1, layout: {}, session: {
       activeTabIndex: 1, tabs: ['D:/first', 'D:/second'].map(folder => ({
         kind: 'workspace', folder, occurrence: 0, activeSessionId: 'saved-session', activeParentSessionId: 'saved-session',
-        drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+         drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+         ...(${JSON.stringify(mode)} === 'catalog' ? {
+           expandedSessionIds: ['saved-session', 'child'],
+           sessionCatalog: ['saved-session', 'child', 'grandchild', 'other-worktree'].map((id, i) => ({
+             id, title: 'Cached ' + id, parentId: i === 1 ? 'saved-session' : i === 2 ? 'child' : null,
+             projectID: 'project', location: { directory: folder + (i === 3 ? '/linked' : '') },
+             time: { created: 1, updated: 1 }, agent: 'build', model: { providerId: 'p', modelId: 'm' }, cost: 0,
+             tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+           })),
+         } : {}),
       }))
-    } }
-    window.electronAPI = {
+     } }
+     const catalogMode = ${JSON.stringify(mode)} === 'catalog'
+     const persisted = catalogMode ? JSON.parse(sessionStorage.getItem('catalog-state') || 'null') : null
+     const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot,
+       ...(catalogMode ? { partitionProtocolVersion: 1 } : {}) })
+     const commit = value => { window.committedState = value; sessionStorage.setItem('catalog-state', JSON.stringify(value)); return true }
+     window.electronAPI = {
       claimClientStateAccess: async () => true,
-      loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot }),
+       loadClientState: async () => load(),
+       loadClientStatePartition: async (_token, key) => persisted?.partitions[key] ?? null,
+       commitClientStatePartitions: async (_token, value) => commit(value),
       saveClientState: async (_token, value) => { window.savedSnapshot = value; return true },
     }
     if (${JSON.stringify(host)} === 'tauri') {
       window.__TAURI_INTERNALS__ = {
         transformCallback: () => 1,
         invoke: async (command, args) => {
-          if (command === 'client_state_load') return { isPrimary: true, restoreEnabled: true, snapshot }
+           if (command === 'client_state_load') return load()
+           if (command === 'client_state_load_partition') return persisted?.partitions[args.key] ?? null
+           if (command === 'client_state_commit_partitions') return commit(args.payload)
           if (command === 'client_state_save') window.savedSnapshot = args.snapshot
           return true
         },
@@ -57,7 +75,7 @@ test(`${host} restores the active project and saved session identity before hydr
     }
   }` })
   let releaseSessions!: () => void
-  const sessionsReady = new Promise<void>(resolve => { releaseSessions = resolve })
+  let sessionsReady = new Promise<void>(resolve => { releaseSessions = resolve })
   const foreground = mode.startsWith("foreground")
   let releaseSecondary!: () => void
   const secondaryReady = new Promise<void>(resolve => { releaseSecondary = resolve })
@@ -119,6 +137,7 @@ test(`${host} restores the active project and saved session identity before hydr
       } else if (foreground) body = { data: [], cursor: {} }
       else if (path.includes("/session")) {
         await sessionsReady
+        if (mode === "catalog") return route.fulfill({ status: 503, json: { error: "Inventory temporarily unavailable" } })
         if (path.endsWith("/saved-session")) return route.fulfill({ status: 404, json: { message: "Session no longer exists" } })
       }
       if (!foreground) body = []
@@ -126,11 +145,24 @@ test(`${host} restores the active project and saved session identity before hydr
     await route.fulfill({ json: body })
   })
   try {
-    await page.goto(`${url}${foreground ? `?${mode}` : ""}`)
+    await page.goto(`${url}${foreground || mode === "catalog" ? `?${mode}` : ""}`)
     const selected = page.getByRole("tab", { name: "D:/second", exact: true })
     await selected.waitFor()
     assert.equal(await selected.getAttribute("aria-selected"), "true", "project selection must not wait for its conversation requests")
     assert.equal(await selected.getAttribute("data-session-selection"), "saved-session", "saved session identity must not wait for HTTP hydration")
+    if (mode === "catalog") {
+      assert.equal(await page.evaluate(() => (window as any).catalogRows("second").length), 4, "metadata must be seeded before network hydration")
+      assert.deepEqual(await page.evaluate(() => (window as any).sessionListIds("second")), ["saved-session", "other-worktree"])
+      for (const id of ["saved-session", "child", "grandchild", "other-worktree"]) {
+        await page.locator(`[data-session-id="${id}"]`).waitFor()
+        assert.equal(await page.getByText(`Cached ${id}`, { exact: true }).isVisible(), true)
+      }
+      await page.clock.fastForward(301_000)
+      assert.equal(await page.locator('[data-session-id="grandchild"]').isVisible(), true,
+        "five minutes of stalled requests must not hide the saved hierarchy")
+      assert.equal(await selected.getAttribute("data-session-selection"), "saved-session")
+      assert.equal(released, false)
+    }
     if (foreground) {
       await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
       assert.equal(await page.evaluate(() => (window as any).messageCount()), 200)
@@ -181,7 +213,21 @@ test(`${host} restores the active project and saved session identity before hydr
     }
     await page.locator('[data-restoring="false"]').waitFor()
     assert.equal(await page.getByRole("tab", { name: userSelection ? "D:/first" : "D:/second", exact: true }).getAttribute("aria-selected"), "true")
-    await page.waitForFunction(index => (window as any).savedSnapshot?.session?.activeTabIndex === index, userSelection ? 0 : 1)
+    if (mode === "catalog") {
+      await page.waitForFunction(() => {
+        const commit = (window as any).committedState
+        return commit && JSON.parse(commit.partitions[commit.snapshot.sessionPartition]).session?.activeTabIndex === 1
+      })
+      const saved = JSON.parse(await page.evaluate(async () => JSON.stringify(await (window as any).decodeSavedState())))
+      assert.equal(saved.session.tabs[1].sessionCatalog.length, 4, "capture must persist the hierarchy despite failed refreshes")
+      sessionsReady = new Promise<void>(resolve => { releaseSessions = resolve })
+      await page.reload()
+      await page.locator('[data-session-id="grandchild"]').waitFor()
+      assert.equal(await page.locator('[data-session-id="other-worktree"]').isVisible(), true,
+        "a fresh renderer must display the catalog written through the native partition adapter")
+    } else {
+      await page.waitForFunction(index => (window as any).savedSnapshot?.session?.activeTabIndex === index, userSelection ? 0 : 1)
+    }
     assert.deepEqual(errors, [])
   } catch (error) {
     console.error({ errors, blocked, requested, body: (await page.locator("body").innerText()).slice(-3000), count: await page.evaluate(() => (window as any).messageCount?.()) })

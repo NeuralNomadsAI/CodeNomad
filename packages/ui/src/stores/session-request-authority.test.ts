@@ -2180,6 +2180,7 @@ describe("session request authority", () => {
   it("preserves roots added while a complete catalog request is in flight", async () => {
     const instanceId = "session-catalog-concurrent-root"
     const { client, cleanup } = setup(instanceId)
+    setInstanceMetadata(instanceId, { project: { id: "project", canonical: "/work" } as any })
     const response = deferred<any>()
     ;(client.session as any).list = () => response.promise
     setSessions((previous) => new Map(previous).set(instanceId, new Map([

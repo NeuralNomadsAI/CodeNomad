@@ -519,7 +519,8 @@ async function hydrateRestoredSessionChainAttempt(
       if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
       let session = sessions().get(instanceId)?.get(sessionId)
-      if (!session) {
+      if (!session || session.catalogSnapshot) {
+        const captured = session
         try {
           signal?.throwIfAborted()
           const read = () => isRequestCurrent()
@@ -533,9 +534,9 @@ async function hydrateRestoredSessionChainAttempt(
             const next = new Map(prev)
             const instanceSessions = new Map(next.get(instanceId) ?? new Map())
             const latest = instanceSessions.get(sessionId)
-            // This row was absent when the read began. A concurrent event or
-            // selection that introduced it owns its current fields.
-            const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession), undefined, latest)
+            // A concurrent event or selection owns fields changed since this
+            // read began, including when replacing a restored display row.
+            const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession, captured), captured, latest)
             if (merged) instanceSessions.set(sessionId, merged)
             next.set(instanceId, instanceSessions)
             return next
@@ -720,18 +721,35 @@ async function fetchSessions(instanceId: string, options?: {
       return
     }
 
-    if (inventoryComplete || (!hasProjectInventory && response.complete)) {
-      const authoritativeSessions = inventoryComplete ? apiSessions : rootApiSessions
+    if (inventoryComplete) {
+      const authoritativeSessions = apiSessions
       const fetchedRootIds = new Set(authoritativeSessions.flatMap((session) => {
         const root = getSessionRoot(instanceId, session.id)
         return root ? [root.id] : []
       }))
       const concurrentRootIds = new Set(Array.from(sessions().get(instanceId)?.values() ?? [])
-        .filter((session) => !existingSessions.has(session.id) && session.parentId === null)
+        .filter((session) => !existingSessions.has(session.id) && getSessionRoot(instanceId, session.id)?.id === session.id)
         .map((session) => session.id))
       const validRootIds = new Set([...fetchedRootIds, ...concurrentRootIds])
       const currentSessions = sessions().get(instanceId) ?? new Map()
-      for (const sessionId of getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds)) {
+      const staleIds = new Set(getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds))
+      const fetchedIds = new Set(authoritativeSessions.map(session => session.id))
+      // Parents may live outside the enumerated project after a native move.
+      // Keep every ancestor needed to connect a verified surviving descendant.
+      for (const id of [...fetchedIds]) {
+        let parent = currentSessions.get(id)?.parentId
+        while (parent && !fetchedIds.has(parent)) {
+          fetchedIds.add(parent)
+          parent = currentSessions.get(parent)?.parentId
+        }
+      }
+      for (const [id, captured] of existingSessions) {
+        // A saved child can disappear while its root survives. Only a complete
+        // owned inventory can evict that display row; concurrent updates win.
+        if (captured.catalogSnapshot && !fetchedIds.has(id) && currentSessions.get(id) === captured) staleIds.add(id)
+      }
+      for (const sessionId of staleIds) {
+        if (currentSessions.get(sessionId) !== existingSessions.get(sessionId)) continue
         removeSessionRuntimeState(instanceId, sessionId, false)
       }
     }
@@ -749,18 +767,18 @@ async function fetchSessions(instanceId: string, options?: {
         missingRootSessionIds.push(apiSession.id)
       }
     }
-    if (!inventoryComplete && (!response.complete || hasProjectInventory)) {
-      for (const sessionId of existingCatalogIds) {
-        const session = sessions().get(instanceId)?.get(sessionId)
-        if (session?.parentId === null && !seenRootIds.has(sessionId)) {
-          seenRootIds.add(sessionId)
-          rootIds.push(sessionId)
-        }
+    // Reconciliation already evicted absent roots. Retain survivors, including
+    // concurrent updates which fenced an inventory eviction.
+    for (const sessionId of existingCatalogIds) {
+      const session = sessions().get(instanceId)?.get(sessionId)
+      if (session && getSessionRoot(instanceId, sessionId)?.id === sessionId && !seenRootIds.has(sessionId)) {
+        seenRootIds.add(sessionId)
+        rootIds.push(sessionId)
       }
     }
     const concurrentRootIds = getSessionListIds(instanceId).filter((sessionId) => {
       const session = sessions().get(instanceId)?.get(sessionId)
-      return !existingCatalogIds.has(sessionId) && session?.parentId === null && !seenRootIds.has(sessionId)
+      return !existingCatalogIds.has(sessionId) && session && getSessionRoot(instanceId, sessionId)?.id === sessionId && !seenRootIds.has(sessionId)
     })
     for (let index = concurrentRootIds.length - 1; index >= 0; index -= 1) {
       const sessionId = concurrentRootIds[index]!
@@ -775,7 +793,7 @@ async function fetchSessions(instanceId: string, options?: {
       })
     }
 
-    setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
+    setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), inventoryComplete && (options?.reset ?? true), response.nextCursor)
     sessionPageTraversals.set(instanceId, {
       cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
       pages: 1,
