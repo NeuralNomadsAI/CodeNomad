@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it } from "node:test"
@@ -87,6 +87,23 @@ describe("Git ownership preflight admission", () => {
     }
     assert.equal(await sharesGitCommonDirectory(repo, pseudo), false)
     assert.equal(await sharesGitCommonDirectory(repo, path.join(pseudo, "nested")), false)
+  })
+
+  it("leaves a nested bare repository with a dangling HEAD symlink to Git", async (context) => {
+    const bare = path.join(repo, "vendor", "linked-head")
+    mkdirSync(path.join(bare, "objects"), { recursive: true })
+    mkdirSync(path.join(bare, "refs"))
+    mkdirSync(path.join(bare, "inner"))
+    try {
+      symlinkSync("refs/heads/main", path.join(bare, "HEAD"))
+    } catch {
+      context.skip("Symbolic links are unavailable")
+      return
+    }
+    for (const directory of [bare, path.join(bare, "inner")]) {
+      assert.equal(await readGitCommonDirectory(directory), realpathSync(git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")), directory)
+    }
+    assert.equal(await sharesGitCommonDirectory(repo, path.join(bare, "inner")), false)
   })
 
   it("defers environment overrides, paths inside Git directories and invalid layouts to Git", async () => {

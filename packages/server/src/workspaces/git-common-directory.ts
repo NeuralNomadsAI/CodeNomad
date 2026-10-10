@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from "node:fs/promises"
+import { lstat, readFile, realpath, stat } from "node:fs/promises"
 import path from "node:path"
 import { runWorktreeGit } from "./git-process"
 
@@ -35,8 +35,9 @@ export async function readCheckoutIdentity(directory: string) {
 }
 
 // Git may recognise the level itself as a Git directory, directly or through
-// `commondir`. Any such marker, even committed content, is left to Git.
-const mayBeGitDirectory = (directory: string) => Promise.all(["HEAD", "commondir"].map(entry => stat(path.join(directory, entry))
+// `commondir`. Any such entry, even committed content or a dangling symlink
+// (Git reads HEAD links without following them), is left to Git.
+const mayBeGitDirectory = (directory: string) => Promise.all(["HEAD", "commondir"].map(entry => lstat(path.join(directory, entry))
   .then(() => true, error => (error as NodeJS.ErrnoException).code !== "ENOENT"))).then(found => found.some(Boolean))
 
 // Git discovery: the nearest ancestor holding `.git`, without crossing devices.
