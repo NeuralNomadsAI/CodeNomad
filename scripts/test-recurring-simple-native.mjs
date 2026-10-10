@@ -9,6 +9,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { createServer } from "node:http"
+import { existsSync } from "node:fs"
 import { copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -16,6 +17,7 @@ import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
+import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
@@ -380,16 +382,23 @@ try {
   evidence.nativeErrors = output.split("\n").filter(line => /ERROR|WARN|Error:|Cause:|recurrence|codenomad\.missions|job/i.test(line)).slice(-40)
     .map(line => line.replaceAll(env.OPENCODE_SERVER_PASSWORD, "[redacted]"))
 } finally {
-  // Finish evidence even when settlement times out; read only this fixture's DB.
-  const { DatabaseSync } = await import("node:sqlite")
-  const db = new DatabaseSync(env.OPENCODE_DB, { readOnly: true })
-  try {
-    evidence.nativePassages = db.prepare("SELECT id,parent_id,project_id,directory FROM session_v2").all().map(s => ({ ...s,
-      starts: db.prepare("SELECT id,type FROM session_message WHERE session_id=? AND type IN ('user','synthetic')").all(s.id) }))
-  } finally { db.close() }
+  // Finish evidence even when settlement times out; read only this fixture's DB,
+  // which an early failure may not have created. Cleanup must never be skipped.
+  if (existsSync(env.OPENCODE_DB)) {
+    try {
+      const { DatabaseSync } = await import("node:sqlite")
+      const db = new DatabaseSync(env.OPENCODE_DB, { readOnly: true })
+      try {
+        evidence.nativePassages = db.prepare("SELECT id,parent_id,project_id,directory FROM session_v2").all().map(s => ({ ...s,
+          starts: db.prepare("SELECT id,type FROM session_message WHERE session_id=? AND type IN ('user','synthetic')").all(s.id) }))
+      } finally { db.close() }
+    } catch (error) { evidence.nativePassagesError = error.message }
+  }
   hold = false; for (const release of releases) release()
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
-  if (child && child.exitCode === null) await stop().catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
+  if (child && child.exitCode === null && child.signalCode === null) {
+    await stopFixtureChild(child, closed).catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
+  }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
   // Native log may contain credentials: retain bounded error labels, never raw logs.
   await writeFile(path.join(root, "qualification.json"), JSON.stringify(evidence, null, 2))

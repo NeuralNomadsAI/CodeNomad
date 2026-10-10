@@ -32,6 +32,16 @@ test("Missions native fixtures stop their owned serve with bounded escalation", 
   }
 })
 
+test("recurring native fixture cleanup survives an early failure before the database exists", () => {
+  const source = fs.readFileSync(new URL("test-recurring-simple-native.mjs", import.meta.url), "utf8")
+  const cleanup = source.slice(source.indexOf("// Finish evidence even when settlement times out"))
+  assert.match(cleanup, /if \(existsSync\(env\.OPENCODE_DB\)\)/)
+  assert.ok(cleanup.indexOf("existsSync(env.OPENCODE_DB)") < cleanup.indexOf("new DatabaseSync"))
+  assert.match(cleanup, /catch \(error\) \{ evidence\.nativePassagesError/)
+  assert.match(cleanup, /await stopFixtureChild\(child, closed\)/)
+  assert.match(cleanup, /writeFile\(path\.join\(root, "qualification\.json"\)/)
+})
+
 test("native pagination rejects cycles instead of looping indefinitely", () => {
   const accept = fixturePaginationGuard()
   accept("one"); accept("two")
