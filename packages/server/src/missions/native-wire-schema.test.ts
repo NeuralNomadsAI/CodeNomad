@@ -5,7 +5,7 @@ import { lifecycleOperationSchema } from "./lifecycle-schema"
 import { taskExecutionModeSchema, taskExecutionModeRpcSchema } from "./native-wire-schema"
 import { parseExecutionMode } from "./task-execution-mode"
 import { parseNativeBinding } from "./native-report-provenance"
-import { missionBriefingSnapshotSchema } from "./briefing"
+import { MISSION_BRIEFING_RESPONSES_MAX, missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 
 test("Missions native RPC schemas avoid unsupported not and pattern keywords", () => {
   const visit = (value: unknown, path = "rpc") => {
@@ -29,6 +29,10 @@ test("native snapshot and mutation output decoders retain the same optional proj
   assert.deepEqual(snapshotMission.properties.briefing, missionBriefingSnapshotSchema)
   assert.ok(!snapshotMission.required.some(key => key === "briefing" as string), "existing missions may lack a briefing")
   assert.deepEqual(CODENOMAD_MISSIONS_RPC.methods.lifecycle.output.properties.mission.properties.briefing, missionBriefingSnapshotSchema)
+  assert.deepEqual(snapshotMission.properties.briefingResponses, missionBriefingResponsesSchema)
+  assert.ok(!snapshotMission.required.some(key => key === "briefingResponses" as string), "older journals project no responses")
+  assert.deepEqual(CODENOMAD_MISSIONS_RPC.methods.lifecycle.output.properties.mission.properties.briefingResponses, missionBriefingResponsesSchema)
+  assert.equal(missionBriefingResponsesSchema.maxItems, MISSION_BRIEFING_RESPONSES_MAX)
   assert.equal(missionBriefingSnapshotSchema.additionalProperties, false)
   assert.equal(missionBriefingSnapshotSchema.properties.achieved.maxItems, 3)
 })

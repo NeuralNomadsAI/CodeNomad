@@ -16,6 +16,10 @@ export interface MissionBriefing extends MissionBriefingContent {
   basedOnUpdatedAt: number
   createdAt: number
 }
+/** Identity of one accepted briefing: proof that the coordinator published a
+ * response to this exact request, never that a person read it. */
+export interface MissionBriefingResponse { requestID: string; briefingID: string }
+export const MISSION_BRIEFING_RESPONSES_MAX = 16
 export interface MissionBriefingInput extends MissionBriefingContent {
   missionID?: string
   requestID: string
@@ -40,6 +44,10 @@ export const missionBriefingSnapshotSchema = { type: "object", properties: {
   summary: missionBriefingSchema.properties.summary,
   achieved: itemsSchema, ongoing: itemsSchema, obstacles: itemsSchema, next: itemsSchema,
 }, required: ["id", "requestID", "basedOnRevision", "basedOnUpdatedAt", "createdAt", "summary", "achieved", "ongoing", "obstacles", "next"], additionalProperties: false }
+
+export const missionBriefingResponsesSchema = { type: "array", maxItems: MISSION_BRIEFING_RESPONSES_MAX, items: {
+  type: "object", properties: { requestID: missionBriefingSchema.properties.requestID, briefingID: missionBriefingSnapshotSchema.properties.id },
+  required: ["requestID", "briefingID"], additionalProperties: false } }
 
 export function parseMissionBriefingInput(input: unknown): MissionBriefingInput {
   const value = record(input)

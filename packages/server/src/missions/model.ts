@@ -1,6 +1,6 @@
 import type { MissionExecution } from "./execution"
-import { briefingSourcesExist, parseMissionBriefing, type MissionBriefing } from "./briefing"
-export type { MissionBriefing, MissionBriefingItem } from "./briefing"
+import { MISSION_BRIEFING_RESPONSES_MAX, briefingSourcesExist, parseMissionBriefing, type MissionBriefing, type MissionBriefingResponse } from "./briefing"
+export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } from "./briefing"
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
 import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
@@ -173,6 +173,9 @@ export interface MissionMap {
   notificationUnavailable?: boolean
   summary?: string
   briefing?: MissionBriefing
+  /** Exact request identities of the most recent accepted briefings, oldest
+   * first, so a superseded requested response is still recognizable. */
+  briefingResponses?: MissionBriefingResponse[]
   coordinatorSessionId: string
   actors: MissionActor[]
   tasks: MissionTask[]
@@ -470,6 +473,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   let objective = created.objective
   let notes = created.notes
   let briefing: MissionBriefing | undefined
+  const briefingResponses: MissionBriefingResponse[] = []
   let updatedAt = created.createdAt
 
   actors.set(created.coordinator.sessionID, {
@@ -518,6 +522,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || ["prepared", "paused", "stopped"].includes(lifecycle.runState ?? "running") || lifecycle.control?.pending.length
         || !briefingSourcesExist({ tasks: [...tasks.values()] }, value)) { discarded.count++; continue }
       briefing = value
+      briefingResponses.push({ requestID: value.requestID, briefingID: value.id })
+      if (briefingResponses.length > MISSION_BRIEFING_RESPONSES_MAX) briefingResponses.shift()
       continue
     }
     if (event.type === "mission.revised") {
@@ -812,6 +818,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     objective,
     notes,
     ...(briefing ? { briefing } : {}),
+    ...(briefingResponses.length ? { briefingResponses } : {}),
     template: created.template,
     taskMode: created.taskMode ?? "native",
     ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
