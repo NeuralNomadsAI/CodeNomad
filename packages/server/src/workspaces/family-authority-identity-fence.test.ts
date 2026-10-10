@@ -55,7 +55,7 @@ test("physical family fences recheck real local Git inputs without processes", a
         const fast = performance.now() - start
         assert.equal(readFileSync(trace, "utf8"), "", "every final fence must remain process-free")
         const legacyStart = performance.now()
-        for (let i = 0; i < 10; i++) assert.equal(readFamilyAuthorityIdentitySync(directory), family)
+        for (let i = 0; i < 10; i++) assert.equal(withSlowGit(() => readFamilyAuthorityIdentitySync(directory)), family)
         const legacy = performance.now() - legacyStart
         t.diagnostic(`${path.basename(directory)}: 10 filesystem fences ${fast.toFixed(1)}ms; 10 Git fences ${legacy.toFixed(1)}ms`)
         assert(fast < legacy / 2, "filesystem fence must cost less than half the repeated Git resolution")
