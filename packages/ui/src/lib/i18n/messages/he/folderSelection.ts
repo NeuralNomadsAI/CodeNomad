@@ -27,8 +27,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.button": "שכפל מאגר Git",
   "folderSelection.temporary.button": "מופע זמני חדש",
   "folderSelection.temporary.description": "התחל בתיקייה ריקה שמנוהלת על ידי CodeNomad; בסגירת הלשונית תוכל לשמור או למחוק אותה",
-  "folderSelection.temporary.resume": "המשך את {name}",
-  "folderSelection.temporary.resumeDescription": "פתח שוב את המופע הזמני שנותר כדי לשמור או למחוק אותו",
   "folderSelection.clone.destination.title": "בחר יעד לשכפול",
   "folderSelection.clone.destination.description": "בחר את התיקייה שאליה יש לשכפל את המאגר.",
   "folderSelection.clone.dialog.title": "שכפול מאגר Git",
@@ -43,8 +41,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.clone": "שכפל",
   "folderSelection.clone.dialog.cloning": "משכפל...",
   "folderSelection.clone.dialog.errorRequired": "כתובת המאגר ותיקיית היעד הן שדות חובה.",
-  "folderSelection.actions.title": "פתח תיקייה או התחבר לשרת",
-  "folderSelection.actions.subtitle": "פתח תיקייה מקומית או התחבר לשרת CodeNomad",
   "folderSelection.actions.connectButton": "התחבר לשרת CodeNomad",
 
   "folderSelection.advancedSettings": "הגדרות מתקדמות",
