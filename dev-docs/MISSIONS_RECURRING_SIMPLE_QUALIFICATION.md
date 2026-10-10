@@ -237,7 +237,7 @@ The `--bounded`/62-minute modes are gone: every archive must now appear within
 | C Run now ×2, same schedule | `fHv1dw` | two distinct passages, both completed; exact duplicate request returned the same passage | **1 each** | 2.0 s, 3.1 s |
 | D Pause → Stop | `fHv1dw` | no admission through due + 30 s; Stop terminal, Resume → 503 | **0** | n/a |
 
-Details (full prefix `C:/Users/Admin/AppData/Local/Temp/opencode/recurring-simple-native-`):
+Details (full prefix `<TEMP>/opencode/recurring-simple-native-`):
 
 - **A** `rcs_7194341d…`: due `1791509340000`, backend/presence closed at
   `1791509265197`; passage `rcp_c32bcdc1…`, coordinator `ses_05cef120…`, only
@@ -295,7 +295,7 @@ Settlement and interrupted native-session continuation remain blockers; offline
 e2e success is not native acceptance.
 
 CLI: **OpenCode 2.0.26**, read-copied from the existing
-`C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe`.
+`<APPDATA>/npm/node_modules/@opencode/cli/bin/opencode.exe`.
 Historical startup receipts used 2.0.24, but this existing artifact now reports
 2.0.26. No installation or upstream modification was performed.
 
@@ -318,7 +318,7 @@ write Mission reports or mutate schedules. The provider emits actual read, shell
 mission_inspect and final mission_report calls.
 
 Each invocation copies the CLI to an independently created directory beneath
-`C:/Users/Admin/AppData/Local/Temp/opencode/recurring-simple-native-*`, uses private
+`<TEMP>/opencode/recurring-simple-native-*`, uses private
 HOME/XDG/config/database/bridge roots and a loopback deterministic provider. Actual
 `debug paths` outputs must remain inside that root. The native service is launched
 as an owned `serve` process, authenticated, and its API PID must equal the spawned
@@ -346,7 +346,7 @@ read-only native database start-message counts. Databases contain only fixture d
 | C Run now | `TGDl8f` | Two distinct manual admissions/work pass on separate schedules; settlement fails | **1 per passage** |
 | D Pause → Stop | `TGDl8f` | Pass in observed due window; Stop terminal | **0** |
 
-Full prefix: `C:/Users/Admin/AppData/Local/Temp/opencode/recurring-simple-native-`.
+Full prefix: `<TEMP>/opencode/recurring-simple-native-`.
 Earlier background results are preserved at `3Lgel8/qualification.json` (A) and
 `OlRBhS/qualification.json` (B). Both completed with failure, not success. A's
 earlier timeout additionally exposed a fixture race: it captured conversationID

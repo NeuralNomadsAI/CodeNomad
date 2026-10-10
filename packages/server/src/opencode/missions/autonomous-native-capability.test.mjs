@@ -1,5 +1,5 @@
 // Investigative capability proof only. No product fallback or authority grant.
-// Run from repository root with node packages/server/src/opencode/missions/autonomous-native-capability.test.mjs.
+// Run from repository root with node packages/server/src/opencode/missions/autonomous-native-capability.test.mjs [path/to/opencode.exe].
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer } from "node:http"

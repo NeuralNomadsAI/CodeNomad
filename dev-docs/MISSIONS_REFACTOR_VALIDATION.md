@@ -2,6 +2,8 @@
 
 > PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
 
+> Artifact paths: `<TEMP>`, `<APPDATA>`, `<LOCALAPPDATA>` and `<HOME>` stand for the Windows temporary, roaming, local application-data and home directories of the machine that ran each validation. Those artifacts are local receipts, not part of this repository.
+
 ## Simplification decision — 2026-10-08
 
 The user's explicit recurring-missions decision supersedes the historical signed
@@ -139,7 +141,7 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
 - At `e895e24f`, all top-level `packages/server/src/missions/*.test.ts` were run
   with `node --conditions=browser --import tsx --test`: **733 pass, 0 fail,
   0 skips/cancellations**, with no native `.test.mjs` fixture selected. Full output:
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11bf4db520010LHAYhxetFsDGK.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11bf4db520010LHAYhxetFsDGK.out`.
 - At `119443d5`, the succeeded-only native settlement/adapter/authority offline
   tests passed **25/25**, and server typecheck passed. Settlement requires exact
   original input, native effect receipts, terminal family evidence, journal and
@@ -156,7 +158,7 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
   suite load (`native-recurrence-due.test.ts:210`); targeted passes do not erase
   this failure. Repeated synchronous Git-family reads are under investigation,
   without relaxing that deadline or calling a lower-concurrency rerun acceptance.
-  Receipt: `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c2b5378001zfigd0lRoWOMeX.out`.
+  Receipt: `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c2b5378001zfigd0lRoWOMeX.out`.
 - At `6f9d485a`, the same broader offline adapter selection, default concurrency
   and original due deadline passed **165/165**, with no skips/cancellations.
   The extra case exercises delayed presence I/O: real callback acknowledgements
@@ -165,7 +167,7 @@ CREATE, Play, due-composition or UI branches and do not authorize installation.
   and retains Git fallback for ambiguous/configuration-changed routing. The
   original due failure and the separate perf-branch presence/owner/baseline
   failures remain failures, not erased by this result. Receipt:
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c66a8e2001ITpweypnekKJve.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11c66a8e2001ITpweypnekKJve.out`.
 - Upstream 2.0.24's active-Location Form/Permission/Shell lists materialize before
   the 1,024-result check. Unknown/over-bound coverage remains pending; no inactive
   worktree scan is used. Failed, interrupted, background and unrecognised effect
@@ -368,7 +370,7 @@ not installed-app or native autonomous execution acceptance.
   denial-control snapshots alongside history/pending references, and preservation
   of the native control/status handlers. UI/server typechecks, UI build and Missions
   bundle build passed on the same source. Retained final foreground receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-ui-final-join-20261008-selfchecks.txt`.
+  `<TEMP>/opencode/missions-ui-final-join-20261008-selfchecks.txt`.
 - Failed evidence remains failed: the earlier owned joined browser selection was
   **32 pass / 8 fail** (`sh_11ccfa9510017XAUkN5Jc5H8EG`, missing assembled locale
   keys and stale control protocol). Its corrected intermediate selections passed
@@ -398,7 +400,7 @@ Pause POST, with no Resume/new-work admission or refresh replay. The complete
 focused selection passed **20/20** (`sh_11d16de6a001g53O1EwB3qaSTO`), and
 independent rereview reported zero P0/P1/P2 findings
 (`ses_ee2eb740affeqL9kUe9SCJzc7q`). Both typechecks and UI build passed; receipt:
-`C:/Users/Admin/AppData/Local/Temp/opencode/missions-ui-denial-capability-20261008-selfchecks.txt`.
+`<TEMP>/opencode/missions-ui-denial-capability-20261008-selfchecks.txt`.
 The first increment selection remains **19 pass / 1 fail**
 (`sh_11d14aea4001Ls9YyKYRGngN9k`): it removed the established disabled Stop
 button during partial Pause. The correction retained that behavior and assertion
@@ -417,7 +419,7 @@ are joined. All top-level `packages/server/src/missions/*.test.ts` pass
 default test concurrency. Server, UI and Electron typechecks and `build:missions`
 pass. The nine recurring Solid browser tests and targeted native-shaped due
 regression also pass; none launches a native daemon. Domain receipt:
-`C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11cc573d1001ziYZAVspTBsMKi.out`.
+`<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_11cc573d1001ziYZAVspTBsMKi.out`.
 
 During CREATE merge verification, `sh_11cbedd3e001rXrGSmzeTPLgMe` finished
 **39/40**: its root-reuse fixture expected invalid roots to survive signer reads,
@@ -469,14 +471,14 @@ or acceptance of the separately assembling UI/control producers.
   execution inputs; only the separately invoked positive-loader qualification
   fixture changed outside the ordinary `**/*.test.ts` selection. The eight
   platform/opt-in skips remain skips, not positive native qualification. Receipt:
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115938c56001IqmfdmI8K4DLrV.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115938c56001IqmfdmI8K4DLrV.out`.
 - New complete browser aggregate: **758 pass / 0 fail / 2 skipped**, all 760 cases
   selected, no cancellations. Completed in 2,445 seconds. Benchmark and native
   Electron zoom opt-ins remain skips. Historical capture replay passed against
   current Technical details/report/coordinator navigation with an exact input
   digest; it is renderer-only proof, not current native transport/closed-client
   scheduled execution. Original 711/39/2 failed aggregate remains retained. Receipt:
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1158aef010015QPM7e460RS2XH.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1158aef010015QPM7e460RS2XH.out`.
 - Three isolated permission-fallback failures were fixture omissions: the dock was
   given neither a registered current conversation nor its identity. With that real
   conversation fixture, all three original copy/page/late-ack scenarios pass. The
@@ -494,7 +496,7 @@ or acceptance of the separately assembling UI/control producers.
   **2,362 selected / 2,335 pass / 16 fail / 3 cancelled / 8 skipped**, completed
   under `sh_1167074b3001FeCeovcmqsfwkz`. All **619 frozen existing server/helper
   inputs remain unchanged**. Final fingerprint/count receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-native-approval-output-20261007.json`.
+  `<TEMP>/opencode/pr866-server-native-approval-output-20261007.json`.
   Failures include private owner/readiness, durable native-observation setup,
   installer fixture readiness, pending recovery, WSL timing, event ownership and
   three Mission-input cases. This failed aggregate is retained, not overwritten
@@ -521,7 +523,7 @@ or acceptance of the separately assembling UI/control producers.
   private handshake; 64-directory pending recovery's unchanged 30-second deadline;
   and a Git worktree-config fixture's owned-root teardown `EPERM` (not its ownership
   assertions). Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-concurrency2-output-20261007.json`.
+  `<TEMP>/opencode/pr866-server-concurrency2-output-20261007.json`.
   Concurrency 2 is demonstrably insufficient on this machine; serial full validation
   follows correction/review without relaxing any admission deadline. Its later
   completed result below also fails the same 64-directory deadline: concurrency
@@ -548,7 +550,7 @@ or acceptance of the separately assembling UI/control producers.
   Correction committed in **`7d292121`**; no admission deadlines or authority checks
   changed. Author's prior combined **10/10** run confirms all 10 private fixture
   roots removed; it predates only the explicit type-narrowing assertion. Evidence:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-cancellation-diagnostic-output-20261007.json`.
+  `<TEMP>/opencode/pr866-cancellation-diagnostic-output-20261007.json`.
 - Independent Git teardown diagnosis confirms a **shared scan custody race**:
   `listNativeWorktrees` can reject one bounded worker while another admitted Git
   read is still outstanding. The ordered probe observes request **11** admitted
@@ -566,7 +568,7 @@ or acceptance of the separately assembling UI/control producers.
   current-user temporary root. Probe-only readiness is shortened to 50 ms; the
   repository keeps its 30-second test bound and all production deadlines unchanged.
   No original test cleanup or ownership assertion is weakened. Evidence:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-bounded-review-git-custody2-order.out`.
+  `<TEMP>/opencode/pr866-bounded-review-git-custody2-order.out`.
 - Corrected-source **full serial server aggregate** completed after these two
   independently closed fixes, with **623 original/current source/helper inputs
   frozen** at `973d775b`, all **623 unchanged**: **2,366 selected / 2,357 pass /
@@ -580,11 +582,11 @@ or acceptance of the separately assembling UI/control producers.
   for a minimal safe consolidation; no completed identity authority cache or
   mass-loading fallback is authorized. Opt-in actual native `.test.mjs` fixtures
   are not selected by the aggregate. Neither prior failed receipt is replaced.
-  Result: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-output-20261007.json`.
+  Result: `<TEMP>/opencode/pr866-server-serial-corrected-output-20261007.json`.
   Inputs:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-inputs-20261007.json`;
+  `<TEMP>/opencode/pr866-server-serial-corrected-inputs-20261007.json`;
   complete retained log:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-corrected-20261007.out`.
+  `<TEMP>/opencode/pr866-server-serial-corrected-20261007.out`.
 - The remaining broker case's unchanged isolated instrumented run passes in
   **26.742 s**, still against the original 30-second deadline and eight ownership
   checks/two Git processes. It executes **195 Git commands**: **65** initial
@@ -620,12 +622,12 @@ or acceptance of the separately assembling UI/control producers.
   expected. All **9 fixtures removed**, **0 outstanding Git reads**, original
   harness/18 test bodies unchanged. Correction committed **`01d63a0b`**. No
   cross-RPC identity cache, deadline or worker-limit change. Custody candidate receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-custody-final-output-20261007.json`.
+  `<TEMP>/opencode/pr866-pending-custody-final-output-20261007.json`.
   Earlier candidate receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-final-output-20261007.json`;
+  `<TEMP>/opencode/pr866-pending-final-output-20261007.json`;
   review: `.../pr866-pending-independent-20261007/verification.json`.
   Original read-only measurement:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-pending-readonly-2rYnY0/summary.json`.
+  `<TEMP>/opencode/pr866-pending-readonly-2rYnY0/summary.json`.
 - The fresh **complete ordinary serial server aggregate** completed at
   **`01d63a0b`**, with **625 inputs frozen**: all earlier **623 paths retained** plus
   the new shared sync-privacy helper and family regression. Selector remains all
@@ -640,8 +642,8 @@ or acceptance of the separately assembling UI/control producers.
   these sources, not native opt-in authority, service-owned due admission or
   packaged parity. All three failed historical aggregates remain separately kept.
   Result and complete-log digest:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-output-20261007.json`.
-  Inputs: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-server-serial-broker-625-inputs-20261007.json`;
+  `<TEMP>/opencode/pr866-server-serial-broker-625-output-20261007.json`.
+  Inputs: `<TEMP>/opencode/pr866-server-serial-broker-625-inputs-20261007.json`;
   complete log: `.../pr866-server-serial-broker-625-20261007.out`.
 - Publication was temporarily blocked: ordinary pushes failed Git LFS lock probing;
   all four outgoing files are verified **non-LFS/non-lockable**, no LFS objects
@@ -710,7 +712,7 @@ or acceptance of the separately assembling UI/control producers.
   complete canonical/file/core/plugin run passes **43/43**, no skips or
   cancellations, after the final root-reader correction. All **17 recorded input
   fingerprints remain unchanged** at completion. Receipt:
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1163bc8ed001YbqLcAQWY0nx2N.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1163bc8ed001YbqLcAQWY0nx2N.out`.
   Commit: `f6973b96`. Previous **40/40** and fast **26/26** checks predate that
   final correction and remain historical. Earlier
   **31/31** and **20/20** exploratory checks predate these review corrections and
@@ -746,7 +748,7 @@ or acceptance of the separately assembling UI/control producers.
   synthetic with `resume:true`, **without a CodeNomad backend or upstream edits**.
   Exact lost-ACK evidence retains one admission without replay. All **9 recorded
   production source hashes** match in main/reviewer verification. Final receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-yx2mH0/results.json`.
+  `<TEMP>/opencode/missions-child-environment-yx2mH0/results.json`.
   Writer trust/exclusion and root-change denial remain **injected**, the Location
   explicitly warmed. Two provider requests show dispatch activity, not successful
   model consumption/completion. Shipping entry/build are unchanged; protected
@@ -779,7 +781,7 @@ or acceptance of the separately assembling UI/control producers.
   checks, readback, rollback after write and two Locations. A second private
   daemon's **genuine native execution claim** denies acquisition without modifying
   that claim. Server typecheck passes. CLI/source fingerprints are recorded in
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-oRs9ZJ/results.json`.
+  `<TEMP>/opencode/missions-child-environment-oRs9ZJ/results.json`.
   Enrollment is **injected**; this is **metadata-commit evidence**, not signer
   authority, permanent writer ownership, whole-database rollback resistance,
   managed cold autonomy or production activation. Independent review reproduced
@@ -791,7 +793,7 @@ or acceptance of the separately assembling UI/control producers.
   The independent original probe now rejects and positive/competing-execution
   probes still pass; **0 actionable findings** in the frozen adapter scope.
   Author/reviewer source fingerprints match; final receipts:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-7CMDEy/results.json`
+  `<TEMP>/opencode/missions-child-environment-7CMDEy/results.json`
   and `.../missions-child-environment-fz21n6/results.json`. Commit `6ba741c4`.
   This closes the metadata adapter P1 only; it does not activate autonomous work.
 - On 2026-10-08 an ordinary focused-test command inadvertently selected the
@@ -800,15 +802,15 @@ or acceptance of the separately assembling UI/control producers.
   recurrence adapter, cold scheduler or installed product was qualified. The
   shared daemon PID 10348 and installed Tauri PID 14708 were unchanged, and no
   fixture OpenCode process remained. Preserve the unchanged receipt at
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-iGW4Sv/results.json`
+  `<TEMP>/opencode/missions-child-environment-iGW4Sv/results.json`
   (SHA-256 `ca736c8f473cce0db7f41bc66032ae63a56f31962fbeefb8d244bbd5a1f293f1`);
   do not repeat this native test before the requested first build.
 - A second native test was run prematurely during the 2026-10-08 recurring Play
   work, after a server/plugin source build but **before the requested first
   complete NSIS build**. The command was `node scripts/test-missions-native.mjs
-  'C:\Users\Admin\AppData\Roaming\npm\node_modules\@opencode\cli\bin\opencode.exe'`.
+  '<APPDATA>\npm\node_modules\@opencode\cli\bin\opencode.exe'`.
   Its isolated OpenCode 2.0.24 service (PID 36796, loopback port 54672) used
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-I0kyjB/fixture.db`
+  `<TEMP>/opencode/missions-native-I0kyjB/fixture.db`
   and separate HOME/XDG/config paths; the retained `receipt.json` in that folder
   reports **16 passed, 0 failed gates**, 32 fixture-provider requests and an
   owned-service SIGTERM on exit. The isolated bundle's SHA-256 was
@@ -828,7 +830,7 @@ or acceptance of the separately assembling UI/control producers.
   refusal and denial of a standalone process sharing the same DB. Managed restart
   keeps DB/enrollment but safely refuses stale ownership. All **8 source hashes**
   match; server typecheck and independent review close with **0 actionable findings**.
-  Receipt: `C:/Users/Admin/AppData/Local/missions-managed-owner-YUXUFw/fixture/results.json`.
+  Receipt: `<LOCALAPPDATA>/missions-managed-owner-YUXUFw/fixture/results.json`.
   Known-writer exclusion and independently protected rollback checks remain delivery
   gates; positive restart requalification is optional research. A protected signer/
   checkpoint candidate is being composed outside DB; none is production-enabled.
@@ -841,7 +843,7 @@ or acceptance of the separately assembling UI/control producers.
   rejected by the independently stored checkpoint, including an older validly
   signed epoch after an explicit fixture-human Pause. No private key is exported
   or used during a native passage, and no CodeNomad backend is attached. Receipt:
-  `C:/Users/Admin/AppData/Local/missions-protected-proof-UEoOzR/fixture/results.json`.
+  `<LOCALAPPDATA>/missions-protected-proof-UEoOzR/fixture/results.json`.
   This is a proof of existing primitives, **not a production authority producer**:
   the existing CAS accepts only a secret-bearing one-shot document; sequential
   `HostStorage.atomic` is not public cross-resource CAS; the genuine async family
@@ -864,7 +866,7 @@ or acceptance of the separately assembling UI/control producers.
   release with metadata rollback, then commits with genuine default sync privacy.
   Independent source/caller/evidence review closes **0 findings**, all **8 reviewed
   hashes unchanged**, without independently rerunning the native fixture. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/family-native-sync-29086334d84247be814f0bd640b82b75/qualification.json`.
+  `<TEMP>/opencode/family-native-sync-29086334d84247be814f0bd640b82b75/qualification.json`.
   This closes the concrete family callback interface gap, not public checkpoint
   CAS, signer provenance, arbitrary-writer exclusion or production autonomy.
 - Native-startup qualification uses a read-copied **2.0.24** artifact and genuinely
@@ -874,7 +876,7 @@ or acceptance of the separately assembling UI/control producers.
   Bun runtime is **1.4.2**; installed Bun **1.3.14** is not a same-version control.
   Cold global-plugin zero hits are observations over **2-second windows**, not
   boot-completion proof. Cleanup and copied/original artifact hashes pass. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-ir3u3e/receipt.json`.
+  `<TEMP>/opencode/missions-startup-ir3u3e/receipt.json`.
   This rejects those artifact-specific loader candidates, not all existing native
   startup mechanisms. No upstream modification, production bootstrap or scheduler
   is enabled.
@@ -891,7 +893,7 @@ or acceptance of the separately assembling UI/control producers.
   durable tool continuation or scheduling. Inactivity survival, protected writer,
   signed-root/profile checks, finite passage/no-replay and unattended relaunch
   remain open; closing all CodeNomad processes is **not** qualified. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-gYg5gT/receipt.json`.
+  `<TEMP>/opencode/missions-startup-gYg5gT/receipt.json`.
   Cleanup/sentinel preservation and original/copied artifact hashes pass. A bounded
   plugin-lifetime/idle probe follows; no native claims are manufactured or rewritten.
 - The follow-up **native timer lifetime** probe passes on actual 2.0.24: plugin
@@ -903,7 +905,7 @@ or acceptance of the separately assembling UI/control producers.
   a bounded observation only. Counts remain **1 admission / 1 tool entry / 2 model
   requests**, with no replay or keepalive prompts. Automatic 60-minute inactivity
   eviction and all-CodeNomad-closed operation remain untested. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-aOPsBv/receipt.json`.
+  `<TEMP>/opencode/missions-startup-aOPsBv/receipt.json`.
   Cleanup, sentinel preservation and artifact hashes pass. Module evaluation at
   cold boot is now being distinguished from setup activation; production remains
   disabled. Cold restart remains an unqualified historical scenario, not a
@@ -916,7 +918,7 @@ or acceptance of the separately assembling UI/control producers.
   This bounded artifact observation does not prove global impossibility, and no
   escaped/global Scope was added. Counts stay **1 admission / 1 tool / 2 model
   requests**, with cleanup/sentinel/artifact hashes preserved. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-JQzXFg/receipt.json`.
+  `<TEMP>/opencode/missions-startup-JQzXFg/receipt.json`.
   A genuine enrolled standing native claim and actual graph callback/retention
   contract are the next bounded candidates; no native execution rows are invented.
 - The **standing watcher callback** candidate (opt-in fixtures in **`bdd6f874`**)
@@ -930,7 +932,7 @@ or acceptance of the separately assembling UI/control producers.
   claim; a following cold restart without Location demand records zero imports/
   setups/callbacks over **8 s**. Watcher counts: **1 admission / 1 tool / 1 model
   request**. The original timer regression also passes, **1 / 1 / 2**.
-  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-EmWMtU/receipt.json`;
+  Receipt: `<TEMP>/opencode/missions-startup-EmWMtU/receipt.json`;
   timer: `.../missions-startup-gvibEk/receipt.json`. Artifact hashes, sentinel and
   cleanup pass. Native denial/unclaimed control pass, not broader permission/inbox
   qualification. Unattended inactivity survival, ten-resume budget continuity, global/
@@ -956,7 +958,7 @@ or acceptance of the separately assembling UI/control producers.
   uninterrupted retention. Historical `session.execution.interrupted.1` payloads
   are absent (**0**), so exact execution-interruption reason remains **Unknown**;
   automatic Location eviction is independently evidenced by the bounded native log.
-  Ack: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-slow-expiry-20261007-a.json`;
+  Ack: `<TEMP>/opencode/missions-slow-expiry-20261007-a.json`;
   original final receipt: `.../missions-startup-GzOudV/receipt.json`.
   Independent setup review finds **2 scoped P2 defects** in the new probe only:
   the supervisor can claim sentinel closure from a kill request without awaiting
@@ -968,7 +970,7 @@ or acceptance of the separately assembling UI/control producers.
   syntax checks pass with **0 native operations**. Revised entry/readiness checks
   record **14/0**, but do not retroactively qualify the old run. All **12 reviewed
   baseline files remain unchanged**. Source/check receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-expiry-p2-validation-20261007-v2.json`.
+  `<TEMP>/opencode/slow-expiry-p2-validation-20261007-v2.json`.
   These checks do not prove execution of the patched 63-minute probe;
   completed old-source cleanup remains **unqualified**, despite its literal
   success outcome. One **P2 evidence gap** remains: preserved-sentinel check and
@@ -990,7 +992,7 @@ or acceptance of the separately assembling UI/control producers.
   actual producer gaps: `observeOwnedExit` proves PID absence, not an already-open
   managed-daemon exit-handle ACK; immediate cancellation is worker-only, with no
   supported post-held-ACK supervisor entry inside five minutes. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-cleanup-proof-9CXFLu/receipt.json`.
+  `<TEMP>/opencode/slow-cleanup-proof-9CXFLu/receipt.json`.
   The concrete fixture interfaces are being implemented separately: exact owned
   Windows process-handle waiting before stop and nonce-bound supervisor IPC
   cancellation. Shared PID-observation helpers remain frozen for ongoing Job
@@ -1000,7 +1002,7 @@ or acceptance of the separately assembling UI/control producers.
   stop same-handle exit ACKs, sentinel preservation/close and worker close, but
   the supervisor parent IPC remains open until the controller deadline; its
   outcome stays **unqualified**, `confirmed:false`. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-cleanup-proof-v4-xfAYO3/attempt-result.json`.
+  `<TEMP>/opencode/slow-cleanup-proof-v4-xfAYO3/attempt-result.json`.
   After a local IPC-drain correction, independent actual-supervisor review finds
   **one remaining P2**: worker close can precede asynchronous enrollment/ACK
   validation and receipt writes; parent disconnect then causes late ACK send
@@ -1014,9 +1016,9 @@ or acceptance of the separately assembling UI/control producers.
   reproducer; all owned children close, **0 held gates/watchers/CLI/native
   admissions**. First-error **code** remains sticky; error-object identity is not
   exposed and is not claimed. Review:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-supervisor-independent-final-20261007/verification.json`.
+  `<TEMP>/opencode/slow-supervisor-independent-final-20261007/verification.json`.
   Freeze:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/slow-supervisor-p2-final-73LvsH/freeze.json`.
+  `<TEMP>/opencode/slow-supervisor-p2-final-73LvsH/freeze.json`.
   Current first-v4 disposition records all **7 known PIDs OS-dead** and no matching
   controller command line, but its original controller PID was not recorded; this
   supplies **no historical close ACK**. Those source checks authorize no native
@@ -1032,7 +1034,7 @@ or acceptance of the separately assembling UI/control producers.
   callback still dispatches a model request. Finite authorized watcher handover
   and uncertain-ACK recovery remain unqualified, not a permanent session limit.
   Source-contract receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-watcher-budget-contract-20261007.json`.
+  `<TEMP>/opencode/missions-watcher-budget-contract-20261007.json`.
   The frozen watcher receipt's post-eviction native claim is **non-null, attempt 1**:
   handler/Scope cancellation is not claim settlement. Its additive read-only
   verification does not invent a historical interruption reason.
@@ -1060,7 +1062,7 @@ or acceptance of the separately assembling UI/control producers.
   Current private lineage/custody and first hung stage are being diagnosed without
   a duplicate invocation, escaped fiber or timeout-based acceptance. No park-claim
   runtime probe is started. Frozen candidate/hash custody:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/job-adoption-pending-source-freeze-20261007/manifest.json`.
+  `<TEMP>/opencode/job-adoption-pending-source-freeze-20261007/manifest.json`.
   All 12 reviewed startup files remain unchanged; production stays disabled.
   Later diagnosis narrows the failed private root to `missions-startup-8L0cbr`:
   one due marker, no shutdown finalizer; retained control flow puts the missing-
@@ -1075,7 +1077,7 @@ or acceptance of the separately assembling UI/control producers.
   not supply historical ACKs or graceful Scope finalization. Disposition:
   `.../missions-startup-8L0cbr/current-custody-disposition-1791387938083.json`.
   No replacement fixture/park probe had run in that receipt. New source/receipt freeze:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/job-exit-handle-correction-freeze-753XQR/manifest.json`.
+  `<TEMP>/opencode/job-exit-handle-correction-freeze-753XQR/manifest.json`.
   Current residue must be reconciled by exact owned identity; PID absence or a
   newly observed exit must never retroactively become an old Scope/fork ACK.
   Exact native Windows stop source explains the finalizer mismatch: CLI stop
@@ -1101,7 +1103,7 @@ or acceptance of the separately assembling UI/control producers.
   sentinel **33948** is preserved then closed, worker **35660** has a fork-close
   ACK/exit **0**. Shutdown finalizer remains **null**: this is native process-bound
   lifetime, not graceful application/generation Scope cancellation or persistence.
-  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-ygipUx/receipt.json`,
+  Receipt: `<TEMP>/opencode/missions-startup-ygipUx/receipt.json`,
   SHA-256 `41c317a135fc60da5613cb849eb8efb3b8ead1bfdc31a08775b90336ece42da3`.
   Independent review supports that executed proof but finds a custody-retention
   correction, then closes its source with **2 artifact-free checks / 0 findings**.
@@ -1118,7 +1120,7 @@ or acceptance of the separately assembling UI/control producers.
   exit **0**. Supervisor writes complete for this run, but no separate supervisor
   exit-handle ACK is supplied. Finalizer stays **null**, authority/persistence and
   graceful Scope cancellation unqualified. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-S3UY5U/receipt.json`,
+  `<TEMP>/opencode/missions-startup-S3UY5U/receipt.json`,
   SHA-256 `eba3d4bbba86ddb0434e0803008f246670acb53a8384affd1507d64d3ac15a8c`.
   Independent review verifies **12 sources / 12 baseline files / 10 fingerprints /
   15 evidence hashes**; main repeats **2/2 artifact-free entry/custody checks** and
@@ -1175,7 +1177,7 @@ or acceptance of the separately assembling UI/control producers.
   exit, watcher **17964** close, sentinel **20984** preservation/close and worker
   **42472** fork-close/exit **1** are witnessed; parent writes drain, no supervisor
   exit-handle ACK is invented. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-qc3AkL/receipt.json`,
+  `<TEMP>/opencode/missions-startup-qc3AkL/receipt.json`,
   SHA-256 `b797076e473ef6fc4f136c4489a07eb740def45fd783652fa5fae3af7f46d215`.
   Existing exact-path normalization corrects placement without admitting unrelated
   roots; independent correction review passes **6 zero-native checks**. Freeze:
@@ -1191,7 +1193,7 @@ or acceptance of the separately assembling UI/control producers.
   not inferred zero. Daemon **4596** same-handle exit, watcher **42988** close,
   sentinel **37164** preservation/close and worker **42024** fork-close/exit **1**
   are witnessed; parent writes drain, no supervisor exit-handle ACK is claimed.
-  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-2iSIoG/receipt.json`,
+  Receipt: `<TEMP>/opencode/missions-startup-2iSIoG/receipt.json`,
   SHA-256 `c8382b424ec99b784d256def9722e1456170360390e139fb5217132dd6cc1855`;
   review: `.../park-corrected-native-execution-f7EdCk/independent-runtime-review.json`.
   Retained-source/log diagnosis and bounded private cause instrumentation proceed
@@ -1207,7 +1209,7 @@ or acceptance of the separately assembling UI/control producers.
   fixture-provider requests **0**, no self-interruption/cold transition. Exact
   daemon **19992** same-handle exit, watcher/worker close, sentinel preservation/
   close and parent write drain are witnessed; no supervisor handle ACK is claimed.
-  Receipt: `C:/Users/Admin/AppData/Local/Temp/opencode/missions-startup-KoCYhX/receipt.json`,
+  Receipt: `<TEMP>/opencode/missions-startup-KoCYhX/receipt.json`,
   SHA-256 `b103091633cef8a2693dd68bf140b0cba24caf179a68a41b5e34ff47e2697191`;
   review: `.../park-first-cause-native-execution-wjsBK7/independent-runtime-review.json`.
   Earlier admission/unsaved provider count stay unknown. The next candidate removes
@@ -1225,7 +1227,7 @@ or acceptance of the separately assembling UI/control producers.
   local to admission. Re-review closes **0 findings**, repeats the 15 zero-native
   checks and adapter parsing, and verifies original baselines/prior evidence;
   old-boundary mutation fails the new admission-context assertion. Freeze/review:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/park-start-context-source-freeze-uirbZF/independent-source-review.json`,
+  `<TEMP>/opencode/park-start-context-source-freeze-uirbZF/independent-source-review.json`,
   manifest SHA-256 `694eb33ceebaf537290d7901c700f94076ce0ed31ad52298989f77672ce9720f`.
   Main verifies six candidate hashes and unchanged baseline12/Job10, then explicitly
   authorizes **one new bounded native parking/cold run** on those exact sources.
@@ -1240,7 +1242,7 @@ or acceptance of the separately assembling UI/control producers.
   ID, deadline and claim. There was no second prompt/root demand, provider call,
   model HTTP request, due marker or wait expiry. Receipt SHA-256
   `4346da4e0cff9f577bb8f50a3838057dca8e09066ca8fe23584c809c6e3e5100`:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/park-observer-native-execution-KveoLy/Temp/opencode/missions-startup-HLEiWG/receipt.json`.
+  `<TEMP>/opencode/park-observer-native-execution-KveoLy/Temp/opencode/missions-startup-HLEiWG/receipt.json`.
   This qualifies bounded fixture parking/cold entry, **not** Stop, scheduling,
   standing authority, passage completion or packaged autonomy. The prior `QDipBM`
   observer-negative receipt remains unchanged.
@@ -1250,7 +1252,7 @@ or acceptance of the separately assembling UI/control producers.
   replacement **finishes 758 pass / 0 fail / 2 skipped / 0 cancelled**, all **760
   selected cases**, under shell `sh_1163a37f9001cC2EBXji7worPp`. All **2,162 input
   fingerprints remain unchanged** at completion; inputs are in
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-keyed-focus-inputs-20261007.json`.
+  `<TEMP>/opencode/pr866-ui-keyed-focus-inputs-20261007.json`.
   Completion check: `.../pr866-ui-keyed-focus-output-20261007.json`. This is ordinary
   Windows renderer/native-fixture evidence, not installed-app or autonomous
   scheduler acceptance, and does not replace the separate hosted CI failure.
@@ -1289,7 +1291,7 @@ or acceptance of the separately assembling UI/control producers.
    test bodies/assertions and the 15-second deadline remain unchanged. Independent
    final review repeats **7/7 setup-hook probes**, closes with **0 actionable findings**
    and confirms all **9 owned cache paths** absent. Receipt:
-   `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-header-fix-validation-20261007.json`.
+   `<TEMP>/opencode/pr866-header-fix-validation-20261007.json`.
    This is local corrected-source evidence, not current hosted acceptance; the
     completed successful full browser aggregate predates this fixture correction.
 - A fresh complete ordinary **no-capture browser aggregate** starts at
@@ -1305,9 +1307,9 @@ or acceptance of the separately assembling UI/control producers.
   flag denotes menu eligibility, **not measured overflow**. Header startup
   correction is not the failure. Real copy/hover
   root diagnosis is active; no forced click, skip or timeout increase is allowed.
-  Result: `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-output-20261007.json`.
+  Result: `<TEMP>/opencode/pr866-ui-header-complete-output-20261007.json`.
   Inputs:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-header-complete-inputs-20261007.json`;
+  `<TEMP>/opencode/pr866-ui-header-complete-inputs-20261007.json`;
   log: `.../pr866-ui-header-complete-20261007.out`;
   job: `sh_11714504d001OxNqANpQB4yJfM`.
   Unchanged focused render-cost/task-copy files pass **26/26**; no source edit or
@@ -1340,7 +1342,7 @@ or acceptance of the separately assembling UI/control producers.
   checks** for timeout/logger/size, confirms identical error preservation and
   pending evaluation drain on owned-page close. **7 browser processes / 7 caches**
   close/remove after shutdown, no open pages/listening fixtures. Review:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-render-diagnostic-independent-20261007/verification.json`.
+  `<TEMP>/opencode/pr866-render-diagnostic-independent-20261007/verification.json`.
   Diagnostic committed **`82c7644e`**; original failed aggregate and unknown root
   are unchanged. The fresh full ordinary no-capture aggregate completes at that
   commit with **2,162 inputs unchanged**, all earlier paths retained and **one extra
@@ -1362,7 +1364,7 @@ or acceptance of the separately assembling UI/control producers.
   drainage is not independently asserted. Vite's port-0 default resolves to the
   actual listening 5173; no bind-collision cause is demonstrated. Chromium's
   `WSAENOBUFS` mapping explains the category, not the failed operation/resource.
-  Report: `C:/Users/Admin/AppData/Local/Temp/opencode/mission-navigation-network-20261007/result.md`.
+  Report: `<TEMP>/opencode/mission-navigation-network-20261007/result.md`.
   Bounded failure-only owned-request/socket capture and original-error-preserving
   setup cleanup are approved next diagnostic work, not a root fix or network retry.
   Preferences diagnosis **reproduces a fixture race** twice without request
@@ -1388,7 +1390,7 @@ or acceptance of the separately assembling UI/control producers.
   closed/removed**, **0 held routes**. Main verifies hashes and UI typecheck.
   Commit **`7407d303`** changes only this test; all **21 original cases**, actions,
   assertions and deadlines remain, with two new held-import cases. Final review:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-mission-control-p2-independent-20261007/verification.json`.
+  `<TEMP>/opencode/pr866-mission-control-p2-independent-20261007/verification.json`.
   Touched-test size warning: **1,213 lines**, no size-only refactor is performed.
   Navigation failure-only capture is also prepared in `mission-navigation.test.ts`
   (**300 lines**): **24/24** author checks, all **23 original bodies byte-identical**,
@@ -1406,7 +1408,7 @@ or acceptance of the separately assembling UI/control producers.
   the historical resource failure. Review:
   `.../mission-navigation-custody-20261007/independent-review/review.md`.
   Evidence:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-navigation-custody-20261007/`.
+  `<TEMP>/opencode/mission-navigation-custody-20261007/`.
   The fresh full ordinary **no-capture** aggregate completes at **`7407d303`**
   after both independent closures. All **2,162 prior input paths** are unchanged;
   only the two reviewed test inputs changed since `82c7644e`. **764 selected cases**:
@@ -1416,7 +1418,7 @@ or acceptance of the separately assembling UI/control producers.
   original **15-second** deadline, before request/badge assertions. Original command,
   assertions and deadlines remain; both external native capture variables are absent.
   Result: `.../pr866-ui-localized-complete-output-20261007.json`. Inputs:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-localized-complete-inputs-20261007.json`;
+  `<TEMP>/opencode/pr866-ui-localized-complete-inputs-20261007.json`;
   log: `.../pr866-ui-localized-complete-20261007.out`;
   job: `sh_117a205a7001O2qz65PqXBWjI8`.
   Six bounded original-case observations do not reproduce that startup failure.
@@ -1433,7 +1435,7 @@ or acceptance of the separately assembling UI/control producers.
   `.../pr866-ui-diagnostic-complete-20261007.out`;
   job `sh_1175ae07e0017YiAg4Muj2zW5n`.
   Focused inputs/result:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-render-diagnostic-final-{inputs,output}-20261007.json`.
+  `<TEMP>/opencode/pr866-render-diagnostic-final-{inputs,output}-20261007.json`.
 
 ### Current independent recurrence/native receipts
 
@@ -1446,13 +1448,13 @@ or acceptance of the separately assembling UI/control producers.
 - Fresh actual OpenCode 2.0.24 trajectory: eight gates pass with native parallel
   siblings, real grandchild, native returns observed before business readout and
   unchanged native subagent contract. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-trajectory-LPKoMj/receipt.json`.
+  `<TEMP>/opencode/missions-native-trajectory-LPKoMj/receipt.json`.
 - Fresh complete native fixture on published `3250150b`: 16 gates pass, no
   failed gates or recorded failures. Covers exact selection, native declarations,
   fresh environment, busy/idle readout, outbox restart, targeted recovery, lifecycle,
   optional cleanup and native transcripts. Its explicit reload/registration remains
   distinct from unattended cold scheduled wake. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-mXFfsa/receipt.json`.
+  `<TEMP>/opencode/missions-native-mXFfsa/receipt.json`.
 - Production Windows qualification: native release build/loader pass; first
   independent birth refuses `native-parent-job-forbids-breakaway`, parent flags
   `0x2000`. One attempt, exact owned sentinel preserved and then torn down. No
@@ -1460,7 +1462,7 @@ or acceptance of the separately assembling UI/control producers.
   continuity. Repeat from an authorized ordinary Windows parent before proceeding
   through its own retained-backend qualification, not as a gate for native-plugin
   scheduling. Packaged Electron/Tauri service-lifetime parity remains separate. Current receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/recurring-continuity-native-dNXg3q/qualification.json`.
+  `<TEMP>/opencode/recurring-continuity-native-dNXg3q/qualification.json`.
 - Fourteen actual Tauri cross-host tests pass, including both historical hosted
   failures. Test-only probe duration/exit diagnostics are added; no production
   deadline, retry or unknown-owner authority is changed.
@@ -1487,7 +1489,7 @@ or acceptance of the separately assembling UI/control producers.
   Tauri. Two 390px French checks read English while the dictionary loads; saving
   preferences does not await i18n import. The remaining failure is the mandatory
   external native capture absent on ordinary CI. Logs retained at
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ci-32ee0fc5-browser-failed.log`.
+  `<TEMP>/opencode/pr866-ci-32ee0fc5-browser-failed.log`.
 - Hosted run `37606296146` on `e56cf0c9` is **cancelled**, not a new test
   failure, after publication of the independently reviewed native-baseline
   correction `d2a5fddb`. Other test jobs passed; the interrupted browser step has
@@ -1506,16 +1508,16 @@ or acceptance of the separately assembling UI/control producers.
   qualification. Audited historical capture passes **1/1** with digest
   `63f3eaf8d8d5aa91b3a46dd9b41d55729f1a72f9d4647d82aa97a854debca3fc`, zero
   page errors/external requests. Fresh output:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-explicit-replay-004c6d9142324c318649b7496b55d448/browser-report.json`.
+  `<TEMP>/opencode/pr866-explicit-replay-004c6d9142324c318649b7496b55d448/browser-report.json`.
   Ordinary discovery loses only this external case and adds one held-import
   regression; another complete no-capture aggregate and hosted result are required.
 - Complete ordinary browser rerun on `e56cf0c9` without `NATIVE_MISSION_CAPTURE`
   or `NATIVE_MISSION_OUTPUT` finishes **757 pass / 1 fail / 2 skipped**, all 760
   cases selected, no cancellations, 2,373 seconds. Its 2,162 input fingerprints
   are unchanged at completion and retained at
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-no-capture-inputs-20261007.json`.
+  `<TEMP>/opencode/pr866-ui-no-capture-inputs-20261007.json`.
   Output is
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115db55ce001fui5txnQWs9XS7.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_115db55ce001fui5txnQWs9XS7.out`.
   Its sole failure is native Electron emulation reset compared against a stale
   initial renderer viewport (height 911 vs 885), not missing capture or the
   translated composer checks. Preserve this failed aggregate.
@@ -1524,7 +1526,7 @@ or acceptance of the separately assembling UI/control producers.
   visible while the pre-emulation renderer remains 1084x911. Every final reset
   agrees with the unchanged native content dimensions. Exact production emulation
   module and original fixture used; no product or menu edits. Probe:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-emulation-geometry-probe.log`.
+  `<TEMP>/opencode/pr866-emulation-geometry-probe.log`.
   The fixture now reads `getContentSize()` and waits for matching renderer size
   before taking its initial reference. Complete reset equality remains strict,
   timeouts unchanged. Five fresh original regression runs pass. Independent
@@ -1537,9 +1539,9 @@ or acceptance of the separately assembling UI/control producers.
   `tests/browser/mission-list-item.test.ts:295`, now under separate root-cause
   investigation. This failed aggregate remains retained; focused reruns do not
   replace it. Fingerprints:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/pr866-ui-native-baseline-inputs-20261007.json`.
+  `<TEMP>/opencode/pr866-ui-native-baseline-inputs-20261007.json`.
   Output:
-  `C:/Users/Admin/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1160318d1001u5Jia2stdQ6RFK.out`.
+  `<HOME>/.local/share/opencode/shell/c11b91080a94d4d4d42e330142a991de76325c49/sh_1160318d1001u5Jia2stdQ6RFK.out`.
 - Independent review of the earlier French/capture seam closes at zero findings.
   Its held-import callback and injected pre-release assertion failure use a
   private Vite cache: eventual French/draft retention and error/owned cleanup pass.
@@ -2509,7 +2511,7 @@ The old map still lacks the `mission-activity-ui` report; its queued admission
 is not evidence of consumption or completion. Its implementation ownership is
 preserved while results are recovered, without resuming Mission orchestration.
 
-These artifacts reside below `C:/Users/Admin/AppData/Local/Temp/opencode/`.
+These artifacts reside below `<TEMP>/opencode/`.
 No application/daemon restart, installation, user session deletion or user config
 mutation occurred for these checks. The separate user-authorized #673 merge/#831
 revert publication did not publish the local durable refactor.

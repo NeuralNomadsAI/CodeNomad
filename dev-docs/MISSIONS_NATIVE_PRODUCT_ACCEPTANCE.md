@@ -2,6 +2,8 @@
 
 > PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
 
+> Artifact paths: `<TEMP>` stands for the Windows temporary directory of the machine that ran each validation; those artifacts are local receipts, not part of this repository.
+
 > Superseded for recurring missions by [MISSIONS_RECURRING_SIMPLE.md](MISSIONS_RECURRING_SIMPLE.md) (2026-10-08). Historical content is retained; unrelated one-time receipts remain in scope.
 
 ## Current status — 2026-10-07
@@ -122,7 +124,7 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   passed. No executable/test/configuration sources changed during the run; the
   complete 2,363-file manifest changed only for this acceptance document. Thus
   this is neither an aggregate pass nor a whole-repository frozen-review receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-ui-full-424283bbd59a4a3f9a2550d8eafd98c7/`.
+  `<TEMP>/opencode/mission-ui-full-424283bbd59a4a3f9a2550d8eafd98c7/`.
   The timeline failure is under reproducible geometry investigation. Two existing
   complete native captures (`missions-child-environment-e2cmfs` and `oLnPm0`) can
   be audited for **historical replay of the current renderer only**; they cannot
@@ -133,7 +135,7 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   result/transcript checks found exact native ancestry and all eight frames;
   original artifacts stayed unchanged. No obsolete selector reproduced and no
   renderer/test patch was needed. Twenty-four fresh screenshots and provenance:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-replay-readout-46385b4de77244ab90cab2a827d2b243/`.
+  `<TEMP>/opencode/mission-replay-readout-46385b4de77244ab90cab2a827d2b243/`.
   This proves current-renderer compatibility with those historical native frames,
   **not current native pipeline qualification**. Their reports are single-page,
   so this replay does not exercise the reader's multi-page branch. The original
@@ -146,7 +148,7 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   Final repeated full-file validation passed **126/126** (42 isolated, 84 under
   concurrent load, including a capture-disabled run); 15 fresh screenshots retain
   midpoint and unchanged streamed thumb placement:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/timeline-owner-20261003/handoff.md`.
+  `<TEMP>/opencode/timeline-owner-20261003/handoff.md`.
   The failed aggregate and failed diagnostic attempts remain retained; a fresh
   complete aggregate is still required rather than summing targeted successes.
 - Latest assembled structural core: **1,097/1,097**, across **70 test files**,
@@ -154,13 +156,13 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   Includes the shared product modules, observation/human-proof ceilings, native
   admission seams, canonical host/transport fixtures and route races. Retained
   spike tests are explicitly excluded; this is **not** native or desktop approval:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-assembled-core-UdupNr/`.
+  `<TEMP>/opencode/missions-assembled-core-UdupNr/`.
 - Default full UI TypeScript passes without changing the target/lib. Default full
   server typing still fails on the checkout's absent `fuzzysort` and wrong resolved
   `commander` declarations. The experiment's `node_modules` is a symlink into the
   original checkout; it has not been modified. No fake ambient declarations are
   being used to hide dependency errors. Full diagnostics:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-product-types-iTYFRx/`.
+  `<TEMP>/opencode/missions-product-types-iTYFRx/`.
 - An isolated full server check with the two actual lockfile declarations
   (`commander@12.1.0`, `fuzzysort@2.0.4`) passes: **519 server TypeScript files**,
   **1,331 compiler inputs**, zero diagnostics. Tarball SHA-512 integrities were
@@ -169,12 +171,12 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   `skipLibCheck:true` are retained. No dependency installation, ambient stub or
   installed-graph repair occurred, so the default workspace still has its **30**
   dependency diagnostics. This is source typing, not runtime/packaged approval:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-isolated-types-20261003-171510-0ee37dc8/`.
+  `<TEMP>/opencode/missions-isolated-types-20261003-171510-0ee37dc8/`.
 - Optional requested task profiles are now distinct from verified resolved child
   profiles at composition: default/partial constraints can match a genuine native
   resolution, but later agent/model/variant changes refuse. **304/304** selected
   regressions, including **42** composition tests, passed; not a real producer:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/native-product-optional-unqualified-tests-17e04d20dda24a34bdfdcadcc4618284.log`.
+  `<TEMP>/opencode/native-product-optional-unqualified-tests-17e04d20dda24a34bdfdcadcc4618284.log`.
 - Background launch return and uncorrelated child success do not settle execution
   or enable finalization. A model-authored decision or even syntactically exact
   Form provenance cannot qualify human authorization. OpenCode 2.0.22's settled
@@ -187,7 +189,7 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   Neither preset inheritance nor a current Session profile proves past invocation
   provenance. Exact-profile retry, mismatched existing coordinator and malformed
   response controls are included in **153/153** scoped tests:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-shared-product-scoped-ExtmPB/`.
+  `<TEMP>/opencode/missions-shared-product-scoped-ExtmPB/`.
 - Lifecycle writes retain native admission or interrupt evidence per exact
   target/action. `interrupted:false`, observed missing targets and uncertain
   replies are not relabelled suspension; historical receipt absence stays unknown.
@@ -195,30 +197,30 @@ a final assembled-product pass. Retain failed attempts and original receipts.
   It has no aggregate pass/count receipt. Many failures expose outdated native
   lifecycle fake acknowledgements; those fixtures were subsequently reconciled without
   weakening strict admission, cancellation or explicit-retry contracts:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-assembled-core-kKjJhm/`.
+  `<TEMP>/opencode/missions-assembled-core-kKjJhm/`.
   All server-source hashes captured by that attempt stayed unchanged during it.
 - Stable production-shell captures found a real desktop composer placeholder/help
   overlap, independently of the timeline fixture's incomplete bounded history
   responses. History fixture responses were completed. The seven original
   diagnostic visual cases are retained as **failing-before evidence, not UI approval**:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-family-visual-5bdd23f956db4b59a52220a52da26df1/`.
+  `<TEMP>/opencode/mission-family-visual-5bdd23f956db4b59a52220a52da26df1/`.
 - Composer correction preserves 44px/8%/60% field limits, saved proportions, all
   shortcut content and a single-row footer. **9** family/browser and **14** original
   control/resize tests passed, with exact helper bounds/hit testing, 44px floor and
   RTL/touch captures. This is rendered fixture evidence, **not live host admission**:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-composer-after-b4c0cd6617124a43a4d57645666cc797/`.
+  `<TEMP>/opencode/mission-composer-after-b4c0cd6617124a43a4d57645666cc797/`.
 
 - Shared declarations, report provenance/control, generation, family display,
   playbook policy, native catalog and plugin/route regressions: **265/265**.
   Source hashes stayed unchanged during that scoped run. Receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/missions-shared-product-scoped-Um1XdD/`.
+  `<TEMP>/opencode/missions-shared-product-scoped-Um1XdD/`.
 - Coordinator's scoped control/plugin/fence strict compilation passes. Including
   full route dependencies retains missing `fuzzysort` declarations and the
   consequent implicit-any diagnostic in `filesystem/search.ts`; this is not a
   complete server typing pass.
 - The production-shell descendant UI fixture has five passing browser cases
   (fake HTTP mutations, not live native host admission). Details:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/mission-family-ui-validation-f794c8c3f8e54ed1a219ca6d5ce1fdaf/`.
+  `<TEMP>/opencode/mission-family-ui-validation-f794c8c3f8e54ed1a219ca6d5ce1fdaf/`.
 - Native guardian protocol, empty-feature refusal probes, preparation and
   derived-authority seams have bounded independent implementation receipts.
   Their structural injected trust is not a genuine writer/storage producer.
@@ -239,10 +241,10 @@ consistent with the difference, but causation is not established. **Exact raw
 index preservation is no longer claimed.** No index restoration was attempted,
 because its origin is uncertain and unrelated changes must not be discarded.
 Observed bytes and receipt:
-  `C:/Users/Admin/AppData/Local/Temp/opencode/primary-preservation-observation-DvVh8O/`.
+  `<TEMP>/opencode/primary-preservation-observation-DvVh8O/`.
 The later read-only verification again found **2,225/2,225** source hashes and the
 staged tree unchanged, with that same non-baseline raw-index hash and no restoration:
-`C:/Users/Admin/AppData/Local/Temp/opencode/primary-preservation-observation-fYlxHK/`.
+`<TEMP>/opencode/primary-preservation-observation-fYlxHK/`.
 
 That agent also created four new untracked adapter/gate files in the original
 checkout and moved its own files to the experiment. Original absence/cleanup was
@@ -258,7 +260,7 @@ the absent authority ABI. Production opening/commit remain refused.
 ### Runtime prerequisites, not a guessed version floor
 
 Current-version inspection used the installed 2.0.22 plugin declarations and
-`C:/Users/Admin/AppData/Local/Temp/opencode/plugin-cancellation-audit-20261003/published-core-2.0.22/`.
+`<TEMP>/opencode/plugin-cancellation-audit-20261003/published-core-2.0.22/`.
 The unrelated `D:/opencode` 2.0.15 checkout supplied source-path navigation only;
 it is not evidence for the active ABI. Required runtime-owned capabilities are:
 

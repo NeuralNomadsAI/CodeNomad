@@ -144,7 +144,8 @@ async function native(script: string, phase: "provision" | "probe" | "unsafe" | 
 test("native own-temp ACL fixture: current principal/SYSTEM only, inherited files, unsafe ACL and junction refusal", {
   skip: process.platform !== "win32", timeout: 60_000,
 }, async () => {
-  const temp = process.platform === "win32" ? "C:/Users/Admin/AppData/Local/Temp/opencode" : tmpdir()
+  const temp = path.join(tmpdir(), "opencode")
+  await mkdir(temp, { recursive: true })
   const root = await mkdtemp(path.join(temp, "windows-host-storage-"))
   const quoted = `'${root.replace(/'/g, "''")}'`
   try {

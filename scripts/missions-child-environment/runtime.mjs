@@ -2,15 +2,20 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { clearFixtureGitEnvironment } from "../native-fixture-guards.mjs"
 
-export const ASSIGNED_CLI = "C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe"
+// The CLI is the first argument; otherwise the user's shared npm installation on Windows.
+export const ASSIGNED_CLI = path.resolve(process.argv[2]
+  ?? path.join(process.env.APPDATA ?? os.homedir(), "npm/node_modules/@opencode/cli/bin/opencode.exe"))
 export async function privateRoot(cli) {
   assert.equal(path.resolve(cli).toLowerCase(), path.resolve(ASSIGNED_CLI).toLowerCase(), "Only assigned private serve CLI")
-  const root = await mkdtemp("C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-")
+  const temp = path.join(os.tmpdir(), "opencode")
+  await mkdir(temp, { recursive: true })
+  const root = await mkdtemp(path.join(temp, "missions-child-environment-"))
   const config = path.join(root, "config"), project = path.join(root, "project")
   for (const directory of [config, project]) await mkdir(directory)
   clearFixtureGitEnvironment()

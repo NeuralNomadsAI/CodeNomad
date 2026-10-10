@@ -1,9 +1,10 @@
-// node packages/server/src/opencode/missions/native-managed-owner.test.mjs
+// node packages/server/src/opencode/missions/native-managed-owner.test.mjs [path/to/opencode.exe]
 // ONLY owned private copies/services. No production provisioning or activation.
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { copyFile, mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { build } from "esbuild"
@@ -29,7 +30,7 @@ try {
   const prepared = await privateRoot(ASSIGNED_CLI)
   // The approved Temp ancestor grants unrelated sandbox identities replacement
   // rights. Move ONLY our owned fixture; never weaken policy/change shared ACLs.
-  const parent = await mkdtemp("C:/Users/Admin/AppData/Local/missions-managed-owner-")
+  const parent = await mkdtemp(path.join(original.LOCALAPPDATA ?? homedir(), "missions-managed-owner-"))
   const root = path.join(parent, "fixture")
   await rename(prepared.root, root)
   const former = path.normalize(prepared.root)

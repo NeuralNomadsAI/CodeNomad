@@ -475,8 +475,8 @@ isolated 2.0.22 runtime and the rebuilt shipped plugin (16 native gates), includ
 the real typed snapshot decoder retaining the briefing, exact request replay,
 foreign/stale refusal, and unchanged tasks/results/provider-turn count. Native
 parallel/recursive trajectory qualification retained all eight gates. Receipts:
-`C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-mXJfp9/receipt.json` and
-`C:/Users/Admin/AppData/Local/Temp/opencode/missions-native-trajectory-GKkfuR/receipt.json`.
+`<TEMP>/opencode/missions-native-mXJfp9/receipt.json` and
+`<TEMP>/opencode/missions-native-trajectory-GKkfuR/receipt.json`.
 
 Server/Mission regressions passed 800 tests, with one pre-existing opt-in native
 test skipped; UI models/locales/view fences passed 69 tests under browser
