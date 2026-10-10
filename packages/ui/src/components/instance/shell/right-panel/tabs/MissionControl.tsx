@@ -88,6 +88,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     onCleanup(() => deactivateMissionDemand(instanceId))
   })
 
+  // A late recovery acknowledgement refreshes only a still-visible view: hidden
+  // views keep their cached snapshot for activation revalidation.
+  const refreshVisible = () => (props.isActive?.() ?? true) && missionStore.demandedInstanceIds().includes(props.instanceId)
+    ? missionStore.refresh(props.instanceId) : Promise.resolve()
+
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
     directory: scope, scheduleID: selectedSchedule, active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
   const mission = createMemo(() => selectedSchedule() ? currentPassage.snapshot()?.mission
@@ -207,7 +212,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
       active={props.isActive?.() ?? true} disabled={Boolean(editor())}
       readOnly={Boolean(selectedSchedule())} reading={isReading} read={target => void read(target)}
-      refresh={() => missionStore.refresh(props.instanceId)} onOpenActor={onOpenActor} />}</Show>
+      refresh={refreshVisible} onOpenActor={onOpenActor} />}</Show>
   </>
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
@@ -319,7 +324,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
-            onAdmitted={() => missionStore.refresh(props.instanceId)} registerRetry={registerRetry}
+            onAdmitted={refreshVisible} registerRetry={registerRetry}
             editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
             onEdit={() => openEditor({ kind: "edit", mission: selected() })}
             onDelete={() => openEditor({ kind: "delete", mission: selected() })} />
