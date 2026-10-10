@@ -53,7 +53,8 @@
 .mission-tree-node[data-state="retired"] .mission-tree-task { color: var(--text-muted); }
 .mission-tree-node[data-state="retired"] .mission-tree-title { text-decoration: line-through; }
 
-/* Conversation shortcut: always visible but discreet, like .session-item-close. */
+/* Conversation shortcut: revealed on row rollover/focus (always shown on touch),
+   then discreet like .session-item-close. */
 .mission-tree-open {
   display: inline-flex;
   align-items: center;
@@ -65,13 +66,14 @@
   background: transparent;
   border: 0;
   border-radius: 0;
-  opacity: 0.5;
+  opacity: 0;
 }
+.mission-tree-node:is(:hover, :focus-within) .mission-tree-open { opacity: 0.5; }
 .mission-tree-open svg { width: 12px; height: 12px; }
-.mission-tree-open:is(:hover, :focus-visible) { color: var(--text-primary); opacity: 1; }
+.mission-tree-node .mission-tree-open:is(:hover, :focus-visible) { color: var(--text-primary); opacity: 1; }
 .mission-tree-open:hover { background-color: var(--surface-hover); }
 .mission-tree-open:focus-visible { outline: 1px solid var(--accent-primary); outline-offset: -1px; }
 .mission-tree-recovery { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); padding-inline-start: calc(var(--space-xs) + 18px); font-size: var(--font-size-xs); }
 @media (pointer: coarse) {
-  .mission-tree-open { min-width: var(--touch-target-size); min-height: var(--touch-target-size); }
+  .mission-tree-open { min-width: var(--touch-target-size); min-height: var(--touch-target-size); opacity: 0.5; }
 }
