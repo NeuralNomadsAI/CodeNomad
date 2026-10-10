@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "Resultados anteriores y tardíos",
   "missions.progress.cleanupHistory": "Historial de limpieza de conversaciones",
   "missions.defaults.scope": "Aplicar a",
-  "missions.defaults.allPlaybooks": "Todos los escenarios",
+  "missions.defaults.allPlaybooks": "Todas las misiones",
+
+  "missions.defaults.exception": "Excepción: {type}",
+
+  "missions.defaults.priority": "Una excepción de tipo sustituye al valor global.",
+
+  "missions.defaults.inheritGlobal": "Global: {value}",
   "missions.defaults.loading": "Cargando valores predeterminados de misión guardados…",
   "missions.defaults.use": "Usar valores predeterminados guardados",
   "missions.defaults.summary": "Agentes y modelos solicitados",

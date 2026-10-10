@@ -15,6 +15,7 @@ describe("mission profile default normalization", () => {
     const input = Object.entries(templateRoles).map(([template, roles]) => ({
       template, profiles: { coordinator, roles: Object.fromEntries(roles.map(role => [role, specialist])) },
     }))
+    input.unshift({ template: "all", profiles: { coordinator, roles: { specialist } } })
     const snapshot = structuredClone(input)
     const result = normalizeMissionDefaults(input)
     assert.deepEqual(result, snapshot)
@@ -25,8 +26,8 @@ describe("mission profile default normalization", () => {
   })
 
   it("keeps deliberately empty profiles without injecting selectors", () => {
-    assert.deepEqual(normalizeMissionDefaults([{ template: "custom", profiles: {} }]), [
-      { template: "custom", profiles: {} },
+    assert.deepEqual(normalizeMissionDefaults([{ template: "all", profiles: {} }]), [
+      { template: "all", profiles: {} },
     ])
     assert.deepEqual(normalizeMissionDefaults([{ template: "wayfinder", profiles: { roles: {} } }]), [
       { template: "wayfinder", profiles: { roles: {} } },
@@ -38,6 +39,8 @@ describe("mission profile default normalization", () => {
     for (const input of [undefined, null, {}, "custom", 1, [null], [false], ["custom"],
       [{ template: "unknown", profiles: {} }], [valid, valid],
       [valid, { template: "wayfinder", profiles: {} }, { template: "pocock-fix-bug", profiles: {} }, valid],
+      [{ template: "all", profiles: {} }, valid, { template: "wayfinder", profiles: {} }, { template: "pocock-fix-bug", profiles: {} }, valid],
+      [{ template: "all", profiles: { roles: { research: specialist } } }],
       [valid, { template: "wayfinder" }]]) {
       assert.deepEqual(normalizeMissionDefaults(input), [], JSON.stringify(input))
     }
@@ -66,7 +69,7 @@ describe("mission profile default normalization", () => {
 
 describe("mission defaults for future creation", () => {
   it("resolves explicit task policy per scenario without inventing a global helper ban", () => {
-    const defaults: MissionProfileDefault[] = [{ template: "custom", profiles: {}, taskMode: "independent" }, { template: "wayfinder", profiles: {}, taskMode: "native" }]
+    const defaults: MissionProfileDefault[] = [{ template: "all", profiles: {}, taskMode: "independent" }, { template: "wayfinder", profiles: {}, taskMode: "native" }]
     assert.deepEqual(normalizeMissionDefaults(defaults), defaults)
     assert.equal(missionTaskModeFor([], "custom"), "native")
     assert.equal(missionTaskModeFor(defaults, "pocock-fix-bug"), "independent")
@@ -80,7 +83,7 @@ describe("mission defaults for future creation", () => {
   })
 
   it("expands the custom specialist fallback to every role of the selected playbook only", () => {
-    const defaults: MissionProfileDefault[] = [{ template: "custom", profiles: { coordinator, roles: { specialist } } }]
+    const defaults: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator, roles: { specialist } } }]
     for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
       const resolved = missionDefaultsFor(defaults, template)!
       assert.deepEqual(resolved.coordinator, coordinator)
@@ -90,7 +93,7 @@ describe("mission defaults for future creation", () => {
 
   it("uses template-specific selections over fallback without mixing execution fields", () => {
     const defaults: MissionProfileDefault[] = [
-      { template: "custom", profiles: { coordinator, roles: { specialist } } },
+      { template: "all", profiles: { coordinator, roles: { specialist } } },
       { template: "wayfinder", profiles: { coordinator: { agent: "web_developer" }, roles: { research: { agent: "general" } } } },
     ]
     assert.deepEqual(missionDefaultsFor(defaults, "wayfinder"), {
@@ -102,7 +105,7 @@ describe("mission defaults for future creation", () => {
 
   it("inherits coordinator and fills only missing roles in partial specific defaults", () => {
     const defaults: MissionProfileDefault[] = [
-      { template: "custom", profiles: { coordinator, roles: { specialist } } },
+      { template: "all", profiles: { coordinator, roles: { specialist } } },
       { template: "pocock-fix-bug", profiles: { roles: { validator: {} } } },
     ]
     const resolved = missionDefaultsFor(defaults, "pocock-fix-bug")!
@@ -115,8 +118,35 @@ describe("mission defaults for future creation", () => {
     })
   })
 
+  it("reads a legacy Flexible entry without a global entry as the global default", () => {
+    const legacy = [{ template: "custom", profiles: { coordinator, roles: { specialist } }, taskMode: "independent" }]
+    const migrated = normalizeMissionDefaults(legacy)
+    assert.deepEqual(migrated, [{ ...legacy[0], template: "all" }])
+    assert.equal(legacy[0].template, "custom", "reading never mutates the saved document")
+    for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+      assert.deepEqual(missionDefaultsFor(migrated, template)!.coordinator, coordinator)
+      assert.equal(missionTaskModeFor(migrated, template), "independent")
+    }
+    const explicit = normalizeMissionDefaults([{ template: "all", profiles: { coordinator } }, { template: "custom", profiles: {} }])
+    assert.deepEqual(explicit.map(item => item.template), ["all", "custom"], "an explicit global entry keeps Flexible as an exception")
+  })
+
+  it("lets Flexible carry its own exception over the global default", () => {
+    const flexible = { agent: "flexible" }
+    const defaults: MissionProfileDefault[] = [
+      { template: "all", profiles: { coordinator, roles: { specialist } }, taskMode: "native" },
+      { template: "custom", profiles: { roles: { specialist: flexible } }, taskMode: "independent" },
+    ]
+    assert.deepEqual(missionDefaultsFor(defaults, "custom"), { coordinator, roles: { specialist: flexible } })
+    assert.deepEqual(missionDefaultsFor(defaults, "custom", false), { coordinator, roles: { specialist } }, "global-only resolution shows the inherited value")
+    assert.deepEqual(missionDefaultsFor(defaults, "wayfinder")!.roles!.research, specialist)
+    assert.equal(missionTaskModeFor(defaults, "custom"), "independent")
+    assert.equal(missionTaskModeFor(defaults, "wayfinder"), "native")
+    assert.equal(missionTaskModeFor([{ template: "custom", profiles: {}, taskMode: "independent" }, { template: "all", profiles: {} }], "wayfinder"), "native")
+  })
+
   it("returns an independent deep copy on every resolution", () => {
-    const defaults: MissionProfileDefault[] = [{ template: "custom", profiles: { coordinator: structuredClone(coordinator), roles: { specialist: structuredClone(specialist) } } }]
+    const defaults: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator: structuredClone(coordinator), roles: { specialist: structuredClone(specialist) } } }]
     const snapshot = structuredClone(defaults)
     const first = missionDefaultsFor(defaults, "wayfinder")!
     const second = missionDefaultsFor(defaults, "wayfinder")!

@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "Önceki ve geç gelen sonuçlar",
   "missions.progress.cleanupHistory": "Konuşma temizleme geçmişi",
   "missions.defaults.scope": "Uygulanacak kapsam",
-  "missions.defaults.allPlaybooks": "Tüm senaryolar",
+  "missions.defaults.allPlaybooks": "Tüm görevler",
+
+  "missions.defaults.exception": "İstisna: {type}",
+
+  "missions.defaults.priority": "Tür istisnası genel varsayılanı geçersiz kılar.",
+
+  "missions.defaults.inheritGlobal": "Genel: {value}",
   "missions.defaults.loading": "Kaydedilmiş görev varsayılanları yükleniyor…",
   "missions.defaults.use": "Kaydedilmiş varsayılanları kullan",
   "missions.defaults.summary": "İstenen ajanlar ve modeller",

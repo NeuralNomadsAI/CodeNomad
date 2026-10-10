@@ -4,6 +4,11 @@ import type { MissionTemplateId } from "../../../server/src/missions/model"
 
 export interface MissionProfileSummaryGroup { roles: string[]; execution?: MissionExecution }
 
+/** Requested agent/model/variant text, or undefined for the native default. */
+export function missionExecutionLabel(execution: MissionExecution | undefined): string | undefined {
+  return [execution?.agent, execution?.model && `${execution.model.providerID}/${execution.model.id}`, execution?.model?.variant].filter(Boolean).join(" / ") || undefined
+}
+
 /** Group effective requested tuples only, without reading catalog or live actors. */
 export function groupMissionProfileSummary(profiles: MissionProfiles | undefined, template: MissionTemplateId): MissionProfileSummaryGroup[] {
   const groups = new Map<string, MissionProfileSummaryGroup>()

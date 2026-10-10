@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "अघिल्ला र ढिलो आएका नतिजाहरू",
   "missions.progress.cleanupHistory": "कुराकानी सफाइको इतिहास",
   "missions.defaults.scope": "लागू हुने क्षेत्र",
-  "missions.defaults.allPlaybooks": "सबै परिदृश्य",
+  "missions.defaults.allPlaybooks": "सबै मिसनहरू",
+
+  "missions.defaults.exception": "अपवाद: {type}",
+
+  "missions.defaults.priority": "प्रकारको अपवादले विश्वव्यापी पूर्वनिर्धारितलाई ओभरराइड गर्छ।",
+
+  "missions.defaults.inheritGlobal": "विश्वव्यापी: {value}",
   "missions.defaults.loading": "सुरक्षित गरिएका मिशनका पूर्वनिर्धारित विकल्पहरू लोड हुँदैछन्…",
   "missions.defaults.use": "सुरक्षित पूर्वनिर्धारित विकल्पहरू प्रयोग गर्नुहोस्",
   "missions.defaults.summary": "अनुरोध गरिएका एजेन्ट र मोडेलहरू",

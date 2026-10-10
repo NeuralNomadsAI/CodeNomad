@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "以前の結果と遅れて届いた結果",
   "missions.progress.cleanupHistory": "会話の削除履歴",
   "missions.defaults.scope": "適用先",
-  "missions.defaults.allPlaybooks": "すべてのシナリオ",
+  "missions.defaults.allPlaybooks": "すべてのミッション",
+
+  "missions.defaults.exception": "例外: {type}",
+
+  "missions.defaults.priority": "種類別の例外はグローバル既定より優先されます。",
+
+  "missions.defaults.inheritGlobal": "グローバル: {value}",
   "missions.defaults.loading": "保存済みのミッション既定値を読み込み中…",
   "missions.defaults.use": "保存済みの既定値を使用",
   "missions.defaults.summary": "指定されたエージェントとモデル",

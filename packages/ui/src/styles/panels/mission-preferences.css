@@ -2,7 +2,7 @@
 .mission-preferences > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs); margin-block-end: var(--space-sm); }
 .mission-preferences h4, .mission-model-library h4, .mission-profiles h4 { margin: 0; font-size: var(--font-size-sm); font-weight: 600; }
 .mission-preferences > header > span, .mission-preferences-dirty { color: var(--text-secondary); font-size: var(--font-size-xs); }
-.mission-profile-summary { color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.mission-profile-summary, .mission-preferences-priority { color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .mission-preferences p { margin-block: var(--space-xs); overflow-wrap: anywhere; }
 .mission-preferences label, .mission-model-library label { display: grid; gap: var(--space-xs); min-width: 0; margin-block: var(--space-sm); }
 .mission-preferences-scope { grid-template-columns: auto minmax(0, 1fr); align-items: center; }

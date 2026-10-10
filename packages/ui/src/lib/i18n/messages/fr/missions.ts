@@ -128,7 +128,13 @@ export const missionMessages = {
   "missions.defaults.loading": "Chargement des réglages des missions…",
   "missions.defaults.use": "Utiliser les réglages enregistrés",
   "missions.defaults.scope": "Appliquer à",
-  "missions.defaults.allPlaybooks": "Tous les scénarios",
+  "missions.defaults.allPlaybooks": "Toutes les missions",
+
+  "missions.defaults.exception": "Exception : {type}",
+
+  "missions.defaults.priority": "Une exception de type remplace la valeur globale.",
+
+  "missions.defaults.inheritGlobal": "Global : {value}",
   "missions.models.title": "Consignes enregistrées",
   "missions.models.hint": "Enregistrez une consigne pour la réutiliser. Chaque lancement crée une mission distincte ; aucune programmation automatique.",
   "missions.models.select": "Consigne enregistrée",

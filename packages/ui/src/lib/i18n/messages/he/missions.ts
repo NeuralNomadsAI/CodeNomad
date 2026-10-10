@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "תוצאות קודמות ומאוחרות",
   "missions.progress.cleanupHistory": "היסטוריית ניקוי שיחות",
   "missions.defaults.scope": "החלה על",
-  "missions.defaults.allPlaybooks": "כל התרחישים",
+  "missions.defaults.allPlaybooks": "כל המשימות",
+
+  "missions.defaults.exception": "חריגה: {type}",
+
+  "missions.defaults.priority": "חריגה לפי סוג גוברת על ברירת המחדל הגלובלית.",
+
+  "missions.defaults.inheritGlobal": "גלובלי: {value}",
   "missions.defaults.loading": "טעינת ברירות המחדל השמורות למשימות…",
   "missions.defaults.use": "שימוש בברירות המחדל השמורות",
   "missions.defaults.summary": "הסוכנים והמודלים המבוקשים",

@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "Предыдущие и поздние результаты",
   "missions.progress.cleanupHistory": "История очистки разговоров",
   "missions.defaults.scope": "Применять к",
-  "missions.defaults.allPlaybooks": "Все сценарии",
+  "missions.defaults.allPlaybooks": "Все миссии",
+
+  "missions.defaults.exception": "Исключение: {type}",
+
+  "missions.defaults.priority": "Исключение для типа переопределяет глобальное значение.",
+
+  "missions.defaults.inheritGlobal": "Глобально: {value}",
   "missions.defaults.loading": "Загрузка сохранённых настроек миссий…",
   "missions.defaults.use": "Использовать сохранённые настройки",
   "missions.defaults.summary": "Запрошенные агенты и модели",

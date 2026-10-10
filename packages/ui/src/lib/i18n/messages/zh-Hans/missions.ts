@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "先前及迟到的结果",
   "missions.progress.cleanupHistory": "会话清理历史",
   "missions.defaults.scope": "应用范围",
-  "missions.defaults.allPlaybooks": "所有场景",
+  "missions.defaults.allPlaybooks": "所有任务",
+
+  "missions.defaults.exception": "例外：{type}",
+
+  "missions.defaults.priority": "类型例外优先于全局默认值。",
+
+  "missions.defaults.inheritGlobal": "全局：{value}",
   "missions.defaults.loading": "正在加载已保存的任务默认设置…",
   "missions.defaults.use": "使用已保存的默认设置",
   "missions.defaults.summary": "请求使用的智能体和模型",

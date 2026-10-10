@@ -125,7 +125,13 @@ export const missionMessages = {
   "missions.progress.previousResults": "Frühere und verspätete Ergebnisse",
   "missions.progress.cleanupHistory": "Verlauf der Gesprächsbereinigung",
   "missions.defaults.scope": "Anwenden auf",
-  "missions.defaults.allPlaybooks": "Alle Szenarien",
+  "missions.defaults.allPlaybooks": "Alle Missionen",
+
+  "missions.defaults.exception": "Ausnahme: {type}",
+
+  "missions.defaults.priority": "Eine Typ-Ausnahme überschreibt den globalen Standard.",
+
+  "missions.defaults.inheritGlobal": "Global: {value}",
   "missions.defaults.loading": "Gespeicherte Missionsstandardwerte werden geladen…",
   "missions.defaults.use": "Gespeicherte Standardwerte verwenden",
   "missions.defaults.summary": "Angeforderte Agenten und Modelle",

@@ -133,7 +133,13 @@ export const missionMessages = {
   "missions.defaults.loading": "Loading saved mission defaults…",
   "missions.defaults.use": "Use saved defaults",
   "missions.defaults.scope": "Apply to",
-  "missions.defaults.allPlaybooks": "All scenarios",
+  "missions.defaults.allPlaybooks": "All missions",
+
+  "missions.defaults.exception": "Exception: {type}",
+
+  "missions.defaults.priority": "A type exception overrides the global default.",
+
+  "missions.defaults.inheritGlobal": "Global: {value}",
   "missions.models.title": "Saved briefs",
   "missions.models.hint": "Save a brief for reuse. Each launch creates a separate mission; no automatic scheduling.",
   "missions.models.select": "Saved brief",

@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, Show } from "solid-js"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import { useI18n } from "../lib/i18n"
-import { normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
+import { globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
 import { useConfig } from "../stores/preferences"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { MissionProfileSummary } from "./mission-profile-summary"
@@ -15,7 +15,7 @@ import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 
 // Global preference drafts belong to this renderer, not a project/tab mount.
 // Keep the original CAS expectation through navigation and owner invalidations.
-const [template, setTemplate] = createSignal<MissionTemplateId>("custom")
+const [template, setTemplate] = createSignal<MissionDefaultScope>("all")
 const [draft, setDraft] = createSignal<MissionProfileDefault[]>([])
 const [dirty, setDirty] = createSignal(false), [pending, setPending] = createSignal(false), [failed, setFailed] = createSignal(false)
 const [repair, setRepair] = createSignal(false)
@@ -24,6 +24,8 @@ let expected: MissionPreferenceExpectation | undefined
 
 export function MissionPreferences(props: { instanceId: string; directory?: string; active: () => boolean }) {
   const { t } = useI18n(), config = useConfig()
+  const entry = () => draft().find(item => item.template === template())
+  const exception = (): MissionTemplateId | undefined => { const scope = template(); return scope === "all" ? undefined : scope }
   const disabled = () => !props.active() || !config.isUiConfigLoaded() || pending() || (!config.missionDefaultsValid() && !repair())
   const change = (profiles: ReturnType<typeof missionDefaultsFor>) => {
     setDirty(true); setFailed(false)
@@ -63,24 +65,23 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     <Show when={!config.isUiConfigLoaded() && !pending()}><p role={config.uiConfigLoadFailed() ? "alert" : "status"}>{t(config.uiConfigLoadFailed() ? "missions.defaults.unavailable" : "missions.defaults.loading")}</p></Show>
     <Show when={config.isUiConfigLoaded() && !config.missionDefaultsValid() && !repair()}><p role="alert">{t("missions.defaults.invalid")}</p></Show>
     <label class="mission-preferences-scope">{t("missions.defaults.scope")}<select value={template()} disabled={disabled()}
-      onChange={event => setTemplate(event.currentTarget.value as MissionTemplateId)}>
-      <option value="custom">{t("missions.defaults.allPlaybooks")}</option>
-      <For each={["pocock-fix-bug", "wayfinder"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
+      onChange={event => setTemplate(event.currentTarget.value as MissionDefaultScope)}>
+      <option value="all">{t("missions.defaults.allPlaybooks")}</option>
+      <For each={["custom", "pocock-fix-bug", "wayfinder"] as const}>{id => <option value={id}>{t("missions.defaults.exception", { type: t(`missions.control.template.${id}`) })}</option>}</For>
     </select></label>
-    <MissionTaskModeControls value={template() === "custom" ? missionTaskModeFor(draft(), template()) : draft().find(item => item.template === template())?.taskMode}
-      onInherit={template() === "custom" ? undefined : () => changeTaskMode()} disabled={disabled()} onChange={changeTaskMode}>
+    <p class="mission-preferences-priority">{t("missions.defaults.priority")}</p>
+    <MissionTaskModeControls value={exception() ? entry()?.taskMode : globalMissionTaskMode(draft())}
+      onInherit={exception() ? () => changeTaskMode() : undefined} disabled={disabled()} onChange={changeTaskMode}
+      inheritLabel={t("missions.defaults.inheritGlobal", { value: t(`missions.taskMode.${globalMissionTaskMode(draft())}`) })}>
       <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
     </MissionTaskModeControls>
-    <MissionProfileSummary template={template()} profiles={missionDefaultsFor(draft(), template())} />
-    <Show when={template() !== "custom"}><MissionDefaultInheritanceControls template={template()}
-      profiles={draft().find(item => item.template === template())?.profiles} disabled={disabled()} onChange={change} /></Show>
-      <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()}
-        taskMode={missionTaskModeFor(draft(), template())}
-        profiles={draft().find(item => item.template === template())?.profiles} disabled={disabled()} active={props.active}
-        onChange={profiles => {
-          const previous = draft().find(item => item.template === template())?.profiles
-          change(template() === "custom" ? profiles : preserveNativeDefaultOverrides(previous, profiles))
-        }} />
+    <MissionProfileSummary template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(draft(), exception()!) : entry()?.profiles} />
+    <Show when={exception()}>{type => <MissionDefaultInheritanceControls template={type()} inherited={missionDefaultsFor(draft(), type(), false)}
+      profiles={entry()?.profiles} disabled={disabled()} onChange={change} />}</Show>
+      <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"}
+        taskMode={exception() ? missionTaskModeFor(draft(), exception()!) : globalMissionTaskMode(draft())}
+        profiles={entry()?.profiles} disabled={disabled()} active={props.active}
+        onChange={profiles => change(exception() ? preserveNativeDefaultOverrides(entry()?.profiles, profiles) : profiles)} />
     <div class="window-actions mission-preferences-actions"><button type="button" class="window-action button-primary" disabled={disabled() || !dirty()} onClick={() => void save()}>
       {t(pending() ? "missions.control.mutation.pending" : "missions.control.save")}</button>
       <button type="button" class="window-action" aria-label={t("missions.defaults.reset")} title={t("missions.defaults.reset")} disabled={!props.active() || !config.isUiConfigLoaded() || pending()} onClick={() => { setDirty(true); setDraft([]); setRepair(true); setFailed(false) }}>{t("missions.preferences.reset")}</button>

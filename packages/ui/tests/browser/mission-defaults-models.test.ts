@@ -588,10 +588,10 @@ test("playbook task policy can inherit again without resetting profiles or other
     await page.getByRole("button", { name: "Save", exact: true }).click()
     await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
     assert.deepEqual(fixture.writes[0].settings.missionProfileDefaults, [
-      { template: "custom", profiles: {}, taskMode: "independent" },
+      { template: "all", profiles: {}, taskMode: "independent" },
       { template: "wayfinder", profiles: { coordinator: { agent: "root" } } },
     ])
-    await scope.selectOption("custom"); await mode.selectOption("native")
+    await scope.selectOption("all"); await mode.selectOption("native")
     await page.getByRole("button", { name: "Save", exact: true }).click()
     await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
     await scope.selectOption("wayfinder")
@@ -627,7 +627,7 @@ test("native task defaults and independent preference edits keep global CAS draf
     assert.equal(await mode.inputValue(), "independent")
     await page.getByRole("button", { name: "Save", exact: true }).click()
     await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
-    assert.deepEqual(fixture.writes, [{ settings: { missionProfileDefaults: [{ template: "custom", profiles: {}, taskMode: "independent" }] } }])
+    assert.deepEqual(fixture.writes, [{ settings: { missionProfileDefaults: [{ template: "all", profiles: {}, taskMode: "independent" }] } }])
     assert.equal(fixture.creates.length, 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
