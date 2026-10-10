@@ -365,6 +365,12 @@ preserves comments, sibling fields and WSL atomic-write protections. Removing th
 override restores inheritance. Missing effective/default data remains unknown;
 zero is displayed as a number, not guessed to mean disabled. No automatic reload,
 restart, permission edit or mutation replay is introduced.
+`node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
+qualifies this against a private runtime (no project discovery, reload or shared
+service): the native depth capability, project JSONC save/reset preserving comments
+and sibling fields, stale-expectation conflicts and foreign-location rejection. It
+passed on Windows with OpenCode 2.0.26 on 2026-10-11 and runs in the latest-runtime
+CI job. It does not qualify depth-0 execution semantics or watcher activation.
 
 Activity and targeted recovery share `missions/native-session-family.ts`: a root's
 bounded native descendant inventory (32 maximum) must have consistent parent,
