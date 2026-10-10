@@ -3,6 +3,8 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { isRejectedLifecycleIntent, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { useI18n } from "../lib/i18n"
+import { showToastNotification } from "../lib/notifications"
+import { missionDisplayTitle } from "../lib/mission-display"
 import { missionStore } from "../stores/missions"
 import { instances } from "../stores/instances"
 import { showConfirmDialog } from "../stores/alerts"
@@ -27,6 +29,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   }
   const identity = createMemo(() => missionLifecycleSource(props.instanceId, props.mission, location()))
   const retry = () => missionLifecycleIntents.retry(identity())
+  const rejection = () => missionLifecycleIntents.rejection(identity(), props.mission.id)
   const busy = () => missionLifecycleIntents.busy(identity()) || refreshing()
   const active = () => missionStore.demandedInstanceIds().includes(props.instanceId)
   let alive = true, epoch = 0, attempt = 0
@@ -82,6 +85,10 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       // The exact operation owns bookkeeping, not its mounted/visible reader.
       // Late ACKs may settle that record, never another request or a new view.
       const matched = missionLifecycleIntents.finish(intent, outcome)
+      // A certified rejection is announced once per exact request, even when
+      // its view is hidden or gone; nothing is resent.
+      if (matched && outcome === "rejected") showToastNotification({ title: missionDisplayTitle(mission, 80),
+        message: t(`missions.control.run.rejected.${intent.input.action}`), variant: "error" })
       if (matched && current()) {
         setRefreshing(true)
         try { await missionStore.refresh(instanceId) }
@@ -91,11 +98,14 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   }
   async function confirmStop() {
     if (blocked() || terminal()) return
-    const scope = identity(), revision = props.mission.revision
+    const scope = identity(), revision = props.mission.revision, missionId = props.mission.id
     const confirmed = await showConfirmDialog(t("missions.control.run.stopConfirm"), { variant: "warning",
       confirmLabel: t("missions.control.run.stop"), cancelLabel: t("missions.control.cancel") })
-    // The confirmation belongs to the exact Mission revision it described.
-    if (confirmed && alive && identity() === scope && props.mission.revision === revision) await act("stop")
+    if (!confirmed) return
+    // The confirmation belongs to the exact Mission revision it described; after
+    // drift nothing is sent and the person is asked to review and reconfirm.
+    if (alive && identity() === scope && props.mission.revision === revision) await act("stop")
+    else missionLifecycleIntents.notSent(scope, missionId, "stop")
   }
   const primary = (): MissionPrimaryAction | undefined => {
     if (unresolved()) return { key: "check", label: t("missionsPanel.action.checkStatus"), ariaLabel: t("missions.control.checkStatus"), disabled: Boolean(props.disabled) || busy(), onSelect: checkStatus }
@@ -116,6 +126,9 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       <small role="status">{t("missions.control.run.partialInterrupt")}</small>
     </Show>
     <Show when={!busy() && (unresolved() || (full() && !terminal()))}><small role="alert">{t("missions.control.run.error")}</small></Show>
+    <Show when={!busy() && rejection()}>{value =>
+      <small role="alert">{t(value().reason === "rejected" ? `missions.control.run.rejected.${value().action}` : "missions.control.run.notSent.stop")}</small>}
+    </Show>
   </>
   return { primary, stop, retryable, resend, feedback }
 }
