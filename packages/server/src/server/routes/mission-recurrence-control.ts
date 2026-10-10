@@ -4,16 +4,15 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { recurrenceControlStatusSchema, recurrenceControlHttpSchema, recurrenceControlStateMatches } from "../../missions/recurrence-control-contract"
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions } from "../../opencode/compatibility/location"
+import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
 /** The sole authenticated human control path. Unknown mutations get one bounded
  * exact receipt read; they are never submitted a second time. */
 export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
 } & Parameters<typeof prepareHumanRecurrenceControl>[3]) {
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control", async (request, reply) => {
-    const session = deps.auth.getSessionFromRequest(request)
-    if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") {
-      return reply.code(401).send({ error: "Authenticated human session required" })
-    }
+    // Refused before any permit/hold: an unqualified principal can never verify.
+    if (!recurrenceHumanSession(request, deps)) return reply.code(401).send({ error: "Authenticated human session required" })
     const input = recurrenceControlHttpSchema.safeParse({ ...(request.body as Record<string, unknown>), scheduleID: request.params.scheduleID })
     if (!input.success || !request.params.id || request.params.id.length > 200) return reply.code(400).send({ error: "Invalid exact recurrence control request" })
     const lifetime = requestAdmission(request, reply)

@@ -48,6 +48,12 @@ Create paused, Play, Pause, Stop, Resume, Run now and Check passage are admitted
 2. The existing HMAC-authenticated bridge.
 3. The plugin's schedule-control RPC.
 
+The route's human principal, with local auth enabled, is a live login cookie
+session or, from the Remote Control ingress (socket membership), a paired device
+that is still authorized; the bridge callback revalidates the same principal and
+never treats a device as a cookie. Any other principal is refused before a
+deletion permit or control hold exists, so a refusal is definitive, never uncertain.
+
 Never expose these controls as model tools. Validate project/Location ownership,
 connection identity, inputs and frozen execution profiles at the existing boundary.
 Each control has `requestID` idempotency and `expectedRevision` CAS.

@@ -359,12 +359,13 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
-    auth: deps.authManager, bridgeToken: deps.automationBridgeToken })
+    auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
-  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence })
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
+  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence,
+    remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })

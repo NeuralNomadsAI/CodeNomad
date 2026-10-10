@@ -10,6 +10,8 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { requestAdmission } from "../request-admission"
 import { captureRecurrenceControlHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
   recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
+import { recurrenceHumanSession } from "./mission-recurrence-proof"
+import type { RemoteControlManager } from "../../remote-control/manager"
 
 /** Explicit bounded read of an uncertain action. No mutation retry and no
  * generic RPC proxy, even when a signed archive establishes prior commitment. */
@@ -18,10 +20,11 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
   manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection" | "ownsLocation"
     | "getWorktreeIdentityForPath">
   fence: WorktreeDeletionFence
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
 }) {
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control/status", async (request, reply) => {
-    const session = deps.auth.getSessionFromRequest(request)
-    if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") return reply.code(401).send({ error: "Human authentication required" })
+    const session = recurrenceHumanSession(request, deps)
+    if (!session) return reply.code(401).send({ error: "Human authentication required" })
     const parsed = z.object({ requestID: z.string(), action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]),
       expectedRevision: z.number(), directory: z.string().min(1).max(4096).optional() }).strict().safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid exact control status request" })
@@ -42,7 +45,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (!currentDeletion() || deps.manager.get(id) !== workspace
           || !sameLocation(deps.manager.getServiceLocation(id) ?? { directory: "" }, base)
-          || deps.auth.getSessionFromRequest(request)?.sessionId !== session.sessionId) throw new Error("Control read changed")
+          || recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Control read changed")
       }
       const location = { directory }, signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(10_000)])
       if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, signal))) return reply.code(403).send({ error: "Foreign Location" })

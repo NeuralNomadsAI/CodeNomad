@@ -14,6 +14,8 @@ import { sameLocation, locationRequestOptions } from "../../opencode/compatibili
 import { resolveRecurrenceRoot } from "./mission-recurrence-roots"
 import { captureRecurrenceControlHoldRead, holdRecurrenceControl } from "./mission-recurrence-holds"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
+import type { RemoteControlManager } from "../../remote-control/manager"
+import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
 /** Exact Settings profile and currently owned physical root are resolved only
  * inside the authenticated human request, never from native RPC path options. */
@@ -21,9 +23,9 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   deps: { auth: AuthManager; settings: Pick<SettingsService, "getProfileScope" | "configYamlPathForAuthority">;
     manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection"
       | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle" | "getWorktreeIdentityForPath" | "getHostPathForServicePath">;
-    fence: WorktreeDeletionFence; bridgeToken: string }, signal: AbortSignal) {
-  const input = recurrenceControlHttpSchema.parse(raw), session = deps.auth.getSessionFromRequest(request)
-  if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") throw new Error("Human authentication required")
+    fence: WorktreeDeletionFence; bridgeToken: string; remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }, signal: AbortSignal) {
+  const input = recurrenceControlHttpSchema.parse(raw), session = recurrenceHumanSession(request, deps)
+  if (!session) throw new Error("Human authentication required")
   const workspace = deps.manager.get(workspaceID), base = deps.manager.getServiceLocation(workspaceID)
   if (!workspace || !base) throw new Error("Workspace unavailable")
   const profile = deps.settings.getProfileScope(), distro = deps.manager.getServiceWslDistro(workspaceID)
@@ -38,7 +40,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   const display = previousHold ?? await captureDisplayIdentities(deps.fence, deps.manager, workspaceID, [base.directory, directory]) ?? (() => false)
   const current = (): true => {
     signal.throwIfAborted(); connection.assertCurrent()
-    if (!deps.auth.isAuthEnabled() || deps.auth.getSessionFromRequest(request)?.sessionId !== session.sessionId
+    if (recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId
       || deps.manager.get(workspaceID) !== workspace || !sameLocation(deps.manager.getServiceLocation(workspaceID) ?? { directory: "" }, base)
       || deps.manager.getServiceWslDistro(workspaceID) !== distro || !display()
       || canonicalAuthority(deps.settings.getProfileScope()) !== canonicalAuthority(profile)) throw new Error("Human recurrence admission changed")
