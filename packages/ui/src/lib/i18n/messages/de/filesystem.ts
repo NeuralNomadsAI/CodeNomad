@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Ordnerpfad eingeben oder einfügen",
   "directoryBrowser.openCurrent": "Öffnen",
   "directoryBrowser.goTo": "Zu einem Ordner wechseln",
+  "directoryBrowser.goToTypedPath": "Zu diesem Ordner wechseln (Eingabe)",
   "directoryBrowser.goToParent": "Übergeordneter Ordner",
   "directoryBrowser.goToHome": "Home",
   "directoryBrowser.goToRoot": "Arbeitsbereichsstamm",

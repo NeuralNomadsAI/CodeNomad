@@ -1,5 +1,5 @@
 import { Component, For, Show, createEffect, createSignal, createUniqueId } from "solid-js"
-import { ArrowLeft, Folder, FolderRoot, Home } from "lucide-solid"
+import { ArrowLeft, CornerDownLeft, Folder, FolderRoot, Home } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 
 export interface DirectoryDestination {
@@ -17,6 +17,8 @@ interface DirectoryBrowserAddressProps {
   onReset: () => void
   onSubmit: () => void
   onChoose: (destination: DirectoryDestination) => void
+  /** The typed path differs from the folder shown, so it can be navigated to. */
+  canGo: boolean
 }
 
 const DirectoryBrowserAddress: Component<DirectoryBrowserAddressProps> = (props) => {
@@ -35,6 +37,7 @@ const DirectoryBrowserAddress: Component<DirectoryBrowserAddressProps> = (props)
     <div class="directory-browser-address" onFocusOut={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onOpenChange(false)
     }}>
+      <div class="directory-browser-address-field">
       <input
         type="text"
         value={props.value}
@@ -75,7 +78,22 @@ const DirectoryBrowserAddress: Component<DirectoryBrowserAddressProps> = (props)
         aria-controls={isExpanded() ? id : undefined}
         aria-activedescendant={isExpanded() && active() >= 0 ? `${id}-${active()}` : undefined}
         class="selector-input directory-browser-current-path"
+        data-can-go={props.canGo ? "" : undefined}
       />
+      {/* Same as Enter: navigate to the typed path without opening it. */}
+      <Show when={props.canGo}>
+        <button
+          type="button"
+          class="directory-browser-go"
+          title={t("directoryBrowser.goToTypedPath")}
+          aria-label={t("directoryBrowser.goToTypedPath")}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => { props.onOpenChange(false); setActive(-1); props.onSubmit() }}
+        >
+          <CornerDownLeft class="w-4 h-4" aria-hidden="true" />
+        </button>
+      </Show>
+      </div>
       <Show when={isExpanded()}>
         <div id={id} class="directory-browser-destinations" role="listbox" aria-label={t("directoryBrowser.goTo")}>
           <For each={props.destinations}>

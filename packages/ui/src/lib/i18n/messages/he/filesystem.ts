@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "הקלד או הדבק נתיב תיקייה",
   "directoryBrowser.openCurrent": "פתח",
   "directoryBrowser.goTo": "מעבר לתיקייה",
+  "directoryBrowser.goToTypedPath": "מעבר לתיקייה זו (Enter)",
   "directoryBrowser.goToParent": "תיקיית אב",
   "directoryBrowser.goToHome": "בית",
   "directoryBrowser.goToRoot": "שורש סביבת העבודה",

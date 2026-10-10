@@ -227,6 +227,27 @@ test("typing filters children; arrow and Enter navigate, while Enter with no sel
   } finally { assert.deepEqual(errors, []); await page.close() }
 })
 
+test("the Go button appears for a different typed path and navigates without opening it", async () => {
+  const page = await browser.newPage({ locale: "fr-FR" })
+  const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
+  try {
+    const go = page.getByRole("button", { name: "Aller à ce dossier (Entrée)", exact: true })
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws/start")
+    assert.equal(await go.count(), 0, "nothing to go to before typing")
+    await field(page).fill("/ws/start/")
+    assert.equal(await go.count(), 0, "the shown folder, with a trailing separator, is not a destination")
+    await field(page).fill("/ws/start/projects")
+    const navigation = page.waitForRequest((request) => request.url().includes("start%2Fprojects"))
+    await go.click()
+    await navigation
+    // The button leaves once the typed path has become the shown folder.
+    await go.waitFor({ state: "detached" })
+    assert.equal(await field(page).inputValue(), "/ws/start/projects")
+    assert.equal(await page.getByRole("dialog").count(), 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).directoryBrowserFixture.navigations()), [], "Go must not open the folder")
+  } finally { assert.deepEqual(errors, []); await page.close() }
+})
+
 test("Escape restores an unsubmitted edit without dismissing the dialog", async () => {
   const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")

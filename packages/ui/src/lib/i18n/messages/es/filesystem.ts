@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Escribe o pega una ruta de carpeta",
   "directoryBrowser.openCurrent": "Abrir",
   "directoryBrowser.goTo": "Ir a una carpeta",
+  "directoryBrowser.goToTypedPath": "Ir a esta carpeta (Intro)",
   "directoryBrowser.goToParent": "Carpeta superior",
   "directoryBrowser.goToHome": "Inicio",
   "directoryBrowser.goToRoot": "Raíz del espacio de trabajo",
