@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowUpRight, Check, ChevronRight, Circle, CircleDot, Ci
 import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
+import { sessions } from "../stores/session-state"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
@@ -12,17 +13,27 @@ export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready
 
 /** One status per node. A reported blockage is "blocked"; unmet dependencies are
  * "waiting"; an open native Form/permission is "input". Admission is only
- * "assigned": observed native activity alone makes a task "active". */
+ * "assigned": observed native activity of the task's own conversation alone
+ * makes a task "active". */
 export function missionTaskState(task: MissionTask, activity?: MissionActorActivity["state"]): MissionTaskState {
   if (task.status === "completed") return "done"
   if (task.status === "withdrawn" || task.replacedByTaskKey) return "retired"
   if (task.status === "failed") return "failed"
-  if (task.actorSessionId && (activity === "form" || activity === "permission")) return "input"
+  if (activity === "form" || activity === "permission") return "input"
   if (task.status === "needs-input") return "blocked"
   if (task.status === "blocked") return "waiting"
-  if (task.actorSessionId && (activity === "running" || activity === "background")) return "active"
+  if (activity === "running" || activity === "background") return "active"
   if (task.status === "dispatching" || task.status === "queued") return "assigned"
   return "ready"
+}
+
+/** A natively delegated task has no declared actor: the live status of its exact
+ * linked conversation stands in, as the session list shows it. */
+function conversationActivity(instanceId: string, sessionId: string): MissionActorActivity["state"] | undefined {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (session?.pendingPermission) return "permission"
+  if (session?.pendingForm) return "form"
+  return session?.status === "working" || session?.status === "compacting" ? "running" : undefined
 }
 
 const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, assigned: Circle, ready: Circle,
@@ -57,7 +68,12 @@ export function MissionTaskTree(props: {
       <div class="mission-flow" classList={{ "mission-flow-linked": linked() }}>
         <ul ref={list} class="mission-tree-list"><For each={ordered().map(task => task.id)}>{id => {
           const task = () => props.mission.tasks.find(task => task.id === id)!
-          const activity = () => props.activity?.find(value => value.sessionId === task().actorSessionId)?.state
+          const activity = () => {
+            const actor = task().actorSessionId
+            if (actor) return props.activity?.find(value => value.sessionId === actor)?.state
+            const linked = props.conversation(task())
+            return linked ? conversationActivity(props.instanceId, linked) : undefined
+          }
           const state = () => missionTaskState(task(), activity())
           const word = () => t(`missionsPanel.task.${state()}`)
           const recovery = createMissionRecoveryAction({
