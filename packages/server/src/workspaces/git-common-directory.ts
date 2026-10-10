@@ -78,7 +78,11 @@ async function readCheckoutCommonDirectory(directory: string): Promise<string> {
 async function hasValidHead(gitDirectory: string): Promise<boolean> {
   const head = path.join(gitDirectory, "HEAD")
   const info = await lstat(head)
-  if (info.isSymbolicLink()) return (await readlink(head)).replaceAll("\\", "/").startsWith("refs/")
+  // Backslash targets are platform-dependent for Git (accepted only on Windows).
+  if (info.isSymbolicLink()) {
+    const target = await readlink(head)
+    return !target.includes("\\") && target.startsWith("refs/")
+  }
   if (!info.isFile()) return false
   const content = (await readFile(head, "utf8")).replace(/\r?\n$/, "")
   return /^ref:\s*refs\//.test(content) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(content)

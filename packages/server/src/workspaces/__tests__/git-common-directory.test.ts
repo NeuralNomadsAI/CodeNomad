@@ -109,6 +109,27 @@ describe("Git ownership preflight admission", () => {
     }
   })
 
+  it("leaves backslash HEAD symlink targets to Git's platform rules", async (context) => {
+    const other = path.join(temp, "other repo")
+    git(temp, "init", "--quiet", other)
+    const vendor = path.join(repo, "vendor")
+    const checkout = path.join(vendor, "x")
+    const administrative = path.join(checkout, ".git")
+    mkdirSync(administrative, { recursive: true })
+    writeFileSync(path.join(vendor, "HEAD"), "ref: refs/heads/main\n")
+    writeFileSync(path.join(vendor, "commondir"), `${path.relative(vendor, path.join(other, ".git")).replaceAll("\\", "/")}\n`)
+    writeFileSync(path.join(administrative, "commondir"), `${path.relative(administrative, path.join(repo, ".git")).replaceAll("\\", "/")}\n`)
+    writeFileSync(path.join(administrative, "gitdir"), `${administrative.replaceAll("\\", "/")}\n`)
+    try {
+      symlinkSync("refs\\heads\\main", path.join(administrative, "HEAD"))
+    } catch {
+      context.skip("Symbolic links are unavailable")
+      return
+    }
+    assert.equal(await readGitCommonDirectory(checkout), realpathSync(git(checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")))
+    if (process.platform !== "win32") assert.equal(await sharesGitCommonDirectory(repo, checkout), false)
+  })
+
   it("leaves a nested bare repository with a dangling HEAD symlink to Git", async (context) => {
     const bare = path.join(repo, "vendor", "linked-head")
     mkdirSync(path.join(bare, "objects"), { recursive: true })
