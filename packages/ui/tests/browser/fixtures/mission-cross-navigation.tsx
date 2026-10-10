@@ -17,6 +17,7 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
@@ -30,6 +31,8 @@ const initial = ["initial", "B"].map(name => ({ id: `ses_${name}`, instanceId: i
 setSessions(previous => new Map(previous).set(id, new Map(initial.map(session => [session.id, session]))))
 setSessionPage(id, initial.map(session => session.id), false, true)
 seedRestoredSessionSelection(id, "ses_initial", "ses_initial")
+// Settle restoration only after the simulated first page and selection exist.
+markSessionListsRestored(id)
 setMessagesLoaded(previous => new Map(previous).set(id, new Set(initial.map(session => session.id))))
 await ensureWorktreesLoaded(id)
 await openSessionPreview("ses_initial", "https://example.invalid/", scope)

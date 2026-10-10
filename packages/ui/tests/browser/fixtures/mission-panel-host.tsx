@@ -11,10 +11,14 @@ import { addInstance } from "../../../src/stores/instances"
 import { activeSettingsSection, settingsOpen } from "../../../src/stores/settings-screen"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
 addInstance({ id: "fixture", folder: "fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: getRootClient("fixture"),
   metadata: { project: { id: "project", directory: "fixture", canonical: "/fixture" } } })
+// This host has no session list or restored conversation: settle restoration
+// once the instance exists so Missions display demand starts.
+markSessionListsRestored("fixture")
 
 /** MissionControl inside the same host chain as RightPanel: a fixed-height column whose
  * tab body (`flex-1 overflow-y-auto`) holds a `h-full min-h-0` tab panel. */
