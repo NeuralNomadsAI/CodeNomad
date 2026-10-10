@@ -1,11 +1,12 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Location } from "@opencode/schema/location"
-import { Context, Effect, Schema } from "effect"
+import { Cause, Context, Effect, Schema } from "effect"
 import { verifyRecurrenceBridge } from "../automation-plugin"
 import { assertRecurrenceProofFresh, recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
 import { recurrenceControlRequestSchema } from "../../missions/recurrence-control-contract"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
-import { cancelNativeRecurrenceClock, observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClock, startNativeRecurrenceClock } from "./native-service-clock"
+import { cancelNativeRecurrenceClock, observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClock, readNativeRecurrenceClockStatus,
+  startNativeRecurrenceClock } from "./native-service-clock"
 import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
@@ -79,10 +80,21 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
     // One Job per running schedule: the daily Job also settles a pending passage,
     // so a paused Run now's settlement-only observer is retired, not kept beside it.
     yield* cancelNativeRecurrenceClock(placement, "settle").pipe(Effect.catchCause(() => Effect.void))
-    yield* startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement,
-      profileSource: document.profileSource }), ctx)
-    const single = yield* observeNativeRecurrenceScheduleOnly(placement).pipe(Effect.catchCause(() => Effect.succeed(false)))
-    record = { ...record, controlsComplete: single, targetsKnown: true }
+    const failure = yield* startNativeRecurrenceClock(placement, nativeRecurrenceDue(ctx, { ...placement,
+      profileSource: document.profileSource }), ctx).pipe(Effect.as(undefined),
+      Effect.catchCause(cause => Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.succeed(cause)))
+    if (failure) {
+      // Definitive only on a positive read that no daily Job runs: the published intent
+      // resolves as Interrupted (reason `error`) for an explicit Resume, never a retry.
+      // A failed, partial or running read keeps the request genuinely unknown.
+      const status = yield* readNativeRecurrenceClockStatus(placement).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      if (status === undefined || status === "running") return yield* Effect.failCause(failure)
+      yield* Effect.promise(() => store.recordClockError(input.scheduleID, () => true))
+      record = { ...record, controlsComplete: true, targetsKnown: true }
+    } else {
+      const single = yield* observeNativeRecurrenceScheduleOnly(placement).pipe(Effect.catchCause(() => Effect.succeed(false)))
+      record = { ...record, controlsComplete: single, targetsKnown: true }
+    }
   } else if (input.action === "check") {
     // Reconcile-only: restarts settlement observation, never daily scheduling.
     yield* startNativeRecurrenceSettlement(ctx, placement, document)

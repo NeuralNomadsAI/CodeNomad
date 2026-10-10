@@ -55,6 +55,8 @@ export class RecurringDayFixture {
   /** Consecutive hits of `crash` before it clears. */
   crashRepeat = 1
   crashHits = 0
+  /** Native Job.start failure: `absent` registers nothing, `registered` fails after the Job runs. */
+  jobStartFailure: "absent" | "registered" | undefined
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
   readonly tools = new Map<string, NativeTool>()
@@ -203,9 +205,10 @@ export class RecurringDayFixture {
       environment: (input: { variables?: unknown }) => Effect.succeed(input.variables ?? {}),
     }
     const job = { get: (id: string) => Effect.sync(() => this.jobs.get(id)),
-      start: (input: Job) => Effect.sync(() => {
+      start: (input: Job) => Effect.suspend(() => {
+        if (this.jobStartFailure === "absent") return Effect.die(new Error("Injected native Job start failure"))
         const old = this.jobs.get(input.id)
-        if (old?.status === "running") return old
+        if (old?.status === "running") return Effect.succeed(old)
         const record = { ...input, status: "running" }
         this.jobs.set(input.id, record)
         record.fiber = Effect.runForkWith(this.graph)(input.run.pipe(Effect.provideService(Clock.Clock, this.clock)))
@@ -213,7 +216,7 @@ export class RecurringDayFixture {
           record.status = Exit.isSuccess(exit) ? "completed" : "error"
           if (Exit.isFailure(exit)) this.errors.push(exit.cause)
         })
-        return record
+        return this.jobStartFailure === "registered" ? Effect.die(new Error("Injected native Job start reply failure")) : Effect.succeed(record)
       }), cancel: (id: string) => Effect.promise(async () => {
         const record = this.jobs.get(id)
         if (record?.fiber) await Effect.runPromise(Fiber.interrupt(record.fiber))
@@ -474,11 +477,11 @@ export class RecurringDayFixture {
     assert(schedule, "created schedule must be present in real snapshot")
     return schedule
   }
-  async control(action: "play" | "pause" | "stop" | "resume" | "run-now" | "check") {
+  async control(action: "play" | "pause" | "stop" | "resume" | "run-now" | "check", statusCode = 200) {
     const schedule = await this.snapshot()
     const response = await this.bridge.inject({ method: "POST", url: "/day-test/control", headers: { cookie: "session=offline-human-cookie" },
       payload: { scheduleID: this.id, action, requestID: `human_${++this.serial}`, expectedRevision: schedule.revision } })
-    assert.equal(response.statusCode, 200, `${action}: ${response.body}`)
+    assert.equal(response.statusCode, statusCode, `${action}: ${response.body}`)
     await this.flush()
     return this.snapshot()
   }

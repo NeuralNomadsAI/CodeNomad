@@ -64,7 +64,11 @@ A schedule document keeps at most 64 control records. Admitting a new control
 evicts the oldest completed record; unresolved records are never evicted, and an
 evicted request's exact status reads unknown, which never authorizes a resend.
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
-later completed control that restarted or cancelled it. A Run now is resolved by
+later completed control that restarted or cancelled it. A Play/Resume whose native
+Job start fails while a fresh read positively shows no running daily Job completes
+its record with the schedule Interrupted (reason `error`), releasing the backend
+permit for an explicit Resume/Pause/Stop; a failed or running read stays unknown.
+Nothing retries the start. A Run now is resolved by
 its own passage's admission or archive; archiving also resolves Checks of that
 passage. Pause/Stop on a reserved passage without a journal mission has no actor
 to interrupt (dispatch of an unadmitted passage is refused once paused/stopped).
