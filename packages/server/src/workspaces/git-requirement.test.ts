@@ -14,7 +14,7 @@ import { WorkspaceManager, canonicalWorktreeIdentity } from "./manager"
 import { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
 
-test("no-Git conversations retain directory ownership, agent context and deletion fences", async () => {
+test("no-Git conversations retain directory ownership, agent context and deletion fences", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "codenomad-no-git-")))
   const repo = path.join(root, "repo"), folder = path.join(repo, "nested"), foreign = path.join(root, "foreign")
   await mkdir(folder, { recursive: true })
@@ -92,6 +92,12 @@ test("no-Git conversations retain directory ownership, agent context and deletio
     const page = await app.inject({ method: "GET", url: `${base}/session?cursor=${cursor({ directory: folder })}` })
     assert.equal(page.statusCode, 200, page.body)
 
+    // The real `git --version` probe can exceed syncSessionGitContext's 2 s advisory
+    // deadline on a loaded host (serial suite); the send then (correctly) succeeds
+    // without updating the context. Freeze that timer so the context assertions
+    // exercise the probe result rather than host load.
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+
     for (const [method, url, payload] of [
       ["POST", `${base}/session`, { location: { directory: folder } }],
       ["DELETE", `${base}/experimental/session/owned/instructions/entries/codenomad.voice-mode`, undefined],
@@ -128,6 +134,7 @@ test("no-Git conversations retain directory ownership, agent context and deletio
     assert.equal(instructions.has("codenomad.git-availability"), false)
     assert.equal(instructions.get("unrelated"), "preserved")
   } finally {
+    t.mock.timers.reset()
     restorePath()
     await app.close()
     await upstream.close()
