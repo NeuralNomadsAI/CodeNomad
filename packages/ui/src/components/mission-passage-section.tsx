@@ -3,9 +3,9 @@ import type { MissionRecurrenceCurrentContent } from "../../../server/src/api-ty
 import type { RecurrenceCurrentContentInput } from "../../../server/src/missions/recurrence-current"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
-import { missionMarkdownPage } from "../lib/mission-markdown-pages"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
+import { missionMarkdownPage } from "../lib/mission-markdown-pages"
 import { Markdown } from "./markdown"
 
 export type MissionPassageSection = Omit<RecurrenceCurrentContentInput, "page"> & { projectID: string; missionID: string }
@@ -34,7 +34,9 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
       if (parsed.version !== 1 || parsed.projectID !== projectID || parsed.missionID !== missionID || parsed.scheduleID !== source.scheduleID
         || parsed.passageID !== source.passageID || parsed.revision !== source.revision || parsed.page !== page
         || !Number.isSafeInteger(parsed.pageCount) || parsed.pageCount < 1 || parsed.pageCount > 64 || page >= parsed.pageCount
-        || typeof parsed.sourceText !== "string" || parsed.sourceText.length > 9_001 || parsed.markdownText !== null) throw new Error("Passage source changed")
+        || typeof parsed.sourceText !== "string" || parsed.sourceText.length > 9_001
+        // The bounded Markdown-page projection (as for archived passages) is optional display context.
+        || parsed.markdownText !== null && (typeof parsed.markdownText !== "string" || parsed.markdownText.length > 9_116)) throw new Error("Passage source changed")
       if (cache.size >= 128 && !cache.has(key)) cache.delete(cache.keys().next().value!)
       cache.set(key, parsed); setValue(parsed); props.onPageCount(parsed.pageCount)
     }).catch(() => { if (current) setError(true) })
