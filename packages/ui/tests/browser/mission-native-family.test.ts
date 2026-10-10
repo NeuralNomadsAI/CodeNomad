@@ -14,6 +14,7 @@ import { outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, out
   navigationWindowInputSchema, navigationWindowResultSchema } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { missionPicker, missionPopupOption } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 
 let server: ViteDevServer, browser: Browser, url: string, output: string
@@ -50,12 +51,12 @@ const observedFamily: NonNullable<MissionActivityProjection["missions"][number][
   { sessionId: "ses_child", parentSessionId: "ses_actor", actorSessionId: "ses_actor", kind: "ordinary" },
   { sessionId: "ses_grandchild", parentSessionId: "ses_child", actorSessionId: "ses_actor", kind: "ordinary" },
 ] }
-const deepFamily: typeof observedFamily = { state: "observed", members: [...observedFamily.members,
+const deepFamily: typeof observedFamily = { state: "observed", members: ([...observedFamily.members,
   { sessionId: "ses_third", parentSessionId: "ses_grandchild", actorSessionId: "ses_actor", kind: "ordinary" },
   { sessionId: "ses_fourth", parentSessionId: "ses_third", actorSessionId: "ses_actor", kind: "ordinary" },
   { sessionId: "ses_fifth", parentSessionId: "ses_fourth", actorSessionId: "ses_actor", kind: "ordinary" },
   { sessionId: "ses_independent", actorSessionId: "ses_independent", kind: "declared" },
-].reverse() }
+] satisfies typeof observedFamily.members).reverse() }
 function nativeHistory(sessionId: string): SessionMessageUser[] {
   assert.match(sessionId, /^ses_[A-Za-z_]+$/)
   return [1, 2].map(n => ({ id: `msg_${sessionId}_${n}`, type: "user", time: { created: n }, text: `Bounded native history ${sessionId} ${n}` }))
@@ -183,14 +184,29 @@ async function setup(label: string, narrow = false, independent = false) {
       openGates: ["live authenticated HTTP/SSE desktop host", "invocation profile provenance"] }, null, 2))
     await page.screenshot({ path: path.join(output, `${label}.png`), fullPage: true }).catch(() => {})
   }
-  try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 });
-    if (!narrow) await page.waitForFunction(() => window.missionNativeFamily.snapshot().selectedMission === "B") }
+  try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 })
+    // Only the picker selects a Mission: restoring a coordinator conversation leaves none selected.
+    if (!narrow) await pickerField(page).waitFor()
+    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }
   catch (error) { await save(); release(); await page.close(); throw error }
   return { page, errors, failures, requests, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
     setFamily: (next: typeof observedFamily) => { family = next },
     unknown: () => { family = { state: "unknown", members: observedFamily.members } } }
 }
 const composer = (page: Page) => page.locator("textarea.prompt-input:visible")
+const selectedMission = async (page: Page) => (await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission
+// Locale-neutral picker field: the RTL cases render the Hebrew accessible name.
+const pickerField = (page: Page) => missionPicker(page).locator("button.mission-picker-field")
+/** The user's explicit picker choice, the only route that changes the selected Mission. */
+async function pickMission(page: Page, id: "A" | "B") {
+  const session = (await page.evaluate(() => window.missionNativeFamily.snapshot())).session
+  if (await selectedMission(page) !== id) {
+    if (await pickerField(page).getAttribute("aria-expanded") !== "true") await pickerField(page).click()
+    await missionPopupOption(page, `Objective ${id}`).click()
+  }
+  await page.waitForFunction(id => window.missionNativeFamily.snapshot().selectedMission === id, id)
+  assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, session, "picking a Mission does not navigate")
+}
 async function select(page: Page, id: string) {
   const row = page.locator(`.session-sidebar [data-session-id="ses_${id}"]`)
   await row.locator(".session-item-select").click()
@@ -210,7 +226,7 @@ async function refreshMap(page: Page) {
 }
 async function answerChild(page: Page) {
   await page.evaluate(() => window.missionNativeFamily.emit({ type: "form.created", id: "event-child-form", created: 1, location: { directory: "/fixture" },
-    data: { form: { id: "child-form", sessionID: "ses_child", title: "Child form", fields: [] } } }))
+    data: { form: { id: "child-form", sessionID: "ses_child", title: "Child form", fields: [{ type: "string", key: "answer", title: "Child answer" }] } } }))
   await answer(page.locator(".mission-attention-list"), "Child form").click()
 }
 
@@ -220,10 +236,11 @@ test("production SessionList/SessionView select recursive children, steer/queue 
     await composer(page).fill("Sibling B draft")
     await select(page, "A"); await composer(page).fill("Coordinator A draft")
     await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
+    await pickMission(page, "A")
     await select(page, "B")
-    await page.waitForFunction(() => window.missionNativeFamily.snapshot().selectedMission === "B")
+    assert.equal(await selectedMission(page), "A", "an unrelated coordinator conversation keeps the picked Mission")
     await select(page, "grandchild")
-    await page.waitForFunction(() => window.missionNativeFamily.snapshot().selectedMission === "A")
+    assert.equal(await selectedMission(page), "A")
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).root, "ses_A")
     assert.equal(await composer(page).inputValue(), "")
     const steer = page.waitForResponse(response => response.url().endsWith("/session/ses_grandchild/prompt") && response.request().method() === "POST")
@@ -242,6 +259,30 @@ test("production SessionList/SessionView select recursive children, steer/queue 
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_child")
     await select(page, "A"); assert.equal(await composer(page).inputValue(), "Coordinator A draft")
     await select(page, "B"); assert.equal(await composer(page).inputValue(), "Sibling B draft")
+    assert.equal(await selectedMission(page), "A")
+    await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
+  } finally { await ctx.save(); ctx.release(); await page.close() }
+})
+
+test("only the explicit picker choice selects a Mission; coordinator, worker and descendant navigation keep it", { timeout: 60000 }, async () => {
+  const ctx = await setup("manual-mission-selection"), { page } = ctx
+  const title = () => pickerField(page).locator(".mission-picker-title").innerText()
+  try {
+    await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
+    // Arriving in Mission A's coordinator selects nothing by itself.
+    await select(page, "A"); assert.equal(await selectedMission(page), undefined)
+    await pickMission(page, "B"); assert.equal(await title(), "Objective B")
+    for (const id of ["A", "actor", "child", "grandchild", "outside", "B", "A"]) {
+      await select(page, id)
+      assert.equal(await selectedMission(page), "B", `ses_${id} keeps the picked Mission`)
+    }
+    assert.equal(await title(), "Objective B")
+    await pickMission(page, "A")
+    for (const id of ["B", "outside", "grandchild"]) {
+      await select(page, id)
+      assert.equal(await selectedMission(page), "A", `ses_${id} keeps the picked Mission`)
+    }
+    assert.equal(await title(), "Objective A")
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
@@ -398,7 +439,7 @@ test("native Chromium touch resize preserves the chosen proportion, exact draft 
 test("descendant attention opens its exact dock; global stays uncorrelated and unknown family hides only ordinary rows", { timeout: 60000 }, async () => {
   const ctx = await setup("attention-unknown"), { page, requests } = ctx
   try {
-    await select(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
+    await select(page, "A"); await pickMission(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
     const attention = page.locator(".mission-attention-list")
     await attention.getByText("Child choice", { exact: true }).waitFor()
     assert.equal(await attention.getByText("Global choice", { exact: true }).count(), 0)
@@ -432,8 +473,10 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     const permissionReplies = requests.filter(item => item.path.includes("child-permission") && item.method !== "GET")
     assert.equal(permissionReplies.length, 1); assert(permissionReplies[0].path.includes("/session/ses_grandchild/"))
     ctx.unknown(); await refreshMap(page)
-    await select(page, "B"); await select(page, "grandchild")
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, "B", "local ancestry does not replace an unknown family observation")
+    await pickMission(page, "B"); await select(page, "grandchild")
+    assert.equal(await selectedMission(page), "B", "neither local ancestry nor an unknown family observation replaces the picked Mission")
+    await select(page, "A")
+    assert.equal(await selectedMission(page), "B")
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
@@ -450,6 +493,7 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".session-header-drawer-toggle--right button:visible").tap()
+    await pickMission(page, "A")
     const attention = page.locator(".mission-attention-list")
     await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
     const permissionAnswer = answer(attention, "safe-fixture.txt")
@@ -467,7 +511,7 @@ test("390px RTL Attention selects the exact same-active-child permission before 
 test("deferred ordinary-child navigation cannot overwrite a newer sibling selection", { timeout: 60000 }, async () => {
   const ctx = await setup("deferred-child"), { page } = ctx
   try {
-    await select(page, "A")
+    await select(page, "A"); await pickMission(page, "A")
     await page.evaluate(() => window.missionNativeFamily.coldChild()); ctx.defer()
     await answerChild(page)
     await ctx.arrival
@@ -475,8 +519,8 @@ test("deferred ordinary-child navigation cannot overwrite a newer sibling select
     ctx.release()
     await ctx.completion
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await page.waitForFunction(() => window.missionNativeFamily.snapshot().selectedMission === "B")
+    await refreshMap(page)
+    assert.equal(await selectedMission(page), "A", "neither the late result nor the sibling conversation changes the picked Mission")
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_B")
     assert.equal(await composer(page).inputValue(), "New sibling draft")
     assert.equal(await page.locator(".mission-control > [role=alert]").count(), 0)
@@ -487,7 +531,7 @@ test("deferred ordinary-child navigation cannot overwrite a newer sibling select
 test("family observation loss fences an awaited ordinary-child navigation without an error or draft mutation", { timeout: 60000 }, async () => {
   const ctx = await setup("membership-loss"), { page } = ctx
   try {
-    await select(page, "A"); await composer(page).fill("Keep A during membership loss")
+    await select(page, "A"); await pickMission(page, "A"); await composer(page).fill("Keep A during membership loss")
     await page.evaluate(() => window.missionNativeFamily.coldChild()); ctx.defer()
     await answerChild(page); await ctx.arrival
     ctx.unknown(); await refreshMap(page)
@@ -495,6 +539,7 @@ test("family observation loss fences an awaited ordinary-child navigation withou
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_A")
     assert.equal(await composer(page).inputValue(), "Keep A during membership loss")
+    assert.equal(await selectedMission(page), "A")
     assert.equal(await page.locator(".mission-control > [role=alert]").count(), 0)
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
