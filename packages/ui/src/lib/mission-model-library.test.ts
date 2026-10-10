@@ -4,7 +4,6 @@ import {
   MAX_MISSION_MODELS, missionRecordedBrief, normalizeMissionModels, parseMissionModel, removeMissionModelRecord, saveMissionModelRecord,
   type UserMissionModel,
 } from "./mission-model-library"
-import { LEGACY_DEBUG_TEMPLATE_ID } from "../../../server/src/missions/template-id"
 
 function model(index = 1, overrides: Partial<UserMissionModel> = {}): UserMissionModel {
   return {
@@ -21,9 +20,6 @@ const templateRoles = {
 } as const
 
 describe("strict reusable Mission model records", () => {
-  it("reads a saved legacy Debugging brief as debug", () => {
-    assert.equal(parseMissionModel({ ...model(), template: LEGACY_DEBUG_TEMPLATE_ID }).template, "debug")
-  })
   it("preserves a selected task policy in a reusable brief and rejects invented modes", () => {
     assert.equal(parseMissionModel(model(1, { taskMode: "independent" })).taskMode, "independent")
     assert.equal(parseMissionModel(model()).taskMode, undefined)

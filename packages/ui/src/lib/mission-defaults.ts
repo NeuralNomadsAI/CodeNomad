@@ -1,6 +1,5 @@
 import { parseMissionProfiles, missionProfileRoles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
-import { normalizeStoredTemplateId } from "../../../server/src/missions/template-id"
 
 export type MissionTaskMode = "native" | "independent"
 /** `all` is the global default; a mission type entry is an exception overriding it. */
@@ -16,7 +15,7 @@ export function normalizeMissionDefaults(value: unknown): MissionProfileDefault[
   const result: MissionProfileDefault[] = []
   for (const entry of value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return []
-    const template = normalizeStoredTemplateId(entry.template) as MissionDefaultScope
+    const template = entry.template as MissionDefaultScope
     if (Object.keys(entry).some(key => !["template", "profiles", "taskMode"].includes(key))
       || (entry.taskMode !== undefined && !["native", "independent"].includes(entry.taskMode))
       || !scopes.includes(template) || result.some(item => item.template === template)) return []

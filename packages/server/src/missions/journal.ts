@@ -28,7 +28,6 @@ import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
 import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
-import { normalizeStoredTemplateId } from "./template-id"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -236,7 +235,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       return { ...eventBase(input), type: "mission.briefed", actorSessionID: input.actorSessionID, briefing }
     }
     case "mission.created": {
-      const templateID = normalizeStoredTemplateId(input.template)
+      const templateID = input.template
       if (!text(input.projectCanonical, MAX_TEXT) || !text(input.objective, MAX_TEXT)
         || !template(templateID) || !record(input.coordinator)) return undefined
       const location = parseLocation(input.coordinator.location)

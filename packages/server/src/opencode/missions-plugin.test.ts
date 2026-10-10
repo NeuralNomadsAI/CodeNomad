@@ -4,15 +4,12 @@ import test from "node:test"
 import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
 import { buildAssignmentPrompt } from "../missions/recipes"
 import type { MissionMap } from "../missions/model"
-import { LEGACY_DEBUG_TEMPLATE_ID } from "../missions/template-id"
 
 test("validates the compact mission tool contracts", () => {
   assert.deepEqual(parseInspectInput({ start: { objective: "Fix it", template: "debug" } }), {
     start: { objective: "Fix it", template: "debug", notes: undefined, taskMode: "native" },
     missionID: undefined,
   })
-  assert.throws(() => parseInspectInput({ start: { objective: "Fix it", template: LEGACY_DEBUG_TEMPLATE_ID } }), /unsupported/,
-    "new missions never accept the legacy template ID")
   assert.deepEqual(parseDelegateInput({ taskKey: "review-spec", title: "Review", brief: "Check spec", role: "review-spec" }), {
     missionID: undefined,
     taskKey: "review-spec",

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { encodeMissionDefaults, missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
-import { LEGACY_DEBUG_TEMPLATE_ID } from "../../../server/src/missions/template-id"
 
 const coordinator = { agent: "general", model: { providerID: "openai", id: "coordinator", variant: "high" } }
 const specialist = { agent: "explore", model: { providerID: "openai", id: "specialist", variant: "low" } }
@@ -24,11 +23,6 @@ describe("mission profile default normalization", () => {
     result[0].profiles.coordinator!.model!.id = "changed"
     result[0].profiles.roles!.specialist.model!.variant = "changed"
     assert.deepEqual(input, snapshot, "normalization must not retain mutable profile references")
-  })
-
-  it("reads a saved legacy Debugging exception as debug", () => {
-    assert.deepEqual(normalizeMissionDefaults([{ template: LEGACY_DEBUG_TEMPLATE_ID, profiles: { coordinator } }]),
-      [{ template: "debug", profiles: { coordinator } }])
   })
 
   it("keeps deliberately empty profiles without injecting selectors", () => {
