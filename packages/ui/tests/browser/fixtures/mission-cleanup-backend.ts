@@ -36,7 +36,7 @@ export function cleanupBackend() {
   } })
   let control: MissionControl
   const client = { ...http,
-    location: { get: async () => ({ project: { id: "private-project" } }) },
+    location: { get: async ({ location }: { location: { directory: string } }) => ({ directory: location.directory, project: { id: "private-project" } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     rpc: () => ({ cleanupTarget: (input: any) => control.cleanupTarget(input), delete: async (input: any) => {
       try { return await control.delete(input) } catch (error) {
@@ -45,12 +45,17 @@ export function cleanupBackend() {
       }
     } }),
   }
+  // One stable workspace object: map mutations recheck its identity before dispatch.
+  const workspace = { id: "fixture" }
   const manager = {
-    list: () => [{ id: "fixture" }], get: () => ({ id: "fixture" }), getServiceLocation: () => ({ directory: "/private-fixture" }),
+    list: () => [workspace], get: () => workspace, getServiceLocation: () => ({ directory: "/private-fixture" }),
     getSharedServiceClient: async () => client, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }),
     ownsLocation: async (_id: string, location: { directory: string }) => state.owned && location.directory === "/private-fixture",
+    getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async () => "/private-fixture",
   }
+  // The production server shares one deletion fence between the map-mutation
+  // routes and the cleanup bridge; its permit is reentrant per directory.
   const fence = new WorktreeDeletionFence()
   control = new MissionControl({ project: { id: "private-project", canonical: "/private-fixture", location: { directory: "/private-fixture" } }, storage,
     createManagedRoot: async (_coordinator, input) => {
@@ -70,7 +75,7 @@ export function cleanupBackend() {
       { kind: "cleanup", input }, new AbortController().signal) },
   })
   const app = Fastify()
-  registerMissionRoutes(app, { workspaceManager: manager as never })
+  registerMissionRoutes(app, { workspaceManager: manager as never, worktreeDeletionFence: fence })
   const journal = new MissionJournal(storage, "private-project", "/private-fixture")
   async function create(name: string, count = 1): Promise<MissionMap> {
     let mission = (await control.create({ requestID: name, objective: `Private cleanup ${name}`, template: "custom" })).mission
