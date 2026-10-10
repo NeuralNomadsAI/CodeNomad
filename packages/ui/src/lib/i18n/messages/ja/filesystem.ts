@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "フォルダパスを入力または貼り付け",
   "directoryBrowser.openCurrent": "開く",
   "directoryBrowser.goTo": "フォルダーに移動",
+  "directoryBrowser.goToTypedPath": "このフォルダーへ移動 (Enter)",
   "directoryBrowser.goToParent": "親フォルダー",
   "directoryBrowser.goToHome": "ホーム",
   "directoryBrowser.goToRoot": "ワークスペースのルート",

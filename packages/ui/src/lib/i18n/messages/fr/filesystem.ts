@@ -6,6 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Saisissez ou collez un chemin de dossier",
   "directoryBrowser.openCurrent": "Ouvrir",
   "directoryBrowser.goTo": "Aller à un dossier",
+  "directoryBrowser.goToTypedPath": "Aller à ce dossier (Entrée)",
   "directoryBrowser.goToParent": "Dossier parent",
   "directoryBrowser.goToHome": "Accueil",
   "directoryBrowser.goToRoot": "Racine de l’espace de travail",

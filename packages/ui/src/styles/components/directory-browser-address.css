@@ -1,3 +1,32 @@
+.directory-browser-address-field {
+  position: relative;
+}
+
+.directory-browser-current-path[data-can-go] {
+  padding-inline-end: 36px;
+}
+
+.directory-browser-go {
+  position: absolute;
+  inset-block: 1px;
+  inset-inline-end: 1px;
+  width: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.directory-browser-go:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover-overlay);
+}
+
+.directory-browser-go:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
 .directory-browser-destinations {
   margin-top: var(--space-xs);
   max-height: min(200px, 30vh);
