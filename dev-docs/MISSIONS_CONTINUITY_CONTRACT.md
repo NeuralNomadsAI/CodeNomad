@@ -522,7 +522,8 @@ doivent être qualifiées dans le service OpenCode, sans backend CodeNomad persi
 ### Sources consultées
 
 - `AGENTS.md`, `dev-docs/MISSIONS.md`, `dev-docs/SESSION_ENVIRONMENT.md`,
-  `dev-docs/MISSIONS_RELIABILITY_REVIEW.md`, `dev-docs/MISSIONS_RUNTIME_SPIKE.md`.
+  `dev-docs/MISSIONS_RELIABILITY_REVIEW.md`, `dev-docs/MISSIONS_RUNTIME_SPIKE.md`
+  (ces deux derniers uniquement sur la branche locale `preserve/missions-full-20261009`).
 - Chemins produit abrégés ci-dessus sous `packages/server/src/` ; déclarations
   installées `@opencode/client` / `@opencode/plugin` 2.0.21 et contract check
   `.opencode/checks/codenomad-missions.ts` (lecture, pas exécution). Les

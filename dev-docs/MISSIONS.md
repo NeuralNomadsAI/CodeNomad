@@ -230,9 +230,10 @@ Run real Solid/HTTP fixtures, never a user's live mission, for these questions:
 | Reuse | Can I launch it again without changing yesterday's run? | Fresh manual mission creation, copied brief/profile payload, removal preserves executions |
 | Failure | Will a retry duplicate work or lose my input? | Exact held create/send identity, no uncertain replay, conditional preference writes and stale-view fencing |
 
-`packages/ui/tests/browser/mission-control.test.ts`, `mission-guidance.test.ts`,
-`mission-task-reader.test.ts`, the editor/default/model fixtures and the progress
-projection unit tests cover these surfaces. Native `test-missions-native.mjs`
+`packages/ui/tests/browser/mission-control.test.ts`, `mission-briefing.test.ts`,
+`mission-task-reader.test.ts`, the editor/default/model fixtures, the
+`src/components/mission-attention.test.ts` open-request projection and the
+progress projection unit tests cover these surfaces. Native `test-missions-native.mjs`
 provides a separate isolated execution/storage proof. A deterministic provider
 proves the native transport and result lifecycle, not real-world PR review quality,
 automatic publication policy or unattended scheduling.
