@@ -193,7 +193,11 @@ reconcile-only (never a second coordinator message; at most the original start
 identity while dispatch is allowed), never starts daily passages and exits once
 the passage settles. Pause cancels it. Stop keeps (restarts) it for a pending
 passage so the passage still archives honestly; the schedule stays terminal. A
-live running schedule's own Job observes its manual passage instead. After a
+live running schedule's own Job observes its manual passage instead. The observer
+starts only on a definite native read that no daily Job runs, or on an unknown read
+of a schedule not desired running; an unknown read of a desired-running schedule
+starts nothing (if its Job is in fact gone it shows Interrupted and Resume
+reconciles the passage), so no second observer runs beside the daily Job. After a
 service restart with a pending passage on a paused or stopped schedule, the
 snapshot offers an explicit **Check passage** (`check`) control, admitted like the
 others (requestID, expectedRevision, authenticated route), which only restarts
