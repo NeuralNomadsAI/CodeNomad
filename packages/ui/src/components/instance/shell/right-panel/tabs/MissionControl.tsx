@@ -24,6 +24,7 @@ import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { MissionPreferences } from "../../../../mission-preferences"
 import { MissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { missionTaskConversation } from "../../../../mission-task-navigation"
+import { missionDerivedSessionIncludes, missionDerivedTaskSession } from "../../../../../stores/mission-task-sessions"
 import { useMissionCurrentPassage } from "../../../../../stores/mission-recurrence"
 import { createMissionViewFence } from "../../../../../lib/mission-view-fence"
 
@@ -50,7 +51,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const missions = () => state().missions
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
   const includesSession = (value: MissionMap, id: string) => value.coordinatorSessionId === id
-    || missionIncludesSession(value.actors, id, family(value.id))
+    || missionIncludesSession(value.actors, id, family(value.id)) || missionDerivedSessionIncludes(props.instanceId, value, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
   const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), state().projectID]), () => props.isActive?.() ?? true)
@@ -144,7 +145,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
     const authorized = () => selectedSchedule() === scheduleID && (!scheduleID || currentPassage.snapshot()?.passageID === passageID)
       && (scheduleID ? Boolean(mission()?.id === missionId && (mission()!.coordinatorSessionId === sessionId
-        || missionIncludesSession(mission()!.actors, sessionId, selectedFamily())))
+        || missionIncludesSession(mission()!.actors, sessionId, selectedFamily())
+        || missionDerivedSessionIncludes(props.instanceId, mission()!, sessionId)))
         : missions().some(value => value.id === missionId && includesSession(value, sessionId)))
     const admitted = () => origin.current() && authorized()
       && instances().get(origin.instanceId)?.client === client && getOpenCodeInstanceGeneration(origin.instanceId) === generation
@@ -197,7 +199,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     if (!active || active === "info") {
       const value = mission()?.id === target.missionId ? mission() : undefined
       const task = value?.tasks.find(task => task.id === target.itemId)
-      const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily()) : value?.coordinatorSessionId
+      const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily(),
+        missionDerivedTaskSession(props.instanceId, value, task.key)) : value?.coordinatorSessionId
       if (!actor || !await openActor(actor, origin)) return
     }
     if (!origin.current()) return

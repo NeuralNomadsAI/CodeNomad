@@ -14,6 +14,7 @@ import { activeSessionId, activeParentSessionId, getAuthoritativelyDeletedSessio
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { missionIncludesSession } from "./mission-attention-model"
 import { missionTaskConversation } from "./mission-task-navigation"
+import { demandMissionTaskSessions, missionDerivedSessionIncludes, missionDerivedTaskSession } from "../stores/mission-task-sessions"
 import { missionReports, missionReportIsPrevious, missionTaskReport, missionProgress } from "./mission-progress-model"
 import { missionMarkdownPage } from "../lib/mission-markdown-pages"
 import { missionBriefingFreshness } from "./mission-briefing-model"
@@ -135,8 +136,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const taskConversation = () => {
     const value = mission(), currentTask = task()
     return value && currentTask && target()?.kind === "task"
-      ? missionTaskConversation(value, currentTask, activity()?.missions.find(item => item.missionId === value.id)?.family) : undefined
+      ? missionTaskConversation(value, currentTask, activity()?.missions.find(item => item.missionId === value.id)?.family,
+        missionDerivedTaskSession(props.instanceId, value, currentTask.key)) : undefined
   }
+  createEffect(() => { const value = mission(); if (value && target()?.kind === "task") demandMissionTaskSessions(props.instanceId, value) })
   const openActor = async (sessionId: string) => {
     const current = captureNavigation(), intent = ++navigationIntent
     const instanceId = props.instanceId, scope = props.scope
@@ -146,8 +149,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       const currentTask = task()
       if (!value || target()?.kind !== "task" || !currentTask) return false
       const family = activity()?.missions.find(item => item.missionId === value.id)?.family
-      return missionTaskConversation(value, currentTask, family) === sessionId
-        && (value.coordinatorSessionId === sessionId || missionIncludesSession(value.actors, sessionId, family))
+      return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key)) === sessionId
+        && (value.coordinatorSessionId === sessionId || missionIncludesSession(value.actors, sessionId, family)
+          || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
     }
     const admitted = () => current() && intent === navigationIntent && authorized()
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
