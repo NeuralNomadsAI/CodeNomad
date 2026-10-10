@@ -11,7 +11,7 @@ import { AuthManager } from "../../auth/manager"
 import { stableToken, MissionJournal, type MissionStorage } from "../../missions/journal"
 import { MissionControl } from "../../missions/control"
 import { buildAssignmentPrompt } from "../../missions/recipes"
-import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
+import { HUMAN_MARK_STORAGE_PREFIX } from "../../missions/human-answer"
 import { createAutomationBridgeRegistration, publishAutomationBridge } from "../automation-plugin"
 import { registerAutomationPluginRoute } from "../../server/routes/automation-plugin"
 import { registerInstanceProxyRoutes } from "../../server/http-server"
@@ -81,7 +81,7 @@ async function fixture() {
   }) } }
   const graph = Context.make(databaseTag, database).pipe(Context.add(locationTag, location), Context.add(formTag, forms))
   const native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location } as never), graph))
-  const markKey = `${MISSION_AUTHORITY_STORAGE_PREFIX}/human-marks/${stableToken(`project\0${directory}`, 24)}/ses_child/${form.id}`
+  const markKey = `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`project\0${directory}`, 24)}/ses_child/${form.id}`
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
   const cookie = auth.createSession("human")
   let ordinary = false
@@ -137,6 +137,8 @@ test("dock header writes a secret-free mark before native reply and gate accepts
     assert.equal(mark.form.fields[0].type, "string")
     if (mark.form.fields[0].type === "string") assert.deepEqual(mark.form.fields[0].options, f.form.fields[0].options)
     assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%recurrence-signer%'").get()!.count, 0)
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%codenomad-missions/authority-%'").get()!.count, 0, "no retired authority-v2 key")
+    assert.ok(f.get(f.markKey), "the mark lives under its own simple namespace")
     assert.equal(JSON.stringify(mark).includes("cookie"), false)
     assert.equal(JSON.stringify(mark).includes("signature"), false)
     for (const secret of f.secrets) assert.equal(JSON.stringify(mark).includes(secret), false)

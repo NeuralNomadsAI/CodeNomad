@@ -6,6 +6,8 @@ import type { Form } from "@opencode/schema/form"
 import { nativeDecisionProvenance } from "./contracts"
 
 export const HUMAN_ANSWER_HEADER = "x-codenomad-human-answer"
+/** Simple UI-answer marks; independent of the retired `authority-v2` namespace. */
+export const HUMAN_MARK_STORAGE_PREFIX = "codenomad-missions/human-marks-v1"
 const id = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
 const location = z.object({ directory: z.string().min(1).max(4096), workspaceID: z.string().optional() }).strict()
 export const humanAnswerBindingSchema = z.object({ sessionID: id, formID: id,

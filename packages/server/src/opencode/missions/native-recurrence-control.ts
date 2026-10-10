@@ -11,7 +11,7 @@ import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
 import { interruptRecurrenceActors } from "./native-recurrence-actor-controls"
 import { createFamilyAuthorityIdentityFence, readFamilyAuthorityPlacement } from "../../workspaces/family-authority-claim"
-import { physical } from "../../missions/host-authority/private-files"
+import { physical } from "../../missions/physical-path"
 import { realpathSync } from "node:fs"
 
 const locationTag = Context.Service<never, Location.Info>("@opencode/Location")

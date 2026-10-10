@@ -1,7 +1,7 @@
 import { lstatSync, realpathSync } from "node:fs"
 import path from "node:path"
 import { authorityDigest } from "../../missions/authority-protocol"
-import { physical } from "../../missions/host-authority/private-files"
+import { physical } from "../../missions/physical-path"
 
 /** Same physical native SQLite identity used by managed-owner enrollment and
  * recurrence authority. Never hash a caller's unverified file string. */

@@ -6,9 +6,8 @@ import { Location } from "@opencode/schema/location"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
 import type { SqlClient } from "effect/unstable/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import { MISSION_AUTHORITY_STORAGE_PREFIX } from "../../missions/authority-store"
 import { stableToken } from "../../missions/journal"
-import { humanAnswerBindingInputSchema, humanAnswerBindingSchema, humanAnswerRpcInputSchema,
+import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBindingSchema, humanAnswerRpcInputSchema,
   humanDecisionRequestSchema, assertHumanAnswerFresh, matchHumanQuestion,
   type HumanDecisionMark } from "../../missions/human-answer"
 import { nativeDatabaseStorageID } from "./native-database-identity"
@@ -81,7 +80,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       throw new Error("Native question call mismatch")
     return { ...part, state: part.state, input: part.state.input }
   })
-  const keyFor = (sessionID: string, formID: string) => `${MISSION_AUTHORITY_STORAGE_PREFIX}/human-marks/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/${formID}`
+  const keyFor = (sessionID: string, formID: string) => `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/${formID}`
   const api = {
     binding: async (raw: unknown) => {
       const input = humanAnswerBindingInputSchema.parse(raw)

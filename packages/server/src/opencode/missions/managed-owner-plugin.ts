@@ -1,9 +1,7 @@
 import { Plugin, Rpc } from "@opencode/plugin/effect"
 import { fromPromise } from "@opencode/plugin/promise/adapter"
 import { Context, Effect, Exit, Scope } from "effect"
-import { z } from "zod"
 import { desktopPlugin as promisePlugin } from "./desktop-plugin"
-import { enrollmentSchema, observeNativeManagedOwner } from "./native-managed-owner"
 import { CODENOMAD_MISSIONS_RPC_ID, CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 import { readNativeRecurrenceControlStatus } from "./native-recurrence-control-status"
@@ -14,14 +12,6 @@ import { acquireNativeHumanAnswers } from "./native-human-answer"
 import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from "./native-recurrence-current"
 import { readNativeRecurrencePage } from "./native-recurrence-reader"
 import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
-
-export const MANAGED_OWNER_RPC_ID = "codenomad.missions.managed-owner"
-export const MANAGED_OWNER_RPC = Rpc.define({ id: MANAGED_OWNER_RPC_ID, methods: {
-  observe: { input: z.object({}).strict(), output: z.object({
-    projectID: z.string(), projectCanonical: z.string(), directory: z.string(),
-    enrollment: enrollmentSchema, storageChallengeVerified: z.literal(true),
-  }).strict() },
-}, events: {} })
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rpc"] {
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
@@ -41,11 +31,11 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rp
 }
 
 // The Promise adapter preserves the shipped Missions plugin. Recurrence reads
-// and paused CREATE run in the sealed service Effect graph.
+// and paused CREATE run in the sealed service Effect graph. The retired signed
+// `authority-v2` namespace and its managed-owner observer are not part of the
+// shipped lifecycle: setup never reads, creates or repairs those bytes.
 export function desktopPlugin(presenceDirectory: string | readonly string[]) {
   return Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.gen(function* () {
-    let ownerReady = false
-    let ownerRpcReady = false
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
@@ -78,21 +68,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
       verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
     }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {
-        try {
-          await run(fromPromise(promisePlugin(presenceDirectory, ready => { ownerReady = ready }, humanGate)).effect(nativeCtx))
-          try { await run(ctx.rpc.register(MANAGED_OWNER_RPC, { observe: () => Effect.scoped(
-            Effect.gen(function* () {
-              if (!ownerReady || !ownerRpcReady) return yield* Effect.fail(new Error("Native owner authority unavailable"))
-              const result = yield* observeNativeManagedOwner(ctx)
-              if (!ownerReady || !ownerRpcReady) return yield* Effect.fail(new Error("Native owner authority changed"))
-              return {
-              ...result, projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical,
-              directory: ctx.location.directory,
-              }
-            }).pipe(Effect.orDie),
-          ) })); ownerRpcReady = true }
-          catch { ownerRpcReady = false } // Optional native observation cannot unload the independent one-shot plugin.
-        } catch (error) { await Effect.runPromise(Scope.close(scope, Exit.void)); throw error }
+        try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate)).effect(nativeCtx)) }
+        catch (error) { await Effect.runPromise(Scope.close(scope, Exit.void)); throw error }
         return scope
     }), owned => Scope.close(owned, Exit.void))
   }) })
