@@ -18,6 +18,7 @@ import type { SettingsService } from "../../settings/service"
 import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
 import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
+import type { RemoteControlManager } from "../../remote-control/manager"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -27,6 +28,7 @@ interface MissionRouteDeps {
   settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>
   auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
   bridgeToken?: string
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })

@@ -8,11 +8,12 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { captureRecurrenceControlHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
   recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
+import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
 export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Parameters<typeof prepareHumanRecurrenceControl>[3]) {
   app.get<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/run-now/status", async (request, reply) => {
-    const session = deps.auth.getSessionFromRequest(request)
-    if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") return reply.code(401).send({ error: "Human authentication required" })
+    const session = recurrenceHumanSession(request, deps)
+    if (!session) return reply.code(401).send({ error: "Human authentication required" })
     const query = z.object({ requestID: z.string(), expectedRevision: z.coerce.number().int().nonnegative().safe(),
       directory: z.string().min(1).max(4096).optional() }).strict().safeParse(request.query)
     if (!query.success) return reply.code(400).send({ error: "Invalid manual status request" })
@@ -32,7 +33,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (!currentDeletion() || deps.manager.get(request.params.id) !== workspace
           || !sameLocation(deps.manager.getServiceLocation(request.params.id) ?? { directory: "" }, base)
-          || deps.auth.getSessionFromRequest(request)?.sessionId !== session.sessionId) throw new Error("Manual status changed")
+          || recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Manual status changed")
       }
       if (!await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign Location")
       current()
@@ -54,8 +55,8 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
     finally { lifetime.dispose() }
   })
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/run-now", async (request, reply) => {
-    const session = deps.auth.getSessionFromRequest(request)
-    if (!deps.auth.isAuthEnabled() || !session || session.sessionId === "auth-disabled") return reply.code(401).send({ error: "Human authentication required" })
+    const session = recurrenceHumanSession(request, deps)
+    if (!session) return reply.code(401).send({ error: "Human authentication required" })
     const input = z.object({ expectedRevision: z.number().int().nonnegative().safe(), requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
       directory: z.string().min(1).max(4096).optional() }).strict().safeParse(request.body)
     if (!input.success) return reply.code(400).send({ error: "Invalid manual passage request" })

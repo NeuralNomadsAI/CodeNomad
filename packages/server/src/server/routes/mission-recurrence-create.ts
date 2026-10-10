@@ -22,6 +22,8 @@ import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../mission
 import { recurrenceInputBudget } from "../../missions/recurrence-read-budget"
 import type { AuthManager } from "../../auth/manager"
 import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
+import type { RemoteControlManager } from "../../remote-control/manager"
+import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
 const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   instructions: z.string().trim().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
@@ -48,10 +50,11 @@ type NativeCreateReply = NativeSummary & { noEffect?: { code: "capacity"; id: st
 export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { workspaceManager: Manager;
   settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>; wslGit?: WslGit;
   auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">; bridgeToken?: string;
-  worktreeDeletionFence?: WorktreeDeletionFence }) {
+  remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">; worktreeDeletionFence?: WorktreeDeletionFence }) {
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions/recurrence", async (request, reply) => {
-    const human = deps.auth?.getSessionFromRequest(request)
-    if (!deps.auth?.isAuthEnabled() || !human || human.sessionId === "auth-disabled" || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
+    // Refused before any hold: an unqualified principal could never verify.
+    const auth = deps.auth, human = auth && recurrenceHumanSession(request, { auth, remoteDevices: deps.remoteDevices })
+    if (!auth || !human || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
     const lifetime = requestAdmission(request, reply)
     let admission: Awaited<ReturnType<typeof admitMissionCreationLocations>> | undefined
     // Flips immediately before the only native write; until then a refusal proves no effect.
@@ -87,6 +90,9 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       const check = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         assertScopeCurrent()
+        if (recurrenceHumanSession(request, { auth, remoteDevices: deps.remoteDevices })?.sessionId !== human.sessionId) {
+          throw new Error("Recurrence human admission changed")
+        }
         if (manager.get(workspaceID) !== workspace || !sameLocation(manager.getServiceLocation(workspaceID) ?? { directory: "" }, base)) {
           throw new Error("Recurrence workspace changed")
         }

@@ -69,7 +69,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (body?.mode === "recurrence-control-verify") {
       try {
         return reply.send({ result: await verifyHumanRecurrenceRequest(body.command, {
-          auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings,
+          auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices,
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }

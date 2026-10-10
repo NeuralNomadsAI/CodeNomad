@@ -41,7 +41,7 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
-import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
+import { HUMAN_ANSWER_HEADER, isHumanAnswerProofPayload } from "../missions/human-answer"
 import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
 import { registerMissionRecurrenceControlStatus } from "./routes/mission-recurrence-control-status"
 import { registerMissionRecurrenceManual } from "./routes/mission-recurrence-manual"
@@ -151,33 +151,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     sseClients.clear()
   }
 
-  app.addHook("onRequest", (request, _reply, done) => {
-    ;(request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
-      start: process.hrtime.bigint(),
-    }
-    done()
-  })
-
-  app.addHook("onResponse", (request, reply, done) => {
-    const meta = (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta
-    const durationMs = meta ? Number((process.hrtime.bigint() - meta.start) / BigInt(1_000_000)) : undefined
-    const base = {
-      method: request.method,
-      url: request.url,
-      status: reply.statusCode,
-      durationMs,
-    }
-    apiLogger.debug(base, "HTTP request completed")
-    if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({
-        ...base,
-        params: redactSecrets(request.params),
-        query: redactSecrets(request.query),
-        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
-      }, "HTTP request payload")
-    }
-    done()
-  })
+  registerRequestLogging(app, apiLogger)
 
   // Remote Control admission runs before CORS, authentication and routing.
   const remoteGate = deps.remoteControlManager.gate()
@@ -385,12 +359,13 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
-    auth: deps.authManager, bridgeToken: deps.automationBridgeToken })
+    auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
-  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence })
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
+  registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence,
+    remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence })
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
@@ -1314,16 +1289,48 @@ function sanitizeInstanceProxyResponseHeaders(headers: Record<string, string | s
   return Object.fromEntries(Object.entries(headers).filter(([key]) => !blocked.has(key.toLowerCase())))
 }
 
+/** Request completion logging; trace payloads always pass through [redactSecrets]. */
+export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) {
+  app.addHook("onRequest", (request, _reply, done) => {
+    ;(request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
+      start: process.hrtime.bigint(),
+    }
+    done()
+  })
+
+  app.addHook("onResponse", (request, reply, done) => {
+    const meta = (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta
+    const durationMs = meta ? Number((process.hrtime.bigint() - meta.start) / BigInt(1_000_000)) : undefined
+    const base = {
+      method: request.method,
+      url: request.url,
+      status: reply.statusCode,
+      durationMs,
+    }
+    apiLogger.debug(base, "HTTP request completed")
+    if (apiLogger.isLevelEnabled("trace")) {
+      apiLogger.trace({
+        ...base,
+        params: redactSecrets(request.params),
+        query: redactSecrets(request.query),
+        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
+      }, "HTTP request payload")
+    }
+    done()
+  })
+}
+
 export function redactSecrets(value: unknown): unknown {
   if (value === null || value === undefined) return value
   if (Array.isArray(value)) return value.map(redactSecrets)
   if (typeof value !== "object") return value
   if (Buffer.isBuffer(value)) return "<redacted>"
   if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return "<redacted>"
-  if (isRecurrenceProofPayload(value as Record<string, unknown>)) return "<redacted>"
+  if (isRecurrenceProofPayload(value as Record<string, unknown>)
+    || isHumanAnswerProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
-    /(authorization|cookie|key|code|token|password|secret)/i.test(key) ? "<redacted>" : redactSecrets(entry),
+    /(authorization|cookie|key|code|token|password|secret|principal)/i.test(key) ? "<redacted>" : redactSecrets(entry),
   ]))
 }
 
