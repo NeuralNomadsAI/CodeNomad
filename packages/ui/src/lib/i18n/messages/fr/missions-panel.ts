@@ -17,6 +17,8 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "Modifier",
   "missionsPanel.action.openConversation": "Ouvrir la conversation",
   "missionsPanel.action.requestUpdate": "Demander un point",
+  "missionsPanel.action.requestUpdatePending": "Point demandé…",
+  "missionsPanel.action.requestUpdateUncertain": "Envoi non confirmé",
   "missionsPanel.action.recover": "Reprendre la mission interrompue",
   "missionsPanel.task.active": "En cours",
   "missionsPanel.task.ready": "À venir",

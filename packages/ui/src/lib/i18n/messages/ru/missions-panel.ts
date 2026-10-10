@@ -17,6 +17,8 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "Изменить",
   "missionsPanel.action.openConversation": "Открыть разговор",
   "missionsPanel.action.requestUpdate": "Запросить сводку",
+  "missionsPanel.action.requestUpdatePending": "Сводка запрошена…",
+  "missionsPanel.action.requestUpdateUncertain": "Отправка не подтверждена",
   "missionsPanel.action.recover": "Восстановить прерванную миссию",
   "missionsPanel.task.active": "В работе",
   "missionsPanel.task.ready": "Далее",

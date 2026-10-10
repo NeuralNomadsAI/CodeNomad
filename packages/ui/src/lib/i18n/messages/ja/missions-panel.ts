@@ -17,6 +17,8 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "編集",
   "missionsPanel.action.openConversation": "会話を開く",
   "missionsPanel.action.requestUpdate": "最新状況を依頼",
+  "missionsPanel.action.requestUpdatePending": "最新状況を依頼済み…",
+  "missionsPanel.action.requestUpdateUncertain": "送信未確認",
   "missionsPanel.action.recover": "中断したミッションを復旧",
   "missionsPanel.task.active": "進行中",
   "missionsPanel.task.ready": "次に実行",

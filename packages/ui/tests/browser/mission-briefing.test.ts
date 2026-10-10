@@ -89,13 +89,13 @@ const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback"
 const readAll = (page: Page) => card(page).locator(".mission-overview-toggle")
 const reader = (page: Page) => page.locator(".mission-reader")
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))
-/** The briefing request is a permanent toolbar icon; unavailable or waiting requests disable it. */
-const requestButton = (page: Page) => card(page).getByRole("toolbar").getByRole("button", { name: REQUEST, exact: true })
+/** The briefing request is a text button below the toolbar; waiting requests relabel and disable it. */
+const requestButton = (page: Page) => card(page).locator(".mission-action-request")
 async function requestUpdate(page: Page) {
-  await requestButton(page).click()
+  await card(page).getByRole("button", { name: REQUEST, exact: true }).click()
 }
 async function canRequest(page: Page): Promise<boolean> {
-  return await requestButton(page).isEnabled()
+  return await requestButton(page).count() > 0 && await requestButton(page).isEnabled()
 }
 function publish(value: MissionMap, requestID: string) {
   value.briefing = { id: `briefing-${value.id}-${requestID}`, requestID, basedOnRevision: value.revision, basedOnUpdatedAt: value.updatedAt,

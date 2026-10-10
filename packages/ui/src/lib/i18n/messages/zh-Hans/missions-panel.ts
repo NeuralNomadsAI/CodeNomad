@@ -17,6 +17,8 @@ export const missionsPanelMessages = {
   "missionsPanel.action.edit": "编辑",
   "missionsPanel.action.openConversation": "打开对话",
   "missionsPanel.action.requestUpdate": "请求更新",
+  "missionsPanel.action.requestUpdatePending": "已请求更新…",
+  "missionsPanel.action.requestUpdateUncertain": "发送未确认",
   "missionsPanel.action.recover": "恢复中断的任务",
   "missionsPanel.task.active": "进行中",
   "missionsPanel.task.ready": "待开始",

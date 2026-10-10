@@ -37,8 +37,12 @@ export function MissionSelectedActions(props: {
     return { key: "recover", label: t("missionsPanel.action.recover"), ariaLabel: t("missionsPanel.action.recover"),
       disabled: recover.disabled, onSelect: recover.onSelect }
   }
+  // Waiting requests keep their exact identity: the button only shows the
+  // state (full wording as tooltip) and never resends automatically.
+  const requestLabel = () => !briefing.waiting() ? t("missionsPanel.action.requestUpdate")
+    : t(briefing.state() === "uncertain" ? "missionsPanel.action.requestUpdateUncertain" : "missionsPanel.action.requestUpdatePending")
   const request = (): MissionPrimaryAction | undefined => briefing.available() ? {
-    key: "briefing", label: t("missionsPanel.action.requestUpdate"),
+    key: "briefing", label: requestLabel(),
     ariaLabel: briefing.waiting() ? t(`missions.briefing.request.${briefing.state()}`) : undefined,
     disabled: briefing.waiting() || props.messagingDisabled || !props.active, onSelect: () => briefing.ask() } : undefined
   return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
