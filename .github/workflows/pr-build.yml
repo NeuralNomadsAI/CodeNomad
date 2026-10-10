@@ -349,6 +349,7 @@ jobs:
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/mission-attention.test.ts
+          packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
           packages/ui/src/components/mission-execution.test.ts
