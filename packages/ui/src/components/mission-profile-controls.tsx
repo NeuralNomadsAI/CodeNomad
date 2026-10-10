@@ -52,10 +52,11 @@ export function MissionProfileControls(props: {
         const options = { ...requestLocationOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) }
         const [agents, models] = await Promise.all([native.agent.list(request, options), native.model.list(request, options)])
         if (!current()) return
-        if (agents.data.length > 512 || models.data.length > 4096) throw new Error("Oversized mission catalog")
+        // The native list includes every known (often disabled) model; bound only the usable ones.
+        const usable = models.data.filter(model => model.enabled && model.capabilities.tools)
+        if (agents.data.length > 512 || usable.length > 4096) throw new Error("Oversized mission catalog")
         setCatalog({ key, agents: agents.data.map(({ id, mode, hidden }) => ({ id, mode, hidden })),
-          models: models.data.filter(model => model.enabled && model.capabilities.tools)
-            .map(({ providerID, id, variants }) => ({ providerID, id, variants: variants.map(({ id }) => ({ id })) })) })
+          models: usable.map(({ providerID, id, variants }) => ({ providerID, id, variants: variants.map(({ id }) => ({ id })) })) })
       } catch { if (current()) setFailed(true) }
       finally { if (current()) setLoading(false) }
     }, 50)
