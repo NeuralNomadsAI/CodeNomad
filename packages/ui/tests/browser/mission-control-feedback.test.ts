@@ -70,6 +70,7 @@ async function visible(missions: () => MissionMap[], activity?: () => unknown) {
   })
   await page.goto(`${base}/visibility`, { timeout: 60_000 })
   await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+  await visibility(page, "restoration", false)
   await visibility(page, "activate", true)
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
   return { page, errors, counter }
