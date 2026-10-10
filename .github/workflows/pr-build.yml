@@ -191,6 +191,10 @@ jobs:
             # (same ctx.tool.list harness constraint as above).
             node scripts/test-missions-native-trajectory.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            # Missions Preferences' Location subagent-depth editor against the
+            # native config schema and production JSONC document admission.
+            node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

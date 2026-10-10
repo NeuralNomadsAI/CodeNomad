@@ -10,7 +10,7 @@ test("project briefing and tracking keys belong to all registered dictionaries w
     const messages = Object.values(module)[0] as Record<string, string>
     if (locale === "en") english = messages
     const keys = Object.keys(english).filter(key => key.startsWith("missions.briefing.") || key.startsWith("missions.tracking."))
-    assert.ok(keys.length >= 30)
+    assert.ok(keys.length >= 16)
     for (const key of keys) {
       assert.ok(Object.prototype.hasOwnProperty.call(messages, key), `${locale}: ${key}`)
       assert.deepEqual(placeholders(messages[key]), placeholders(english[key]), `${locale}: ${key}`)

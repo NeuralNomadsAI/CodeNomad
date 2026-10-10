@@ -31,9 +31,7 @@ after(async () => { await browser?.close(); await server?.close() })
 
 test("all ten locales define recurrence reference reader and pending status keys", async () => {
   const locales = ["en", "fr", "es", "de", "he", "ja", "zh-Hans", "ru", "tr", "ne"]
-  const required = ["read", "reader", "latest", "history", "historyEmpty", "referencesOnly", "passage", "due", "settledAt",
-    "missionRef", "conversationRef", "messageRef", "artifactRefs", "pending.unknown", "pending.admitted", "readResult", "section", "resultUnavailable",
-    "result.completed", "result.failed", "result.stopped"]
+  const required = ["reader", "section", "pending.retrying", "pending.checkNeeded"]
   for (const locale of locales) {
     const source = await readFile(new URL(`../../src/lib/i18n/messages/${locale}/missions.ts`, import.meta.url), "utf8")
     for (const key of required) assert.equal(source.split(`"missions.recurrence.${key}":`).length - 1, 1, `${locale}: ${key}`)

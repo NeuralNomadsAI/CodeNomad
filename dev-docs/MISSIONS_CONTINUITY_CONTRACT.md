@@ -96,7 +96,8 @@ les constats corrigés ici priment sur leurs anciennes descriptions du code.
   sans adoption privée de canal. S reste hors du Job de runtime ; le service
   starter officiel reste lui aussi à l'extérieur. La preuve combinée est passée,
   mais lancement indépendant, transport produit et parité packagée restent des
-  gates distinctes. Voir `MISSIONS_NATIVE_NODE_IPC.md` pour les compromis.
+  gates distinctes. L'étude détaillée de ces compromis a quitté ce dépôt avec la
+  fondation host-lifetime (voir l'en-tête).
 
 ## Proposition historique de backend — remplacée par la cible native
 
@@ -162,8 +163,8 @@ Autres preuves produit :
   `settings/yaml-doc-store.ts:51-77` cache le fichier après son premier load et
   remplace une erreur de lecture par `{}`. Ce comportement ne suffit pas pour
   promettre fraîcheur filesystem et fail-closed à un nouveau lecteur headless.
-- L'audit `MISSIONS_RELIABILITY_REVIEW.md` (branche `preserve/missions-full-20261009`) prouve
-  le couplage de disponibilité, pas une interruption native causée par quit.
+- Un audit de fiabilité antérieur (non livré avec ce dépôt) prouvait le couplage
+  de disponibilité, pas une interruption native causée par quit.
 
 L'ancien spike beta prouve storage partagé main/worktree et idempotence ; il ne
 qualifie ni ce contrat headless ni les enfants actuels. Le minimum technique
@@ -521,14 +522,13 @@ doivent être qualifiées dans le service OpenCode, sans backend CodeNomad persi
 
 ### Sources consultées
 
-- `AGENTS.md`, `dev-docs/MISSIONS.md`, `dev-docs/SESSION_ENVIRONMENT.md`,
-  `dev-docs/MISSIONS_RELIABILITY_REVIEW.md`, `dev-docs/MISSIONS_RUNTIME_SPIKE.md`
-  (ces deux derniers uniquement sur la branche locale `preserve/missions-full-20261009`).
+- `AGENTS.md`, `dev-docs/MISSIONS.md`, `dev-docs/SESSION_ENVIRONMENT.md`, ainsi
+  qu'une revue de fiabilité et un spike runtime antérieurs, non livrés avec ce
+  dépôt : leurs conclusions utiles sont résumées dans ce document.
 - Chemins produit abrégés ci-dessus sous `packages/server/src/` ; déclarations
-  installées `@opencode/client` / `@opencode/plugin` 2.0.21 et contract check
-  `.opencode/checks/codenomad-missions.ts` (lecture, pas exécution). Les
-  documents de spike/revue et ce contract check sont conservés sur la branche
-  locale `preserve/missions-full-20261009`, hors de l'arbre produit.
+  installées `@opencode/client` / `@opencode/plugin` 2.0.21, lues sans exécution.
+  Le contrat de chargement du plugin Missions est aujourd'hui qualifié par
+  `scripts/test-missions-native-contract.mjs`.
 - https://opencode.ai/v2/docs/build/plugins
 - https://opencode.ai/v2/docs/build/plugins/rpc
 - https://opencode.ai/v2/docs/tools

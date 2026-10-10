@@ -43,7 +43,7 @@ function Fixture() {
         actions={(() => {
           const version = generation()
           const items = [
-          { key: "read", label: t("missions.control.read"), icon: <Eye />, onSelect: selected },
+          { key: "read", label: t("missionsPanel.overview"), icon: <Eye />, onSelect: selected },
           { key: "coordinator", label: t("missions.control.openCoordinator"), icon: <ArrowUpRight />, onSelect: selected },
           { key: "recover", label: t("missions.recovery.coordinator"), icon: <RefreshCw />, onSelect: selected },
           { key: "edit", label: t("missions.control.edit"), icon: <Pencil />, disabled: disabled(), onSelect: selected },

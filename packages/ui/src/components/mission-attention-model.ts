@@ -138,19 +138,3 @@ export function selectMissionAttention(source: MissionAttentionSource): MissionA
 
   return open
 }
-
-/** Current returned blockages are not native requests. Retired/replaced reports
- * remain readable in Reports/History, not in the current blockers. */
-export function selectMissionBlockages(tasks: readonly MissionAttentionTask[]): MissionAttentionItem[] {
-  return tasks
-    .filter(task => task.status === "needs-input" && !task.replacedByTaskKey && task.report?.outcome === "blocked")
-    .map(task => ({
-      id: `blocked:${task.id}`,
-      kind: "blocked" as const,
-      taskKey: task.key,
-      title: task.title,
-      summary: task.report?.summary,
-      open: false,
-    }))
-
-}

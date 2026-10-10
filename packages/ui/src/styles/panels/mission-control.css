@@ -15,7 +15,6 @@
   padding: 0 0 var(--space-sm);
 }
 
-.mission-control-actions { display: flex; align-items: center; gap: 2px; }
 
 .mission-control-icon-button {
   display: inline-flex;

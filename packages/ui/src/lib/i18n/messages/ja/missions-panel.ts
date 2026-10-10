@@ -1,5 +1,4 @@
 export const missionsPanelMessages = {
-  "missionsPanel.moreActions": "その他の操作",
   "missionsPanel.tasks": "タスク",
   "missionsPanel.needsYou": "対応が必要です",
   "missionsPanel.answer": "回答する",
@@ -11,10 +10,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.runNow": "今すぐ実行",
   "missionsPanel.action.checkPassage": "実行を確認",
   "missionsPanel.action.checkStatus": "状態を確認",
-  "missionsPanel.action.retry": "前回の操作を再試行",
   "missionsPanel.action.stop": "停止…",
-  "missionsPanel.action.delete": "削除…",
-  "missionsPanel.action.edit": "編集",
   "missionsPanel.action.openConversation": "会話を開く",
   "missionsPanel.action.requestUpdate": "最新状況を依頼",
   "missionsPanel.action.requestUpdatePending": "最新状況を依頼済み…",

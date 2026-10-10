@@ -22,8 +22,6 @@
 @import "./panels/mission-route.css";
 @import "./panels/mission-graph.css";
 @import "./panels/mission-task-tree.css";
-@import "./panels/mission-mesh.css";
-@import "./panels/mission-activity.css";
 @import "./panels/mission-disclosure.css";
 @import "./panels/mission-attention.css";
 @import "./panels/mission-progress.css";
