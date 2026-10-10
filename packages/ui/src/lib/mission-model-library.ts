@@ -1,5 +1,5 @@
 import { parseMissionProfiles, validateMissionProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
-import type { MissionTemplateId } from "../../../server/src/missions/model"
+import type { MissionMap, MissionTemplateId } from "../../../server/src/missions/model"
 import { normalizeStoredTemplateId } from "../../../server/src/missions/template-id"
 import type { MissionTaskMode } from "./mission-defaults"
 
@@ -47,6 +47,15 @@ export function normalizeMissionModels(input: unknown): UserMissionModel[] {
 
 export function validMissionModels(input: unknown): boolean {
   return input === undefined || (Array.isArray(input) && (input.length === 0 || normalizeMissionModels(input).length === input.length))
+}
+
+/** The reusable inputs recorded on an existing one-time Mission, in any status:
+ * its current objective, verbatim notes, template and frozen profiles/task mode.
+ * Identity, plan, results and lifecycle state never become part of a brief. */
+export function missionRecordedBrief(mission: Pick<MissionMap, "objective" | "notes" | "template" | "profiles" | "taskMode">): Omit<UserMissionModel, "version" | "id" | "name"> {
+  return { objective: mission.objective, notes: mission.notes ?? "", template: mission.template,
+    ...(mission.profiles === undefined ? {} : { profiles: structuredClone(mission.profiles) }),
+    ...(mission.taskMode === undefined ? {} : { taskMode: mission.taskMode }) }
 }
 
 export function saveMissionModelRecord(current: readonly UserMissionModel[], input: UserMissionModel): UserMissionModel[] {

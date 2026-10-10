@@ -6,6 +6,9 @@ import { MissionActionBar } from "./mission-action-bar"
 import { createMissionBriefingRequest } from "./mission-briefing"
 import { createMissionLifecycle, type MissionControlRetry, type MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
+import { MissionBriefSave } from "./mission-model-library"
+import { missionRecordedBrief } from "../lib/mission-model-library"
+import { missionDisplayTitle } from "../lib/mission-display"
 
 /** Summary reader, lifecycle (with coordinator recovery on Play), update
  * request, coordinator conversation, edit and delete of the selected one-time
@@ -49,5 +52,7 @@ export function MissionSelectedActions(props: {
   return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
     primary={primary()} stop={lifecycle.stop()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
     onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
+    secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
+      draft={() => missionRecordedBrief(props.mission)} initialName={() => missionDisplayTitle(props.mission, 80)} />}
     feedback={<>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>} />
 }

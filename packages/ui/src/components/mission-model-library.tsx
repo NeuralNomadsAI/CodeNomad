@@ -140,8 +140,9 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   </Show>
 }
 
-/** Creation footer: a small "Save as brief" text button that asks for a name inline. */
-export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief }) {
+/** A small "Save as brief" text button that asks for a name inline: the creation
+ * footer's draft, or a selected Mission's recorded brief inputs (`initialName` prefills). */
+export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string }) {
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   let input: HTMLInputElement | undefined
@@ -152,7 +153,7 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   }
   return <div class="mission-brief-save">
     <Show when={open()} fallback={<button type="button" class="window-text-button" disabled={actions.disabled() || full()}
-      onClick={() => { setOpen(true); queueMicrotask(() => input?.focus()) }}>{t("missions.create.brief.saveAs")}</button>}>
+      onClick={() => { setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true); queueMicrotask(() => input?.select()) }}>{t("missions.create.brief.saveAs")}</button>}>
       <input ref={input} aria-label={t("missions.models.name")} placeholder={t("missions.models.name")} value={name()} maxLength={80}
         disabled={actions.disabled()} onInput={event => setName(event.currentTarget.value)} onKeyDown={event => {
           // Enter names the brief; it never submits the creation form.
