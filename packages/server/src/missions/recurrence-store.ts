@@ -133,7 +133,10 @@ export class NativeMissionRecurrenceStore {
     })
   }
 
-  recordControl(id: string, input: RecurrenceControlRecord, current: () => true): Promise<RecurrenceDocument> {
+  /** `clockError` marks a running schedule Interrupted (reason `error`) in the SAME
+   * revision as the completed record, so no crash can separate the two. */
+  recordControl(id: string, input: RecurrenceControlRecord, current: () => true,
+    options: { clockError?: boolean } = {}): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       const doc = await this.required(id), index = doc.controls.findIndex(item => item.requestID === input.requestID)
       const prior = doc.controls[index]
@@ -146,6 +149,7 @@ export class NativeMissionRecurrenceStore {
           && input.targets.find(item => item.sessionID === target.sessionID)?.outcome !== "acknowledged")) throw new Error("Recurrence control targets changed")
       doc.controls[index] = input
       if (input.controlsComplete && input.action !== "run-now") supersedeStartIntents(doc, index)
+      if (options.clockError && doc.state === "running") doc.interruptionReason = "error"
       doc.revision++
       return this.publish(doc, current, doc.revision - 1)
     })

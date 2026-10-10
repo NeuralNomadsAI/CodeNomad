@@ -76,6 +76,7 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
   let record = document.controls.find(item => item.requestID === input.requestID)!
   const response = () => ({ version: 1 as const, scheduleID: input.scheduleID, ...record })
   if (record.controlsComplete || previous && !(input.retry && (input.action === "pause" || input.action === "stop"))) return response()
+  let clockError = false
   if (input.action === "play" || input.action === "resume") {
     // One Job per running schedule: the daily Job also settles a pending passage,
     // so a paused Run now's settlement-only observer is retired, not kept beside it.
@@ -89,7 +90,8 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
       // A failed, partial or running read keeps the request genuinely unknown.
       const status = yield* readNativeRecurrenceClockStatus(placement).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
       if (status === undefined || status === "running") return yield* Effect.failCause(failure)
-      yield* Effect.promise(() => store.recordClockError(input.scheduleID, () => true))
+      // Interrupted(error) and the completed record commit in one revision below.
+      clockError = true
       record = { ...record, controlsComplete: true, targetsKnown: true }
     } else {
       const single = yield* observeNativeRecurrenceScheduleOnly(placement).pipe(Effect.catchCause(() => Effect.succeed(false)))
@@ -114,6 +116,6 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
     if (stopped?.state === "stopped" && stopped.pending)
       yield* startNativeRecurrenceSettlement(ctx, placement, stopped).pipe(Effect.catchCause(() => Effect.void))
   }
-  yield* Effect.promise(() => store.recordControl(input.scheduleID, record, () => true))
+  yield* Effect.promise(() => store.recordControl(input.scheduleID, record, () => true, { clockError }))
   return response()
 })
