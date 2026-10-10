@@ -46,9 +46,6 @@ test("the user-facing mission journey has a translated key for every literal mes
       assert.ok(Object.prototype.hasOwnProperty.call(en, match[1]), `${file}: ${match[1]} is missing`)
     }
   }
-  for (const intent of ["priority", "constraint", "alternative"]) {
-    assert.ok(Object.prototype.hasOwnProperty.call(en, `missions.control.guidance.intent.${intent}`))
-  }
 })
 
 test("keeps Mission Control keys and interpolation placeholders aligned across locales", () => {

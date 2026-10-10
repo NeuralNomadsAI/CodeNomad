@@ -1,5 +1,4 @@
 export const missionsPanelMessages = {
-  "missionsPanel.moreActions": "Diğer işlemler",
   "missionsPanel.tasks": "Görevler",
   "missionsPanel.needsYou": "Yanıtınız gerekiyor",
   "missionsPanel.answer": "Yanıtla",
@@ -11,10 +10,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.runNow": "Şimdi çalıştır",
   "missionsPanel.action.checkPassage": "Çalıştırmayı denetle",
   "missionsPanel.action.checkStatus": "Durumu denetle",
-  "missionsPanel.action.retry": "Son işlemi yeniden dene",
   "missionsPanel.action.stop": "Durdur…",
-  "missionsPanel.action.delete": "Sil…",
-  "missionsPanel.action.edit": "Düzenle",
   "missionsPanel.action.openConversation": "Konuşmayı aç",
   "missionsPanel.action.requestUpdate": "Güncelleme iste",
   "missionsPanel.action.requestUpdatePending": "Güncelleme istendi…",

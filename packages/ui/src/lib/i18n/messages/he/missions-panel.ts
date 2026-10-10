@@ -1,5 +1,4 @@
 export const missionsPanelMessages = {
-  "missionsPanel.moreActions": "פעולות נוספות",
   "missionsPanel.tasks": "משימות משנה",
   "missionsPanel.needsYou": "נדרשת תגובתך",
   "missionsPanel.answer": "מענה",
@@ -11,10 +10,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.runNow": "הרצה עכשיו",
   "missionsPanel.action.checkPassage": "בדיקת ההרצה",
   "missionsPanel.action.checkStatus": "בדיקת מצב",
-  "missionsPanel.action.retry": "ניסיון חוזר של הפעולה האחרונה",
   "missionsPanel.action.stop": "עצירה…",
-  "missionsPanel.action.delete": "מחיקה…",
-  "missionsPanel.action.edit": "עריכה",
   "missionsPanel.action.openConversation": "פתיחת השיחה",
   "missionsPanel.action.requestUpdate": "בקשת עדכון",
   "missionsPanel.action.requestUpdatePending": "עדכון התבקש…",

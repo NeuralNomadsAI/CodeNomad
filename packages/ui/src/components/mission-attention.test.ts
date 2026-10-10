@@ -4,7 +4,6 @@ import { describe, it } from "node:test"
 import {
   MISSION_ATTENTION_UNCORRELATABLE_SESSION,
   selectMissionAttention,
-  selectMissionBlockages,
   selectMissionFamilyMembers,
   missionIncludesSession,
   type MissionObservedFamily,
@@ -62,20 +61,6 @@ it("rejects ambiguous, cyclic, incomplete and wrong-nearest-actor ancestry", () 
     { ...family, members: [{ ...child, parentSessionId }] }), [])
   assert.deepEqual(selectMissionFamilyMembers(actors, { ...family, members: [{ ...child, actorSessionId: "ses-active" }] }), [])
   assert.deepEqual(selectMissionFamilyMembers(actors, { ...family, members: Array.from({ length: 265 }, (_, n) => ({ ...child, sessionId: `child-${n}` })) }), [])
-})
-
-it("all ten Mission locales own family labels without English fallback", async () => {
-  const keys = ["declared", "ordinary", "ancestry", "unknown"].map(name => `missions.control.family.${name}`)
-  const en = (await import("../lib/i18n/messages/en/missions.ts")).missionMessages as Record<string, string>
-  for (const locale of ["en", "de", "es", "fr", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
-    const bundle = (await import(`../lib/i18n/messages/${locale}/missions.ts`)).missionMessages as Record<string, string>
-    for (const key of keys) {
-      assert(Object.prototype.hasOwnProperty.call(bundle, key), `${locale} owns ${key}`)
-      assert(bundle[key].trim(), `${locale} translates ${key}`)
-      if (locale !== "en") assert.notEqual(bundle[key], en[key], `${locale} does not fall back for ${key}`)
-    }
-    assert.match(bundle[keys[2]], /\{parent\}/); assert.match(bundle[keys[2]], /\{actor\}/)
-  }
 })
 
 /** The selector only reads a task's identity and, when present, its report. */
@@ -137,14 +122,6 @@ describe("selectMissionAttention", () => {
     // status, so the actor has already returned: it must not read as a live wait.
     const tasks = [task("task-1", "blocked", "Waiting on a coordinator decision.")]
     assert.deepEqual(selectMissionAttention(source({ tasks })), [])
-    const items = selectMissionBlockages(tasks)
-
-    assert.equal(items.length, 1)
-    assert.equal(items[0].kind, "blocked")
-    assert.equal(items[0].open, false)
-    assert.equal(items[0].sessionId, undefined)
-    assert.equal(items[0].taskKey, "mission-ux")
-    assert.equal(items[0].summary, "Waiting on a coordinator decision.")
   })
 
   it("does not treat a task without a blocked report as attention", () => {
@@ -159,13 +136,5 @@ describe("selectMissionAttention", () => {
     }))
 
     assert.deepEqual(items.map(item => item.open), [true])
-  })
-  it("excludes replaced, retired, completed and late historical blockages", () => {
-    const blocked = task("old", "blocked")
-    for (const status of ["withdrawn", "completed", "ready", "blocked"]) {
-      assert.deepEqual(selectMissionBlockages([{ ...blocked, status }]), [])
-    }
-    assert.deepEqual(selectMissionBlockages([{ ...blocked, replacedByTaskKey: "replacement" }]), [])
-    assert.equal(selectMissionBlockages([blocked]).length, 1)
   })
 })

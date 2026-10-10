@@ -17,17 +17,13 @@
 .mission-disclosure-trigger > small { margin-inline-start: auto; color: var(--text-muted); font-size: var(--font-size-xs); }
 .mission-disclosure > div:not([hidden]) { padding-top: var(--space-sm); }
 .mission-disclosure > [hidden] { display: none; }
-.mission-report-heading { display: grid; gap: var(--space-xs); flex: 1; }
-.mission-report-heading strong, .mission-text-excerpt {
+.mission-text-excerpt {
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
 }
-.mission-control-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
-.mission-read-button { margin: 0; }
 .mission-task-dependencies { display: grid; gap: var(--space-xs); }
 .mission-task-link { text-align: start; color: var(--text-secondary); overflow-wrap: anywhere; }
 .mission-task-link:hover { color: var(--accent-primary); text-decoration: underline; }
-.mission-history-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }

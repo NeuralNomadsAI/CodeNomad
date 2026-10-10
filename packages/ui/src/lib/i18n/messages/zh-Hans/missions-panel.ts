@@ -1,5 +1,4 @@
 export const missionsPanelMessages = {
-  "missionsPanel.moreActions": "更多操作",
   "missionsPanel.tasks": "子任务",
   "missionsPanel.needsYou": "需要你处理",
   "missionsPanel.answer": "回答",
@@ -11,10 +10,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.runNow": "立即运行",
   "missionsPanel.action.checkPassage": "检查本次运行",
   "missionsPanel.action.checkStatus": "检查状态",
-  "missionsPanel.action.retry": "重试上一个操作",
   "missionsPanel.action.stop": "停止…",
-  "missionsPanel.action.delete": "删除…",
-  "missionsPanel.action.edit": "编辑",
   "missionsPanel.action.openConversation": "打开对话",
   "missionsPanel.action.requestUpdate": "请求更新",
   "missionsPanel.action.requestUpdatePending": "已请求更新…",

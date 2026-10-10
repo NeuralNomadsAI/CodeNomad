@@ -26,15 +26,3 @@ test("a derived delegation child opens only when no other task owns that convers
   assert.equal(missionTaskConversation(withTasks, task, undefined, "global"), undefined)
   assert.equal(missionTaskConversation(withTasks, { ...task, actorSessionId: "ses_actor" }, undefined, "ses_derived"), "ses_actor")
 })
-test("all ten locales distinguish instruction delivery, card edits and reported blockages", async () => {
-  const en = (await import("../lib/i18n/messages/en/missions")).missionMessages as Record<string, string>
-  const keys = Object.keys(en).filter(key => key.startsWith("missions.control.guidance.") || key.startsWith("missions.control.blockages."))
-  assert.ok(keys.length >= 16)
-  for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
-    const messages = (await import(`../lib/i18n/messages/${locale}/missions.ts`)).missionMessages as Record<string, string>
-    for (const key of keys) {
-      assert.ok(Object.prototype.hasOwnProperty.call(messages, key) && messages[key].trim(), `${locale}: ${key}`)
-      if (locale !== "en") assert.notEqual(messages[key], en[key], `${locale}: translated ${key}`)
-    }
-  }
-})

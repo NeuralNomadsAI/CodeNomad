@@ -1,5 +1,4 @@
 export const missionsPanelMessages = {
-  "missionsPanel.moreActions": "Más acciones",
   "missionsPanel.tasks": "Tareas",
   "missionsPanel.needsYou": "Te necesita",
   "missionsPanel.answer": "Responder",
@@ -11,10 +10,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.runNow": "Ejecutar ahora",
   "missionsPanel.action.checkPassage": "Comprobar pasada",
   "missionsPanel.action.checkStatus": "Comprobar estado",
-  "missionsPanel.action.retry": "Reintentar la última acción",
   "missionsPanel.action.stop": "Detener…",
-  "missionsPanel.action.delete": "Eliminar…",
-  "missionsPanel.action.edit": "Editar",
   "missionsPanel.action.openConversation": "Abrir conversación",
   "missionsPanel.action.requestUpdate": "Pedir una actualización",
   "missionsPanel.action.requestUpdatePending": "Actualización pedida…",

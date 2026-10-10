@@ -1,5 +1,4 @@
 export const missionsPanelMessages = {
-  "missionsPanel.moreActions": "थप कार्यहरू",
   "missionsPanel.tasks": "कार्यहरू",
   "missionsPanel.needsYou": "तपाईंको जवाफ चाहिन्छ",
   "missionsPanel.answer": "जवाफ दिनुहोस्",
@@ -11,10 +10,7 @@ export const missionsPanelMessages = {
   "missionsPanel.action.runNow": "अहिले चलाउनुहोस्",
   "missionsPanel.action.checkPassage": "पालो जाँच गर्नुहोस्",
   "missionsPanel.action.checkStatus": "अवस्था जाँच गर्नुहोस्",
-  "missionsPanel.action.retry": "अन्तिम कार्य फेरि प्रयास गर्नुहोस्",
   "missionsPanel.action.stop": "बन्द गर्नुहोस्…",
-  "missionsPanel.action.delete": "मेटाउनुहोस्…",
-  "missionsPanel.action.edit": "सम्पादन गर्नुहोस्",
   "missionsPanel.action.openConversation": "कुराकानी खोल्नुहोस्",
   "missionsPanel.action.requestUpdate": "अद्यावधिक माग्नुहोस्",
   "missionsPanel.action.requestUpdatePending": "अद्यावधिक मागियो…",
