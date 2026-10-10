@@ -33,6 +33,12 @@ export const interruptRecurrenceActors = Effect.fn("missions.interruptRecurrence
   const passage = recurrencePassage(storage, source, () => true)
   const snapshot = yield* Effect.promise(() => passage.journal.snapshot())
   const mission = snapshot.missions.find(item => item.id === passage.missionID)
+  // Admission creates the journal mission before the start message, and Pause/Stop
+  // forbid dispatching an unadmitted passage: no journal mission means no actors.
+  if (!mission && !snapshot.controlUnavailable && !source.pending.admission) {
+    if (record.targets.length) return record
+    return { ...record, targetsKnown: true }
+  }
   if (!mission || mission.controlUnavailable || snapshot.controlUnavailable || mission.actors.length > 32) throw new Error("Recurrence actors unavailable")
   if (!record.targetsKnown) {
     record = { ...record, targetsKnown: true, targets: mission.actors.map(actor => ({ sessionID: actor.sessionId, outcome: "unknown" as const })) }

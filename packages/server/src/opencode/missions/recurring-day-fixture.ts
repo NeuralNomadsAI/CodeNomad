@@ -51,6 +51,8 @@ export class RecurringDayFixture {
   private wakeTimes: number[] = []
   /** `before-message`: a transient native admission refusal; nothing is admitted. */
   crash: "after-pending" | "after-create" | "before-message" | "after-message" | undefined
+  /** Consecutive hits of `crash` before it clears. */
+  crashRepeat = 1
   crashHits = 0
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
@@ -308,7 +310,8 @@ export class RecurringDayFixture {
   }
   private fail(point: NonNullable<RecurringDayFixture["crash"]>) {
     if (this.crash !== point) return
-    this.crash = undefined; this.crashHits++
+    if (--this.crashRepeat <= 0) { this.crash = undefined; this.crashRepeat = 1 }
+    this.crashHits++
     throw new Error(`Injected crash ${point}`)
   }
   private event(sessionID: string, type: string, data: object = {}) {

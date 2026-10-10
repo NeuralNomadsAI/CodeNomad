@@ -444,6 +444,56 @@ test("strict bounded codec leaves damaged/foreign stored bytes unchanged and nev
   }
 })
 
+async function control(f: Awaited<ReturnType<typeof fixture>>, requestID: string, action: "play" | "pause" | "stop" | "resume" | "check", complete = true) {
+  let doc = (await f.store.read("daily_review"))!
+  doc = await f.store.beginControl(doc.id, { requestID, action, expectedRevision: doc.revision }, current)
+  const record = doc.controls.find(item => item.requestID === requestID)!
+  return complete ? f.store.recordControl(doc.id, { ...record, controlsComplete: true, targetsKnown: true }, current) : doc
+}
+
+test("controls keep a bounded completed history and never evict an unknown request", async () => {
+  const f = await fixture(false)
+  for (let index = 0; index < 50; index++) {
+    await control(f, `play_${index}`, "play")
+    await control(f, `pause_${index}`, "pause")
+  }
+  let doc = (await f.store.read("daily_review"))!
+  assert.equal(doc.state, "paused")
+  assert.equal(doc.controls.length, 64)
+  assert.equal(doc.controls.at(-1)!.requestID, "pause_49")
+  assert.equal(doc.controls.some(item => item.requestID === "play_0"), false, "the oldest completed request is evicted")
+  doc = await f.store.reserveManual(doc.id, "manual_after_100", doc.revision, f.now, { profileID: "profile", executionHost: "host", configYamlPath: "/p" }, current)
+  assert.equal(doc.pending!.passage.due.kind, "manual")
+  const unknown = await fixture(false)
+  for (let index = 0; index < 64; index++) await control(unknown, `resume_${index}`, "resume", false)
+  doc = (await unknown.store.read("daily_review"))!
+  await assert.rejects(unknown.store.beginControl(doc.id, { requestID: "resume_64", action: "resume", expectedRevision: doc.revision }, current), /control conflict/)
+  assert.equal((await unknown.store.read("daily_review"))!.controls.every(item => !item.controlsComplete), true)
+})
+
+test("an unknown Play/Check outcome is settled by a later completed control; Run now settles with its passage", async () => {
+  const f = await fixture(false)
+  await control(f, "play_unknown", "play", false)
+  let doc = await control(f, "resume_done", "resume")
+  assert.equal(doc.controls.find(item => item.requestID === "play_unknown")!.controlsComplete, true)
+  await control(f, "pause_done", "pause")
+  doc = (await f.store.read("daily_review"))!
+  const source = { profileID: "profile", executionHost: "host", configYamlPath: "/p" }
+  doc = await f.store.reserveManual(doc.id, "manual_unknown", doc.revision, f.now, source, current)
+  assert.equal(doc.controls.at(-1)!.controlsComplete, false)
+  await assert.rejects(control(f, "play_blocked", "play"), /control conflict/)
+  await control(f, "check_unknown", "check", false)
+  doc = await f.store.recordAdmission(doc.id, accepted((await f.store.read(doc.id))!), f.now, current)
+  assert.equal(doc.controls.find(item => item.requestID === "manual_unknown")!.controlsComplete, true, "admission settles the exact Run now")
+  assert.equal(doc.controls.find(item => item.requestID === "check_unknown")!.controlsComplete, false)
+  doc = await f.store.finish(doc.id, terminal(doc), f.now, current)
+  assert.equal(doc.controls.every(item => item.controlsComplete), true, "archive settles Checks of that passage")
+  assert.equal((await control(f, "play_again", "play")).state, "running")
+  doc = await control(f, "pause_again", "pause")
+  doc = await f.store.reserveManual(doc.id, "manual_again", doc.revision, f.now, source, current)
+  assert.equal(doc.pending!.passage.due.kind === "manual" && doc.pending!.passage.due.requestID, "manual_again")
+})
+
 test("native scan pages/capacity/cursors/foreign placement bounded; failed creates never alter bytes", async () => {
   const f = await fixture(false)
   for (let index = 1; index < 64; index++) await f.store.create(`schedule_${String(index).padStart(3, "0")}`, config(), f.now, current)

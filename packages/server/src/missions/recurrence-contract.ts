@@ -13,6 +13,7 @@ export const RECURRENCE_STORAGE_PREFIX = "codenomad-missions/recurrence-v1"
 export const RECURRENCE_HISTORY_LIMIT = 30
 export const RECURRENCE_SCHEDULE_LIMIT = 64
 export const RECURRENCE_CURSOR_LIMIT = 64
+export const RECURRENCE_CONTROL_LIMIT = 64
 export const RECURRENCE_MAX_BYTES = 256 * 1024
 export const recurrenceIDSchema = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 const id = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
@@ -90,8 +91,8 @@ const documentSchema = z.object({ version: z.literal(1), projectID: id, projectC
   state: z.enum(["paused", "running", "stopped"]), config: recurrenceConfigSchema,
   interruptionReason: z.enum(["service-restart", "error"]).optional(),
   profileSource: z.object({ profileID: id, executionHost: id, configYamlPath: z.string().min(1).max(4096) }).strict().optional(),
-  // ponytail: 64 exact intents per document; move completed request status to sibling KV keys if this payload ceiling is reached, never evict/replay unknown requests.
-  controls: z.array(recurrenceControlRecordSchema).max(64).default([]),
+  // At most 64 exact intents: the store evicts the oldest completed request and never evicts/replays an unknown one.
+  controls: z.array(recurrenceControlRecordSchema).max(RECURRENCE_CONTROL_LIMIT).default([]),
   lastDaily: dailyDueSchema.nullable(), settledCount: counter,
    cursors: cursorListSchema.refine(items => items.length <= RECURRENCE_CURSOR_LIMIT),
   pending: z.object({ passage: passageSchema, admission: recurrenceAdmissionSchema.options[0].nullable() }).strict().nullable(),
