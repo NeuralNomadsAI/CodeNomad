@@ -26,6 +26,7 @@ import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { missionDerivedSessionIncludes, missionDerivedTaskSession } from "../../../../../stores/mission-task-sessions"
 import { useMissionCurrentPassage } from "../../../../../stores/mission-recurrence"
 import { createMissionViewFence } from "../../../../../lib/mission-view-fence"
+import { sessionListRestored } from "../../../../../stores/session-list-restoration"
 
 interface MissionControlProps {
   instanceId: string
@@ -80,9 +81,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     previousConversation = next
   })
 
+  // Session-list restoration keeps priority; activation revalidates afterwards.
+  const visible = () => (props.isActive?.() ?? true) && sessionListRestored(props.instanceId)
   createEffect(() => {
     const instanceId = props.instanceId
-    if (!(props.isActive?.() ?? true)) return
+    if (!visible()) return
     // Visibility owns demand; fetching state must not retrigger this effect.
     untrack(() => activateMissionDemand(instanceId))
     onCleanup(() => deactivateMissionDemand(instanceId))

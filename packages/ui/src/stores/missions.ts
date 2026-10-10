@@ -1,11 +1,15 @@
 import { serverApi } from "../lib/api-client"
+import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { serverEvents } from "../lib/server-events"
 import { createMissionStore } from "./mission-store"
 
-const REFRESH_DEBOUNCE_MS = 50
-const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
-
 export const missionStore = createMissionStore((instanceId) => serverApi.fetchMissions(instanceId))
+
+// Every native status change of a large running family is an invalidation:
+// activity revalidates at a bounded rate, journal changes promptly.
+const refreshes = createEventRefreshScheduler((instanceId) => {
+  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId)
+})
 
 export function activateMissionDemand(instanceId: string): void {
   missionStore.setDemand(instanceId, true)
@@ -15,9 +19,7 @@ export function activateMissionDemand(instanceId: string): void {
 
 export function deactivateMissionDemand(instanceId: string): void {
   missionStore.setDemand(instanceId, false)
-  const timer = refreshTimers.get(instanceId)
-  if (timer) clearTimeout(timer)
-  refreshTimers.delete(instanceId)
+  refreshes.cancel(instanceId)
 }
 
 export function isMissionChangedEvent(event: { type: string }): boolean {
@@ -44,37 +46,27 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
     || event.type.startsWith("permission.")
 }
 
-function scheduleRefresh(instanceId: string): void {
-  const pending = refreshTimers.get(instanceId)
-  if (pending) clearTimeout(pending)
-  refreshTimers.set(instanceId, setTimeout(() => {
-    refreshTimers.delete(instanceId)
-    if (!missionStore.demandedInstanceIds().includes(instanceId)) return
-    void missionStore.refresh(instanceId)
-  }, REFRESH_DEBOUNCE_MS))
+function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
+  if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency)
 }
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
-  const capabilityChanged = event.event.type === "plugin.updated"
-  const visible = missionStore.demandedInstanceIds().includes(event.instanceId)
-  if (!visible || (!isMissionChangedEvent(event.event) && !isMissionActivityEvent(event.event) && !capabilityChanged)) return
-  scheduleRefresh(event.instanceId)
+  const urgent = isMissionChangedEvent(event.event) || event.event.type === "plugin.updated"
+  if (urgent || isMissionActivityEvent(event.event)) scheduleRefresh(event.instanceId, urgent ? "urgent" : "activity")
 })
 
 serverEvents.on("instance.eventStatus", (event) => {
   if (event.type !== "instance.eventStatus" || event.status !== "connected") return
-  if (missionStore.demandedInstanceIds().includes(event.instanceId)) scheduleRefresh(event.instanceId)
+  scheduleRefresh(event.instanceId, "urgent")
 })
 
 serverEvents.onOpen(() => {
-  for (const instanceId of missionStore.demandedInstanceIds()) scheduleRefresh(instanceId)
+  for (const instanceId of missionStore.demandedInstanceIds()) scheduleRefresh(instanceId, "urgent")
 })
 
 serverEvents.on("workspace.stopped", (event) => {
   if (event.type !== "workspace.stopped") return
-  const timer = refreshTimers.get(event.workspaceId)
-  if (timer) clearTimeout(timer)
-  refreshTimers.delete(event.workspaceId)
+  refreshes.cancel(event.workspaceId)
   missionStore.clear(event.workspaceId)
 })

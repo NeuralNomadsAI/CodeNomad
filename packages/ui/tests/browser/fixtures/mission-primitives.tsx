@@ -11,8 +11,10 @@ import { missionProjectView, updateMissionProjectView } from "../../../src/store
 import { missionStore } from "../../../src/stores/missions"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("track3")
 const instance: Instance = { id: "track3", folder: "/fixture", port: 0, pid: 0, proxyPath: "/fixture", status: "ready", client: null }
 function Fixture() {
   const { t } = useI18n()

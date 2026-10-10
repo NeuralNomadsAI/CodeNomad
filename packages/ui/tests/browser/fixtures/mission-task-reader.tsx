@@ -16,8 +16,10 @@ import type { Session } from "../../../src/types/session"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("task-reader")
 const instanceId = "task-reader", scope = "/fixture", proxyPath = `/workspaces/${instanceId}/instance`
 addInstance({ id: instanceId, folder: scope, port: 0, pid: 0, status: "ready", proxyPath,
   client: sdkManager.createClient(instanceId, proxyPath, () => true),

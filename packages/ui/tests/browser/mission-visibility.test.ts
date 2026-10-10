@@ -43,6 +43,7 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
     await page.locator(".mission-control").waitFor({ state: "attached" })
+    await call(page, "restoration", false)
     assert.equal(await page.locator(".mission-control").count(), 1, "Missions is mounted, not unmounted to simulate hiding")
     assert.deepEqual(await call(page, "demanded"), [])
     await call(page, "event", "session.status")
@@ -80,5 +81,77 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     await page.getByText("No missions yet", { exact: true }).waitFor()
     assert.equal(requests, 3)
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+const missionsRoute = (page: Page, onRequest: () => number, delay = 0) => page.route("**/api/workspaces/mission-visibility/missions", async route => {
+  const count = onRequest()
+  if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+  return route.fulfill({ json: { available: true, version: 1, projectID: "fixture", missions: [],
+    generatedAt: count, discardedEvents: 0, activity: { generatedAt: count, missions: [] } } })
+})
+
+test("a visible Missions tab waits for session-list restoration, then revalidates once", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let requests = 0
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await missionsRoute(page, () => ++requests)
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "activate", true)
+    await call(page, "event", "session.status")
+    await page.waitForTimeout(150)
+    assert.equal(requests, 0, "no Missions read before the session list starts restoring")
+    assert.deepEqual(await call(page, "demanded"), [])
+
+    await call(page, "restoration", true)
+    await call(page, "event", "rpc.codenomad.missions.changed")
+    await page.waitForTimeout(150)
+    assert.equal(requests, 0, "restoration keeps priority while it runs")
+
+    const shown = page.waitForResponse(response => response.url().endsWith("/missions"))
+    await call(page, "restoration", false)
+    await shown
+    await page.getByText("No missions yet", { exact: true }).waitFor()
+    assert.deepEqual(await call(page, "demanded"), ["mission-visibility"])
+    // A later list refresh does not withdraw established demand.
+    await call(page, "restoration", true)
+    await page.waitForTimeout(150)
+    assert.equal(requests, 1)
+    assert.deepEqual(await call(page, "demanded"), ["mission-visibility"])
+  } finally { await page.close() }
+})
+
+test("continuous native activity of a large family is revalidated at a bounded rate", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let requests = 0
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    // The server projection is slow while the family is busy.
+    await missionsRoute(page, () => ++requests, 150)
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "restoration", false)
+    const shown = page.waitForResponse(response => response.url().endsWith("/missions"))
+    await call(page, "activate", true)
+    await shown
+    await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
+
+    // A busy family: status events keep arriving, spaced beyond the debounce.
+    const first = page.waitForResponse(response => response.url().endsWith("/missions"))
+    for (let index = 0; index < 16; index++) {
+      await call(page, "event", "session.status")
+      await page.waitForTimeout(100)
+    }
+    await first
+    await page.waitForTimeout(400)
+    assert.equal(requests, 2, "the storm coalesces into one read, never one per event or a back-to-back loop")
+
+    // Journal changes stay prompt even while activity is throttled.
+    const changed = page.waitForResponse(response => response.url().endsWith("/missions"))
+    await call(page, "event", "rpc.codenomad.missions.changed")
+    await changed
+    assert.equal(requests, 3)
   } finally { await page.close() }
 })

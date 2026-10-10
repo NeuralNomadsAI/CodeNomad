@@ -8,8 +8,10 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("result-reader")
 const instanceId = "result-reader", scope = "/fixture"
 addInstance({ id: instanceId, folder: scope, port: 0, pid: 0, status: "ready", proxyPath: `/workspaces/${instanceId}/instance`,
   client: sdkManager.createClient(instanceId, `/workspaces/${instanceId}/instance`, () => true),

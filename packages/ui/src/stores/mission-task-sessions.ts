@@ -48,6 +48,12 @@ export function demandMissionTaskSessions(instanceId: string, mission: MissionMa
   const entry = entries().get(key)
   const known = entry?.stamp === stamp
   if (!client || (known && entry.pulse === pulse)) return
+  // No linked conversations and no live task left to discover: do not fan out
+  // another native active-session read for this activity invalidation.
+  if (known && !unlinked(mission, entry.sessions) && entry.sessions.size === 0) {
+    setEntries(previous => new Map(previous).set(key, { ...entry, pulse }))
+    return
+  }
   const running = inFlight.get(key)
   if (running) { running.rerun = () => demandMissionTaskSessions(instanceId, mission, pulse); return }
   const flight: { rerun?: () => void } = {}

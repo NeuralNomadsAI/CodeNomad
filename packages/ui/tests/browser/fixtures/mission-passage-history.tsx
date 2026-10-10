@@ -12,8 +12,10 @@ import { serverEvents } from "../../../src/lib/server-events"
 import type { WorkspaceEventPayload } from "../../../../server/src/api-types"
 import { MISSION_RECURRENCE_CHANGED_EVENT } from "../../../../server/src/missions/recurrence-events"
 import "../../../src/index.css"
+import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+markSessionListsRestored("fixture")
 addInstance({ id: "fixture", folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: null,
   metadata: { project: { id: "project", directory: "/fixture", canonical: "/fixture" } } })
 
