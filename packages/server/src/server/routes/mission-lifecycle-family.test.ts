@@ -330,16 +330,30 @@ test("stop drains a root inbox larger than one receipt and settles with a bounde
   assert.equal(ack.descendants?.complete, true, "a fresh read confirmed the whole drain")
 })
 
-test("stop that cannot drain an oversized root inbox still settles, honestly partial", async () => {
+const unrelated = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `inb_user_${index}`, type: "user", payload: { text: "unrelated" } }))
+
+test("stop keeps draining past an overflowing settle pass until the root inbox is empty", async () => {
   const f = smallFixture("stop")
-  // Unrelated items never hide matching ones; 300 matching exceed the route plus one settle pass.
-  f.inboxes.set("ses_coordinator", [...Array.from({ length: 150 }, (_, index) => ({ id: `inb_user_${index}`, type: "user", payload: { text: "unrelated" } })),
-    ...Array.from({ length: 300 }, (_, index) => missionInput(`inb_${String(index).padStart(3, "0")}`))])
+  // 300 matching exceed the route plus one settle pass; the next pass drains the rest.
+  f.inboxes.set("ses_coordinator", [...unrelated(150), ...Array.from({ length: 300 }, (_, index) => missionInput(`inb_${String(index).padStart(3, "0")}`))])
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  const left = f.inboxes.get("ses_coordinator")!
+  assert.equal(left.length, 150, "every matching input was cancelled")
+  assert.ok(left.every(item => item.type === "user"), "unrelated inputs are kept")
+  assert.equal(ack.cancellations.length, 128, "the receipt stays within its schema bound")
+  assert.equal(ack.descendants?.complete, true, "a fresh read confirmed the whole drain")
+})
+
+test("stop that cannot drain an oversized root inbox within its pass budget still settles, honestly partial", async () => {
+  const f = smallFixture("stop")
+  // Unrelated items never hide matching ones; 700 matching exceed the route plus every settle pass.
+  f.inboxes.set("ses_coordinator", [...unrelated(150), ...Array.from({ length: 700 }, (_, index) => missionInput(`inb_${String(index).padStart(3, "0")}`))])
   const ack = (await f.send()).nativeAcknowledgement
   if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
   const left = f.inboxes.get("ses_coordinator")!
   assert.equal(left.filter(item => item.type === "user").length, 150, "unrelated inputs are kept")
-  assert.ok(left.length < 450, "progress was made on the matching inputs")
+  assert.equal(left.length, 150 + 700 - 4 * 128, "the route and all three settle passes each drained one bounded batch")
   assert.equal(ack.cancellations.length, 128)
   assert.equal(ack.descendants?.complete, false)
   assert.ok((ack.descendants?.unconfirmed ?? 0) > 0)

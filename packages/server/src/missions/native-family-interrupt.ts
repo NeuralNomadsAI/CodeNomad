@@ -116,7 +116,12 @@ async function controlSession(options: Pick<Options, "client" | "signal" | "curr
   if (drain) {
     ledger.drained.add(id)
     // Never `+= await`: concurrent workers would lose updates.
-    try { const count = await cancelQueued({ ...options, signal: walk }, id, () => true); ledger.cancelled += count; ledger.failedCancels.delete(id) }
+    try {
+      const { count, complete } = await cancelQueued({ ...options, signal: walk }, id, () => true)
+      ledger.cancelled += count
+      if (complete) ledger.failedCancels.delete(id)
+      else ledger.failedCancels.add(id)
+    }
     catch { signal.throwIfAborted(); ledger.failedCancels.add(id) }
   }
 }
@@ -185,13 +190,18 @@ export async function settleInterruptedRoot(options: Omit<Options, "deadline"> &
   onCancelled?: (inboxID: string) => void
 }): Promise<boolean> {
   const { client, root, signal, current } = options
-  let failed = false
+  let failed = false, overflowing = false
   for (let pass = 0; pass < PASSES; pass++) {
     await sleep(options.settleMs ?? 250, signal)
     await options.checkpoint()
     let changed = false
     if (options.cancel) {
-      try { changed = await cancelQueued(options, root.id, options.cancel, options.onCancelled) > 0 }
+      // A partial batch is progress: the next pass drains the remainder.
+      try {
+        const drain = await cancelQueued(options, root.id, options.cancel, options.onCancelled)
+        overflowing = !drain.complete
+        changed = drain.count > 0 || overflowing
+      }
       catch { signal.throwIfAborted(); failed = true }
     }
     const active = await readActive(options)
@@ -202,14 +212,14 @@ export async function settleInterruptedRoot(options: Omit<Options, "deadline"> &
     }
     if (!changed) return !failed
   }
-  return !failed && !(await readActive(options))[root.id]
+  return !failed && !overflowing && !(await readActive(options))[root.id]
 }
 
 export type NativeInboxItem = Awaited<ReturnType<OpenCodeClient["session"]["inbox"]["list"]>>[number]
 type InboxItem = NativeInboxItem
 
 async function cancelQueued(options: Pick<Options, "client" | "signal" | "current">, sessionID: string,
-  matches: (item: InboxItem) => boolean, onCancelled?: (inboxID: string) => void): Promise<number> {
+  matches: (item: InboxItem) => boolean, onCancelled?: (inboxID: string) => void): Promise<{ count: number; complete: boolean }> {
   const { client, signal, current } = options
   const inbox = await client.session.inbox.list({ sessionID }, { signal })
   current()
@@ -228,8 +238,8 @@ async function cancelQueued(options: Pick<Options, "client" | "signal" | "curren
     onCancelled?.(item.id)
     count++
   }
-  if (queued.length > 128) throw new Error("Incomplete native inbox cancellation")
-  return count
+  // Bounded batch; `complete: false` keeps the count and reports the remainder.
+  return { count, complete: queued.length <= 128 }
 }
 
 async function readActive(options: Pick<Options, "client" | "signal" | "current">): Promise<Readonly<Record<string, unknown>>> {
