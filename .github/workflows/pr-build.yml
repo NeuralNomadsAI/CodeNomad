@@ -341,6 +341,45 @@ jobs:
           packages/ui/src/types/session.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
 
+      - name: Test Missions UI units
+        run: >-
+          node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/components/mission-attention.test.ts
+          packages/ui/src/components/mission-briefing-locales.test.ts
+          packages/ui/src/components/mission-briefing-model.test.ts
+          packages/ui/src/components/mission-execution.test.ts
+          packages/ui/src/components/mission-native-execution-locales.test.ts
+          packages/ui/src/components/mission-native-execution.test.ts
+          packages/ui/src/components/mission-picker-model.test.ts
+          packages/ui/src/components/mission-profile-controls-data.test.ts
+          packages/ui/src/components/mission-profile-summary-data.test.ts
+          packages/ui/src/components/mission-progress-model.test.ts
+          packages/ui/src/components/mission-reader-locales.test.ts
+          packages/ui/src/components/mission-task-navigation.test.ts
+          packages/ui/src/lib/compatibility-click.test.ts
+          packages/ui/src/lib/event-refresh-scheduler.test.ts
+          packages/ui/src/lib/i18n/messages/missions-panel.test.ts
+          packages/ui/src/lib/mission-cleanup.test.ts
+          packages/ui/src/lib/mission-defaults.test.ts
+          packages/ui/src/lib/mission-display.test.ts
+          packages/ui/src/lib/mission-lifecycle-request.test.ts
+          packages/ui/src/lib/mission-markdown-pages.test.ts
+          packages/ui/src/lib/mission-model-library.test.ts
+          packages/ui/src/lib/mission-mutation-locales.test.ts
+          packages/ui/src/lib/mission-mutation.test.ts
+          packages/ui/src/lib/mission-preferences-document.test.ts
+          packages/ui/src/lib/mission-recurrence-control.test.ts
+          packages/ui/src/lib/mission-task-sessions.test.ts
+          packages/ui/src/lib/mission-view-fence.test.ts
+          packages/ui/src/lib/native-mission-preferences.test.ts
+          packages/ui/src/lib/storage-owner-read-fence.test.ts
+          packages/ui/src/stores/mission-creation-drafts.test.ts
+          packages/ui/src/stores/mission-lifecycle-intents.test.ts
+          packages/ui/src/stores/mission-task-session-reads.test.ts
+          packages/ui/src/stores/missions.test.ts
+          packages/ui/src/stores/session-generation-recovery-integration.test.ts
+          packages/ui/src/stores/session-list-restoration.test.ts
+
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
