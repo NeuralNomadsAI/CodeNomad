@@ -8,8 +8,8 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
-import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionRefresh,
-  missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
+import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
+  missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 import { createFixtureShutdown } from "./fixture-shutdown"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -45,12 +45,15 @@ function mission(id: string): MissionMap {
     reports: [{ id: `report-${id}`, taskKey: "task-one", sessionId: "ses_fixture", outcome: "completed", summary: "Report opening paragraph.\n\n" + "Long report paragraph.\n\n".repeat(90), evidence: ["Source proof"], next: [], createdAt: 1 }],
   }
 }
-async function setup(page: Page) {
+/** Local desktop windows route every Settings entry point to the single native
+ * Preferences window; the embedded Settings screen exists only in browser and
+ * remote windows, so tests of that screen run in a remote window. */
+async function setup(page: Page, windowContext: "local" | "remote" = "local") {
   page.setDefaultTimeout(15_000)
   page.setDefaultNavigationTimeout(60_000)
   page.on("pageerror", error => console.error("fixture error", error))
   await page.addInitScript(`
-    Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
+    Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: ${JSON.stringify(windowContext)}, electronAPI: {
       claimClientStateAccess: async () => true,
       loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(localStorage.getItem("fixture-native") ?? "null") }),
       saveClientState: async (_token, snapshot) => { localStorage.setItem("fixture-native", JSON.stringify(snapshot)); return true },
@@ -72,6 +75,12 @@ const taskState = (page: Page, key: string, state: string) => page.locator(`.mis
 const readAll = (page: Page) => selectedCard(page).locator(".mission-overview-toggle")
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
+/** Locale-neutral explicit picker choice (the field's accessible name is localized). */
+async function pickLocalized(page: Page, title: string) {
+  await missionPicker(page).locator("button.mission-picker-field").click()
+  await missionPopupOption(page, title).click()
+  await selectedCard(page).waitFor()
+}
 async function localizedPreferences(page: Page, name: string) {
   const preferences = missionGeneralAction(page, name)
   await preferences.waitFor()
@@ -111,7 +120,7 @@ test("Missions preferences open in Settings from the panel gear, retain dirty CA
   page.on("pageerror", error => errors.push(error.message))
   let owner: any = { settings: { missionProfileDefaults: [], unrelated: "keep" } }
   try {
-    await setup(page)
+    await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [mission("preferences")], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/storage/config/ui*", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: owner })
@@ -138,6 +147,8 @@ test("Missions preferences open in Settings from the panel gear, retain dirty CA
     assert.equal(await fixtureCall(page, "settingsOpen"), false)
     await page.waitForTimeout(100)
     assert.equal(catalogReads.length, 0)
+    // Only the picker selects a Mission; the coordinator conversation selects none.
+    await selectMission(page, "Objective preferences")
     await readAll(page).click()
     const reader = page.locator(".mission-reader")
     await reader.waitFor()
@@ -192,7 +203,7 @@ test("empty Missions reaches localized preferences through the gear, without set
   for (const locale of ["fr-FR", "he-IL"]) {
     const page = await browser.newPage({ locale, viewport: { width: 1000, height: 850 } })
     try {
-      await setup(page)
+      await setup(page, "remote")
       await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
       await page.goto(url); await fixtureCall(page, "panelWidth", "280px")
       await page.waitForFunction(() => (window as any).missionFixture.loaded())
@@ -229,7 +240,7 @@ for (const failBeforeRelease of [false, true]) test(`localized Missions preferen
   const run = async () => {
     let failed = false, failure: unknown
     try {
-      await setup(page)
+      await setup(page, "remote")
       await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
       await page.route("**/messages/fr/index.ts*", async route => {
         requested.resolve()
@@ -284,7 +295,7 @@ test("Delegation depth reads only on demand, keeps its original Location draft a
   page.on("pageerror", error => errors.push(error.message))
   let reads = 0, depth: number | null = null, expectation = "original-file"
   try {
-    await setup(page)
+    await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
       if (route.request().method() === "GET") {
@@ -349,7 +360,7 @@ test("visible clean depth revalidates after config and connection changes while 
     } } as any])
   }, reconnect)
   try {
-    await setup(page)
+    await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
       if (route.request().method() === "GET") {
@@ -388,7 +399,7 @@ test("config invalidation fences an admitted stale depth response and keeps edit
     serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "config.updated" } } as any])
   })
   try {
-    await setup(page)
+    await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/fixture/subagent-depth*", async route => {
       assert.equal(route.request().method(), "GET")
@@ -424,7 +435,7 @@ test("depth uncertainty stays at its original Location through pending navigatio
   let writes = 0, reads = 0, release!: () => void, reached!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
   try {
-    await setup(page)
+    await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/fixture/subagent-depth*", async route => {
       if (route.request().method() === "GET") {
@@ -475,6 +486,7 @@ test("reader toggles highlight the exact visible content and toggle it off witho
       return route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0 } })
     })
     await page.goto(url)
+    await selectMission(page, "Objective toggle")
     const overview = readAll(page)
     const task = taskButton(page, "task-one")
     await overview.click()
@@ -516,6 +528,7 @@ test("finished missions omit dead controls and duplicate report/cleanup sections
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], cleanups, generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     assert.equal(await page.locator(".mission-control").locator("form, textarea, .mission-index-primary").count(), 0)
+    await pickLocalized(page, "Objective minimal")
     await selectedCard(page).locator(".mission-tree").waitFor()
     assert.equal(await selectedCard(page).getByText(value.summary, { exact: true }).count(), 0, "the result is read centrally")
     assert.equal(await page.locator(".mission-control .mission-cleanup").count(), 0, "settled cleanup history stays out of the panel")
@@ -570,6 +583,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
           await target.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
             activity: { generatedAt: value.revision, missions: [{ missionId: value.id, actors: activity }] } } }))
           await target.goto(url)
+          await selectMission(target, value.objective)
           await selectedCard(target).locator(".mission-tree").waitFor()
           if (name.includes("human-request")) {
             await fixtureCall(target, "seedActor")
@@ -585,6 +599,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
       } finally { if (mobile) await target.close() }
     }
     await page.goto(url)
+    await selectMission(page, value.objective)
     await selectedStatus(page, "Prepared").waitFor({ state: "attached" })
     await checklist.getByText("Ready to start. Start the mission to build its plan.", { exact: true }).waitFor()
     assert.equal(await card.locator("form, textarea, .mission-disclosure:not(.mission-tree)").count(), 0, "no coordinator field or secondary disclosure besides the task tree")
@@ -717,6 +732,7 @@ test("current report readers honor task-owned results instead of stale history c
     value.reports = [stale]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
+    await selectMission(page, value.objective)
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
     await page.locator(".mission-reader").getByText(current.summary, { exact: true }).waitFor()
     await page.locator(".mission-reader").getByText(current.evidence[0], { exact: true }).waitFor()
@@ -737,6 +753,7 @@ test("paginated evidence copies its entire unchanged source without touching the
     value.tasks[0].report = value.reports[0]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
+    await selectMission(page, value.objective)
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
     const evidence = page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: "Evidence", exact: true }) })
     await evidence.getByText("SDK inventory: first-page proof.", { exact: false }).waitFor()
@@ -782,6 +799,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
       return route.fulfill({ json: { mission: current } })
     })
     await page.goto(url)
+    await selectMission(page, current.objective)
     const play = primaryControl(page), stop = missionToolbarAction(page, "Stop mission permanently")
     await play.waitFor()
     assert.equal(await play.getAttribute("aria-label"), "Start mission")
@@ -873,7 +891,9 @@ test("edits keep drafts and original revision during refresh, and creation retri
       const request = route.request(), body = request.postDataJSON()
       if (request.method() === "POST") {
         creates.push(body)
-        if (failCreate) return route.fulfill({ status: 503, body: "Unavailable" })
+        // A reviewed pre-dispatch refusal proves no effect, so the same request may
+        // be retried; unproven failures are held instead (isDefinitiveCreationRejection).
+        if (failCreate) return route.fulfill({ status: 503, json: { code: "creation-capacity" } })
         const created = { ...mission("created"), objective: body.objective }; list.push(created)
         return route.fulfill({ json: { mission: created } })
       }
@@ -918,7 +938,11 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await fixtureCall(page, "refresh")
     await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
-    await selectedMissionTitle(page).filter({ hasText: "Objective one" }).waitFor()
+    // Only the picker selects: deleting the selected Mission never falls back to
+    // another one, even the current conversation's coordinator Mission.
+    await missionPickerField(page).locator(".mission-picker-placeholder").waitFor()
+    assert.equal(await selectedCard(page).count(), 0)
+    await (await inlineMissionEntry(page, "Objective one")).waitFor()
     assert.equal(deletions.length, 2)
     assert.equal(deletions[0].deleteManagedSessions, true)
     assert.equal(deletions[0].requestId, deletions[1].requestId)
@@ -936,6 +960,7 @@ test("a saved report remains visibly pending until native notification admission
       available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
     } }))
     await page.goto(url)
+    await selectMission(page, value.objective)
     const reports = await openResultHistory(page)
     const pending = page.locator(".mission-reader").getByRole("status").filter({ hasText: "Coordinator notification pending" })
     await pending.waitFor()
@@ -962,6 +987,7 @@ test("dependency navigation reveals the linked task and revised plans retain rea
     value.historyTruncated = true
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
+    await selectMission(page, value.objective)
     await taskButton(page, "task-next").click()
     await page.getByRole("button", { name: "Depends on Inspect evidence", exact: true }).click()
     await page.locator('.mission-task-reader[data-task-id="task-plan"]').waitFor()
@@ -995,6 +1021,7 @@ test("background native questions settle and requested execution remains distinc
     value.tasks[0] = { ...value.tasks[0], actorSessionId: "ses_background", execution: { agent: "build", model: { providerID: "requested", id: "chosen", variant: "high" } } }
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
+    await selectMission(page, value.objective)
     await taskButton(page, "task-one").click()
     await openTaskTechnicalDetails(page)
     await fixtureCall(page, "seedActor")
@@ -1224,6 +1251,7 @@ test("native activity stays separate from the plan and refreshes only while Miss
       ] }] } })
     await page.route("**/api/workspaces/fixture/missions", route => { requests += 1; return route.fulfill({ json: response() }) })
     await page.goto(url)
+    await selectMission(page, value.objective)
     // Observed native activity colours the tree's status icons; the declared plan stays the same rows.
     const states = () => page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.state))
     await taskState(page, "task-0", "active").waitFor()

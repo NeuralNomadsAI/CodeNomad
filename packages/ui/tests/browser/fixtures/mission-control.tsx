@@ -65,7 +65,8 @@ function Fixture() {
       <Show when={missionProjectView("fixture").reader}><MissionReader instanceId="fixture" scope="fixture" /></Show>
     </main>
     <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId="fixture" activeSessionId={() => "ses_fixture"} isActive={active} t={t} /></Show></aside>
-    {/* As in App: without a native Preferences window, the gear opens Settings in this window. */}
+    {/* As in App: browser and remote windows open the embedded Settings screen; local
+        desktop windows route the gear to the native Preferences window instead. */}
     <SettingsScreen />
     <AlertDialog />
   </div>
