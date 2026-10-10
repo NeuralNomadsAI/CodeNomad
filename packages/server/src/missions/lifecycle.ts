@@ -34,7 +34,9 @@ export async function controlMission(input: MissionLifecycleInput, options: {
     if (mission.control?.action === "stop" && input.action !== "stop") {
       throw new MissionControlError("Stopped missions cannot be restarted or paused", "mission-finished")
     }
-    if (mission.status !== "active" && input.action === "start") throw new MissionControlError("Finished missions cannot be restarted", "mission-finished")
+    // Only Stop applies to a finished mission: the native transport rejects any
+    // other control there, so accepting it would leave an unresolvable intent.
+    if (mission.status !== "active" && input.action !== "stop") throw new MissionControlError("Finished missions cannot be restarted or paused", "mission-finished")
     if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before controlling it", "revision-conflict")
     if (mission.control?.pending.length && input.action === "start") throw new MissionControlError("Retry the pending control action first", "control-pending")
     const state = mission.runState ?? "running"
