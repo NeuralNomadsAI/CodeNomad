@@ -209,6 +209,28 @@ test("a definitive creation rejection releases the request, keeps the draft edit
   } finally { await page.close() }
 })
 
+test("clearing the daily time and choosing Once creates a one-time mission without flipping back to Daily", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const fixture = await setup(page)
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("One-time after clearing the schedule")
+    await form.getByLabel("Every day at", { exact: true }).check()
+    await form.getByLabel("Daily local time", { exact: true }).fill("")
+    await form.getByLabel("Once", { exact: true }).check()
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await form.waitFor({ state: "detached", timeout: 3_000 }).catch(() => undefined)
+    assert.equal(await form.count(), 0, "native validation must not block Once for an inactive daily time")
+    assert.equal(fixture.creates.length, 1)
+    assert.equal(fixture.creates[0]!.clock, undefined, "the one-time route received the creation, not a schedule")
+    assert.equal(fixture.creates[0]!.objective, "One-time after clearing the schedule")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 test("daily Create stores a paused schedule and never sends Play", async () => {
   const page = await browser.newPage({ locale: "en-US", timezoneId: "Europe/Paris", viewport: { width: 900, height: 1000 } })
   const fixture = await setup(page)

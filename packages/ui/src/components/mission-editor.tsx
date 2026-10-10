@@ -333,7 +333,8 @@ export function MissionEditor(props: {
         onChange={() => setMode("once")} />{t("missions.create.once")}</label>
       <label class="mission-create-choice"><input type="radio" name="mission-create-when" value="recurring" checked={mode() === "recurring"}
         onChange={() => setMode("recurring")} />{t("missions.create.daily")}</label>
-      <input type="time" class="mission-create-time" required aria-label={t("missions.recurrence.time")} value={time()}
+      {/* Focus/typing still chooses Daily, but only an applicable schedule is natively validated. */}
+      <input type="time" class="mission-create-time" required={mode() === "recurring"} aria-label={t("missions.recurrence.time")} value={time()}
         onFocus={() => setMode("recurring")} onInput={e => { setMode("recurring"); setTime(e.currentTarget.value) }} />
       <Show when={mode() === "recurring"}>
         <small class="mission-create-zone"><bdi>{t("missions.create.zone", { zone: zone().trim() || "—" })}</bdi>
