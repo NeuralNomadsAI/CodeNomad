@@ -317,6 +317,34 @@ test("stop never purges the root's unrelated inbox items", async () => {
   assert.deepEqual(ack.cancellations, [])
 })
 
+const missionInput = (id: string) => ({ id, type: "synthetic", payload: { text: "queued mission input",
+  metadata: { "codenomad.mission": { version: 1, missionID: "msn_fixture", kind: "report" } } } })
+
+test("stop drains a root inbox larger than one receipt and settles with a bounded receipt", async () => {
+  const f = smallFixture("stop")
+  f.inboxes.set("ses_coordinator", Array.from({ length: 200 }, (_, index) => missionInput(`inb_${String(index).padStart(3, "0")}`)))
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.deepEqual(f.inboxes.get("ses_coordinator"), [], "every queued mission input was cancelled")
+  assert.equal(ack.cancellations.length, 128, "the receipt stays within its schema bound")
+  assert.equal(ack.descendants?.complete, true, "a fresh read confirmed the whole drain")
+})
+
+test("stop that cannot drain an oversized root inbox still settles, honestly partial", async () => {
+  const f = smallFixture("stop")
+  // Unrelated items never hide matching ones; 300 matching exceed the route plus one settle pass.
+  f.inboxes.set("ses_coordinator", [...Array.from({ length: 150 }, (_, index) => ({ id: `inb_user_${index}`, type: "user", payload: { text: "unrelated" } })),
+    ...Array.from({ length: 300 }, (_, index) => missionInput(`inb_${String(index).padStart(3, "0")}`))])
+  const ack = (await f.send()).nativeAcknowledgement
+  if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  const left = f.inboxes.get("ses_coordinator")!
+  assert.equal(left.filter(item => item.type === "user").length, 150, "unrelated inputs are kept")
+  assert.ok(left.length < 450, "progress was made on the matching inputs")
+  assert.equal(ack.cancellations.length, 128)
+  assert.equal(ack.descendants?.complete, false)
+  assert.ok((ack.descendants?.unconfirmed ?? 0) > 0)
+})
+
 test("an expired family deadline still interrupts the coordinator with a partial receipt", async () => {
   const f = smallFixture("stop")
   f.addChild("ses_child", true, true)
