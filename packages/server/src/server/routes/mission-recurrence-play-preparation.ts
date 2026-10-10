@@ -57,7 +57,8 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   try {
     hold = holdRecurrenceControl(deps.fence, { scheduleID: input.scheduleID, requestID: input.requestID,
       action: input.action, expectedRevision: input.expectedRevision,
-      workspaceID, location: { directory }, connection }, () => deps.fence.enter([checkout]), input.retry)
+      workspaceID, location: { directory }, connection, owner: { workspace, projectID: location.project.id,
+        projectCanonical: location.project.canonical, checkout } }, () => deps.fence.enter([checkout]), input.retry)
     if (!hold) throw new Error("Worktree deletion in progress")
     const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
     const assertRoots = async () => {
