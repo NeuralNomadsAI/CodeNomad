@@ -3,8 +3,9 @@
 // consumes only contracts the product itself uses: native plugin loading, the
 // model-visible mission tools through the ordinary prompt loop (no fixture
 // ctx.tool.list, which postdates 2.0.7), the one-time journal RPC and the
-// recurrence RPC. Recurrence is qualified by capability: it either serves the
-// native graph or fails closed without schedules, sessions or journal changes.
+// recurrence RPC. The supported contract must serve the native graph without
+// creating schedules, sessions or journal changes; arbitrary RPC errors cannot
+// count as successful qualification.
 // Never discovers the shared service, user home, database or a real provider.
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
@@ -143,25 +144,20 @@ try {
   gate("tool transform, context hook and mission inspect execute through the native model loop")
 
   // Recurrence RPC is registered without presence and qualifies the private
-  // native graph on demand. Either outcome is acceptable; a failure must be a
-  // declared RPC error that leaves the plugin, journal and sessions untouched.
+  // native graph on demand. Both minimum and latest must support this contract;
+  // do not let authentication, storage or plugin failures masquerade as support.
   stage = "recurrence capability qualification"
   const sessionsBefore = (await client.session.list({ location, limit: 64 })).data.map(value => value.id).sort()
   const recurrence = await settle(missions.recurrenceSnapshot({}, { location }))
   receipt.recurrence = recurrence.ok ? { supported: true, schedules: recurrence.value.schedules?.length }
     : { supported: false, error: { type: recurrence.error?.type, message: recurrence.error?.message } }
-  if (recurrence.ok) {
-    assert.deepEqual(recurrence.value.schedules ?? [], [], "A fresh isolated store has no schedules")
-  } else {
-    assert.equal(typeof recurrence.error?.type, "string", "Unavailable recurrence fails as a structured native RPC error")
-    assert(await active(), "Missing recurrence capability never unloads the plugin")
-  }
+  assert(recurrence.ok, `Recurrence contract unavailable: ${recurrence.error?.type ?? ""}: ${recurrence.error?.message ?? ""}`)
+  assert.deepEqual(recurrence.value.schedules, [], "A fresh isolated store has no schedules")
   assert.deepEqual((await client.session.list({ location, limit: 64 })).data.map(value => value.id).sort(), sessionsBefore,
     "Recurrence qualification creates no native sessions")
   assert.deepEqual((await missions.snapshot({}, { location })).missions, started.missions,
     "Recurrence qualification leaves the one-time journal unchanged")
-  gate(recurrence.ok ? "native recurrence graph available with an empty isolated schedule store"
-    : "recurrence capability absent: fails closed without sessions, schedules or journal changes")
+  gate("native recurrence graph available with an empty isolated schedule store")
   receipt.status = "passed"
   console.log(`PASS ${version}: Missions plugin native contract (${receipt.gates.length} gates); ${root}`)
 } catch (error) {
