@@ -43,6 +43,12 @@ export const HUMAN_ANSWER_RPC = { id: "codenomad.missions.human-answer", methods
 export function humanAnswerProof(body: HumanAnswerProof, secret: string): string {
   return createHmac("sha256", secret).update(canonicalAuthority(body)).digest("hex")
 }
+/** The private bridge envelope and the proof body carry the real login cookie
+ * (cookie principals). Redact the whole payload, like the recurrence twin. */
+export function isHumanAnswerProofPayload(value: Record<string, unknown>): boolean {
+  return value.mode === "human-answer-verify"
+    || typeof value.principal === "object" && value.principal !== null && typeof value.formID === "string"
+}
 export function assertHumanAnswerFresh(body: HumanAnswerProof, now = Date.now()): void {
   if (body.principal.kind === "cookie" && body.principal.sessionID === "auth-disabled" || body.issuedAt > now + 5000 || now - body.issuedAt >= 30000)
     throw new Error("Human answer authentication expired")
