@@ -89,6 +89,26 @@ describe("Git ownership preflight admission", () => {
     assert.equal(await sharesGitCommonDirectory(repo, path.join(pseudo, "nested")), false)
   })
 
+  it("leaves a .git with a HEAD Git rejects to Git's continued discovery", async () => {
+    const other = path.join(temp, "other repo")
+    git(temp, "init", "--quiet", other)
+    const vendor = path.join(repo, "vendor")
+    mkdirSync(vendor)
+    writeFileSync(path.join(vendor, "HEAD"), "ref: refs/heads/main\n")
+    writeFileSync(path.join(vendor, "commondir"), `${path.relative(vendor, path.join(other, ".git")).replaceAll("\\", "/")}\n`)
+    for (const invalid of ["text", "directory"] as const) {
+      const checkout = path.join(vendor, `x-${invalid}`)
+      const administrative = path.join(checkout, ".git")
+      mkdirSync(administrative, { recursive: true })
+      if (invalid === "text") writeFileSync(path.join(administrative, "HEAD"), "not a ref\n")
+      else mkdirSync(path.join(administrative, "HEAD"))
+      writeFileSync(path.join(administrative, "commondir"), `${path.relative(administrative, path.join(repo, ".git")).replaceAll("\\", "/")}\n`)
+      writeFileSync(path.join(administrative, "gitdir"), `${path.join(checkout, ".git").replaceAll("\\", "/")}\n`)
+      assert.equal(await readGitCommonDirectory(checkout), realpathSync(git(checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")), invalid)
+      assert.equal(await sharesGitCommonDirectory(repo, checkout), false, invalid)
+    }
+  })
+
   it("leaves a nested bare repository with a dangling HEAD symlink to Git", async (context) => {
     const bare = path.join(repo, "vendor", "linked-head")
     mkdirSync(path.join(bare, "objects"), { recursive: true })

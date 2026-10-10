@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath, stat } from "node:fs/promises"
+import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises"
 import path from "node:path"
 import { runWorktreeGit } from "./git-process"
 
@@ -69,8 +69,19 @@ async function readCheckoutCommonDirectory(directory: string): Promise<string> {
   const { gitDirectory, common } = await readCheckoutIdentity(await findCheckoutRoot(directory))
   // Mirror Git's repository check before trusting the layout; Git skips an
   // invalid `.git` and keeps walking, which the Git fallback reproduces.
-  await Promise.all([stat(path.join(gitDirectory, "HEAD")), stat(path.join(common, "objects")), stat(path.join(common, "refs"))])
+  await Promise.all([stat(path.join(common, "objects")), stat(path.join(common, "refs"))])
+  if (!await hasValidHead(gitDirectory)) throw new Error("Git would reject this HEAD")
   return common
+}
+
+// Git's HEAD validation: a link into refs/, a symbolic ref or an object ID.
+async function hasValidHead(gitDirectory: string): Promise<boolean> {
+  const head = path.join(gitDirectory, "HEAD")
+  const info = await lstat(head)
+  if (info.isSymbolicLink()) return (await readlink(head)).replaceAll("\\", "/").startsWith("refs/")
+  if (!info.isFile()) return false
+  const content = (await readFile(head, "utf8")).replace(/\r?\n$/, "")
+  return /^ref:\s*refs\//.test(content) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(content)
 }
 
 /** Every call reads current state; only in-flight reads are shared, and completed
