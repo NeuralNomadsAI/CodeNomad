@@ -22,7 +22,6 @@
 .mission-delete-sessions input { flex-shrink: 0; margin-top: 3px; }
 .mission-editor .window-body { padding: var(--space-sm); }
 .mission-editor .window-header, .mission-editor .window-footer { padding: var(--space-sm); }
-.mission-editor .mission-editor-start-hint { margin-block: var(--space-sm) 0; font-size: var(--font-size-xs); }
 /* Schedule reader: rule, selected run, the run list, identifiers folded last. */
 .mission-recurrence-reader { display: grid; gap: var(--space-sm); }
 .mission-recurrence-reader > p, .mission-recurrence-reader h3 { margin: 0; }

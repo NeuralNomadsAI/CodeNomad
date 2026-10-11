@@ -283,7 +283,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
     const form = page.locator("form.mission-editor")
     assert.equal(await form.locator("details").first().locator(":scope > summary").innerText(), "Options")
     assert.equal(await form.locator("header").count(), 0, "the panel's Create button heads the form")
-    assert.equal(await form.locator(".mission-editor-start-hint").count(), 0, "creation offers an explicit start choice instead of a hint")
+    assert.equal(await form.getByRole("button", { name: /start/i }).count(), 0, "creation never offers a start action; Play stays separate")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Daily review\nReview the latest work and report changes.")
     await form.getByLabel("Every day at", { exact: true }).check()
     assert.match(await form.locator(".mission-create-zone").innerText(), /America\/New_York/, "the resolved zone is shown beside the schedule")
