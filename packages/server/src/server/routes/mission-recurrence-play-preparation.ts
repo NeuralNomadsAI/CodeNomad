@@ -110,6 +110,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       profileSource, issuedAt: Date.now() }
     const body = { ...identity, digest: recurrenceControlRequestDigest(identity) }
     current()
+    hold.issued(identity.issuedAt)
     return { body: { ...body, ...(input.retry ? { retry: true } : {}), proof: signNativeRecurrenceControl(body, deps.bridgeToken) }, current,
       client, location: identity.location, hold, dispose: hold.dispose }
   } catch (error) { hold?.dispose(); throw error }

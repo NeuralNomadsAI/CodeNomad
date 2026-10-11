@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Context, Effect, Schema } from "effect"
-import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../missions/recurrence-manual-rpc"
+import { recurrenceManualRequestSchema, recurrenceManualResultSchema, recurrenceManualStatusRequestSchema } from "../../missions/recurrence-manual-rpc"
 import { assertRecurrenceBridgeProof, nativeRecurrenceControlInputSchema } from "./native-recurrence-control"
 import { qualifyNativeRecurrenceOrigin } from "./native-recurrence-origin"
 import { assertRecurrenceProofFresh } from "../../missions/recurrence-control-proof"
@@ -9,19 +9,25 @@ import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { readNativeRecurrenceClock } from "./native-service-clock"
 import type { RecurrencePassage } from "../../missions/recurrence-contract"
-import { recurrenceRequestRefusal } from "../../missions/recurrence-store"
 
 type NativeContext = Pick<Plugin.Context, "storage" | "location">
 export const readNativeRecurrenceRunNow = Effect.fn("missions.readNativeRecurrenceRunNow")(function* (ctx: NativeContext, raw: unknown) {
-  const input = recurrenceManualRequestSchema.parse(raw), store = yield* acquireNativeRecurrenceStore(ctx)
-  const doc = yield* Effect.promise(() => store.read(input.scheduleID))
-  if (!doc || !doc.config.roots.some(root => root.directory === ctx.location.directory)) throw new Error("Recurrence scope changed")
+  const { issuedAt, ...input } = recurrenceManualStatusRequestSchema.parse(raw), store = yield* acquireNativeRecurrenceStore(ctx)
+  let doc = yield* Effect.promise(() => store.read(input.scheduleID))
   const exact = (passage: RecurrencePassage) =>
     passage.due.kind === "manual" && passage.due.requestID === input.requestID && passage.due.expectedRevision === input.expectedRevision
+  const found = (value: typeof doc) => !!value && !!(value.pending && exact(value.pending.passage) || value.history.some(item => exact(item.passage)))
+  let reason: "revision-conflict" | "control-conflict" | undefined
+  if (doc && !found(doc)) {
+    // The same serialized proof as control status: CAS refusal or expired held proof.
+    const refused = yield* Effect.promise(() => store.refusal(input.scheduleID, { ...input, action: "run-now" }, issuedAt))
+    doc = refused?.doc
+    reason = found(doc) ? undefined : refused?.reason
+  }
+  if (!doc || !doc.config.roots.some(root => root.directory === ctx.location.directory)) throw new Error("Recurrence scope changed")
   const pending = doc.pending && exact(doc.pending.passage) ? doc.pending : null
   const archived = doc.history.find(item => exact(item.passage))
   const passage = pending?.passage ?? archived?.passage
-  const reason = passage ? undefined : recurrenceRequestRefusal(doc, { ...input, action: "run-now" })
   return recurrenceManualResultSchema.parse({ ...input, version: 1, projectID: doc.projectID, projectCanonical: doc.projectCanonical,
     location: { directory: ctx.location.directory, ...(ctx.location.workspaceID === undefined ? {} : { workspaceID: ctx.location.workspaceID }) },
     outcome: archived ? "settled" : pending?.admission ? "accepted" : reason ? "rejected" : "unknown", ...(reason ? { reason } : {}), passageID: passage?.id ?? null,

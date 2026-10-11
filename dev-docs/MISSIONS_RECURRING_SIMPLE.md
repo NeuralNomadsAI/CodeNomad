@@ -100,6 +100,25 @@ fresh entry. Status reads through the current connection may still settle that
 permit (committed and complete, with the owner re-proven) while such a deletion
 waits, and never resend. A retry or a known held identity's repeat stays uncoded
 on early failure: no dispatch in this attempt says nothing about earlier effects.
+A dispatched control or Run now that native refused before writing any record
+(transport-proof callback timeout, transient Git/family read, profile check,
+Resume not interrupted, service death) first reads unknown: a timeout alone
+proves nothing. Every record-creating CAS (`beginControl`, `reserveManual`)
+rechecks the signed proof's 30 s freshness synchronously inside its write
+transaction. Once the backend's clock considers the exact proof it still holds
+expired, its status reads (and the route's immediate read after a lost reply)
+send that backend-signed `issuedAt` — never a browser value. Native, serialized
+with those CASes, answers `rejected` (`control-conflict`) only when its own clock
+also finds it expired and the request has no record that could ever have been
+evicted; it then retires the request ID in that native host, so an in-flight
+original (or any later attempt of that ID) fails at the CAS even if the wall
+clock moves back, and keeps answering `rejected` for it. The route releases the
+permit holding exactly that `issuedAt`, Location and request (with the owner
+re-proven through a replaced connection), unblocking controls and deletion. An
+unexpired proof, an unheld identity (for example after a backend restart, with
+no hint) or a mismatch stays unknown. Retirement is process-local and bounded
+(4096 IDs); another daemon sharing the same storage relies on the expired proof
+alone, and clients must not reuse a rejected request ID.
 Everything else (including an unprovable profile change) stays unknown.
 
 If a reply is lost, retain that request identity and reread its status.

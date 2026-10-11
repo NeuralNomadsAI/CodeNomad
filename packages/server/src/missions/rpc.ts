@@ -12,7 +12,7 @@ import { recurrenceCurrentContentWire } from "./recurrence-current"
 import { recurrencePassageReadWire } from "./recurrence-reader-contract"
 import { recurrenceScheduleChangedSchema } from "./recurrence-events"
 import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceControlStatusWire, recurrenceControlRequestWire } from "./recurrence-control-contract"
-import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
+import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_STATUS_REQUEST, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -200,7 +200,7 @@ export const CODENOMAD_MISSIONS_RPC = {
         required: ["scheduleID", "requestID", "expectedRevision", "action", "sessionID", "workspaceID", "location", "profileSource", "issuedAt", "digest", "proof"], additionalProperties: false },
       output: RECURRENCE_RUN_NOW_OUTPUT,
     },
-    recurrenceRunNowStatus: { input: RECURRENCE_RUN_NOW_STATUS_INPUT, output: RECURRENCE_RUN_NOW_OUTPUT },
+    recurrenceRunNowStatus: { input: RECURRENCE_RUN_NOW_STATUS_REQUEST, output: RECURRENCE_RUN_NOW_OUTPUT },
 
     recurrenceCurrent: {
       input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 } }, required: ["scheduleID"], additionalProperties: false },

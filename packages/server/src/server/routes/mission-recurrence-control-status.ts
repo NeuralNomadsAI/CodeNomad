@@ -9,7 +9,7 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { requestAdmission } from "../request-admission"
 import { captureRecurrenceControlHoldRead, captureReplacedRecurrenceHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
-  recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
+  recurrenceControlHeldElsewhere, recurrenceHoldProofHint } from "./mission-recurrence-holds"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 import type { RemoteControlManager } from "../../remote-control/manager"
 
@@ -53,7 +53,9 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       const location = { directory }, signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(10_000)])
       if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, signal))) return reply.code(403).send({ error: "Foreign Location" })
       current()
-      const raw = await lifetime.wait(connection.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus(input.data, {
+      // Only an exact permit this backend holds may carry its own expired proof time.
+      const read = { ...input.data, ...(heldRead || replacedRead ? recurrenceHoldProofHint(deps.fence, id, input.data) : {}) }
+      const raw = await lifetime.wait(connection.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus(read, {
         location, ...locationRequestOptions(location), signal,
       }))
       current()
@@ -67,7 +69,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       const owner = recurrenceControlHeldElsewhere(deps.fence, id, input.data, connection)
         ? await lifetime.wait(readRecurrenceHoldOwner(deps.manager, id, workspace, directory, connection.client, signal)) : undefined
       current()
-      reconcileRecurrenceControlHold(deps.fence, id, location, input.data, result, connection, owner)
+      reconcileRecurrenceControlHold(deps.fence, id, location, read, result, connection, owner)
       return result
     } catch {
       request.log.warn({ code: "recurrence-control-status-unavailable" }, "Mission recurrence control status unavailable")

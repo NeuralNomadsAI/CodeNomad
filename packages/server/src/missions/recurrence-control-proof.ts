@@ -19,10 +19,18 @@ export function recurrenceControlRequestDigest(input: Omit<RecurrenceControlProo
   return authorityDigest(input)
 }
 
+const RECURRENCE_PROOF_LIFETIME_MS = 30_000
+
 export function assertRecurrenceProofFresh(issuedAt: number, now = Date.now()): void {
-  if (!Number.isSafeInteger(issuedAt) || issuedAt > now + 5000 || now - issuedAt >= 30_000) {
+  if (!Number.isSafeInteger(issuedAt) || issuedAt > now + 5000 || now - issuedAt >= RECURRENCE_PROOF_LIFETIME_MS) {
     throw new Error("Recurrence proof expired")
   }
+}
+
+/** True only once the same clock makes every later `assertRecurrenceProofFresh`
+ * of `issuedAt` fail. A future-dated issue time is not expired: it may become fresh. */
+export function recurrenceProofExpired(issuedAt: number, now = Date.now()): boolean {
+  return Number.isSafeInteger(issuedAt) && issuedAt >= 0 && now - issuedAt >= RECURRENCE_PROOF_LIFETIME_MS
 }
 
 /** Both the private bridge envelope and direct native RPC proof contain the
