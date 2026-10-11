@@ -1,5 +1,6 @@
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { recurrenceControlStateMatches, recurrenceNotDispatchedCode, type RecurrenceControlRequest, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
+import { recurrenceProofExpired } from "../../missions/recurrence-control-proof"
 import { sameLocation } from "../../opencode/compatibility/location"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 
@@ -13,6 +14,8 @@ export interface RecurrenceHoldAdmission { root: string; profile: string }
 interface Binding extends RecurrenceControlRequest {
   workspaceID: string; location: { directory: string; workspaceID?: string }; connection: ServiceConnection; owner?: RecurrenceHoldOwner
   admission?: RecurrenceHoldAdmission
+  /** Issue time this backend signed into the exact proof it dispatched. */
+  issuedAt?: number
 }
 interface Held {
   binding: Binding; state: "preparing" | "dispatched" | "uncertain" | "partial"; retrying?: boolean; release(): void
@@ -45,6 +48,12 @@ function locate(registry: Map<string, Held> | undefined, workspaceID: string, re
  * A no-effect request restores its superseded intent, still uncertain. */
 function drop(registry: Map<string, Held>, id: string, record: Held, effective: boolean) {
   registry.delete(id); record.release()
+  // A retained intent settled without effect leaves the chain: whoever superseded
+  // it now supersedes its own predecessor, which a later no-effect still restores.
+  if (!effective && id === retainedKey(record.binding)) {
+    for (const heir of registry.values()) if (heir.supersedes === record) heir.supersedes = record.supersedes
+    return
+  }
   for (let old = record.supersedes; old; old = effective ? old.supersedes : undefined) {
     if (registry.get(retainedKey(old.binding)) !== old) continue
     if (effective) { registry.delete(retainedKey(old.binding)); old.release() }
@@ -88,6 +97,24 @@ export function recurrenceControlHeldElsewhere(fence: WorktreeDeletionFence, wor
   const { record } = locate(held.get(fence), workspaceID, request)
   return !!record && record.state !== "preparing" && record.binding.connection !== connection && !!record.binding.owner
     && record.binding.requestID === request.requestID
+}
+
+/** The exact held proof's issue time, offered to native status reads only once
+ * this backend's clock considers it expired (native then decides with its own
+ * clock and the CAS lock). Unexpired proofs are not sent, so a still-fresh or
+ * future-dated hint can never matter and older native readers keep working. */
+function hintOf(issuedAt: number | undefined): { issuedAt?: number } {
+  return issuedAt !== undefined && recurrenceProofExpired(issuedAt) ? { issuedAt } : {}
+}
+
+/** Proof hint for an exact status read of a dispatched permit this backend holds;
+ * never from the browser, never for a preparing attempt or another request. */
+export function recurrenceHoldProofHint(fence: WorktreeDeletionFence, workspaceID: string,
+  request: RecurrenceControlRequest): { issuedAt?: number } {
+  const { record } = locate(held.get(fence), workspaceID, request)
+  if (!record || record.state === "preparing" || record.binding.requestID !== request.requestID
+    || record.binding.action !== request.action || record.binding.expectedRevision !== request.expectedRevision) return {}
+  return hintOf(record.binding.issuedAt)
 }
 
 /** Admission refused before preparation could hold the schedule: another
@@ -151,8 +178,9 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   // A deletion already waiting on the old permit blocks this fresh entry.
   const release = reuses ? previous!.release : enter()
   if (!release) return undefined
+  // A successor inherits its predecessor's superseded chain only when promoted.
   const record: Held = reuses ? previous! : { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release,
-    ...(superseding ? { supersedes: superseding } : replaces && previous!.supersedes ? { supersedes: previous!.supersedes } : {}) }
+    ...(superseding ? { supersedes: superseding } : {}) }
   if (reuses) record.retrying = true
   else if (replaces) previous!.successor = record
   else {
@@ -170,7 +198,10 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
     requiresPartialProof,
     /** The exact uncertain start intent this request must prove before dispatch. */
     superseded: superseding ? { scheduleID: superseding.binding.scheduleID, requestID: superseding.binding.requestID,
-      action: superseding.binding.action, expectedRevision: superseding.binding.expectedRevision } : undefined,
+      action: superseding.binding.action, expectedRevision: superseding.binding.expectedRevision,
+      ...hintOf(superseding.binding.issuedAt) } : undefined,
+    /** Binds the exact signed issue time of the proof this attempt dispatches. */
+    issued(at: number) { if (owned() || record.retrying) record.binding.issuedAt = at },
     /** A fresh exact native read through the current connection must show the
      * superseded request recorded and still incomplete, under the re-proven owner. */
     confirmSuperseded(receipt: RecurrenceControlStatus, owner: RecurrenceHoldOwner) {
@@ -209,6 +240,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
         // Retire the replaced-connection permit only now: the fresh permit is
         // already entered, so deletion never observes an unheld checkout.
         previous!.successor = undefined
+        if (previous!.supersedes) record.supersedes = previous!.supersedes
         registry!.set(id, record)
         previous!.release()
       }
@@ -239,15 +271,17 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
  * re-proven equal to the admitted owner; that connection
  * never inherits the permit, a partial retry or any other admission right. */
 export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, workspaceID: string,
-  location: Binding["location"], request: RecurrenceControlRequest, receipt: RecurrenceControlStatus, connection: ServiceConnection,
-  owner?: RecurrenceHoldOwner): void {
+  location: Binding["location"], request: RecurrenceControlRequest & { issuedAt?: number }, receipt: RecurrenceControlStatus,
+  connection: ServiceConnection, owner?: RecurrenceHoldOwner): void {
   const registry = held.get(fence), { id, record } = locate(registry, workspaceID, request)
   if (!record || record.state === "preparing") return
   const original = record.binding, replaced = original.connection !== connection
   if (replaced && !sameOwner(original.owner, owner)) return
   // Native proof that the exact request never applied and never can: no effect to hold.
+  // A read that carried a proof hint settles only the permit holding that exact proof.
   if (receipt.outcome === "rejected") {
-    if (!sameLocation(location, original.location) || request.requestID !== original.requestID
+    if (request.issuedAt !== undefined && request.issuedAt !== original.issuedAt
+      || !sameLocation(location, original.location) || request.requestID !== original.requestID
       || request.expectedRevision !== original.expectedRevision || request.action !== original.action
       || receipt.scheduleID !== original.scheduleID || receipt.requestID !== original.requestID
       || receipt.expectedRevision !== original.expectedRevision || record.state === "partial") return

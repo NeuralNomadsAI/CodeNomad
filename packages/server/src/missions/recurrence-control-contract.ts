@@ -18,6 +18,10 @@ export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceI
 }).strict()
 export type RecurrenceControlRequest = z.infer<typeof recurrenceControlRequestSchema>
 export { recurrenceControlTargetState, recurrenceControlStateMatches } from "./recurrence-control-state"
+/** Backend-only status hint: the issue time the backend signed into the exact
+ * dispatched proof it still holds a permit for. Never accepted from a browser. */
+export const recurrenceProofIssuedAtSchema = z.number().int().nonnegative().safe()
+export const recurrenceControlStatusRequestSchema = recurrenceControlRequestSchema.extend({ issuedAt: recurrenceProofIssuedAtSchema.optional() }).strict()
 export const recurrenceControlHttpSchema = recurrenceControlRequestSchema.extend({
   directory: z.string().min(1).max(4096).optional(), retry: z.boolean().optional(),
 }).refine(input => !input.retry || input.action === "pause" || input.action === "stop", "Only partial denial controls can be retried")
@@ -28,7 +32,8 @@ export const recurrenceControlRouteSchema = recurrenceControlHttpSchema.refine(i
 export const recurrenceControlStatusSchema = recurrenceControlRecordSchema.omit({ action: true, targetsKnown: true }).partial({
   revision: true, state: true, controlsComplete: true, targets: true,
 }).extend({ version: z.literal(1), scheduleID: recurrenceIDSchema, outcome: z.enum(["committed", "unknown", "rejected"]),
-  // `rejected`: native storage proves this exact request never applied and never can.
+  // `rejected`: native storage proves this exact request never applied and never can,
+  // including (`control-conflict`) an unrecorded request whose held proof expired.
   reason: recurrenceRefusalReasonSchema.optional(),
   action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]).optional() })
   .refine(value => value.outcome !== "committed" || value.controlsComplete === true)
@@ -46,6 +51,7 @@ export const recurrenceControlRequestWire = { type: "object", properties: {
   requestID: { type: "string", minLength: 3, maxLength: 100 },
   action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
   expectedRevision: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+  issuedAt: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
 }, required: ["scheduleID", "requestID", "action", "expectedRevision"], additionalProperties: false } as const
 
 const timestamp = z.number().int().nonnegative().safe()

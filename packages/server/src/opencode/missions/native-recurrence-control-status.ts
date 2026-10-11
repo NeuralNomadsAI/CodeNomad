@@ -1,8 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
-import { recurrenceControlRequestSchema, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
+import { recurrenceControlStatusRequestSchema, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
 import type { RecurrenceControlRecord, RecurrenceDocument } from "../../missions/recurrence-contract"
-import { recurrenceRequestRefusal } from "../../missions/recurrence-store"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClockStatus } from "./native-service-clock"
 
@@ -13,7 +12,7 @@ import { observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClockStatus } 
 export const readNativeRecurrenceControlStatus = Effect.fn("missions.readNativeRecurrenceControlStatus")(function* (
   ctx: Pick<Plugin.Context, "storage" | "location">, raw: unknown,
 ) {
-  const input = recurrenceControlRequestSchema.parse(raw)
+  const { issuedAt, ...input } = recurrenceControlStatusRequestSchema.parse(raw)
   const unknown: RecurrenceControlStatus = { version: 1, scheduleID: input.scheduleID, requestID: input.requestID,
     expectedRevision: input.expectedRevision, outcome: "unknown" }
   const store = yield* acquireNativeRecurrenceStore(ctx)
@@ -21,9 +20,11 @@ export const readNativeRecurrenceControlStatus = Effect.fn("missions.readNativeR
   if (!doc?.config.roots.some(root => root.directory === ctx.location.directory)) return unknown
   let record = doc.controls.find(item => item.requestID === input.requestID)
   if (!record) {
-    // Definitive only on proof the request never applied and never can (CAS).
-    const reason = recurrenceRequestRefusal(doc, input)
-    return reason ? { ...unknown, outcome: "rejected" as const, reason } : unknown
+    // Definitive only on proof the request never applied and never can (CAS, or
+    // its held proof expired), rechecked serialized with the record-creating CAS.
+    const refused = yield* Effect.promise(() => store.refusal(input.scheduleID, input, issuedAt))
+    if (!refused?.doc.config.roots.some(root => root.directory === ctx.location.directory)) return unknown
+    return refused.reason ? { ...unknown, outcome: "rejected" as const, reason: refused.reason } : unknown
   }
   if (record.action !== input.action || record.expectedRevision !== input.expectedRevision) return unknown
   if (startIntentCurrent(doc, record)) {

@@ -7,7 +7,7 @@ import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-prepara
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { captureRecurrenceControlHoldRead, captureReplacedRecurrenceHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
-  recurrenceControlHeldElsewhere, recurrenceNotDispatchedReply } from "./mission-recurrence-holds"
+  recurrenceControlHeldElsewhere, recurrenceHoldProofHint, recurrenceNotDispatchedReply } from "./mission-recurrence-holds"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
@@ -28,9 +28,12 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       const connection = await lifetime.wait(deps.manager.getSharedServiceConnection(request.params.id))
       if (!directory || !connection) throw new Error("Manual status unavailable")
       const location = { directory }, identity = { ...input.data, action: "run-now" as const }
-      const currentDeletion = captureRecurrenceControlHoldRead(deps.fence, request.params.id, location, identity, connection)
+      const heldRead = captureRecurrenceControlHoldRead(deps.fence, request.params.id, location, identity, connection)
         ?? captureReplacedRecurrenceHoldRead(deps.fence, request.params.id, location, identity, connection)
+      const currentDeletion = heldRead
         ?? await lifetime.wait(captureDisplayIdentities(deps.fence, deps.manager, request.params.id, [base.directory, directory])) ?? (() => false)
+      // Only an exact permit this backend holds may carry its own expired proof time.
+      const hint = heldRead ? recurrenceHoldProofHint(deps.fence, request.params.id, identity) : {}
       const current = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (!currentDeletion() || deps.manager.get(request.params.id) !== workspace
@@ -39,7 +42,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       }
       if (!await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign Location")
       current()
-      const result = recurrenceManualResultSchema.parse(await lifetime.wait(connection.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus(input.data,
+      const result = recurrenceManualResultSchema.parse(await lifetime.wait(connection.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ ...input.data, ...hint },
         { location, ...locationRequestOptions(location), signal: lifetime.signal })))
       current()
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID || result.expectedRevision !== input.data.expectedRevision
@@ -49,7 +52,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
         const owner = recurrenceControlHeldElsewhere(deps.fence, request.params.id, identity, connection)
           ? await lifetime.wait(readRecurrenceHoldOwner(deps.manager, request.params.id, workspace, directory, connection.client, lifetime.signal)) : undefined
         current()
-        reconcileRecurrenceControlHold(deps.fence, request.params.id, location, identity, result.outcome === "rejected" && result.reason
+        reconcileRecurrenceControlHold(deps.fence, request.params.id, location, { ...identity, ...hint }, result.outcome === "rejected" && result.reason
           ? { version: 1, ...input.data, outcome: "rejected", reason: result.reason }
           : { version: 1, ...input.data, revision: input.data.expectedRevision + 1, outcome: "committed", controlsComplete: true }, connection, owner)
       }
@@ -74,8 +77,11 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       const options = { location: prepared.location, ...locationRequestOptions(prepared.location) }
       let raw: unknown
       try { raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNow(prepared.body, options) }
-      catch { raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ scheduleID: prepared.body.scheduleID,
-        requestID: input.data.requestID, expectedRevision: input.data.expectedRevision }, { ...options, signal: AbortSignal.timeout(10_000) }) }
+      catch {
+        const identity = { scheduleID: prepared.body.scheduleID, requestID: input.data.requestID, expectedRevision: input.data.expectedRevision }
+        raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ ...identity,
+          ...recurrenceHoldProofHint(deps.fence, request.params.id, { ...identity, action: "run-now" }) }, { ...options, signal: AbortSignal.timeout(10_000) })
+      }
       const result = recurrenceManualResultSchema.parse(raw)
       if (result.scheduleID !== prepared.body.scheduleID || result.requestID !== input.data.requestID
         || result.expectedRevision !== input.data.expectedRevision || !sameLocation(result.location, prepared.location)) throw new Error("Foreign manual reply")

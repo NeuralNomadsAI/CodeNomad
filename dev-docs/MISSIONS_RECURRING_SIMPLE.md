@@ -90,9 +90,14 @@ original partial permit.
 Within one backend, a partial or uncertain Pause/Stop permit can outlive its
 retired OpenCode connection (event-stream end, failed request, new daemon).
 An explicit exact retry through the current connection may then prepare a fresh
-admission beside it, never transfer it: the same workspace, native project and
-storage, directory, checkout, physical root and Settings profile must be
-re-proven, plus the same exact native partial record. The old permit is retired
+admission beside it, never transfer it: the same backend workspace object,
+native project ID and canonical path (which OpenCode derives from the Git root),
+directory, checkout, physical root and Settings profile must be re-proven, plus
+the same exact native partial record (random request ID, revision and state).
+These are real ownership gates, but there is no daemon-storage identity
+challenge: a byte-identical copy of the native database served by another daemon
+at the same project/path is indistinguishable, and a retry's effects would land
+in that copy while the backend retires its permit. The old permit is retired
 only at dispatch, after the fresh one is entered. An in-flight, still-preparing
 or already-replacing original, a live original connection, or any mismatch
 refuses without effects; a deletion already waiting on the old permit blocks the
@@ -100,6 +105,25 @@ fresh entry. Status reads through the current connection may still settle that
 permit (committed and complete, with the owner re-proven) while such a deletion
 waits, and never resend. A retry or a known held identity's repeat stays uncoded
 on early failure: no dispatch in this attempt says nothing about earlier effects.
+A dispatched control or Run now that native refused before writing any record
+(transport-proof callback timeout, transient Git/family read, profile check,
+Resume not interrupted, service death) first reads unknown: a timeout alone
+proves nothing. Every record-creating CAS (`beginControl`, `reserveManual`)
+rechecks the signed proof's 30 s freshness synchronously inside its write
+transaction. Once the backend's clock considers the exact proof it still holds
+expired, its status reads (and the route's immediate read after a lost reply)
+send that backend-signed `issuedAt` — never a browser value. Native, serialized
+with those CASes, answers `rejected` (`control-conflict`) only when its own clock
+also finds it expired and the request has no record that could ever have been
+evicted; it then retires the request ID in that native host, so an in-flight
+original (or any later attempt of that ID) fails at the CAS even if the wall
+clock moves back, and keeps answering `rejected` for it. The route releases the
+permit holding exactly that `issuedAt`, Location and request (with the owner
+re-proven through a replaced connection), unblocking controls and deletion. An
+unexpired proof, an unheld identity (for example after a backend restart, with
+no hint) or a mismatch stays unknown. Retirement is process-local and bounded
+(4096 IDs); another daemon sharing the same storage relies on the expired proof
+alone, and clients must not reuse a rejected request ID.
 Everything else (including an unprovable profile change) stays unknown.
 
 If a reply is lost, retain that request identity and reread its status.
@@ -121,7 +145,11 @@ its snapshot records the intent; the original is never resent. The backend admit
 that new request with its own permit only after a fresh exact native read through
 the current connection shows the original recorded and incomplete under the same
 owner; a committed superseding control retires the original permit, a no-effect
-refusal restores it. Run now itself still completes only on admission or archive.
+refusal restores it. If another client's exact read proves a retained middle
+intent had no effect while a newer control still supersedes it, only that
+intent's permit is released and the newer control inherits its predecessor, so
+a later no-effect restores (and a commit retires) the earlier intent instead of
+orphaning its permit. Run now itself still completes only on admission or archive.
 In-flight, preparing and partial Pause/Stop permits are never superseded. A Play/Resume whose native
 Job start fails while a fresh read positively shows no running daily Job completes
 its record with the schedule Interrupted (reason `error`), releasing the backend

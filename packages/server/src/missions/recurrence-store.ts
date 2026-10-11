@@ -4,6 +4,7 @@ import { runMissionExclusive } from "./exclusive"
 import { stableToken, type MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { latestDailyDue } from "./recurrence-clock"
+import { recurrenceProofExpired } from "./recurrence-control-proof"
 import {
   parseRecurrenceDocument, recurrenceAdmissionSchema, recurrenceConfigSchema, recurrenceIDSchema,
   recurrenceMessageID, recurrencePassageID, recurrenceResultSchema, recurrenceCoordinatorSessionID,
@@ -26,6 +27,15 @@ export class RecurrenceCreateCapacityError extends Error {
  * this module supplies durability, not grants. Plain native get/set is NOT CAS;
  * production must use a conditional adapter. In-process exclusion only coalesces
  * plugin incarnations sharing this JS process. */
+// Request identities an exact status read proved unrecorded after their held proof
+// expired. Shared across plugin incarnations in this host, like the exclusive
+// queue, so an in-flight original can never record later even if the wall clock
+// moves back; other hosts rely on the expired proof alone. Bounded, FIFO.
+const retiredKey = Symbol.for("codenomad.missions.recurrence-retired.v1")
+const retiredHost = globalThis as typeof globalThis & { [retiredKey]?: Set<string> }
+const retired = retiredHost[retiredKey] ??= new Set<string>()
+const RETIRED_LIMIT = 4096
+
 export class NativeMissionRecurrenceStore {
   readonly projectToken: string
   private readonly prefix: string
@@ -102,6 +112,7 @@ export class NativeMissionRecurrenceStore {
 
   beginControl(id: string, input: Pick<RecurrenceControlRecord, "requestID" | "action" | "expectedRevision">,
     current: () => true, profileSource?: RecurrenceDocument["profileSource"]): Promise<RecurrenceDocument> {
+    current = this.unretired(id, input.requestID, current)
     return this.exclusive(async () => {
       const doc = await this.required(id), prior = doc.controls.find(item => item.requestID === input.requestID)
       // A partial retry can still perform effects. Idempotent lookup must not
@@ -167,7 +178,7 @@ export class NativeMissionRecurrenceStore {
 
   reserveManual(id: string, requestID: string, expectedRevision: number, now: number,
     profileSource: NonNullable<RecurrenceDocument["profileSource"]>, current: () => true): Promise<RecurrenceDocument> {
-    return this.change(id, expectedRevision, current, doc => {
+    return this.change(id, expectedRevision, this.unretired(id, requestID, current), doc => {
       if (manualRefused(doc) || profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
         || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence manual conflict")
       makeControlRoom(doc)
@@ -247,6 +258,38 @@ export class NativeMissionRecurrenceStore {
     doc.settledCount++
     doc.pending = null
   }
+  /** Exact status refusal of a request with no record. Besides the pure CAS proof,
+   * a backend-held proof `issuedAt` that this host's clock already expired proves
+   * it too: every record-creating CAS rechecks freshness synchronously, and this
+   * read, serialized with those writes, retires the identity so none records it. */
+  refusal(id: string, input: Pick<RecurrenceControlRecord, "requestID" | "action" | "expectedRevision">,
+    issuedAt?: number, now = Date.now): Promise<{ doc: RecurrenceDocument; reason?: "revision-conflict" | "control-conflict" } | undefined> {
+    return this.exclusive(async () => {
+      const doc = await this.read(id)
+      if (!doc) return undefined
+      const reason = recurrenceRequestRefusal(doc, input)
+      // A possibly evicted record may have applied: only an unrecorded request whose
+      // record provably never existed in this document can be retired.
+      const identity = this.retiredIdentity(id, input.requestID)
+      if (reason || doc.controls.some(item => item.requestID === input.requestID) || !neverEvicted(doc, input.expectedRevision)) {
+        return { doc, ...(reason ? { reason } : {}) }
+      }
+      // Already retired here: still unrecorded, so the same proof stands.
+      if (retired.has(identity)) return { doc, reason: "control-conflict" }
+      if (issuedAt === undefined || !recurrenceProofExpired(issuedAt, now())) return { doc }
+      retired.add(identity)
+      if (retired.size > RETIRED_LIMIT) retired.delete(retired.values().next().value!)
+      return { doc, reason: "control-conflict" }
+    })
+  }
+  private retiredIdentity(id: string, requestID: string) { return JSON.stringify([this.projectToken, id, requestID]) }
+  private unretired(id: string, requestID: string, current: () => true): () => true {
+    const identity = this.retiredIdentity(id, requestID)
+    return () => {
+      if (retired.has(identity)) throw new Error("Recurrence request retired")
+      return current()
+    }
+  }
   private exactPending(doc: RecurrenceDocument, identity: { passageID: string; messageID: string }) {
     if (!doc.pending || doc.pending.passage.id !== identity.passageID || doc.pending.passage.messageID !== identity.messageID) throw new Error("Recurrence passage conflict")
     return doc.pending
@@ -325,13 +368,16 @@ function manualRefused(doc: RecurrenceDocument): boolean {
 export function recurrenceRequestRefusal(doc: RecurrenceDocument,
   input: Pick<RecurrenceControlRecord, "requestID" | "action" | "expectedRevision">): "revision-conflict" | "control-conflict" | undefined {
   if (doc.controls.some(item => item.requestID === input.requestID)) return undefined
-  if (doc.revision > input.expectedRevision) {
-    const neverEvicted = doc.evictedControlRevision === undefined ? doc.controls.length < RECURRENCE_CONTROL_LIMIT
-      : input.expectedRevision + 1 > doc.evictedControlRevision
-    return neverEvicted ? "revision-conflict" : undefined
-  }
+  if (doc.revision > input.expectedRevision) return neverEvicted(doc, input.expectedRevision) ? "revision-conflict" : undefined
   if (doc.revision < input.expectedRevision) return undefined
   return (input.action === "run-now" ? manualRefused(doc) : controlRefusal(doc, input)) ? "control-conflict" : undefined
+}
+
+/** No record recorded at `expectedRevision + 1` can have been evicted from `doc`. */
+function neverEvicted(doc: RecurrenceDocument, expectedRevision: number): boolean {
+  if (doc.revision <= expectedRevision) return true
+  return doc.evictedControlRevision === undefined ? doc.controls.length < RECURRENCE_CONTROL_LIMIT
+    : expectedRevision + 1 > doc.evictedControlRevision
 }
 
 /** A Job/observer start intent (Play, Resume, Check) whose outcome stayed unknown

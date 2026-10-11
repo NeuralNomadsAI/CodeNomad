@@ -5,7 +5,7 @@ import { recurrenceControlStatusSchema, recurrenceControlRouteSchema, recurrence
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions } from "../../opencode/compatibility/location"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
-import { recurrenceNotDispatchedReply } from "./mission-recurrence-holds"
+import { recurrenceHoldProofHint, recurrenceNotDispatchedReply } from "./mission-recurrence-holds"
 
 /** The sole authenticated human control path. Unknown mutations get one bounded
  * exact receipt read; they are never submitted a second time. Native remains the
@@ -46,9 +46,10 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         return result
       } catch {
         const body = prepared.body
+        const identity = { scheduleID: body.scheduleID, requestID: body.requestID, action: body.action, expectedRevision: body.expectedRevision }
+        // A reply lost after the proof expired lets native settle it now; otherwise unknown.
         const result = recurrenceControlStatusSchema.parse(await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus({
-          scheduleID: body.scheduleID, requestID: body.requestID, action: body.action,
-          expectedRevision: body.expectedRevision,
+          ...identity, ...recurrenceHoldProofHint(deps.fence, request.params.id, identity),
         }, { ...options, signal: AbortSignal.timeout(10_000) }))
         if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID
           || result.expectedRevision !== body.expectedRevision) throw new Error("Foreign control receipt")
