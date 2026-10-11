@@ -2,6 +2,22 @@
 
 > PR scope (2026-10-09): host-lifetime, `packages/native-host-lifetime`, the durable host/plugin and their fixtures were moved out of this tree to the local branch `experiment/host-lifetime-foundation-20261009`; spikes and experiments are preserved on `preserve/missions-full-20261009`. References below are historical.
 
+## Large family journey L (2026-10-11, gatekeeper R8 P2-2)
+
+Settlement shares the 4096-session control ceiling instead of a 32-session bound.
+New journey **L**: the coordinator launches 34 ordinary background subagents in
+batches of six (a single burst of 34 failed some launches closed on the 2 s
+per-send profile-environment read budget; that is admission behaviour, not
+settlement). Same isolated read-copy of OpenCode 2.0.26, rebuilt `build:missions`:
+
+| Journey | Evidence suffix | Result |
+| --- | --- | --- |
+| L | `a39Z1n` | 35-session family; pending while one held child was the only active session; completed 3.06 s after quiescence |
+| A B C D G | `gZDNBT` | all passed after the change |
+
+This is not 4096-session stress qualification; the ceiling and above-ceiling
+unknown coverage are unit-tested against the real SQL observation adapter.
+
 ## PR candidate rerun (2026-10-09, after scope cleanup and merge with upstream `dev` 43165435)
 
 Same isolated read-copy of OpenCode 2.0.26, rebuilt `build:missions`, journeys

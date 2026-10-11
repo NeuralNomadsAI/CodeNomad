@@ -103,6 +103,51 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
     await c.control(scheduleID, "stop")
   }
 
+  if (c.journeys.includes("L")) {
+    // Extended family: more native sessions than the former 32-session settlement bound.
+    c.setStage("L large family")
+    const CHILDREN = 34, held = `L-child-${CHILDREN - 1}`
+    c.scenarios.push(turn => {
+      const child = /\[L-CHILD-(\d+)\]/.exec(turn.first)
+      if (child) return { ...(Number(child[1]) === CHILDREN - 1 ? { hold: held } : {}), text: `L_CHILD_RESULT_${child[1]}_` }
+      if (!turn.first.includes("[JOURNEY-L]")) return undefined
+      // Batches: one burst of 34 concurrent launches exceeds the 2 s per-send profile
+      // environment read budget on a loaded host and fails some launches closed.
+      const next = Array.from({ length: CHILDREN }, (_, i) => i).filter(i => !turn.all.includes(`[L-CHILD-${i}]`)).slice(0, 6)
+      if (next.length) return { calls: next.map(i => ({ name: "subagent",
+        args: { agent: "fixture-worker", description: `Background child ${i}`, prompt: `[L-CHILD-${i}] Produce child result ${i}`, background: true } })) }
+      if (turn.calls.includes("mission_report")) return { text: "Done" }
+      return Array.from({ length: CHILDREN }, (_, i) => `L_CHILD_RESULT_${i}_`).every(text => turn.all.includes(text))
+        ? { calls: [{ name: "mission_report", args: { outcome: "completed", summary: "Every background child finished", final: true } }] }
+        : { text: "Waiting for background work" }
+    })
+    const scheduleID = await c.create("Native large family", far(), { instructions: "[JOURNEY-L] Delegate many background children; report only after all finish." })
+    const L = c.evidence.journeys.L = { id: scheduleID, children: CHILDREN }
+    try {
+      const passage = L.passage = await manual(scheduleID, 0)
+      const coordinator = passage.sessionID
+      const family = async () => (await c.sessions()).filter(s => s.parentID === coordinator).map(s => s.id)
+      await c.until(async () => c.holds.has(held) && (await family()).length === CHILDREN, 120_000)
+      L.familySize = (await family()).length + 1
+      assert.ok(L.familySize > 33, "family larger than the former settlement bound")
+      await c.until(async () => (await active()).filter(id => id !== coordinator).length === 1, 120_000)
+      L.heldChild = (await active()).find(id => id !== coordinator)
+      await delay(OBSERVE)
+      L.whileHeld = { at: Date.now(), active: await active(), snapshot: await c.snapshot(scheduleID) }
+      assert.ok(L.whileHeld.snapshot.pending, "one active descendant keeps a large family pending")
+      assert.equal(L.whileHeld.snapshot.history.length, 0)
+      c.holds.get(held)(); c.holds.delete(held)
+      await c.until(() => calls(coordinator).some(call => call.name === "mission_report"), 120_000)
+      await c.quiet(coordinator); L.quiescentAt = Date.now()
+      const { after, observedAt } = await archived(scheduleID, 1)
+      L.archiveLatencyMs = observedAt - L.quiescentAt
+      assert.equal(after.latestResult.outcome, "completed"); assert.equal(after.latestResult.passageID, passage.passageID)
+      assert.equal(after.pending, null)
+      L.result = "passed"
+    } finally { c.holds.get(held)?.() }
+    await c.control(scheduleID, "stop")
+  }
+
   if (c.journeys.includes("F")) {
     c.setStage("F native provider failure")
     c.scenarios.push(turn => turn.first.includes("[JOURNEY-F]") ? { fail: true } : undefined)
