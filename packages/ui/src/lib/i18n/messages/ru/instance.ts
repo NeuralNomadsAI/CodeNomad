@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "Удалить расширение и настройки активации из этого профиля CodeNomad?",
   "panelExtensions.removeConfirm": "Подтвердить удаление",
   "instanceTabs.new.title": "Новый экземпляр (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "Новый экземпляр (Cmd/Ctrl+N) — долгое нажатие или правый клик: больше действий",
   "instanceTabs.new.ariaLabel": "Новый экземпляр",
   "instanceTabs.remote.title": "Удаленное подключение",
   "instanceTabs.remote.ariaLabel": "Удаленное подключение",

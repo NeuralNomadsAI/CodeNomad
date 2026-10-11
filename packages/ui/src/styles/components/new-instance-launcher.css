@@ -1,0 +1,172 @@
+/* Compact new-instance launcher anchored to the tab-bar button (`new-instance-launcher.tsx`). */
+.new-instance-launcher {
+  background-color: var(--surface-control);
+  color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+  width: min(26rem, calc(100vw - 1rem));
+  max-height: min(calc(100dvh - 2rem), var(--kb-popper-content-available-height, calc(100dvh - 2rem)));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1000;
+}
+
+.new-instance-launcher .window-header {
+  background: transparent;
+  border-bottom-color: color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.new-instance-launcher-search {
+  gap: var(--space-sm);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.new-instance-launcher-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.new-instance-launcher-section-title {
+  padding: var(--space-xs) var(--window-inline-padding) 0;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+/* About eight rows stay visible; the rest scroll. */
+.new-instance-launcher-recents {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: calc(8 * 2.25rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-xs);
+}
+
+.new-instance-launcher-recent,
+.new-instance-launcher-server {
+  display: grid;
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 2.25rem;
+  padding: var(--space-xs) var(--space-sm);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.new-instance-launcher-recent[aria-selected="true"] {
+  background-color: var(--list-item-highlight-bg);
+  box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
+}
+
+.new-instance-launcher-server:hover,
+.new-instance-launcher-server:focus-visible {
+  background-color: var(--surface-hover-overlay);
+  outline: none;
+}
+
+.new-instance-launcher-recent[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.new-instance-launcher-recent-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.new-instance-launcher-recent-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.new-instance-launcher-recent-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.new-instance-launcher-recent-open {
+  color: var(--session-status-idle-fg, var(--text-secondary));
+}
+
+.new-instance-launcher-recent-open .status-dot {
+  background-color: currentColor;
+}
+
+.new-instance-launcher-empty {
+  margin: 0;
+  padding: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.new-instance-launcher-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--window-inline-padding);
+  border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.new-instance-launcher-actions .window-action {
+  justify-content: center;
+  min-width: 0;
+}
+
+.new-instance-launcher-actions .window-action > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.new-instance-launcher-servers {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-xs);
+  border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.new-instance-launcher-server {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.new-instance-launcher-footer {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+
+.new-instance-launcher-home {
+  margin-inline-start: auto;
+}
+
+/* Long press must not select text or open the touch callout on the button. */
+.new-instance-button {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}

@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "¿Eliminar esta extensión y sus ajustes de activación de este perfil de CodeNomad?",
   "panelExtensions.removeConfirm": "Confirmar eliminación",
   "instanceTabs.new.title": "Nueva instancia (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "Nueva instancia (Cmd/Ctrl+N) — mantén pulsado o clic derecho para más opciones",
   "instanceTabs.new.ariaLabel": "Nueva instancia",
   "instanceTabs.remote.title": "Conexión remota",
   "instanceTabs.remote.ariaLabel": "Conexión remota",

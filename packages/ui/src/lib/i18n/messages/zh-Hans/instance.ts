@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "从此 CodeNomad 配置中移除扩展及其启用设置？",
   "panelExtensions.removeConfirm": "确认移除",
   "instanceTabs.new.title": "新建实例 (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "新建实例 (Cmd/Ctrl+N) — 长按或右键查看更多选项",
   "instanceTabs.new.ariaLabel": "新建实例",
   "instanceTabs.remote.title": "远程连接",
   "instanceTabs.remote.ariaLabel": "远程连接",

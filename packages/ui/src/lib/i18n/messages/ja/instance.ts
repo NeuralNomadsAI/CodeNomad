@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "この CodeNomad プロファイルから拡張機能と有効化設定を削除しますか？",
   "panelExtensions.removeConfirm": "削除を確認",
   "instanceTabs.new.title": "新しいインスタンス (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "新しいインスタンス (Cmd/Ctrl+N) — 長押しまたは右クリックでその他のオプション",
   "instanceTabs.new.ariaLabel": "新しいインスタンス",
   "instanceTabs.remote.title": "リモート接続",
   "instanceTabs.remote.ariaLabel": "リモート接続",

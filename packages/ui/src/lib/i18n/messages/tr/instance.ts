@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "Bu uzantı ve etkinleştirme ayarları bu CodeNomad profilinden kaldırılsın mı?",
   "panelExtensions.removeConfirm": "Kaldırmayı onayla",
   "instanceTabs.new.title": "Yeni instance (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "Yeni instance (Cmd/Ctrl+N) — daha fazlası için uzun basın veya sağ tıklayın",
   "instanceTabs.new.ariaLabel": "Yeni instance",
   "instanceTabs.remote.title": "Uzak bağlantı",
   "instanceTabs.remote.ariaLabel": "Uzak bağlantı",

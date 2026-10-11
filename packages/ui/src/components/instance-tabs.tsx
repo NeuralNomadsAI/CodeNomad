@@ -14,8 +14,9 @@ import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
-import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
+import { PlusSquare, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
+import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
@@ -30,6 +31,9 @@ interface InstanceTabsProps {
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
   onNew: () => void
+  /** Long press, right-click or Alt+Down on the new-instance button. */
+  onOpenLauncher?: (anchor: HTMLElement) => void
+  launcherOpen?: boolean
   onMoveTab: (tabId: string, targetTabId: string, placement: "before" | "after") => void
 }
 
@@ -114,6 +118,10 @@ const isTouchOnlyPointer = () => {
 
 const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { t } = useI18n()
+  const newInstanceHandlers = createLongPressHandlers({
+    onClick: () => props.onNew(),
+    onLongPress: (anchor) => props.onOpenLauncher?.(anchor),
+  })
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
@@ -262,12 +270,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
             </Show>
 
             <button
-              class="new-tab-button"
-              onClick={props.onNew}
-              title={t("instanceTabs.new.title")}
+              class="new-tab-button new-instance-button"
+              {...newInstanceHandlers}
+              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
               aria-label={t("instanceTabs.new.ariaLabel")}
+              aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
+              aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
             >
-              <Plus class="w-4 h-4" />
+              <PlusSquare class="w-4 h-4" />
             </button>
 
             <button

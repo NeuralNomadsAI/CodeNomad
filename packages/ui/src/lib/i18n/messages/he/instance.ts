@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "להסיר את ההרחבה ואת הגדרות ההפעלה מפרופיל CodeNomad זה?",
   "panelExtensions.removeConfirm": "אישור הסרה",
   "instanceTabs.new.title": "מופע חדש (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "מופע חדש (Cmd/Ctrl+N) — לחיצה ארוכה או לחיצה ימנית לאפשרויות נוספות",
   "instanceTabs.new.ariaLabel": "מופע חדש",
   "instanceTabs.remote.title": "חיבור מרוחק",
   "instanceTabs.remote.ariaLabel": "חיבור מרוחק",

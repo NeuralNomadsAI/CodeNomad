@@ -24,6 +24,7 @@ export const instanceMessages = {
   "panelExtensions.removeWarning": "यो CodeNomad प्रोफाइलबाट विस्तार र यसको सक्रियता सेटिङ हटाउने?",
   "panelExtensions.removeConfirm": "हटाउने पुष्टि गर्नुहोस्",
   "instanceTabs.new.title": "नयाँ उदाहरण (Cmd/Ctrl+N)",
+  "instanceTabs.new.launcherTitle": "नयाँ उदाहरण (Cmd/Ctrl+N) — थप विकल्पका लागि लामो थिच्नुहोस् वा दायाँ क्लिक गर्नुहोस्",
   "instanceTabs.new.ariaLabel": "नयाँ उदाहरण",
   "instanceTabs.remote.title": "रिमोट जडान",
   "instanceTabs.remote.ariaLabel": "रिमोट जडान",
