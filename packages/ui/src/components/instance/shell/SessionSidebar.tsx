@@ -3,7 +3,7 @@ import type { SessionThread } from "../../../stores/session-state"
 import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { Plus, Search } from "lucide-solid"
+import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 import { ArrowLeft, Info } from "lucide-solid"
 
@@ -53,7 +53,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
                 }
               }}
             >
-              <Plus class="w-4 h-4" />
+              <PlusSquare class="w-4 h-4" />
             </IconButton>
             <IconButton
               class="icon-toggle"

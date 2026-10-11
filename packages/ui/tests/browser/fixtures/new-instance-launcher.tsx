@@ -15,8 +15,8 @@ addInstance(open)
 const tabs: AppTabRecord[] = [{ id: `instance:${open.id}`, kind: "instance", instance: open }]
 
 const calls: string[] = []
+const [launcherOpen, setLauncherOpen] = createSignal(false)
 function Fixture() {
-  const [launcherOpen, setLauncherOpen] = createSignal(false)
   const [anchor, setAnchor] = createSignal<HTMLElement>()
   return <>
     <InstanceTabs tabs={tabs} activeTabId={tabs[0].id} onSelect={() => {}} onClose={() => {}}
@@ -28,9 +28,11 @@ function Fixture() {
       onNewTemporaryInstance={() => calls.push("temporary")}
       onOpenSidecar={() => calls.push("sidecar")}
       onOpenHome={() => calls.push("full-home")} />
+    {/* Stands in for another window (command palette, home page) taking focus. */}
+    <input id="other-surface" aria-label="Other surface" />
   </>
 }
 
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).launcherFixture = { calls }
+;(window as any).launcherFixture = { calls, close: () => setLauncherOpen(false) }

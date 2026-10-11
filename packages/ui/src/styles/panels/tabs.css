@@ -62,6 +62,21 @@
   padding-block: 0;
 }
 
+/* The strip only takes its tabs' width, so the new-instance button follows the
+   last tab and stays pinned at the strip's end once the tabs overflow. */
+.tab-bar-instance .tab-scroll-frame {
+  flex: 0 1 auto;
+}
+
+.tab-strip-new {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: flex-end;
+  height: calc(var(--chrome-height) + var(--space-xs) - 1px);
+  margin-inline-end: auto;
+}
+
 .tab-bar-actions {
   @apply flex items-center gap-1 flex-shrink-0;
   position: relative;

@@ -53,8 +53,10 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
       || folder.path.toLowerCase().includes(needle))
   })
 
-  // An action or an outside click hands focus elsewhere; Escape returns it to the button.
-  let skipFocusReturn = false
+  // Only Escape returns focus to the button: actions, outside clicks, other
+  // windows and the home page all hand it elsewhere.
+  let returnFocus = false
+  let contentRef: HTMLDivElement | undefined
 
   // Each opening starts from an empty filter on the most recent project.
   createEffect(on(() => props.open, (open) => {
@@ -62,7 +64,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     setQuery("")
     setActiveIndex(0)
     setServersExpanded(false)
-    skipFocusReturn = false
+    returnFocus = false
   }))
   createEffect(on(matches, () => setActiveIndex(0), { defer: true }))
   // Keep the highlighted project visible, including after the filter changes.
@@ -74,7 +76,6 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   // Close first so the launched flow (dialog, tab, home page) owns focus.
   const run = (action: () => void) => {
     if (props.isLoading) return
-    skipFocusReturn = true
     close()
     action()
   }
@@ -112,12 +113,16 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
       >
         <Popover.Portal>
           <Popover.Content class="window-shell new-instance-launcher" aria-busy={props.isLoading}
-            onPointerDownOutside={() => { skipFocusReturn = true }}
+            ref={contentRef}
+            onEscapeKeyDown={() => { returnFocus = true }}
             onCloseAutoFocus={(event) => {
-              // The popup has an anchor, not a Kobalte trigger: restore focus ourselves.
+              // The popup has an anchor, not a Kobalte trigger: restore focus ourselves,
+              // unless another surface has taken it meanwhile.
               event.preventDefault()
-              if (!skipFocusReturn) props.anchor?.focus()
-              skipFocusReturn = false
+              const active = document.activeElement
+              const unclaimed = !active || active === document.body || Boolean(contentRef?.contains(active))
+              if (returnFocus && unclaimed) props.anchor?.focus()
+              returnFocus = false
             }}>
             <header class="window-header">
               <Popover.Title class="window-title">{t("newInstanceLauncher.title")}</Popover.Title>

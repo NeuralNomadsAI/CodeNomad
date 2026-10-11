@@ -173,3 +173,44 @@ test("a touch long press opens the launcher and keeps it open after the finger l
     assert.deepEqual(await page.evaluate(() => [...(window as any).launcherFixture.calls]), [])
   } finally { await context.close() }
 })
+test("closing returns focus only after Escape and never steals it from another surface", async () => {
+  const { page, errors } = await prepare()
+  try {
+    const focused = () => page.evaluate(() => document.activeElement?.id || document.activeElement?.className || document.activeElement?.tagName)
+    // Another window takes focus while the launcher is open (the command palette, for example).
+    await plus(page).focus()
+    await page.keyboard.press("Alt+ArrowDown")
+    await openedWithFocus(page)
+    await page.evaluate(() => (document.getElementById("other-surface") as HTMLInputElement).focus())
+    await launcher(page).waitFor({ state: "detached" })
+    await page.keyboard.type("kept")
+    assert.equal(await page.locator("#other-surface").inputValue(), "kept")
+    assert.equal(await focused(), "other-surface")
+
+    // The app closes it (the home page opened): focus does not land on the covered button.
+    await plus(page).focus()
+    await page.keyboard.press("Alt+ArrowDown")
+    await openedWithFocus(page)
+    await page.evaluate(() => (window as any).launcherFixture.close())
+    await launcher(page).waitFor({ state: "detached" })
+    assert.notEqual(await focused(), "new-tab-button new-instance-button")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the new-instance button follows the last tab like a browser", async () => {
+  const { page, errors } = await prepare()
+  try {
+    const gap = await page.evaluate(() => {
+      const tabs = [...document.querySelectorAll(".tab-strip-tabs > *")]
+      const last = tabs[tabs.length - 1].getBoundingClientRect()
+      const plus = document.querySelector(".new-instance-button")!.getBoundingClientRect()
+      const actions = document.querySelector(".tab-bar-actions")!.getBoundingClientRect()
+      return { afterTab: plus.left - last.right, beforeActions: actions.left - plus.right }
+    })
+    assert.ok(gap.afterTab >= 0 && gap.afterTab < 24, `button sits right after the last tab (${gap.afterTab}px)`)
+    assert.ok(gap.beforeActions > 200, `free space stays between the button and the bar actions (${gap.beforeActions}px)`)
+    if (process.env.CODENOMAD_LAUNCHER_TABS_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_TABS_CAPTURE, clip: { x: 0, y: 0, width: 1100, height: 60 } })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

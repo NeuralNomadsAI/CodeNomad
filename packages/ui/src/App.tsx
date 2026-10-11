@@ -849,7 +849,12 @@ const App: Component = () => {
                   onSelect={selectAppTab}
                   onClose={(tabId) => void handleCloseAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
-                  onOpenLauncher={(anchor) => { setLauncherAnchor(anchor); setLauncherOpen(true) }}
+                  onOpenLauncher={(anchor) => {
+                    // The home page already offers everything; a hidden tab bar must not reopen it.
+                    if (showFolderSelection()) return
+                    setLauncherAnchor(anchor)
+                    setLauncherOpen(true)
+                  }}
                   launcherOpen={launcherOpen()}
                   onMoveTab={moveAppTab}
                 />

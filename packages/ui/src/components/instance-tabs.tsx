@@ -14,7 +14,7 @@ import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
-import { PlusSquare, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
+import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
@@ -258,6 +258,19 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 </Show>
               </div>
           </TabScroll>
+          {/* Like a browser, the new-instance button follows the last tab. */}
+          <div class="tab-strip-new">
+            <button
+              class="new-tab-button new-instance-button"
+              {...newInstanceHandlers}
+              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
+              aria-label={t("instanceTabs.new.ariaLabel")}
+              aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
+              aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
+            >
+              <Plus class="w-4 h-4" />
+            </button>
+          </div>
           <div class="tab-bar-actions">
             <Show when={props.tabs.length > 1}>
               <div class="tab-shortcuts">
@@ -268,17 +281,6 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 />
               </div>
             </Show>
-
-            <button
-              class="new-tab-button new-instance-button"
-              {...newInstanceHandlers}
-              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
-              aria-label={t("instanceTabs.new.ariaLabel")}
-              aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
-              aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
-            >
-              <PlusSquare class="w-4 h-4" />
-            </button>
 
             <button
               class="new-tab-button"
