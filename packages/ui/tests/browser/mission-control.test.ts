@@ -781,8 +781,11 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     let current: MissionMap = { ...mission("lifecycle"), runState: "prepared" }
     const calls: any[] = []
     let failPause = true
+    let failMap = false
     await page.route("**/api/workspaces/fixture/missions**", async route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current], generatedAt: 1, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return failMap
+        ? route.fulfill({ status: 503, json: { error: "Map unavailable" } })
+        : route.fulfill({ json: { available: true, missions: [current], generatedAt: 1, discardedEvents: 0 } })
       const input = route.request().postDataJSON()
       calls.push(input)
       current = { ...current, revision: current.revision + 1,
@@ -813,6 +816,13 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     assert.equal(await play.getAttribute("aria-label"), "Check control status", "an unresolved request offers a status check, never a second Pause")
     // The explicit panel refresh reconciles first, then resends the unconfirmed control with its original identity.
     assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh and resend the unconfirmed action")
+    failMap = true
+    const failedRead = page.waitForResponse(response => response.request().method() === "GET" && response.url().endsWith("/missions") && response.status() === 503)
+    await missionRefresh(page).click()
+    await failedRead
+    await page.waitForFunction(() => !(document.querySelector('.mission-picker-actions > button:last-child') as HTMLButtonElement)?.disabled)
+    assert.equal(calls.length, 2, "a failed map read never authorizes a one-time resend")
+    failMap = false
     await missionRefresh(page).click()
     await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-action-bar [aria-label="Resume mission"]'); return Boolean(button && !button.disabled) })
     assert.equal(calls[1].requestId, calls[2].requestId)

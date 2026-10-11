@@ -254,7 +254,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const retry = controlRetry(), instanceId = props.instanceId
     setRefreshing(true)
     try {
-      const [, read] = await Promise.allSettled([missionStore.refresh(instanceId), retry?.reconcile()])
+      const mapRead = missionStore.refresh(instanceId)
+      const [, read] = await Promise.allSettled([mapRead, retry?.reconcile(mapRead)])
       setRecurrenceRefresh(value => value + 1)
       // A skipped, failed or superseded read never leads to a resend.
       const witnessed = read.status === "fulfilled" && read.value === true

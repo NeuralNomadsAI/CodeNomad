@@ -16,7 +16,7 @@ export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: 
  * by the panel's refresh button. `reconcile` is read-only and resolves true only
  * when its own completed read leaves the exact request resendable; `resend`
  * replays that original identity and runs only after it, from that explicit click. */
-export interface MissionControlRetry { pending: () => boolean; reconcile: () => Promise<boolean>; resend: () => Promise<void> }
+export interface MissionControlRetry { pending: () => boolean; reconcile: (missionMapRead: Promise<void>) => Promise<boolean>; resend: () => Promise<void> }
 
 /** Play/Pause/Stop for the selected Mission: one contextual primary action and
  * Stop. Unresolved requests are checked, and resent only on explicit refresh. */
@@ -120,6 +120,17 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     ? { key: "stop", label: t("missions.control.run.stop"), disabled: blocked(), onSelect: confirmStop } : undefined
   /** The unresolved exact request may be resent, unchanged, on an explicit click only. */
   const retryable = () => unresolved() && !retryBlocked() && !props.disabled && !busy()
+  /** Reuse the panel's own read; do not authorize a resend from a failed map or
+   * from a different Mission/request selected while that read was pending. */
+  const reconcile = async (read: Promise<void>): Promise<boolean> => {
+    const scope = identity(), startedEpoch = epoch, instanceId = props.instanceId
+    const original = durableRequest() ?? retry()?.input
+    await read
+    const next = durableRequest() ?? retry()?.input
+    return alive && scope === identity() && startedEpoch === epoch && instanceId === props.instanceId
+      && missionStore.state(instanceId).status === "ready" && retryable() && Boolean(original && next
+        && original.requestId === next.requestId && original.action === next.action && original.expectedRevision === next.expectedRevision)
+  }
   const resend = () => retryable() ? act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
   const feedback = <>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
@@ -131,5 +142,5 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       <small role="alert">{t(value().reason === "rejected" ? `missions.control.run.rejected.${value().action}` : "missions.control.run.notSent.stop")}</small>}
     </Show>
   </>
-  return { primary, stop, retryable, resend, feedback }
+  return { primary, stop, retryable, reconcile, resend, feedback }
 }
