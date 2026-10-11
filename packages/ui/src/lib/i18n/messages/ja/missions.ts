@@ -303,6 +303,7 @@ export const missionMessages = {
   "missions.recurrence.refused.stale": "この操作が届く前にスケジュールが変更されたため、何も適用されていません。現在の状態を確認してから再試行してください。",
   "missions.recurrence.refused.conflict": "この操作はスケジュールの現在の状態では利用できないため、何も適用されていません。",
   "missions.recurrence.refused.notAdmitted": "この操作は受け付けられなかったため、何も適用されていません。必要に応じて再ログインしてから再試行してください。",
+  "missions.recurrence.refused.notSent": "この操作は送信されなかったため、何も適用されていません。スケジュールの現在の状態を確認し、必要に応じて再試行してください。",
   "missions.recurrence.reader": "定期スケジュール {id}",
   "missions.recurrence.section": "セクション {section} / {total}",
 } as const

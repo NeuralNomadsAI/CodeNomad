@@ -38,7 +38,11 @@ test("only proven no-effect refusals release a control; uncertain failures stay 
   assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-control-conflict")), "missions.recurrence.refused.conflict")
   assert.equal(recurrenceControlRefusalKey(error(401)), "missions.recurrence.refused.notAdmitted", "refused before any permit")
   assert.equal(recurrenceControlRefusalKey(error(400)), "missions.recurrence.refused.notAdmitted")
+  // Refused before dispatch (preparation failure or another request's permit): nothing was sent.
+  assert.equal(recurrenceControlRefusalKey(error(503, "recurrence-not-dispatched")), "missions.recurrence.refused.notSent")
+  assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-not-dispatched")), "missions.recurrence.refused.notSent")
   for (const uncertain of [error(503), error(409), error(500), error(404), error(401, "unexpected"), error(409, "creation-uncertain"),
+    error(500, "recurrence-not-dispatched"), error(502, "recurrence-not-dispatched"), error(503, "creation-unavailable"),
     new TypeError("Failed to fetch"), undefined]) assert.equal(recurrenceControlRefusalKey(uncertain), undefined)
 
   const intent = createRecurrenceControlIntent("rec_schedule", 4, "pause")

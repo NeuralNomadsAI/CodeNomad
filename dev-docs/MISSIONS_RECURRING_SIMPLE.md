@@ -64,9 +64,16 @@ Native stays the authoritative CAS: the exact status read reports `rejected`
 no record never applied and never can — a later revision whose record provably was
 never evicted (the document bounds evicted revisions), or a pure pre-write refusal
 at its own revision. The route then releases the permit and answers 409
-`recurrence-revision-conflict` / `recurrence-control-conflict`; the UI releases
-those and the route's pre-permit 400/401, refreshes the row and explains the
-refusal. Everything else (including an unprovable profile change) stays unknown.
+`recurrence-revision-conflict` / `recurrence-control-conflict`. A control or Run
+now that fails before the route dispatches it (connection unavailable, Location
+ownership or deletion admission, another request's held permit) answers
+`recurrence-not-dispatched` (409 when another permit or a deletion blocks the
+hold, otherwise 503); a refused repeat of an already held identity stays uncoded. `/control`
+refuses `run-now` with 400 before any permit; Run now has its own endpoint. The
+UI releases these coded refusals and the route's pre-permit 400/401 for a
+request's first attempt only, refreshes the row and explains the refusal; a
+refused exact partial retry keeps the original held request and server permit.
+Everything else (including an unprovable profile change) stays unknown.
 
 If a reply is lost, retain that request identity and reread its status.
 Refresh, reconnect, remount and status reads never automatically resend it.

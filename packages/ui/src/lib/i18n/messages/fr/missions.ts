@@ -303,6 +303,7 @@ export const missionMessages = {
   "missions.recurrence.refused.stale": "Le programme a changé avant l’arrivée de cette action ; rien n’a été appliqué. Vérifiez son état actuel puis réessayez.",
   "missions.recurrence.refused.conflict": "Cette action n’est pas disponible dans l’état actuel du programme ; rien n’a été appliqué.",
   "missions.recurrence.refused.notAdmitted": "Cette action n’a pas été admise ; rien n’a été appliqué. Reconnectez-vous si nécessaire, puis réessayez.",
+  "missions.recurrence.refused.notSent": "Cette action n’a pas été envoyée ; rien n’a été appliqué. Vérifiez l’état actuel du programme, puis réessayez si nécessaire.",
   "missions.recurrence.reader": "Programme récurrent {id}",
   "missions.recurrence.section": "Section {section} sur {total}",
 } as const

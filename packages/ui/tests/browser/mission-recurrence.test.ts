@@ -373,6 +373,138 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
   } catch (error) { console.error(errors, posts, replies, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
+const NOT_SENT = "This action was not sent, so nothing was applied. Review the schedule's current state, then try again if needed."
+const notDispatched = (status: 409 | 503) => ({ status, json: { error: "Recurrence request refused before dispatch; nothing was sent", code: "recurrence-not-dispatched" } })
+const variants = [
+  { action: "play", state: "paused", actions: ["play", "stop", "run-now"], label: `Play schedule ${TITLE}`, status: 503 },
+  { action: "resume", state: "paused", actions: ["resume", "stop", "run-now"], label: RESUME, status: 409 },
+  { action: "check", state: "paused", actions: ["check", "stop"], label: `Check the pending passage of ${TITLE}`, status: 503 },
+  { action: "pause", state: "running", actions: ["pause", "stop", "run-now"], label: `Pause schedule ${TITLE}`, status: 409 },
+  { action: "stop", state: "paused", actions: ["play", "stop", "run-now"], label: STOP, status: 503 },
+  { action: "run-now", state: "paused", actions: ["play", "stop", "run-now"], label: RUN_NOW, status: 409 },
+] as const
+for (const variant of variants) test(`a ${variant.action} refused before dispatch on an unchanged schedule is released, explained and never resent`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], errors: string[] = []
+  page.setDefaultTimeout(10_000)
+  page.on("pageerror", error => errors.push(error.message))
+  // Paused schedules make no daily writes: the revision never moves on its own.
+  const schedule: RecurrenceSchedule = { ...scheduleFixture(), state: variant.state, actions: [...variant.actions],
+    nextDueAt: variant.state === "running" ? Date.UTC(2026, 9, 9, 8, 15) : null,
+    pending: variant.action === "check" ? { passageID: "pas_manual", status: "running" } : null }
+  let snapshots = 0
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions/recurrence")) { snapshots++; return route.fulfill({ json: snapshotFixture(schedule) }) }
+    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: null } })
+    if (path.endsWith("/control/status") || path.endsWith("/run-now/status")) { statusReads.push(path); return route.fulfill({ status: 500, json: {} }) }
+    if (path.endsWith("/control") || path.endsWith("/run-now")) {
+      posts.push({ path, body: request.postDataJSON() })
+      return route.fulfill(notDispatched(variant.status))
+    }
+    return route.fulfill({ json: {} })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    await selectMission(page, schedule.title)
+    await missionToolbarAction(page, variant.label).waitFor()
+    const initial = await lifecycleButtons(page), before = snapshots
+    await clickMissionAction(page, variant.label)
+    if (variant.action === "stop") await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click()
+    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
+    for (let attempt = 0; snapshots <= before && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.ok(snapshots > before, "the row revalidates after the refusal")
+    // Released: the same controls as before, nothing held, nothing to check.
+    await page.waitForFunction(expected => JSON.stringify([...document.querySelector(".mission-detail .mission-action-bar")!.children]
+      .filter(node => node instanceof HTMLButtonElement).slice(0, expected.length)
+      .map(node => [node.getAttribute("aria-label"), !(node as HTMLButtonElement).disabled])) === JSON.stringify(expected), initial)
+    assert.equal(await missionToolbarAction(page, CHECK).count(), 0)
+    await page.waitForTimeout(300)
+    assert.equal(posts.length, 1, "never resent automatically")
+    assert.deepEqual(statusReads, [], "a received no-effect code needs no status read")
+    assert.equal(posts[0].body.expectedRevision, schedule.revision, "refused at the unchanged revision")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const action of ["pause", "stop"] as const) test(`a refused partial ${action} retry keeps the original held request and permit without resend`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], errors: string[] = []
+  page.setDefaultTimeout(10_000)
+  page.on("pageerror", error => errors.push(error.message))
+  const schedule = scheduleFixture()
+  const retryReplies: Array<"refuse" | "commit"> = ["refuse", "commit"]
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: snapshotFixture(schedule) })
+    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: null } })
+    if (path.endsWith("/control/status")) {
+      statusReads.push(request.postDataJSON())
+      const { outcome: _outcome, ...record } = schedule.controls[0]
+      return route.fulfill({ json: { ...record, targetsKnown: true } })
+    }
+    if (path.endsWith("/control")) {
+      const input = recurrenceControlHttpSchema.parse(request.postDataJSON()); posts.push(input)
+      // The retry is refused while the server prepares it; the original partial permit stays held.
+      if (input.retry && retryReplies.shift() === "refuse") return route.fulfill(notDispatched(503))
+      const { directory: _directory, retry: _retry, ...identity } = input
+      const status = recurrenceControlStatusSchema.parse({ version: 1, ...identity, revision: input.expectedRevision + 1,
+        state: action === "pause" ? "paused" : "stopped", outcome: input.retry ? "committed" : "unknown", controlsComplete: Boolean(input.retry),
+        targets: [{ sessionID: "ses_running", outcome: input.retry ? "acknowledged" : "unknown" }], schedulerCancellation: "acknowledged" })
+      schedule.revision = status.revision!; schedule.state = status.state!; schedule.nextDueAt = null; schedule.controls = [status]
+      schedule.actions = action === "pause" ? ["play", "stop", "run-now"] : []
+      const { outcome: _outcome, ...record } = status
+      return route.fulfill({ json: { ...record, targetsKnown: true } })
+    }
+    return route.fulfill({ json: {} })
+  })
+  const held = async () => {
+    await missionToolbarAction(page, CHECK).click({ trial: true }) // enabled once row reads settle
+    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).waitFor()
+    // Row reads briefly disable Check; the held layout itself never changes.
+    const expected = [[CHECK, true], [STOP, false], [RUN_NOW, false]]
+    let buttons = await lifecycleButtons(page)
+    for (let attempt = 0; JSON.stringify(buttons) !== JSON.stringify(expected) && attempt < 100; attempt++) {
+      assert.deepEqual(buttons.map(([label]) => label), [CHECK, STOP, RUN_NOW], "no Play and no dropped controls")
+      await page.waitForTimeout(50); buttons = await lifecycleButtons(page)
+    }
+    assert.deepEqual(buttons, expected, "no Play and no dropped controls")
+    assert.equal(await page.getByText(NOT_SENT, { exact: true }).count(), 0, "the partial original is not reported as unsent")
+    assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh and resend the unconfirmed action")
+  }
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    await selectMission(page, schedule.title)
+    if (action === "pause") await clickMissionAction(page, `Pause schedule ${TITLE}`)
+    else {
+      await clickMissionAction(page, STOP)
+      await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click()
+    }
+    await held()
+    await missionRefresh(page).click()
+    for (let attempt = 0; posts.length < 2 && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.deepEqual(posts[1], { ...posts[0], retry: true }, "the refused retry used the same identity")
+    await held()
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    await selectMission(page, schedule.title)
+    await held()
+    await page.waitForTimeout(300)
+    assert.equal(posts.length, 2, "a refused retry is never resent automatically")
+    // Only another explicit refresh reads status first and then resends the original identity.
+    await missionRefresh(page).click()
+    await missionToolbarAction(page, CHECK).waitFor({ state: "hidden" })
+    assert.equal(statusReads.length, 2)
+    assert.equal(posts.length, 3)
+    assert.deepEqual(posts[2], posts[1])
+    assert.deepEqual(errors, [])
+  } catch (error) { console.error(errors, posts, await page.locator("body").innerText()); throw error } finally { await page.close() }
+})
+
 for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`real ${mode} routes preserve unknown identity without automatic resend`, async () => {
   const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], controlStatusReads: any[] = [], errors: string[] = []
   page.setDefaultTimeout(10_000)

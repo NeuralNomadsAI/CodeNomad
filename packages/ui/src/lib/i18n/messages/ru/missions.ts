@@ -303,6 +303,7 @@ export const missionMessages = {
   "missions.recurrence.refused.stale": "Расписание изменилось до поступления этого действия, поэтому ничего не применено. Проверьте текущее состояние и повторите попытку.",
   "missions.recurrence.refused.conflict": "Это действие недоступно в текущем состоянии расписания, поэтому ничего не применено.",
   "missions.recurrence.refused.notAdmitted": "Это действие не было принято, поэтому ничего не применено. При необходимости войдите снова и повторите попытку.",
+  "missions.recurrence.refused.notSent": "Это действие не было отправлено, поэтому ничего не применено. Проверьте текущее состояние расписания и при необходимости повторите попытку.",
   "missions.recurrence.reader": "Повторяющееся расписание {id}",
   "missions.recurrence.section": "Раздел {section} из {total}",
 } as const

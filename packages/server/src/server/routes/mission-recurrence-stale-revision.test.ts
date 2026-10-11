@@ -96,6 +96,19 @@ test("a control or Run now refused for a stale revision is a definitive conflict
     const pause = (requestID: string, expectedRevision: number) => app.inject({ method: "POST", url: `${url}/control`, headers,
       payload: { action: "pause", expectedRevision, requestID } })
     const revision = async () => (await store.read(scheduleID))!.revision
+    // An exclusive deletion drains every admitted mutation permit (`enter` alone is a
+    // shared counter). Bounded: a held permit fails the check without hanging it, and
+    // is only probed where every permit should already be released.
+    const deletionRuns = () => Promise.race([fence.run(directory, [canonicalWorktreeIdentity(directory)], async () => true),
+      new Promise<false>(resolve => setTimeout(() => resolve(false), 1_000))])
+
+    // Run now posted to the generic control endpoint is refused before any permit
+    // or native call; it would otherwise strand a hold native status cannot prove.
+    const misrouted = await app.inject({ method: "POST", url: `${url}/control`, headers,
+      payload: { action: "run-now", expectedRevision: await revision(), requestID: "runnow_on_control" } })
+    assert.deepEqual([misrouted.statusCode, misrouted.json().code], [400, undefined], misrouted.body)
+    assert.equal(controls, 0, "nothing reached native")
+    assert.equal(await deletionRuns(), true, "no permit was taken")
 
     // The scheduler advanced the revision after the UI rendered.
     const stale = await pause("pause_stale", (await revision()) - 1)
@@ -122,7 +135,13 @@ test("a control or Run now refused for a stale revision is a definitive conflict
     statusFailures = 1
     const lost = await pause("pause_lost", (await revision()) - 1)
     assert.equal(lost.statusCode, 503)
-    assert.equal((await pause("pause_blocked", await revision())).statusCode, 503, "held while genuinely uncertain")
+    // Another request is refused before dispatch: coded, and nothing reaches native.
+    const blocked = await pause("pause_blocked", await revision())
+    assert.deepEqual([blocked.statusCode, blocked.json().code], [409, "recurrence-not-dispatched"], "held while genuinely uncertain")
+    assert.equal(controls, 5, "the blocked request never reached native")
+    // The held identity's own repeat may follow its dispatch: never coded.
+    const repeat = await pause("pause_lost", (await revision()) - 1)
+    assert.deepEqual([repeat.statusCode, repeat.json().code], [503, undefined])
     const read = await app.inject({ method: "POST", url: `${url}/control/status`, headers,
       payload: { action: "pause", expectedRevision: (await revision()) - 1, requestID: "pause_lost" } })
     assert.equal(read.statusCode, 200, read.body)
@@ -131,8 +150,6 @@ test("a control or Run now refused for a stale revision is a definitive conflict
       payload: { action: "play", expectedRevision: await revision(), requestID: "play_after" } })
     assert.equal(play.statusCode, 200, `the explicit read released the permit: ${play.body}`)
 
-    const release = fence.enter([canonicalWorktreeIdentity(directory)])
-    assert(release, "the checkout's deletion fence is free")
-    release()
+    assert.equal(await deletionRuns(), true, "no admitted permit remains")
   } finally { await app.close(); await rm(base, { recursive: true, force: true }) }
 })
