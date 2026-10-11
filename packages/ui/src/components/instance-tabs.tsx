@@ -6,6 +6,7 @@ import {
   SortableProvider,
   closestCenter,
   createSortable,
+  useDragDropContext,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import InstanceTab from "./instance-tab"
@@ -103,6 +104,27 @@ const SortableAppTab: Component<SortableAppTabProps> = (props) => {
   )
 }
 
+/** Like a browser, a dragged tab stays within the tab list: the strip only spans
+ * its tabs (the new-instance button follows them), so it would otherwise clip. */
+const KeepDraggedTabInStrip: Component<{ strip: () => HTMLElement | undefined }> = (props) => {
+  const [, { onDragStart, onDragEnd, addTransformer, removeTransformer }] = useDragDropContext()!
+  const id = "keep-in-strip"
+  onDragStart(({ draggable }) => {
+    const strip = props.strip()?.getBoundingClientRect()
+    if (!strip) return
+    const tab = draggable.layout
+    const min = strip.left - tab.left
+    const max = strip.right - tab.right
+    addTransformer("draggables", draggable.id, {
+      id,
+      order: 100,
+      callback: (transform) => ({ ...transform, x: Math.min(max, Math.max(min, transform.x)) }),
+    })
+  })
+  onDragEnd(({ draggable }) => removeTransformer("draggables", draggable.id, id))
+  return null
+}
+
 const StaticAppTab: Component<SortableAppTabProps> = (props) => {
   return (
     <div class="tab-draggable" data-app-tab-id={props.tab.id}>
@@ -122,25 +144,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     onClick: () => props.onNew(),
     onLongPress: (anchor) => props.onOpenLauncher?.(anchor),
   })
-
-  // Focusing the sticky new-instance button makes Chromium scroll its in-flow
-  // position (after the last tab) into view, although the button is always
-  // visible. Scroll events land after focus, so `offset` still holds the
-  // pre-focus position and the strip stays where it was.
-  let newButtonSlot!: HTMLDivElement
-  onMount(() => {
-    const viewport = newButtonSlot.closest<HTMLElement>(".tab-scroll")
-    if (!viewport) return
-    let offset = viewport.scrollLeft
-    const remember = () => { offset = viewport.scrollLeft }
-    const keep = () => { viewport.scrollLeft = offset }
-    viewport.addEventListener("scroll", remember, { passive: true })
-    newButtonSlot.addEventListener("focusin", keep)
-    onCleanup(() => {
-      viewport.removeEventListener("scroll", remember)
-      newButtonSlot.removeEventListener("focusin", keep)
-    })
-  })
+  let tabList: HTMLDivElement | undefined
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
@@ -240,18 +244,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       <div class="tab-bar tab-bar-instance">
         <div class="tab-container">
           <TabScroll>
-              <div
-                class="tab-strip-tabs"
-                role="tablist"
-                onFocusIn={(event) => {
-                  // Chromium only scrolls focus that leaves the strip, so a tab still under
-                  // the sticky new-instance button would stay covered. Keyboard focus only:
-                  // a pointer drag must not shift the tab under the cursor.
-                  const target = event.target as HTMLElement
-                  if (!event.currentTarget.contains(target)) return
-                  if (target.matches(":focus-visible")) target.scrollIntoView({ block: "nearest", inline: "nearest" })
-                }}
-              >
+              <div class="tab-strip-tabs" role="tablist" ref={tabList}>
                 <Show
                   when={dragReorderEnabled()}
                   fallback={
@@ -270,6 +263,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 >
                   <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleDragEnd}>
                     <DragDropSensors>
+                      <KeepDraggedTabInStrip strip={() => tabList} />
                       <SortableProvider ids={tabIds()}>
                         <For each={props.tabs}>
                           {(tab) => (
@@ -287,20 +281,20 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                   </DragDropProvider>
                 </Show>
               </div>
-              {/* Like a browser, the new-instance button follows the last tab. */}
-              <div class="tab-strip-new" ref={newButtonSlot}>
-                <button
-                  class="new-tab-button new-instance-button"
-                  {...newInstanceHandlers}
-                  title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
-                  aria-label={t("instanceTabs.new.ariaLabel")}
-                  aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
-                  aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
-                >
-                  <Plus class="w-4 h-4" />
-                </button>
-              </div>
           </TabScroll>
+          {/* Like a browser, the new-instance button follows the last tab. */}
+          <div class="tab-strip-new">
+            <button
+              class="new-tab-button new-instance-button"
+              {...newInstanceHandlers}
+              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
+              aria-label={t("instanceTabs.new.ariaLabel")}
+              aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
+              aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
+            >
+              <Plus class="w-4 h-4" />
+            </button>
+          </div>
           <div class="tab-bar-actions">
             <Show when={props.tabs.length > 1}>
               <div class="tab-shortcuts">

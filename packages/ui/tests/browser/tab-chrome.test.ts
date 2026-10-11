@@ -200,7 +200,7 @@ test("a tab dragged past the last one stays visible beside the new-instance butt
   } finally { await page.close() }
 })
 
-test("keyboard focus keeps overflowing tabs clear of the sticky new-instance button", async () => {
+test("keyboard focus never leaves an overflowing tab under the new-instance button", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 800 } })
   try {
     await prepare(page)
@@ -216,7 +216,10 @@ test("keyboard focus keeps overflowing tabs clear of the sticky new-instance but
           const bar = document.querySelector('[data-fixture="instances"]')!
           if (!el.closest('[data-fixture="instances"] [role="tablist"]')) return 0
           const plus = bar.querySelector(".tab-strip-new")!.getBoundingClientRect(), focused = el.getBoundingClientRect()
-          return Math.max(0, Math.min(focused.right, plus.right) - Math.max(focused.left, plus.left))
+          // Only the visible part counts: the strip edge clipping a tab is not the button covering it.
+          const clip = bar.querySelector(".tab-scroll")!.getBoundingClientRect()
+          const left = Math.max(focused.left, clip.left), right = Math.min(focused.right, clip.right)
+          return Math.max(0, Math.min(right, plus.right) - Math.max(left, plus.left))
         })
         if (overlap > 0.5) covered.push(`${step}:${overlap}`)
       }
@@ -226,7 +229,7 @@ test("keyboard focus keeps overflowing tabs clear of the sticky new-instance but
   } finally { await page.close() }
 })
 
-test("focusing the sticky new-instance button keeps the strip where it was", async () => {
+test("focusing the new-instance button keeps the strip where it was", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 800 } })
   try {
     await prepare(page)

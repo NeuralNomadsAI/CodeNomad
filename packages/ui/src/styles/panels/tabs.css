@@ -62,24 +62,19 @@
   padding-block: 0;
 }
 
-/* The new-instance button scrolls with the tabs, right after the last one, and
-   sticks to the strip's end once they overflow. The strip keeps its full width,
-   so dragged tabs and the shared scrollbar lane behave as without the button. */
+/* The strip only takes its tabs' width, so the new-instance button follows the
+   last tab and stays pinned at the strip's end once the tabs overflow. */
+.tab-bar-instance .tab-scroll-frame {
+  flex: 0 1 auto;
+}
+
 .tab-strip-new {
-  position: sticky;
-  inset-inline-end: 0;
-  z-index: 2;
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  padding-inline: var(--space-xs);
-  /* Opaque over scrolled tabs while keeping the bar's baseline. */
-  background: linear-gradient(to top, var(--tab-border) 1px, var(--surface-secondary) 1px);
-}
-
-/* Revealed tabs (focus, keyboard) stop short of the sticky button. */
-.tab-bar-instance .tab-scroll {
-  scroll-padding-inline-end: 2.75rem;
+  align-self: flex-end;
+  height: calc(var(--chrome-height) + var(--space-xs) - 1px);
+  margin-inline-end: auto;
 }
 
 .tab-bar-actions {
