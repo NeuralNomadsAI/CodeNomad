@@ -2,6 +2,8 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Context, Effect, Schema } from "effect"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../missions/recurrence-manual-rpc"
 import { assertRecurrenceBridgeProof, nativeRecurrenceControlInputSchema } from "./native-recurrence-control"
+import { qualifyNativeRecurrenceOrigin } from "./native-recurrence-origin"
+import { assertRecurrenceProofFresh } from "../../missions/recurrence-control-proof"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
@@ -33,19 +35,22 @@ export const runNativeRecurrenceNow = Effect.fn("missions.runNativeRecurrenceNow
   if (input.action !== "run-now" || input.retry || input.location.directory !== ctx.location.directory
     || input.location.workspaceID !== ctx.location.workspaceID) throw new Error("Recurrence manual scope changed")
   yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(input))
-  const store = yield* acquireNativeRecurrenceStore(ctx), before = yield* Effect.promise(() => store.read(input.scheduleID))
-  if (!before || !before.config.roots.some(root => root.directory === ctx.location.directory)) throw new Error("Recurrence scope changed")
+  // The same native graph, Location and owned physical root qualification as the other
+  // controls; a missing contract or retargeted root refuses before any CAS or effect.
+  const { location, store, before, rootCurrent } = yield* qualifyNativeRecurrenceOrigin(ctx, input)
   if (before.controls.some(item => item.requestID === input.requestID)) return yield* readNativeRecurrenceRunNow(ctx, request)
+  const current = (): true => { assertRecurrenceProofFresh(input.issuedAt); return rootCurrent() }
   const doc = yield* Effect.promise(() => store.reserveManual(input.scheduleID, input.requestID, input.expectedRevision,
-    Date.now(), input.profileSource, () => true))
-  const placement = { projectID: doc.projectID, projectCanonical: doc.projectCanonical,
-    directory: ctx.location.directory, workspaceID: ctx.location.workspaceID, scheduleID: doc.id,
+    Date.now(), input.profileSource, current))
+  const placement = { projectID: location.project.id, projectCanonical: location.project.canonical,
+    directory: location.directory, workspaceID: location.workspaceID, scheduleID: doc.id,
     profileID: doc.config.profileID, executionHost: doc.config.executionHost }
   const due = nativeRecurrenceDue(ctx, { ...placement, profileSource: doc.profileSource,
     manual: { requestID: input.requestID, expectedRevision: input.expectedRevision } })
   const controller = new AbortController()
   // A failed first attempt stays pending under its original identity; the observer retries it.
-  yield* due(doc.id, () => true, controller.signal).pipe(Effect.catchCause(() => Effect.succeed("pending")),
+  // The root is rechecked before every admission CAS and native effect inside the wake.
+  yield* due(doc.id, rootCurrent, controller.signal).pipe(Effect.catchCause(() => Effect.succeed("pending")),
     Effect.ensuring(Effect.sync(() => controller.abort())))
   // A live running schedule Job observes the passage. Otherwise (paused, or
   // Interrupted after a restart) start the settlement-only observer; it reconciles
@@ -56,14 +61,16 @@ export const runNativeRecurrenceNow = Effect.fn("missions.runNativeRecurrenceNow
   const after = yield* Effect.promise(() => store.read(doc.id))
   if (after?.pending?.passage.id === doc.pending!.passage.id) {
     const live = yield* readNativeRecurrenceClock(placement).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-    if (live === false || (live === undefined && after.state !== "running"))
+    if (live === false || (live === undefined && after.state !== "running")) {
+      rootCurrent()
       yield* startNativeRecurrenceSettlement(ctx, placement, after)
+    }
   }
   const result = yield* readNativeRecurrenceRunNow(ctx, request)
   if (result.outcome !== "unknown") {
     const fresh = yield* Effect.promise(() => store.read(doc.id))
     const control = fresh!.controls.find(item => item.requestID === input.requestID)!
-    yield* Effect.promise(() => store.recordControl(doc.id, { ...control, controlsComplete: true }, () => true))
+    yield* Effect.promise(() => store.recordControl(doc.id, { ...control, controlsComplete: true }, rootCurrent))
   }
   return result
 })

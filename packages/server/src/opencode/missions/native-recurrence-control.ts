@@ -1,21 +1,15 @@
 import type { Plugin } from "@opencode/plugin/effect"
-import { Location } from "@opencode/schema/location"
-import { Cause, Context, Effect, Schema } from "effect"
+import { Cause, Effect, Schema } from "effect"
 import { verifyRecurrenceBridge } from "../automation-plugin"
 import { assertRecurrenceProofFresh, recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
 import { recurrenceControlRequestSchema } from "../../missions/recurrence-control-contract"
-import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { cancelNativeRecurrenceClock, observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClock, readNativeRecurrenceClockStatus,
   startNativeRecurrenceClock } from "./native-service-clock"
 import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
-import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
+import { qualifyNativeRecurrenceOrigin } from "./native-recurrence-origin"
 import { interruptRecurrenceActors } from "./native-recurrence-actor-controls"
-import { createFamilyAuthorityIdentityFence, readFamilyAuthorityPlacement } from "../../workspaces/family-authority-claim"
-import { physical } from "../../missions/physical-path"
-import { realpathSync } from "node:fs"
 
-const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
 export const nativeRecurrenceControlInputSchema = Schema.Struct({ sessionID: Schema.String, workspaceID: Schema.String, requestID: Schema.String,
   location: Schema.Struct({ directory: Schema.String, workspaceID: Schema.optional(Schema.String) }),
   digest: Schema.String, scheduleID: Schema.String, expectedRevision: Schema.Number,
@@ -44,27 +38,7 @@ export const controlNativeRecurrence = Effect.fn("missions.controlNativeRecurren
     action: input.action, expectedRevision: input.expectedRevision })
   if (input.action === "run-now" || input.action === "create") throw new Error("Use the dedicated recurrence method")
   yield* Effect.tryPromise(() => assertRecurrenceBridgeProof(input))
-  yield* qualifyNativeRecurrenceControl()
-  const location = yield* locationTag
-  if (location.directory !== ctx.location.directory || location.workspaceID !== ctx.location.workspaceID
-    || location.project.id !== ctx.location.project.id || location.project.canonical !== ctx.location.project.canonical
-    || input.location.directory !== location.directory || input.location.workspaceID !== location.workspaceID) throw new Error("Recurrence Location changed")
-  const store = yield* acquireNativeRecurrenceStore(ctx)
-  const before = yield* Effect.promise(() => store.read(input.scheduleID))
-  if (!before || before.config.roots.length !== 1 || before.config.roots[0].directory !== location.directory) throw new Error("Recurrence scope changed")
-  const root = before.config.roots[0]
-  if (root.mode !== "git") throw new Error("Recurrence physical root changed")
-  // Resolve with Git once, asynchronously; every synchronous CAS guard then rereads
-  // the captured routing inputs and falls back to Git only when they changed.
-  // A per-guard spawnSync timed out on loaded hosts as policy-unqualified.
-  const family = yield* Effect.promise(() => createFamilyAuthorityIdentityFence(root.directory))
-  const actual = yield* Effect.tryPromise({ try: () => readFamilyAuthorityPlacement(root.directory), catch: error => error })
-  if (actual.checkout !== root.checkout || actual.family !== root.family) throw new Error("Recurrence physical root changed")
-  const physicalCurrent = (): true => {
-    if (family() !== root.family || physical(realpathSync(root.family)) !== root.family) throw new Error("Recurrence physical root changed")
-    return true
-  }
-  physicalCurrent()
+  const { location, store, before, rootCurrent: physicalCurrent } = yield* qualifyNativeRecurrenceOrigin(ctx, input)
   const placement = { projectID: location.project.id, projectCanonical: location.project.canonical,
     directory: location.directory, workspaceID: location.workspaceID, scheduleID: input.scheduleID,
     profileID: before.config.profileID, executionHost: before.config.executionHost }
