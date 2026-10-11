@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "Consultar resultado de control de {id}",
   "missions.recurrence.checkPassage": "Comprobar la ejecución pendiente de {id}",
   "missions.recurrence.uncertain": "Resultado sin confirmar; consulta el estado antes de otra acción.",
+  "missions.recurrence.refused.stale": "La programación cambió antes de que llegara esta acción, así que no se aplicó nada. Revisa su estado actual e inténtalo de nuevo.",
+  "missions.recurrence.refused.conflict": "Esta acción no está disponible en el estado actual de la programación, así que no se aplicó nada.",
+  "missions.recurrence.refused.notAdmitted": "Esta acción no fue admitida, así que no se aplicó nada. Vuelve a iniciar sesión si hace falta y reinténtalo.",
   "missions.recurrence.reader": "Programa recurrente {id}",
   "missions.recurrence.section": "Sección {section} de {total}",
 } as const

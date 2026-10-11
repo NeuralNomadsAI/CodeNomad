@@ -108,14 +108,9 @@ export class NativeMissionRecurrenceStore {
         if (prior.action !== input.action || prior.expectedRevision !== input.expectedRevision) throw new Error("Recurrence request conflict")
         return doc
       }
-      // Terminal Stop admits only Check, which merely observes its pending passage.
-      if (doc.revision !== input.expectedRevision || doc.state === "stopped" && input.action !== "check" || !roomForControl(doc)
-        || doc.controls.some(item => !item.controlsComplete && !(["resume", "pause", "stop", "check"].includes(input.action)
-          && (item.action === "play" || item.action === "resume" || item.action === "run-now" || item.action === "check")))) throw new Error("Recurrence control conflict")
-      if (input.action === "play" && (doc.state !== "paused" || doc.pending)) throw new Error("Recurrence cannot play")
-      // Check only restarts reconcile-only observation of a paused pending passage.
-      if (input.action === "check" && (doc.state === "running" || !doc.pending)) throw new Error("Recurrence has nothing to check")
-      if (input.action === "run-now" && doc.pending) throw new Error("Recurrence pending")
+      const refusal = controlRefusal(doc, input)
+      if (refusal) throw new Error(refusal)
+      makeControlRoom(doc)
       if (profileSource) {
         if (profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
           || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence profile changed")
@@ -168,9 +163,9 @@ export class NativeMissionRecurrenceStore {
   reserveManual(id: string, requestID: string, expectedRevision: number, now: number,
     profileSource: NonNullable<RecurrenceDocument["profileSource"]>, current: () => true): Promise<RecurrenceDocument> {
     return this.change(id, expectedRevision, current, doc => {
-      if (doc.pending || doc.state === "stopped" || !roomForControl(doc) || doc.controls.some(item => !item.controlsComplete)
-        || profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
+      if (manualRefused(doc) || profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
         || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence manual conflict")
+      makeControlRoom(doc)
       doc.profileSource = profileSource
       const due: RecurrenceDue = { kind: "manual", requestID, expectedRevision, at: now }
       const passageID = recurrencePassageID(this.projectToken, id, doc.scheduleRevision, due)
@@ -285,13 +280,53 @@ export class NativeMissionRecurrenceStore {
   }
 }
 
-/** Completed requests are bounded history: evict the oldest completed record to
- * make room. Incomplete intents are never evicted; an evicted request's exact
- * status reads `unknown`, which never authorizes a resend. */
-function roomForControl(doc: RecurrenceDocument): boolean {
-  const index = doc.controls.length >= RECURRENCE_CONTROL_LIMIT ? doc.controls.findIndex(item => item.controlsComplete) : -1
-  if (index >= 0) doc.controls.splice(index, 1)
-  return doc.controls.length < RECURRENCE_CONTROL_LIMIT
+/** Completed requests are bounded history: room exists below the limit or when a
+ * completed record can be evicted. Incomplete intents are never evicted. */
+function hasControlRoom(doc: RecurrenceDocument): boolean {
+  return doc.controls.length < RECURRENCE_CONTROL_LIMIT || doc.controls.some(item => item.controlsComplete)
+}
+
+/** Evicts the oldest completed record when full and bounds every evicted revision.
+ * A first bound without one is the current revision, covering earlier evictions. */
+function makeControlRoom(doc: RecurrenceDocument) {
+  if (doc.controls.length < RECURRENCE_CONTROL_LIMIT) return
+  const index = doc.controls.findIndex(item => item.controlsComplete)
+  doc.evictedControlRevision = Math.max(doc.evictedControlRevision ?? doc.revision, doc.controls[index]!.revision)
+  doc.controls.splice(index, 1)
+}
+
+/** Pre-write refusals of beginControl at the document's own revision. Pure, so a
+ * status read can prove the same refusal; the profile check is the caller's. */
+function controlRefusal(doc: RecurrenceDocument, input: Pick<RecurrenceControlRecord, "action" | "expectedRevision">): string | undefined {
+  // Terminal Stop admits only Check, which merely observes its pending passage.
+  if (doc.revision !== input.expectedRevision || doc.state === "stopped" && input.action !== "check" || !hasControlRoom(doc)
+    || doc.controls.some(item => !item.controlsComplete && !(["resume", "pause", "stop", "check"].includes(input.action)
+      && (item.action === "play" || item.action === "resume" || item.action === "run-now" || item.action === "check")))) return "Recurrence control conflict"
+  if (input.action === "play" && (doc.state !== "paused" || doc.pending)) return "Recurrence cannot play"
+  // Check only restarts reconcile-only observation of a paused pending passage.
+  if (input.action === "check" && (doc.state === "running" || !doc.pending)) return "Recurrence has nothing to check"
+  if (input.action === "run-now" && doc.pending) return "Recurrence pending"
+}
+
+function manualRefused(doc: RecurrenceDocument): boolean {
+  return Boolean(doc.pending) || doc.state === "stopped" || !hasControlRoom(doc) || doc.controls.some(item => !item.controlsComplete)
+}
+
+/** Native proof that an exact control/Run now request with no record in `doc`
+ * never applied and never can. Every write bumps the revision and both CAS paths
+ * record the request at `expectedRevision + 1`, so: a later revision refuses it
+ * once its record provably was never evicted; at its own revision the pure
+ * refusal is the one any in-flight attempt meets. Otherwise undefined: unknown. */
+export function recurrenceRequestRefusal(doc: RecurrenceDocument,
+  input: Pick<RecurrenceControlRecord, "requestID" | "action" | "expectedRevision">): "revision-conflict" | "control-conflict" | undefined {
+  if (doc.controls.some(item => item.requestID === input.requestID)) return undefined
+  if (doc.revision > input.expectedRevision) {
+    const neverEvicted = doc.evictedControlRevision === undefined ? doc.controls.length < RECURRENCE_CONTROL_LIMIT
+      : input.expectedRevision + 1 > doc.evictedControlRevision
+    return neverEvicted ? "revision-conflict" : undefined
+  }
+  if (doc.revision < input.expectedRevision) return undefined
+  return (input.action === "run-now" ? manualRefused(doc) : controlRefusal(doc, input)) ? "control-conflict" : undefined
 }
 
 /** A Job/observer start intent (Play, Resume, Check) whose outcome stayed unknown

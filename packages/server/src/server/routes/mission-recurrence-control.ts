@@ -1,13 +1,14 @@
 import type { FastifyInstance } from "fastify"
 import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-preparation"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
-import { recurrenceControlStatusSchema, recurrenceControlHttpSchema, recurrenceControlStateMatches } from "../../missions/recurrence-control-contract"
+import { recurrenceControlStatusSchema, recurrenceControlHttpSchema, recurrenceControlStateMatches, recurrenceRefusalCode } from "../../missions/recurrence-control-contract"
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions } from "../../opencode/compatibility/location"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
 /** The sole authenticated human control path. Unknown mutations get one bounded
- * exact receipt read; they are never submitted a second time. */
+ * exact receipt read; they are never submitted a second time. Native remains the
+ * authoritative CAS: only its exact read can prove a refusal. */
 export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
 } & Parameters<typeof prepareHumanRecurrenceControl>[3]) {
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/control", async (request, reply) => {
@@ -48,6 +49,12 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         }, { ...options, signal: AbortSignal.timeout(10_000) }))
         if (result.scheduleID !== body.scheduleID || result.requestID !== body.requestID
           || result.expectedRevision !== body.expectedRevision) throw new Error("Foreign control receipt")
+        // Refused before any record (stale revision or inadmissible state): proven
+        // no effect, so the permit is released and the refusal is definitive.
+        if (result.outcome === "rejected" && result.reason) {
+          prepared.hold.settled()
+          return reply.code(409).send({ error: "Recurrence control refused; nothing was applied", code: recurrenceRefusalCode(result.reason) })
+        }
         if (result.outcome === "committed" && result.controlsComplete === true && result.revision === body.expectedRevision + 1
           && recurrenceControlStateMatches(body.action, result.state)) prepared.hold.settled()
         else if (result.controlsComplete === false) prepared.hold.partial()

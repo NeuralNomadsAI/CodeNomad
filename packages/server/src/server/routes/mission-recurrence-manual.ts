@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../missions/recurrence-manual-rpc"
+import { recurrenceRefusalCode } from "../../missions/recurrence-control-contract"
 import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-preparation"
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -47,8 +48,9 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
         const owner = recurrenceControlHeldElsewhere(deps.fence, request.params.id, identity, connection)
           ? await lifetime.wait(readRecurrenceHoldOwner(deps.manager, request.params.id, workspace, directory, connection.client, lifetime.signal)) : undefined
         current()
-        reconcileRecurrenceControlHold(deps.fence, request.params.id, location, identity,
-          { version: 1, ...input.data, revision: input.data.expectedRevision + 1, outcome: "committed", controlsComplete: true }, connection, owner)
+        reconcileRecurrenceControlHold(deps.fence, request.params.id, location, identity, result.outcome === "rejected" && result.reason
+          ? { version: 1, ...input.data, outcome: "rejected", reason: result.reason }
+          : { version: 1, ...input.data, revision: input.data.expectedRevision + 1, outcome: "committed", controlsComplete: true }, connection, owner)
       }
       return result
     } catch { return reply.code(503).send({ error: "Manual status unavailable" }) }
@@ -75,6 +77,10 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       if (result.scheduleID !== prepared.body.scheduleID || result.requestID !== input.data.requestID
         || result.expectedRevision !== input.data.expectedRevision || !sameLocation(result.location, prepared.location)) throw new Error("Foreign manual reply")
       if (result.outcome !== "unknown") prepared.hold.settled()
+      // Native proof that this Run now never reserved and never can: definitive, released.
+      if (result.outcome === "rejected" && result.reason) {
+        return reply.code(409).send({ error: "Manual passage refused; nothing was started", code: recurrenceRefusalCode(result.reason) })
+      }
       return reply.code(result.outcome === "unknown" ? 503 : 200).send(result)
     } catch { return reply.code(503).send({ error: "Manual admission uncertain; read status, do not resend" }) }
     finally { prepared?.dispose(); lifetime.dispose() }

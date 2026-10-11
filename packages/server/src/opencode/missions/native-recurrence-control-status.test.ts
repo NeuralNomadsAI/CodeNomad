@@ -35,7 +35,11 @@ test("lost control replies read exact request/revision status without starting J
     const bytes = (db.prepare("SELECT value FROM kv").get() as { value: string }).value
     assert.equal((await read()).outcome, "committed")
     assert.equal((await read({ ...input, expectedRevision: 1 })).outcome, "unknown")
-    assert.equal((await read({ ...input, requestID: "request_foreign" })).outcome, "unknown")
+    // No record at a later revision with nothing evicted: provably never applied.
+    assert.deepEqual(await read({ ...input, requestID: "request_foreign" }), { version: 1, scheduleID: "schedule_one",
+      requestID: "request_foreign", expectedRevision: 0, outcome: "rejected", reason: "revision-conflict" })
+    // An admissible unrecorded request at the current revision may still be in flight.
+    assert.equal((await read({ ...input, requestID: "request_foreign", expectedRevision: 1, action: "pause" })).outcome, "unknown")
     const manual = await Effect.runPromiseWith(graph)(readNativeRecurrenceRunNow(ctx, { scheduleID: "schedule_one", requestID: "manual_unknown", expectedRevision: 1 }))
     assert.equal(manual.outcome, "unknown")
     assert.equal((db.prepare("SELECT value FROM kv").get() as { value: string }).value, bytes)
@@ -50,6 +54,9 @@ test("lost control replies read exact request/revision status without starting J
     db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify({ ...manualDoc, revision: 4, pending: { passage, admission } }), key)
     const accepted = await Effect.runPromiseWith(graph)(readNativeRecurrenceRunNow(ctx, manualInput))
     assert.equal(accepted.outcome, "accepted"); assert.equal(accepted.passageID, passageID)
-    assert.equal((await Effect.runPromiseWith(graph)(readNativeRecurrenceRunNow(ctx, { ...manualInput, expectedRevision: 3 }))).outcome, "unknown")
+    const stale = await Effect.runPromiseWith(graph)(readNativeRecurrenceRunNow(ctx, { ...manualInput, expectedRevision: 3 }))
+    assert.deepEqual([stale.outcome, stale.reason, stale.passageID], ["rejected", "revision-conflict", null], "no reservation, later revision")
+    assert.equal((await Effect.runPromiseWith(graph)(readNativeRecurrenceRunNow(ctx, { ...manualInput, expectedRevision: 4 }))).outcome, "rejected",
+      "a pending passage refuses another Run now at its own revision")
   } finally { db.close() }
 })

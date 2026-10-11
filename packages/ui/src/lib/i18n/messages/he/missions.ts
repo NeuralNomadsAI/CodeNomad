@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "בדיקת תוצאת הבקרה של {id}",
   "missions.recurrence.checkPassage": "בדיקת ההרצה הממתינה של {id}",
   "missions.recurrence.uncertain": "התוצאה לא אומתה; יש לבדוק את המצב לפני פעולה נוספת.",
+  "missions.recurrence.refused.stale": "לוח הזמנים השתנה לפני שהפעולה הגיעה, ולכן דבר לא הוחל. יש לבדוק את מצבו הנוכחי ולנסות שוב.",
+  "missions.recurrence.refused.conflict": "פעולה זו אינה זמינה במצב הנוכחי של לוח הזמנים, ולכן דבר לא הוחל.",
+  "missions.recurrence.refused.notAdmitted": "הפעולה לא התקבלה, ולכן דבר לא הוחל. יש להתחבר מחדש במידת הצורך ולנסות שוב.",
   "missions.recurrence.reader": "לוח זמנים חוזר {id}",
   "missions.recurrence.section": "קטע {section} מתוך {total}",
 } as const

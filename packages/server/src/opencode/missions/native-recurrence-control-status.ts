@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { recurrenceControlRequestSchema, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
 import type { RecurrenceControlRecord, RecurrenceDocument } from "../../missions/recurrence-contract"
+import { recurrenceRequestRefusal } from "../../missions/recurrence-store"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClockStatus } from "./native-service-clock"
 
@@ -19,7 +20,12 @@ export const readNativeRecurrenceControlStatus = Effect.fn("missions.readNativeR
   const doc = yield* Effect.promise(() => store.read(input.scheduleID))
   if (!doc?.config.roots.some(root => root.directory === ctx.location.directory)) return unknown
   let record = doc.controls.find(item => item.requestID === input.requestID)
-  if (!record || record.action !== input.action || record.expectedRevision !== input.expectedRevision) return unknown
+  if (!record) {
+    // Definitive only on proof the request never applied and never can (CAS).
+    const reason = recurrenceRequestRefusal(doc, input)
+    return reason ? { ...unknown, outcome: "rejected" as const, reason } : unknown
+  }
+  if (record.action !== input.action || record.expectedRevision !== input.expectedRevision) return unknown
   if (startIntentCurrent(doc, record)) {
     const placement = { projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical,
       directory: ctx.location.directory, workspaceID: ctx.location.workspaceID, scheduleID: doc.id,

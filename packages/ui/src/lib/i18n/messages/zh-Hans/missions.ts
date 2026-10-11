@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "检查 {id} 的控制结果",
   "missions.recurrence.checkPassage": "检查 {id} 的待处理执行",
   "missions.recurrence.uncertain": "结果未确认；请先检查状态，再执行其他操作。",
+  "missions.recurrence.refused.stale": "此操作送达前日程已更改，因此未应用任何更改。请查看其当前状态后重试。",
+  "missions.recurrence.refused.conflict": "此操作在日程的当前状态下不可用，因此未应用任何更改。",
+  "missions.recurrence.refused.notAdmitted": "此操作未被接受，因此未应用任何更改。如有需要请重新登录，然后重试。",
   "missions.recurrence.reader": "定期计划 {id}",
   "missions.recurrence.section": "第 {section} 节，共 {total} 节",
 } as const

@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "Steuerungsstatus für {id} prüfen",
   "missions.recurrence.checkPassage": "Ausstehenden Durchlauf von {id} prüfen",
   "missions.recurrence.uncertain": "Ergebnis unbestätigt; Status vor einer weiteren Aktion prüfen.",
+  "missions.recurrence.refused.stale": "Der Zeitplan hat sich geändert, bevor diese Aktion ankam; es wurde nichts angewendet. Aktuellen Zustand prüfen und erneut versuchen.",
+  "missions.recurrence.refused.conflict": "Diese Aktion ist im aktuellen Zustand des Zeitplans nicht verfügbar; es wurde nichts angewendet.",
+  "missions.recurrence.refused.notAdmitted": "Diese Aktion wurde nicht zugelassen; es wurde nichts angewendet. Bei Bedarf erneut anmelden und dann wiederholen.",
   "missions.recurrence.reader": "Wiederkehrender Zeitplan {id}",
   "missions.recurrence.section": "Abschnitt {section} von {total}",
 } as const
