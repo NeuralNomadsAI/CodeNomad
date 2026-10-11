@@ -62,6 +62,22 @@ test("only proven no-effect refusals release a control; uncertain failures stay 
   assert.equal(completedRecurrenceManual(manual, manualIntent), false)
 })
 
+test("Check completion accepts both native inactive states without relaxing identity or acknowledgement", () => {
+  const intent = createRecurrenceControlIntent("rec_schedule", 4, "check")
+  for (const state of ["paused", "stopped"] as const) {
+    const result = recurrenceControlStatusSchema.parse({ version: 1, scheduleID: intent.scheduleID,
+      requestID: intent.requestID, action: "check", expectedRevision: 4, revision: 5, state,
+      outcome: "committed", controlsComplete: true, schedulerCancellation: "acknowledged", targets: [] })
+    assert.equal(completedRecurrenceControl(result, intent), true)
+    for (const invalid of [{ ...result, state: "running" as const }, { ...result, requestID: "other_request" },
+      { ...result, outcome: "unknown" as const }, { ...result, schedulerCancellation: "unknown" as const },
+      { ...result, targets: [{ sessionID: "child", outcome: "unknown" as const }] }]) {
+      assert.equal(completedRecurrenceControl(invalid, intent), false)
+    }
+    assert.equal(completedRecurrenceControl({ ...result, action: "pause" }, { ...intent, action: "pause" }), state === "paused")
+  }
+})
+
 test("manual admission/status uses the real tuple and accepts only exact known effects", () => {
   const intent = createRecurrenceControlIntent("rec_schedule", 4, "run-now")
   const input = recurrenceManualRequestSchema.parse({ scheduleID: intent.scheduleID, requestID: intent.requestID, expectedRevision: intent.expectedRevision })

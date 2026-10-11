@@ -193,7 +193,7 @@ async function fixture() {
     }
     return route.fulfill({ json: {} })
   }
-  return { app, store, native, read, posts, statusReads, permitFree, handle, headers,
+  return { app, store, native, read, posts, statusReads, permitFree, handle, headers, yaml,
     replaceConnection: () => { connection = { ...connection, assertCurrent: () => {} } },
     dispose: async () => { await app.close(); await rm(base, { recursive: true, force: true }) } }
 }
@@ -317,6 +317,62 @@ for (const superseding of ["check", "stop"] as const) test(`an unadmitted Run no
     await until(async () => f.statusReads.length > reads)
     await held.waitFor()
     assert.equal(f.native.writes.length, 2, "no automatic replay of Run now")
+    assert.deepEqual(errors, [])
+  } finally { await page.close(); await f.dispose() }
+})
+
+test("a completed Check on a stopped pending passage releases its UI request without reopening the schedule", async () => {
+  const f = await fixture()
+  const revision = (await f.read()).revision
+  await f.store.reserveManual(scheduleID, "manual_admitted", revision, Date.now(),
+    { profileID: "profile", executionHost: "local", configYamlPath: f.yaml }, current)
+  // Isolate a completed manual record with a pending passage, then terminal Stop.
+  const manual = (await f.read()).controls.at(-1)!
+  await f.store.recordControl(scheduleID, { ...manual, controlsComplete: true, targetsKnown: true }, current)
+  const begun = await f.store.beginControl(scheduleID, { requestID: "stop_seed", action: "stop", expectedRevision: (await f.read()).revision }, current)
+  await f.store.recordControl(scheduleID, { ...begun.controls.at(-1)!, controlsComplete: true, targetsKnown: true }, current)
+  const { page, errors } = await open(f)
+  try {
+    await expectLifecycle(page, [[PASSAGE, true], [STOP, false], [RUN_NOW, false]])
+    await missionToolbarAction(page, PASSAGE).click()
+    await until(async () => (await f.read()).controls.at(-1)?.action === "check" && (await f.read()).controls.at(-1)?.controlsComplete === true)
+    await until(async () => !await missionDetail(page).getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).count())
+    assert.equal((await f.read()).state, "stopped")
+    assert.equal(f.native.writes.length, 1)
+    // The observer is lost again: the same page can explicitly Check passage anew.
+    f.native.settle = false
+    await refresh(page)
+    await expectLifecycle(page, [[PASSAGE, true], [STOP, false], [RUN_NOW, false]])
+    await missionToolbarAction(page, PASSAGE).click()
+    await until(async () => f.native.writes.length === 2)
+    assert.notEqual(f.native.writes[0], f.native.writes[1], "only a new explicit action creates a fresh Check request")
+    assert.deepEqual(errors, [])
+  } finally { await page.close(); await f.dispose() }
+})
+
+for (const action of ["pause", "stop"] as const) test(`a local unknown Play sees another client's later partial ${action} and retries only that recorded tuple`, async () => {
+  const f = await fixture(), { page, errors } = await open(f)
+  try {
+    f.native.crash = "start"
+    await missionToolbarAction(page, PLAY).click()
+    await missionToolbarAction(page, CHECK).click()
+    await statusText(page).waitFor()
+    const started = (await f.read()).controls[0]!
+    f.native.partial = true
+    const request = { action, requestID: `other_client_${action}`, expectedRevision: (await f.read()).revision }
+    const response = await f.app.inject({ method: "POST", url: `/api/workspaces/fixture/missions/recurrence/${scheduleID}/control`,
+      headers: f.headers, payload: request })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(response.json().controlsComplete, false)
+    await refresh(page)
+    await expectLifecycle(page, [[CHECK, true], [STOP, false], [RUN_NOW, false]])
+    assert.equal(await statusText(page).count(), 0)
+    assert.equal(f.native.writes.length, 2, "a refreshed snapshot does not resend anything")
+    await missionRefresh(page).click()
+    await until(async () => f.native.writes.length === 3)
+    assert.equal(f.native.writes[2], `${action}:${request.requestID}:retry`)
+    assert.equal((await f.read()).controls.find(item => item.requestID === started.requestID)?.controlsComplete, true)
+    assert.equal(await f.permitFree(), true)
     assert.deepEqual(errors, [])
   } finally { await page.close(); await f.dispose() }
 })

@@ -1,4 +1,5 @@
 import type { RecurrenceControlRequest, RecurrenceControlStatus } from "../../../server/src/missions/recurrence-control-contract"
+import { recurrenceControlStateMatches } from "../../../server/src/missions/recurrence-control-state"
 import type { recurrenceNotDispatchedCode as NotDispatchedCode } from "../../../server/src/missions/recurrence-control-contract"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
 import { HttpResponseError } from "./retryable-file-search"
@@ -26,8 +27,7 @@ export function completedRecurrenceControl(result: RecurrenceControlStatus, inte
     && (result.action === undefined || result.action === intent.action)
     && result.expectedRevision === intent.expectedRevision && result.revision === intent.expectedRevision + 1
     && result.outcome === "committed" && result.controlsComplete === true
-    && result.state === (intent.action === "play" || intent.action === "resume" ? "running"
-      : intent.action === "pause" || intent.action === "check" ? "paused" : "stopped")
+    && recurrenceControlStateMatches(intent.action, result.state)
     && result.schedulerCancellation !== "unknown" && (result.targets === undefined
       || Array.isArray(result.targets) && result.targets.every(target => target && target.outcome === "acknowledged"))
 }

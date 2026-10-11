@@ -17,15 +17,7 @@ export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceI
   expectedRevision: z.number().int().nonnegative().safe(),
 }).strict()
 export type RecurrenceControlRequest = z.infer<typeof recurrenceControlRequestSchema>
-/** Desired state committed by a control; Run now has none. */
-export function recurrenceControlTargetState(action: RecurrenceControlRequest["action"]) {
-  return action === "play" || action === "resume" ? "running" : action === "pause" || action === "check" ? "paused"
-    : action === "stop" ? "stopped" : undefined
-}
-/** Check keeps whichever inactive state it observed: paused, or terminal stopped. */
-export function recurrenceControlStateMatches(action: RecurrenceControlRequest["action"], state: string | undefined) {
-  return action === "check" ? state === "paused" || state === "stopped" : state === recurrenceControlTargetState(action)
-}
+export { recurrenceControlTargetState, recurrenceControlStateMatches } from "./recurrence-control-state"
 export const recurrenceControlHttpSchema = recurrenceControlRequestSchema.extend({
   directory: z.string().min(1).max(4096).optional(), retry: z.boolean().optional(),
 }).refine(input => !input.retry || input.action === "pause" || input.action === "stop", "Only partial denial controls can be retried")

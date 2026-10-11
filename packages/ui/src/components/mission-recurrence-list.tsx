@@ -60,8 +60,15 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     return intent && unresolved.get(key()) === intent ? intent : undefined
   }
   const heldIntent = () => {
-    const control = outstanding()
-    return current() ?? (control?.action ? { scheduleID: props.schedule.id, requestID: control.requestID,
+    const control = outstanding(), local = current()
+    // An owned native snapshot may contain another client's later partial denial.
+    // Prefer that exact retry over the local start it superseded, but never over
+    // an unrecorded/in-flight local request or a local partial Pause/Stop.
+    const newerPartial = local && START_INTENTS.includes(local.action) && control?.action
+      && (control.action === "pause" || control.action === "stop") && control.revision !== undefined
+      && control.revision > local.expectedRevision + 1 && incomplete().some(item => item.requestID === local.requestID
+        && item.action === local.action && item.expectedRevision === local.expectedRevision)
+    return (newerPartial ? undefined : local) ?? (control?.action ? { scheduleID: props.schedule.id, requestID: control.requestID,
       expectedRevision: control.expectedRevision, action: control.action, directory: props.directory } : undefined)
   }
   /** The held request is an unknown start intent (Play, Resume, Check or Run now) that
