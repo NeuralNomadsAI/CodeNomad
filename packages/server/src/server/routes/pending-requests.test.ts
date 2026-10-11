@@ -409,7 +409,7 @@ test("undefined ownership for an existing optional path never excludes it", asyn
   } finally { await h.cleanup() }
 })
 
-test("undefined ownership excludes only missing paths with an owned existing ancestor", async () => {
+test("missing optional history outside the checkout is excluded without claiming coverage", async () => {
   const h = await harness()
   try {
     const owned = join(h.root, "deleted-parent", "session")
@@ -417,12 +417,65 @@ test("undefined ownership excludes only missing paths with an owned existing anc
     const response = await h.app.inject({ url: h.url([h.root, owned, foreign], [owned, foreign]) })
     assert.equal(response.statusCode, 200, response.body)
     assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === owned), { directory: owned, status: "excluded" })
-    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error" })
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "excluded" })
     assert.deepEqual(h.state.batches, [[h.root]])
     h.state.calls.length = 0
-    assert.equal((await h.app.inject({ url: h.url([foreign], [foreign]) })).statusCode, 403)
-    assert.deepEqual(h.state.calls, [], "missing foreign history cannot negotiate root capability alone")
+    assert.deepEqual((await h.app.inject({ url: h.url([foreign], [foreign]) })).json(), {
+      supported: true, directories: [{ directory: foreign, status: "excluded" }],
+    })
+    assert.deepEqual(h.state.batches.at(-1), [h.root], "capability still comes from the owned root, never the excluded path")
   } finally { await h.cleanup() }
+})
+
+test("optional historical clones are excluded by actual Git identity while valid idle locations remain scanned", async () => {
+  const h = await harness()
+  try {
+    const foreign = join(h.root, "old-fixture-checkout")
+    await git("git", ["init", "--quiet", foreign])
+    h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{
+      location: { directory: h.subdirectory }, permissions: [permission], forms: [form],
+    }])] }
+    for (const resolverClaimsOwnership of [false, true]) {
+      if (resolverClaimsOwnership) h.state.allowed.add(foreign)
+      const response = await h.app.inject({ url: h.url([h.root, foreign, h.subdirectory], [foreign, h.subdirectory]) })
+      assert.equal(response.statusCode, 200, response.body)
+      assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "excluded" })
+      assert.deepEqual(h.state.batches.at(-1), [h.root, h.subdirectory], "never query or warm the unrelated repository")
+      assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === h.subdirectory).locations[0].forms, [form])
+    }
+    const required = await h.app.inject({ url: h.url([h.root, foreign, h.subdirectory]) })
+    assert.deepEqual(required.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error" }, "required locations still fail visibly")
+  } finally { await h.cleanup() }
+})
+
+test("negative scope evidence must survive native IO and does not swallow uncertain ownership", async () => {
+  for (const fault of ["becomes-owned", "reappears", "identity-blocked", "lookup-error"] as const) {
+    const h = await harness()
+    const foreign = fault === "reappears" ? `${h.root}-old-history` : join(h.root, "other-repository")
+    try {
+      if (fault !== "reappears") await git("git", ["init", "--quiet", foreign])
+      if (fault === "identity-blocked") {
+        h.state.allowed.add(foreign)
+        h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === foreign ? "foreign-identity" : h.root
+      }
+      if (fault === "lookup-error") {
+        const resolve = h.manager.getServiceDirectoryForPath
+        h.manager.getServiceDirectoryForPath = async (id, directory) => {
+          if (directory === foreign) throw Object.assign(new Error("Access denied"), { code: "EACCES" })
+          return resolve(id, directory)
+        }
+      }
+      h.state.onFetch = () => {
+        if (fault === "becomes-owned") h.state.allowed.add(foreign)
+        if (fault === "reappears") execFileSync("git", ["init", "--quiet", foreign], { windowsHide: true })
+        if (fault === "identity-blocked") h.state.blockedIdentities.add("foreign-identity")
+      }
+      const response = await h.app.inject({ url: h.url([h.root, foreign], [foreign]) })
+      assert.equal(response.statusCode, 200, response.body)
+      assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error" }, fault)
+      assert.deepEqual(h.state.batches, [[h.root]])
+    } finally { await h.cleanup(); if (fault === "reappears") await rm(foreign, { recursive: true, force: true }) }
+  }
 })
 
 test("a missing path through a symlink outside the owned root is not excluded", async () => {

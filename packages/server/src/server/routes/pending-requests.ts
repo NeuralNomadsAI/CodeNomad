@@ -107,6 +107,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       // Optional history whose host directory is absent: authorized by its own owned
       // identity or by an existing, canonically owned ancestor, and revalidated after RPC.
       const missing: Array<{ submitted: string; directory?: string; identity: string; host: string; ancestor?: string }> = []
+      // Negative scope evidence only: these hints never authorize a native read
+      // or an empty queue. Preserve errors when membership is merely unknown.
+      const outside: Array<{ submitted: string; directory?: string; identity?: string; proof: string }> = []
       // A candidate whose ownership cannot be (re)established reports its own
       // non-authoritative error; it neither fails the batch nor counts as empty.
       const failed = new Set<string>()
@@ -123,6 +126,25 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       }
       let common: Promise<string> | undefined
       const workspaceCommon = () => common ??= readCommon(workspace.path)
+      const outsideHistory = async (candidate: string, expectedCommon: () => Promise<string>) => {
+        if (!nativePath.isAbsolute(candidate)) return undefined
+        const host = await manager.getHostPathForServicePath(id, candidate)
+        if (!host || !path.isAbsolute(host)) return undefined
+        if (await missingHost(host)) {
+          // An absent direct child of a canonical existing parent outside this
+          // checkout is obsolete history, not an unavailable owned checkout.
+          // Missing owned descendants retain the identity/fence path below.
+          const rootHost = await realpath(workspace.path)
+          const relative = path.relative(rootHost, host)
+          if (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)) return undefined
+          const parent = path.dirname(host)
+          if (await realpath(parent) !== parent) return undefined
+          return `missing\0${host}\0${parent}`
+        }
+        const candidateCommon = await readCommon(host)
+        if (candidateCommon === await expectedCommon()) return undefined
+        return `foreign\0${await realpath(host)}\0${candidateCommon}`
+      }
       // Lazy: the expected identity is read only once an existing ancestor needs it.
       const ownedMissingAncestor = async (candidate: string, expectedCommon: () => Promise<string>) => {
         if (!nativePath.isAbsolute(candidate)) return undefined
@@ -158,7 +180,12 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             if (!directory && optional.has(candidate)) {
               const host = await manager.getHostPathForServicePath(id, candidate)
               const owned = host && path.isAbsolute(host) && await missingHost(host) ? await ownedMissingAncestor(candidate, workspaceCommon) : undefined
-              if (!host || !owned) return { candidate, status: "error" as const }
+              if (!host || !owned) {
+                const proof = await outsideHistory(candidate, workspaceCommon)
+                return proof
+                  ? { candidate, status: "excluded" as const, outside: { submitted: candidate, proof } }
+                  : { candidate, status: "error" as const }
+              }
               return { candidate, status: "excluded" as const, missing: { submitted: candidate, host, ...owned } }
             }
             const identity = directory === root ? rootIdentity : directory && await manager.getWorktreeIdentityForPath(id, directory)
@@ -172,7 +199,12 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             // Containment alone cannot authorize a nested independent clone.
             const sameRepository = directory === root || await Promise.all([workspaceCommon(), readCommon(host)])
               .then(([left, right]) => left === right, () => false)
-            if (!sameRepository) return { candidate, status: "error" as const }
+            if (!sameRepository) {
+              const proof = optional.has(candidate) ? await outsideHistory(candidate, workspaceCommon) : undefined
+              return proof
+                ? { candidate, status: "excluded" as const, outside: { submitted: candidate, directory, identity, proof } }
+                : { candidate, status: "error" as const }
+            }
             return { candidate, status: "ok" as const, owned: { submitted: candidate, directory, identity } }
           } catch (error) {
             isolate(error)
@@ -182,7 +214,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         for (const entry of candidates) {
           if (entry.status === "ok") resolved.push(entry.owned)
           else {
-            if (entry.status === "excluded") missing.push(entry.missing)
+            if (entry.status === "excluded") {
+              if (entry.outside) outside.push(entry.outside)
+              else missing.push(entry.missing)
+            }
             result.directories.push({ directory: entry.candidate, status: entry.status })
           }
         }
@@ -205,7 +240,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         assertCurrent()
       }
       const revalidateCandidates = async () => {
-        const currentCommon = resolved.some((candidate) => candidate.directory !== root) || missing.some((entry) => entry.ancestor)
+        const currentCommon = resolved.some((candidate) => candidate.directory !== root) || missing.some((entry) => entry.ancestor) || outside.length > 0
           ? await readCommon(workspace.path) : undefined
         for (let offset = 0; offset < resolved.length; offset += 8) {
           await drainOwnershipReads(resolved.slice(offset, offset + 8).map(async (candidate) => {
@@ -241,8 +276,17 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             }
           }))
         }
+        for (const entry of outside) {
+          try {
+            if (await manager.getServiceDirectoryForPath(id, entry.submitted) !== entry.directory
+              || (entry.identity && (deps.worktreeDeletionFence.isBlocked(entry.identity)
+                || await manager.getWorktreeIdentityForPath(id, entry.directory!) !== entry.identity))
+              || await outsideHistory(entry.submitted, async () => currentCommon!) !== entry.proof) failed.add(entry.submitted)
+          } catch (error) { isolate(error); failed.add(entry.submitted) }
+        }
         // A deletion that began during the awaits above still fences publication.
         for (const candidate of [...resolved, ...missing]) if (deps.worktreeDeletionFence.isBlocked(candidate.identity)) failed.add(candidate.submitted)
+        for (const candidate of outside) if (candidate.identity && deps.worktreeDeletionFence.isBlocked(candidate.identity)) failed.add(candidate.submitted)
         assertCurrent()
       }
       assertCurrent()

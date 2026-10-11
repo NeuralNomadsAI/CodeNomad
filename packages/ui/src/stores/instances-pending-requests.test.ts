@@ -149,27 +149,31 @@ test("loaded-only recovery outlives the old ten-second deadline but still times 
   } finally { h.cleanup(); t.mock.timers.reset() }
 })
 
-test("obsolete history can be excluded while valid idle subdirectories still recover questions and permissions", async () => {
+test("obsolete and foreign history can be excluded without repeated warnings or losing valid idle requests", async () => {
   const h = harness()
   try {
-    const deleted = "/deleted-temporary-history", subdirectory = `${h.directory}/idle-subdirectory`
-    setSessions((previous) => new Map(previous).set(h.id, new Map([deleted, subdirectory].map((directory, index) => {
+    const deleted = "/deleted-temporary-history", foreign = `${h.directory}/foreign-fixture`, subdirectory = `${h.directory}/idle-subdirectory`
+    const warnings = () => getToastHistory().filter((item) => item.message === tGlobal("interruption.recoveryIncomplete")).length
+    const before = warnings()
+    setSessions((previous) => new Map(previous).set(h.id, new Map([deleted, foreign, subdirectory].map((directory, index) => {
       const session = createClientSession({ id: `history-${index}`, title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
       return [session.id, session]
     }))))
     serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
-      assert.deepEqual(optional, [deleted, subdirectory])
-      return { supported: true, directories: directories.map((directory) => directory === deleted
+      assert(optional?.includes(deleted) && optional.includes(foreign))
+      return { supported: true, directories: directories.map((directory) => directory === deleted || directory === foreign
         ? { directory, status: "excluded" as const }
         : { directory, status: "ok" as const, locations: [{ location: { directory },
           permissions: directory === subdirectory ? [permission("idle")] : [], forms: directory === subdirectory ? [form("idle")] : [],
         }] }) }
     }
     await syncPendingRequests(h.id)
+    await syncPendingRequests(h.id)
     assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.equal(warnings(), before, "two successful recoveries with excluded hints must not emit the incomplete warning")
     assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["idle"])
     assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["idle"])
-    assert.equal(sessions().get(h.id)?.size, 2, "excluding a recovery hint never deletes its historical session")
+    assert.equal(sessions().get(h.id)?.size, 3, "excluding a recovery hint never deletes its historical session")
     assert.deepEqual(h.calls, [])
   } finally { h.cleanup() }
 })
