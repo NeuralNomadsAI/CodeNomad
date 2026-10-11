@@ -7,5 +7,7 @@
 .mission-editor .mission-conversation-option { display: flex; flex-direction: row; align-items: center; gap: var(--space-xs); padding-block: var(--space-xs); }
 .mission-conversation-option span { min-width: 0; overflow-wrap: anywhere; }
 
-/* Customizable selects size to the shown value; keep the section picker stable. */
-.mission-recurrence-section-select { inline-size: 20rem; max-inline-size: 100%; text-overflow: ellipsis; }
+/* Customizable selects size to the shown value; keep the section picker stable and
+   within narrow readers (container units do not depend on the select's content). */
+.mission-recurrence-result { container-type: inline-size; }
+.mission-recurrence-section-select { inline-size: min(20rem, 60cqi); }

@@ -1,8 +1,9 @@
 /* Native <select> elements are controls, not fields: the closed control matches
    the selector trigger (control surface, chevron) and, where the engine supports
-   customizable selects (Chromium: Electron and WebView2), the open list matches
-   the shared menus; elsewhere the system list remains. Customizable selects size to
-   the value shown: auto-width selects need a stable width from their feature.
+   customizable selects with content-box clipping (Chromium: Electron and WebView2),
+   the open list matches the shared menus; elsewhere the system list remains.
+   Customizable selects size to the value shown: auto-width selects need a stable
+   width from their feature.
    :not([multiple]):not([size]) outranks per-feature select backgrounds; keyboard focus
    is left to each select's own focus treatment (border, background). */
 select:not([multiple]):not([size]):not(:focus-visible) {
@@ -13,31 +14,50 @@ select:not([multiple]):not([size]):not(:focus-visible):hover:not(:disabled) {
   background-color: var(--surface-hover);
 }
 
-@supports (appearance: base-select) {
+@supports (appearance: base-select) and (overflow-clip-margin: content-box) {
   select,
   select::picker(select) {
     appearance: base-select;
   }
 
+  /* One line: a long value clips at the content edge, beside the chevron, instead
+     of wrapping. The chevron is a background so the clip cannot hide it. */
   select {
-    align-items: center;
+    display: inline-grid;
+    align-content: center;
+    white-space: nowrap;
+    overflow: clip;
+    overflow-clip-margin: content-box;
     /* base-select rounds the control by default; chrome stays square. */
     border-radius: 0;
   }
 
-  /* Same chevron as the selector triggers, rotated while the list is open. */
   select::picker-icon {
-    content: "";
-    width: var(--icon-size, 1rem);
-    height: var(--icon-size, 1rem);
-    background-color: var(--icon-button-color, var(--text-muted));
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
-    opacity: var(--icon-button-idle-opacity, 1);
-    transition: rotate 150ms ease;
+    display: none;
   }
 
-  select:open::picker-icon {
-    rotate: 180deg;
+  /* Same chevron as the selector triggers, drawn in the theme's icon colour; it
+     points up while the list is open. Outranks feature `background` shorthands. */
+  select:not([multiple]):not([size]) {
+    --select-chevron: var(--icon-button-color, var(--text-muted));
+    /* Room for the chevron; the value clips before it. */
+    padding-inline-end: 1.75rem;
+    background-image:
+      linear-gradient(45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%),
+      linear-gradient(-45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%);
+    background-size: 0.375rem 0.375rem;
+    background-repeat: no-repeat;
+    background-position: right 0.875rem center, right 0.5rem center;
+  }
+
+  select:not([multiple]):not([size]):open {
+    background-image:
+      linear-gradient(-45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%),
+      linear-gradient(45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%);
+  }
+
+  select:not([multiple]):not([size]):dir(rtl) {
+    background-position: left 0.5rem center, left 0.875rem center;
   }
 
   select::picker(select) {
