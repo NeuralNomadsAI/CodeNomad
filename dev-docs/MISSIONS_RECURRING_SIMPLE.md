@@ -68,7 +68,8 @@ at its own revision. The route then releases the permit and answers 409
 now that fails before the route dispatches it (connection unavailable, Location
 ownership or deletion admission, another request's held permit) answers
 `recurrence-not-dispatched` (409 when another permit or a deletion blocks the
-hold, otherwise 503); a refused repeat of an already held identity stays uncoded. `/control`
+hold, the permit table is full, or a retry has no original partial permit;
+otherwise 503). A refused repeat of an already held identity stays uncoded. `/control`
 refuses `run-now` with 400 before any permit; Run now has its own endpoint. The
 UI releases these coded refusals and the route's pre-permit 400/401 for a
 request's first attempt only, refreshes the row and explains the refusal; a
