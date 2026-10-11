@@ -221,7 +221,17 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       <div class="tab-bar tab-bar-instance">
         <div class="tab-container">
           <TabScroll>
-              <div class="tab-strip-tabs" role="tablist">
+              <div
+                class="tab-strip-tabs"
+                role="tablist"
+                onFocusIn={(event) => {
+                  // Chromium only scrolls focus that leaves the strip, so a tab still under
+                  // the sticky new-instance button would stay covered. Keyboard focus only:
+                  // a pointer drag must not shift the tab under the cursor.
+                  const target = event.target as HTMLElement
+                  if (target.matches(":focus-visible")) target.scrollIntoView({ block: "nearest", inline: "nearest" })
+                }}
+              >
                 <Show
                   when={dragReorderEnabled()}
                   fallback={

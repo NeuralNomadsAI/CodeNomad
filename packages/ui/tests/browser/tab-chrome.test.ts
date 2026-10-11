@@ -200,6 +200,32 @@ test("a tab dragged past the last one stays visible beside the new-instance butt
   } finally { await page.close() }
 })
 
+test("keyboard focus keeps overflowing tabs clear of the sticky new-instance button", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 800 } })
+  try {
+    await prepare(page)
+    for (const dir of ["ltr", "rtl"]) {
+      await page.evaluate(dir => { document.dir = dir }, dir)
+      await page.locator('[data-fixture="instances"] [role="tab"]').first().focus()
+      const covered: string[] = []
+      for (let step = 0; step < 18; step++) {
+        await page.keyboard.press("Tab")
+        await page.waitForTimeout(40)
+        const overlap = await page.evaluate(() => {
+          const el = document.activeElement as HTMLElement
+          const bar = document.querySelector('[data-fixture="instances"]')!
+          if (!el.closest('[data-fixture="instances"] [role="tablist"]')) return 0
+          const plus = bar.querySelector(".tab-strip-new")!.getBoundingClientRect(), focused = el.getBoundingClientRect()
+          return Math.max(0, Math.min(focused.right, plus.right) - Math.max(focused.left, plus.left))
+        })
+        if (overlap > 0.5) covered.push(`${step}:${overlap}`)
+      }
+      assert.deepEqual(covered, [], `${dir}: focused tab under the new-instance button`)
+    }
+    await page.evaluate(() => { document.dir = "ltr" })
+  } finally { await page.close() }
+})
+
 test("double-click, F2 and the context menu rename the tab's project through the shared dialog", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const patches: any[] = []
