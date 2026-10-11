@@ -23,14 +23,12 @@ const reads = new Map<string, Read>()
 let invalidations = 0
 
 // Changes apply to rows that are not mounted, and events missed while
-// disconnected can change any row.
+// disconnected can change any row. The server omits messageId only for a
+// receipt without a source message, which belongs to the unanchored row.
 serverEvents.on("permission.receiptsChanged", event => {
   if (event.type !== "permission.receiptsChanged") return
-  const session = `${event.instanceId}\0${event.sessionId}\0`
-  const changed = event.messageId ? `${session}${event.messageId}` : undefined
-  for (const key of [...snapshots.keys(), ...reads.keys()]) {
-    if (key.startsWith(session) && (!changed || key === changed)) invalidatePermissionReceipts(key)
-  }
+  invalidatePermissionReceipts(permissionReceiptKey(event.instanceId, event.sessionId,
+    event.messageId ? { messageId: event.messageId } : { unanchored: true }))
 })
 serverEvents.onOpen(() => {
   for (const key of [...snapshots.keys(), ...reads.keys()]) invalidatePermissionReceipts(key)

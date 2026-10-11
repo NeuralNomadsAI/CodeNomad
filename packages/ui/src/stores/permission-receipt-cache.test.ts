@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { serverApi } from "../lib/api-client"
 import { backgroundReads } from "../lib/background-read-queue"
+import { serverEvents } from "../lib/server-events"
 import {
   acquirePermissionReceipts, cachedPermissionReceipts, invalidatePermissionReceipts, permissionReceiptGeneration, permissionReceiptKey,
 } from "./permission-receipt-cache"
@@ -70,6 +71,23 @@ test("a read is shared while any mounted row waits, cancelled when none does, an
     mounted.release()
     assert.equal(calls, 2)
     assert.ok(cachedPermissionReceipts(key), "the completed snapshot is retained for later remounts")
+  } finally { serverApi.fetchPermissionReceipts = original }
+})
+
+test("an unanchored change invalidates only the unanchored row", async () => {
+  const original = serverApi.fetchPermissionReceipts
+  serverApi.fetchPermissionReceipts = async () => ({ receipts: [] })
+  try {
+    for (const scope of [{ messageId: "anchored" }, { unanchored: true as const }]) {
+      const row = acquirePermissionReceipts("cache-instance", "ses-events", scope, 1)
+      await row.promise
+      row.release()
+    }
+    ;(serverEvents as any).dispatchBatch([{ type: "permission.receiptsChanged", instanceId: "cache-instance", sessionId: "ses-events" }])
+    assert.ok(cachedPermissionReceipts(permissionReceiptKey("cache-instance", "ses-events", { messageId: "anchored" })), "anchored rows keep their snapshot")
+    assert.equal(cachedPermissionReceipts(permissionReceiptKey("cache-instance", "ses-events", { unanchored: true })), undefined)
+    ;(serverEvents as any).dispatchBatch([{ type: "permission.receiptsChanged", instanceId: "cache-instance", sessionId: "ses-events", messageId: "anchored" }])
+    assert.equal(cachedPermissionReceipts(permissionReceiptKey("cache-instance", "ses-events", { messageId: "anchored" })), undefined)
   } finally { serverApi.fetchPermissionReceipts = original }
 })
 

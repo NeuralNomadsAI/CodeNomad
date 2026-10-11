@@ -105,7 +105,8 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     }
     const offEvent = serverEvents.on("permission.receiptsChanged", event => {
       if (event.type !== "permission.receiptsChanged" || event.instanceId !== instanceId || event.sessionId !== sessionId) return
-      if (!event.messageId || event.messageId === messageId) refresh()
+      // A missing messageId denotes an unanchored receipt, not a session-wide change.
+      if ((event.messageId || undefined) === messageId) refresh()
     })
     const offOpen = serverEvents.onOpen(refresh)
     const cached = cachedPermissionReceipts(key)
