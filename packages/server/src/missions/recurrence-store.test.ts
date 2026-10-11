@@ -7,7 +7,7 @@ import { RECURRENCE_HISTORY_LIMIT, RECURRENCE_MAX_BYTES, RECURRENCE_STORAGE_PREF
   type RecurrenceAdmission, type RecurrenceConfig, type RecurrenceDocument, type RecurrenceResult } from "./recurrence-contract"
 import { recurrenceSnapshotOutput } from "./recurrence-control-contract"
 import { MissionRecurrenceRunner, type RecurrenceAuthorizedAdmission } from "./recurrence-runner"
-import { NativeMissionRecurrenceStore } from "./recurrence-store"
+import { NativeMissionRecurrenceStore, recurrenceRequestRefusal } from "./recurrence-store"
 import { latestDailyDue } from "./recurrence-clock"
 import { missionProfileRoles } from "./playbook-profiles"
 
@@ -485,6 +485,40 @@ test("controls keep a bounded completed history and never evict an unknown reque
   doc = (await unknown.store.read("daily_review"))!
   await assert.rejects(unknown.store.beginControl(doc.id, { requestID: "resume_64", action: "resume", expectedRevision: doc.revision }, current), /control conflict/)
   assert.equal((await unknown.store.read("daily_review"))!.controls.every(item => !item.controlsComplete), true)
+})
+
+test("a request without a record is refused only on proof it never applied and never can", async () => {
+  const f = await fixture(false)
+  let doc = await control(f, "play_one", "play")
+  const stale = { requestID: "pause_stale", action: "pause" as const, expectedRevision: doc.revision - 1 }
+  await assert.rejects(f.store.beginControl(doc.id, stale, current), /control conflict/)
+  assert.equal(recurrenceRequestRefusal(doc, stale), "revision-conflict", "the CAS can never succeed later")
+  assert.equal(recurrenceRequestRefusal(doc, { ...stale, action: "run-now" }), "revision-conflict")
+  // At its own revision the pure refusal is exactly the one an in-flight attempt meets.
+  const play = { requestID: "play_running", action: "play" as const, expectedRevision: doc.revision }
+  await assert.rejects(f.store.beginControl(doc.id, play, current), /cannot play/)
+  assert.equal(recurrenceRequestRefusal(doc, play), "control-conflict")
+  assert.equal(recurrenceRequestRefusal(doc, { ...play, action: "pause" }), undefined, "admissible: may still be in flight")
+  assert.equal(recurrenceRequestRefusal(doc, { ...play, expectedRevision: doc.revision + 1 }), undefined)
+  assert.equal(recurrenceRequestRefusal(doc, { requestID: "play_one", action: "play", expectedRevision: doc.revision - 2 }), undefined,
+    "an existing record is never reinterpreted")
+  doc = await control(f, "pause_one", "pause")
+  doc = await f.store.reserveManual(doc.id, "manual_one", doc.revision, f.now, { profileID: "profile", executionHost: "host", configYamlPath: "/p" }, current)
+  assert.equal(recurrenceRequestRefusal(doc, { requestID: "manual_two", action: "run-now", expectedRevision: doc.revision }), "control-conflict",
+    "a pending passage refuses another Run now at this revision")
+
+  // Once completed records are evicted, only requests newer than every eviction stay provable.
+  const full = await fixture(false)
+  for (let index = 0; index < 33; index++) { await control(full, `play_${index}`, "play"); await control(full, `pause_${index}`, "pause") }
+  doc = (await full.store.read("daily_review"))!
+  assert.equal(doc.controls.length, 64)
+  const bound = doc.evictedControlRevision!
+  assert.ok(bound > 0 && bound < doc.revision)
+  assert.equal(recurrenceRequestRefusal(doc, { requestID: "old", action: "pause", expectedRevision: bound - 1 }), undefined, "may have been evicted")
+  assert.equal(recurrenceRequestRefusal(doc, { requestID: "recent", action: "pause", expectedRevision: bound }), "revision-conflict")
+  const { evictedControlRevision: _bound, ...legacy } = doc
+  assert.equal(recurrenceRequestRefusal(legacy, { requestID: "recent", action: "pause", expectedRevision: doc.revision - 1 }), undefined,
+    "a full list without a bound may predate it")
 })
 
 test("an unknown Play/Check outcome is settled by a later completed control; Run now settles with its passage", async () => {

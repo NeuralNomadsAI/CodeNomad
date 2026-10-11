@@ -291,6 +291,88 @@ test("paused pending passage exposes a labelled reconcile-only Check passage con
   } finally { await page.close() }
 })
 
+test("proven no-effect refusals release the control and refresh the row; uncertain failures stay held without resend", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], errors: string[] = []
+  page.setDefaultTimeout(10_000)
+  page.on("pageerror", error => errors.push(error.message))
+  const schedule = scheduleFixture()
+  let snapshots = 0
+  const replies: Array<{ status: number; json: object }> = []
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions/recurrence")) { snapshots++; return route.fulfill({ json: snapshotFixture(schedule) }) }
+    if (path.endsWith("/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: schedule.id, passageID: null } })
+    if (path.endsWith("/control/status")) {
+      const { directory: _directory, ...identity } = request.postDataJSON(); statusReads.push(identity)
+      return route.fulfill({ json: recurrenceControlStatusSchema.parse({ version: 1, ...identity, scheduleID: schedule.id,
+        outcome: "rejected", reason: "revision-conflict" }) })
+    }
+    if (path.endsWith("/control") || path.endsWith("/run-now")) {
+      posts.push({ path, body: request.postDataJSON() })
+      // The scheduler advanced the revision after the row rendered.
+      schedule.revision++
+      return route.fulfill(replies.shift()!)
+    }
+    return route.fulfill({ json: {} })
+  })
+  const PAUSE = `Pause schedule ${TITLE}`
+  const feedback = () => missionDetail(page).locator(".mission-action-feedback [role=status]")
+  // A proven refusal shows its message, refreshes the row and re-enables the controls.
+  const released = async (message: string, before: number) => {
+    await feedback().getByText(message, { exact: true }).waitFor()
+    for (let attempt = 0; snapshots <= before && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.ok(snapshots > before, "the row refreshes after a refusal")
+    await page.waitForFunction(labels => labels.every(label => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>(".mission-action-bar button")].find(node => node.getAttribute("aria-label") === label)
+      return button && !button.disabled
+    }), [PAUSE, RUN_NOW])
+    assert.equal(await missionToolbarAction(page, CHECK).count(), 0, "a proven refusal is not held")
+  }
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    await selectMission(page, schedule.title)
+    await missionToolbarAction(page, PAUSE).waitFor()
+
+    const STALE = "The schedule changed before this action arrived, so nothing was applied. Review its current state and try again."
+    replies.push({ status: 409, json: { error: "refused", code: "recurrence-revision-conflict" } })
+    let before = snapshots
+    await clickMissionAction(page, PAUSE)
+    await released(STALE, before)
+    await captureMissionView(page, "recurrence-control-refused-stale")
+
+    // A refused pre-permit 401 is equally definitive; the next send is a fresh request at the refreshed revision.
+    replies.push({ status: 401, json: { error: "Authenticated human session required" } })
+    before = snapshots
+    await clickMissionAction(page, PAUSE)
+    await released("This action was not admitted, so nothing was applied. Sign in again if needed, then retry.", before)
+    assert.notEqual(posts[1].body.requestID, posts[0].body.requestID)
+    assert.equal(posts[1].body.expectedRevision, posts[0].body.expectedRevision + 1)
+
+    replies.push({ status: 409, json: { error: "refused", code: "recurrence-control-conflict" } })
+    before = snapshots
+    await clickMissionAction(page, RUN_NOW)
+    await released("This action is not available in the schedule's current state, so nothing was applied.", before)
+    assert.equal(posts[2].path.endsWith("/run-now"), true)
+
+    // An uncertain failure stays held; only the explicit exact status read proves the refusal.
+    replies.push({ status: 503, json: { error: "Recurrence control uncertain; read exact status before another action" } })
+    await clickMissionAction(page, PAUSE)
+    const check = missionToolbarAction(page, CHECK)
+    await check.waitFor()
+    await feedback().getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).waitFor()
+    before = snapshots
+    await check.click()
+    await released(STALE, before)
+    const { directory: _directory, scheduleID: _scheduleID, ...held } = posts[3].body
+    assert.deepEqual(statusReads, [held], "the read names the exact held request")
+    assert.equal(posts.length, 4, "no control was ever resent")
+    assert.deepEqual(errors, [])
+  } catch (error) { console.error(errors, posts, replies, await page.locator("body").innerText()); throw error } finally { await page.close() }
+})
+
 for (const mode of ["manual", "partial-pause", "partial-stop"] as const) test(`real ${mode} routes preserve unknown identity without automatic resend`, async () => {
   const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], statusReads: any[] = [], controlStatusReads: any[] = [], errors: string[] = []
   page.setDefaultTimeout(10_000)

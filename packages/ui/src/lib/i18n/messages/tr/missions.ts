@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "{id} denetim sonucunu kontrol et",
   "missions.recurrence.checkPassage": "{id} için bekleyen çalıştırmayı kontrol et",
   "missions.recurrence.uncertain": "Sonuç doğrulanmadı; başka bir işlemden önce durumu kontrol edin.",
+  "missions.recurrence.refused.stale": "Bu işlem ulaşmadan önce zamanlama değişti, bu yüzden hiçbir şey uygulanmadı. Güncel durumu inceleyip yeniden deneyin.",
+  "missions.recurrence.refused.conflict": "Bu işlem zamanlamanın güncel durumunda kullanılamıyor, bu yüzden hiçbir şey uygulanmadı.",
+  "missions.recurrence.refused.notAdmitted": "Bu işlem kabul edilmedi, bu yüzden hiçbir şey uygulanmadı. Gerekirse yeniden oturum açıp tekrar deneyin.",
   "missions.recurrence.reader": "Yinelenen takvim {id}",
   "missions.recurrence.section": "Bölüm {section} / {total}",
 } as const

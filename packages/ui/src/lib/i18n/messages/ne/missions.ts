@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "{id} को नियन्त्रण परिणाम जाँच गर्नुहोस्",
   "missions.recurrence.checkPassage": "{id} को बाँकी सञ्चालन जाँच गर्नुहोस्",
   "missions.recurrence.uncertain": "परिणाम पुष्टि भएको छैन; अर्को कार्यअघि स्थिति जाँच गर्नुहोस्।",
+  "missions.recurrence.refused.stale": "यो कार्य आइपुग्नुअघि तालिका परिवर्तन भयो, त्यसैले केही लागू भएन। हालको स्थिति हेरेर फेरि प्रयास गर्नुहोस्।",
+  "missions.recurrence.refused.conflict": "तालिकाको हालको स्थितिमा यो कार्य उपलब्ध छैन, त्यसैले केही लागू भएन।",
+  "missions.recurrence.refused.notAdmitted": "यो कार्य स्वीकार गरिएन, त्यसैले केही लागू भएन। आवश्यक भए फेरि साइन इन गरेर पुनः प्रयास गर्नुहोस्।",
   "missions.recurrence.reader": "दोहोरिने तालिका {id}",
   "missions.recurrence.section": "खण्ड {section} / {total}",
 } as const

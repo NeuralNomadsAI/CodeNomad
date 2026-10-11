@@ -63,6 +63,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
       if (registry!.get(id) !== record || record.state !== "preparing" && !(record.state === "partial" && record.retrying)) throw new Error("Recurrence dispatch unavailable")
       record.state = "dispatched"
     },
+    /** Proven outcome: a committed receipt, or a native proof that nothing applied. */
     settled() { if (record.state === "dispatched") proven = true },
     partial() { if (record.state === "dispatched") record.state = "partial" },
     dispose() {
@@ -74,8 +75,9 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   }
 }
 
-/** An explicit exact completed request is positive publication evidence. Missing,
- * unknown or mismatched reads can never release a dispatched permit. Through a
+/** An explicit exact completed request is positive publication evidence, and an
+ * exact native `rejected` receipt proves no publication. Missing, unknown or
+ * mismatched reads can never release a dispatched permit. Through a
  * replacement connection only a committed, complete receipt releases it, and only
  * when `owner` was freshly re-proven equal to the admitted owner; that connection
  * never inherits the permit, a partial retry or any other admission right. */
@@ -86,6 +88,16 @@ export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, wor
   if (!record || record.state === "preparing") return
   const original = record.binding, replaced = original.connection !== connection
   if (replaced && !sameOwner(original.owner, owner)) return
+  // Native proof that the exact request never applied and never can: no effect to hold.
+  if (receipt.outcome === "rejected") {
+    if (!sameLocation(location, original.location) || request.requestID !== original.requestID
+      || request.expectedRevision !== original.expectedRevision || request.action !== original.action
+      || receipt.scheduleID !== original.scheduleID || receipt.requestID !== original.requestID
+      || receipt.expectedRevision !== original.expectedRevision || record.state === "partial") return
+    ;(replaced ? connection : original.connection).assertCurrent()
+    registry!.delete(id); record.release()
+    return
+  }
   if (!sameLocation(location, original.location) || request.requestID !== original.requestID
     || request.expectedRevision !== original.expectedRevision
     || request.action !== original.action || receipt.scheduleID !== original.scheduleID

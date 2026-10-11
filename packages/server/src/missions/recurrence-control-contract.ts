@@ -2,6 +2,10 @@ import { z } from "zod"
 import { recurrenceIDSchema, recurrenceControlRecordSchema } from "./recurrence-contract"
 import { dailyClockSchema } from "./recurrence-clock"
 
+export const recurrenceRefusalReasonSchema = z.enum(["revision-conflict", "control-conflict"])
+/** Stable HTTP codes of a native-proven refusal: no effect, the permit is released. */
+export const recurrenceRefusalCode = (reason: z.infer<typeof recurrenceRefusalReasonSchema>) =>
+  reason === "revision-conflict" ? "recurrence-revision-conflict" as const : "recurrence-control-conflict" as const
 export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceIDSchema,
   requestID: recurrenceIDSchema, action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]),
   expectedRevision: z.number().int().nonnegative().safe(),
@@ -21,9 +25,13 @@ export const recurrenceControlHttpSchema = recurrenceControlRequestSchema.extend
 }).refine(input => !input.retry || input.action === "pause" || input.action === "stop", "Only partial denial controls can be retried")
 export const recurrenceControlStatusSchema = recurrenceControlRecordSchema.omit({ action: true, targetsKnown: true }).partial({
   revision: true, state: true, controlsComplete: true, targets: true,
-}).extend({ version: z.literal(1), scheduleID: recurrenceIDSchema, outcome: z.enum(["committed", "unknown"]),
+}).extend({ version: z.literal(1), scheduleID: recurrenceIDSchema, outcome: z.enum(["committed", "unknown", "rejected"]),
+  // `rejected`: native storage proves this exact request never applied and never can.
+  reason: recurrenceRefusalReasonSchema.optional(),
   action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]).optional() })
   .refine(value => value.outcome !== "committed" || value.controlsComplete === true)
+  .refine(value => (value.outcome === "rejected") === (value.reason !== undefined)
+    && (value.outcome !== "rejected" || value.revision === undefined && value.controlsComplete === undefined))
   .refine(value => value.controlsComplete !== true || value.schedulerCancellation !== "unknown"
     && (value.targets?.every(target => target.outcome === "acknowledged") ?? true), "Unknown targets/cancellation are not completed controls")
 export type RecurrenceControlStatus = z.infer<typeof recurrenceControlStatusSchema>
@@ -69,7 +77,8 @@ const referenceWire = { type: ["object", "null"], properties: { passageID: { typ
   required: ["passageID", "dueAt", "settledAt", "outcome"], additionalProperties: false } as const
 export const recurrenceControlStatusWire = { type: "object", properties: { version: { type: "integer", const: 1 },
   scheduleID: { type: "string" }, requestID: { type: "string" }, expectedRevision: numberWire, revision: numberWire,
-  state: { type: "string", enum: ["paused", "running", "stopped"] }, outcome: { type: "string", enum: ["committed", "unknown"] },
+  state: { type: "string", enum: ["paused", "running", "stopped"] }, outcome: { type: "string", enum: ["committed", "unknown", "rejected"] },
+  reason: { type: "string", enum: ["revision-conflict", "control-conflict"] },
   action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
   controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] },
   targets: { type: "array", maxItems: 32, items: recurrenceNativeControlWire } },

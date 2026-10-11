@@ -480,10 +480,13 @@ export class RecurringDayFixture {
     assert(schedule, "created schedule must be present in real snapshot")
     return schedule
   }
-  async control(action: "play" | "pause" | "stop" | "resume" | "run-now" | "check", statusCode = 200) {
+  /** `identity` pins an exact request, e.g. one sent with a stale revision. */
+  async control(action: "play" | "pause" | "stop" | "resume" | "run-now" | "check", statusCode = 200,
+    identity: { requestID?: string; expectedRevision?: number } = {}) {
     const schedule = await this.snapshot()
     const response = await this.bridge.inject({ method: "POST", url: "/day-test/control", headers: { cookie: "session=offline-human-cookie" },
-      payload: { scheduleID: this.id, action, requestID: `human_${++this.serial}`, expectedRevision: schedule.revision } })
+      payload: { scheduleID: this.id, action, requestID: identity.requestID ?? `human_${++this.serial}`,
+        expectedRevision: identity.expectedRevision ?? schedule.revision } })
     assert.equal(response.statusCode, statusCode, `${action}: ${response.body}`)
     await this.flush()
     return this.snapshot()

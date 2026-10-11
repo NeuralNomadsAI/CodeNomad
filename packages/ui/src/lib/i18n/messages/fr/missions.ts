@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "Vérifier le résultat de {id}",
   "missions.recurrence.checkPassage": "Vérifier le passage en attente de {id}",
   "missions.recurrence.uncertain": "Résultat non confirmé ; vérifiez l’état avant une autre action.",
+  "missions.recurrence.refused.stale": "Le programme a changé avant l’arrivée de cette action ; rien n’a été appliqué. Vérifiez son état actuel puis réessayez.",
+  "missions.recurrence.refused.conflict": "Cette action n’est pas disponible dans l’état actuel du programme ; rien n’a été appliqué.",
+  "missions.recurrence.refused.notAdmitted": "Cette action n’a pas été admise ; rien n’a été appliqué. Reconnectez-vous si nécessaire, puis réessayez.",
   "missions.recurrence.reader": "Programme récurrent {id}",
   "missions.recurrence.section": "Section {section} sur {total}",
 } as const

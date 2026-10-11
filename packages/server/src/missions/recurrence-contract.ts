@@ -92,6 +92,9 @@ const documentSchema = z.object({ version: z.literal(1), projectID: id, projectC
   profileSource: z.object({ profileID: id, executionHost: id, configYamlPath: z.string().min(1).max(4096) }).strict().optional(),
   // At most 64 exact intents: the store evicts the oldest completed request and never evicts/replays an unknown one.
   controls: z.array(recurrenceControlRecordSchema).max(RECURRENCE_CONTROL_LIMIT).default([]),
+  // Upper bound of every evicted record's revision; absent means none was evicted
+  // by a store that keeps this bound (a full list without it may predate it).
+  evictedControlRevision: counter.optional(),
   lastDaily: dailyDueSchema.nullable(), settledCount: counter,
    cursors: cursorListSchema.refine(items => items.length <= RECURRENCE_CURSOR_LIMIT),
   pending: z.object({ passage: passageSchema, admission: recurrenceAdmissionSchema.options[0].nullable() }).strict().nullable(),

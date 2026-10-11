@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "Check control outcome for {id}",
   "missions.recurrence.checkPassage": "Check the pending passage of {id}",
   "missions.recurrence.uncertain": "Control outcome unconfirmed; check status before another action.",
+  "missions.recurrence.refused.stale": "The schedule changed before this action arrived, so nothing was applied. Review its current state and try again.",
+  "missions.recurrence.refused.conflict": "This action is not available in the schedule's current state, so nothing was applied.",
+  "missions.recurrence.refused.notAdmitted": "This action was not admitted, so nothing was applied. Sign in again if needed, then retry.",
   "missions.recurrence.reader": "Recurring schedule {id}",
   "missions.recurrence.section": "Section {section} of {total}",
 } as const

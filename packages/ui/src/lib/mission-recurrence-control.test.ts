@@ -3,7 +3,9 @@ import test from "node:test"
 import { recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
 import { createRecurrenceControlIntent, recurrenceControlStatusInput, completedRecurrenceControl,
-  completedRecurrenceManual, partialRecurrenceControl, readRecurrenceControlResult } from "./mission-recurrence-control"
+  completedRecurrenceManual, partialRecurrenceControl, readRecurrenceControlResult, recurrenceControlRefusalKey,
+  rejectedRecurrenceControl } from "./mission-recurrence-control"
+import { HttpResponseError } from "./retryable-file-search"
 
 test("real control schemas preserve exact unknown/partial identities and normalize native mutation records", () => {
   const intent = createRecurrenceControlIntent("rec_schedule", 4, "pause", "/project")
@@ -28,6 +30,32 @@ test("real control schemas preserve exact unknown/partial identities and normali
   for (const foreign of [{ ...completed, requestID: "another_request" }, { ...completed, scheduleID: "another_schedule" },
     { ...completed, expectedRevision: 3 }, { ...completed, revision: 6 }])
     assert.equal(completedRecurrenceControl(foreign, intent), false)
+})
+
+test("only proven no-effect refusals release a control; uncertain failures stay held", () => {
+  const error = (status: number, code?: string) => new HttpResponseError("refused", status, null, code)
+  assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-revision-conflict")), "missions.recurrence.refused.stale")
+  assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-control-conflict")), "missions.recurrence.refused.conflict")
+  assert.equal(recurrenceControlRefusalKey(error(401)), "missions.recurrence.refused.notAdmitted", "refused before any permit")
+  assert.equal(recurrenceControlRefusalKey(error(400)), "missions.recurrence.refused.notAdmitted")
+  for (const uncertain of [error(503), error(409), error(500), error(404), error(401, "unexpected"), error(409, "creation-uncertain"),
+    new TypeError("Failed to fetch"), undefined]) assert.equal(recurrenceControlRefusalKey(uncertain), undefined)
+
+  const intent = createRecurrenceControlIntent("rec_schedule", 4, "pause")
+  const rejected = recurrenceControlStatusSchema.parse({ version: 1, scheduleID: intent.scheduleID, requestID: intent.requestID,
+    expectedRevision: 4, outcome: "rejected", reason: "revision-conflict" })
+  assert.equal(rejectedRecurrenceControl(rejected, intent), "missions.recurrence.refused.stale")
+  assert.equal(completedRecurrenceControl(rejected, intent), false)
+  assert.throws(() => recurrenceControlStatusSchema.parse({ ...rejected, reason: undefined }), "a rejection always carries its reason")
+  for (const foreign of [{ ...rejected, requestID: "another_request" }, { ...rejected, expectedRevision: 3 },
+    { ...rejected, outcome: "unknown" as const }, { ...rejected, reason: "unknown-reason" as never }])
+    assert.equal(rejectedRecurrenceControl(foreign, intent), undefined)
+  const manualIntent = createRecurrenceControlIntent("rec_schedule", 4, "run-now")
+  const manual = recurrenceManualResultSchema.parse({ version: 1, scheduleID: manualIntent.scheduleID, requestID: manualIntent.requestID,
+    expectedRevision: 4, projectID: "project", projectCanonical: "/project", location: { directory: "/project" },
+    outcome: "rejected", reason: "control-conflict", passageID: null, messageID: null, admission: null })
+  assert.equal(rejectedRecurrenceControl(manual, manualIntent), "missions.recurrence.refused.conflict")
+  assert.equal(completedRecurrenceManual(manual, manualIntent), false)
 })
 
 test("manual admission/status uses the real tuple and accepts only exact known effects", () => {

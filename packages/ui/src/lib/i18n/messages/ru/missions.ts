@@ -300,6 +300,9 @@ export const missionMessages = {
   "missions.recurrence.check": "Проверить результат управления {id}",
   "missions.recurrence.checkPassage": "Проверить ожидающий запуск {id}",
   "missions.recurrence.uncertain": "Результат не подтверждён; проверьте статус перед следующим действием.",
+  "missions.recurrence.refused.stale": "Расписание изменилось до поступления этого действия, поэтому ничего не применено. Проверьте текущее состояние и повторите попытку.",
+  "missions.recurrence.refused.conflict": "Это действие недоступно в текущем состоянии расписания, поэтому ничего не применено.",
+  "missions.recurrence.refused.notAdmitted": "Это действие не было принято, поэтому ничего не применено. При необходимости войдите снова и повторите попытку.",
   "missions.recurrence.reader": "Повторяющееся расписание {id}",
   "missions.recurrence.section": "Раздел {section} из {total}",
 } as const

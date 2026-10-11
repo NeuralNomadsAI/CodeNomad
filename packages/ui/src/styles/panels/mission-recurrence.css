@@ -2,8 +2,6 @@
   min-width: 0; width: 100%; min-height: var(--touch-target-size-compact); padding: var(--space-xs);
   color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0;
 }
-.mission-recurrence-list { display: grid; gap: var(--space-xs); padding: 0 var(--space-sm) var(--space-sm); font-size: var(--font-size-sm); }
-.mission-recurrence-list p { margin: 0; color: var(--text-secondary); }
 .mission-conversation-picker { display: grid; gap: var(--space-xs); }
 .mission-conversation-results { max-height: 12rem; overflow-y: auto; }
 .mission-editor .mission-conversation-option { display: flex; flex-direction: row; align-items: center; gap: var(--space-xs); padding-block: var(--space-xs); }

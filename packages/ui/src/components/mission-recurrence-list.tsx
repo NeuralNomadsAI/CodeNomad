@@ -13,7 +13,7 @@ import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { missionScheduleText } from "./mission-schedule-text"
 import { createRecurrenceControlIntent, completedRecurrenceControl, completedRecurrenceManual, partialRecurrenceControl,
-  type RecurrenceControlStatus, type RecurrenceControlIntent } from "../lib/mission-recurrence-control"
+  recurrenceControlRefusalKey, rejectedRecurrenceControl, type RecurrenceControlStatus, type RecurrenceControlIntent } from "../lib/mission-recurrence-control"
 
 // Lost replies survive remounts. Only an exact status read releases the hold.
 const unresolved = new Map<string, RecurrenceControlIntent>()
@@ -30,6 +30,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const [held, setHeld] = createSignal(unresolved.get(key()))
   const [busy, setBusy] = createSignal(false)
   const [partial, setPartial] = createSignal(partialResults.get(key()))
+  // Message key of the last request proven to have had no effect.
+  const [refusal, setRefusal] = createSignal<string>()
   const connection = createMemo(() => ({ client: instances().get(props.instanceId)?.client,
     generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
     { equals: (a, b) => Boolean(a && a.client === b.client && a.generation === b.generation) })
@@ -37,7 +39,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   createEffect(() => {
     const identity = key(); props.active()
     connection()
-    generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false)
+    generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false); setRefusal(undefined)
   })
   onCleanup(() => { generation++ })
   const outstanding = () => props.schedule.controls.find(control => control.controlsComplete !== true)
@@ -51,19 +53,22 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     const intent = heldIntent(), result = partial() ?? outstanding()
     return Boolean(intent && result && partialRecurrenceControl(result, intent)) && props.enabled() && !busy()
   }
-  const settle = (intent: RecurrenceControlIntent, identity: string) => {
+  const settle = (intent: RecurrenceControlIntent, identity: string, refusal?: string) => {
     if (unresolved.get(identity) !== intent) return
-    unresolved.delete(identity); partialResults.delete(identity); setHeld(undefined); setPartial(undefined); props.refresh()
+    unresolved.delete(identity); partialResults.delete(identity)
+    if (key() !== identity) return
+    setHeld(undefined); setPartial(undefined); setRefusal(refusal); props.refresh()
   }
   const finish = (result: RecurrenceControlStatus, intent: RecurrenceControlIntent, identity: string) => {
-    if (completedRecurrenceControl(result, intent)) settle(intent, identity)
+    const rejected = rejectedRecurrenceControl(result, intent)
+    if (completedRecurrenceControl(result, intent) || rejected) settle(intent, identity, rejected)
     else if (partialRecurrenceControl(result, intent)) { partialResults.set(identity, result); setPartial(result); props.refresh() }
   }
   const act = async (action: RecurrenceAction, retry = false) => {
     if (retry ? !retryCapable() : !capable(action)) return
     const identity = key(), captured = generation, instanceId = props.instanceId
     const intent = retry ? heldIntent()! : createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
-    unresolved.set(identity, intent); setHeld(intent); setBusy(true)
+    unresolved.set(identity, intent); setHeld(intent); setBusy(true); setRefusal(undefined)
     try {
       if (action === "run-now") {
         const result = await serverApi.runMissionRecurrenceNow(instanceId, intent)
@@ -72,7 +77,13 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
         const result = await serverApi.controlMissionRecurrence(instanceId, intent.scheduleID, { ...intent, ...(retry ? { retry: true } : {}) })
         if (captured === generation && key() === identity) finish(result, intent, identity)
       }
-    } catch { /* Check status, never resend. */ }
+    } catch (error) {
+      // A proven no-effect refusal releases this new request and refreshes the row;
+      // anything else stays held for Check status, never resent. A refused retry
+      // leaves the original partial request held.
+      const refusal = retry ? undefined : recurrenceControlRefusalKey(error)
+      if (refusal) settle(intent, identity, refusal)
+    }
     finally { if (captured === generation) setBusy(false) }
   }
   const check = async () => {
@@ -83,7 +94,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     try {
       if (intent.action === "run-now") {
         const result = await serverApi.missionRecurrenceRunNowStatus(props.instanceId, intent)
-        if (captured === generation && key() === identity && completedRecurrenceManual(result, intent)) settle(intent, identity)
+        const rejected = rejectedRecurrenceControl(result, intent)
+        if (captured === generation && key() === identity && (completedRecurrenceManual(result, intent) || rejected)) settle(intent, identity, rejected)
       } else {
         const result = await serverApi.missionRecurrenceControlStatus(props.instanceId, intent.scheduleID, intent)
         if (captured === generation && key() === identity) finish(result, intent, identity)
@@ -121,7 +133,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   // Always present for schedules, disabled while unavailable or a request is held.
   const runNow = (): MissionPrimaryAction => ({ key: "run-now", label: label("run-now"), ariaLabel: description("run-now"),
     disabled: !capable("run-now"), onSelect: () => act("run-now") })
-  const feedback = <Show when={heldIntent()}><small role="status">{t("missions.recurrence.uncertain")}</small></Show>
+  const feedback = <Show when={heldIntent()} fallback={<Show when={refusal()}>{message => <small role="status">{t(message())}</small>}</Show>}>
+    <small role="status">{t("missions.recurrence.uncertain")}</small></Show>
   return { primary, stop: stopAction, runNow, retry, feedback }
 }
 

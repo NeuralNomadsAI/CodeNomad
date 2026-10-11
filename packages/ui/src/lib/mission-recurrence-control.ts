@@ -1,5 +1,6 @@
 import type { RecurrenceControlRequest, RecurrenceControlStatus } from "../../../server/src/missions/recurrence-control-contract"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
+import { HttpResponseError } from "./retryable-file-search"
 
 export type RecurrenceAction = RecurrenceControlRequest["action"]
 export type RecurrenceControlIntent = RecurrenceControlRequest & { directory?: string; retry?: boolean }
@@ -34,6 +35,28 @@ export function partialRecurrenceControl(result: RecurrenceControlStatus, intent
     && (result.action === undefined || result.action === intent.action) && result.scheduleID === intent.scheduleID
     && result.requestID === intent.requestID && result.expectedRevision === intent.expectedRevision
     && result.revision === intent.expectedRevision + 1 && result.controlsComplete === false
+}
+const refusalKeys = { "revision-conflict": "missions.recurrence.refused.stale", "control-conflict": "missions.recurrence.refused.conflict" } as const
+type RefusalReason = keyof typeof refusalKeys
+
+/** Message key when the route proves the original request had no effect, or
+ * undefined when it must stay held. Only the native-proven conflict codes and the
+ * route's pre-permit 400/401 qualify; 503, other statuses and transport loss may
+ * follow a committed control and are never resent. */
+export function recurrenceControlRefusalKey(error: unknown): string | undefined {
+  if (!(error instanceof HttpResponseError)) return undefined
+  if (error.status === 409 && error.code === "recurrence-revision-conflict") return refusalKeys["revision-conflict"]
+  if (error.status === 409 && error.code === "recurrence-control-conflict") return refusalKeys["control-conflict"]
+  if (!error.code && (error.status === 400 || error.status === 401)) return "missions.recurrence.refused.notAdmitted"
+  return undefined
+}
+/** Message key of an exact status read proving the request never applied and never can. */
+export function rejectedRecurrenceControl(result: { version: number; scheduleID: string; requestID: string; expectedRevision: number;
+  outcome: string; reason?: string }, intent: RecurrenceControlIntent): string | undefined {
+  if (result.version !== 1 || result.scheduleID !== intent.scheduleID || result.requestID !== intent.requestID
+    || result.expectedRevision !== intent.expectedRevision || result.outcome !== "rejected" || !result.reason
+    || !Object.prototype.hasOwnProperty.call(refusalKeys, result.reason)) return undefined
+  return refusalKeys[result.reason as RefusalReason]
 }
 export function completedRecurrenceManual(result: RecurrenceManualResult, intent: RecurrenceControlIntent): boolean {
   return result.version === 1 && result.scheduleID === intent.scheduleID && result.requestID === intent.requestID

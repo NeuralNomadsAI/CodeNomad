@@ -7,6 +7,7 @@ import { nativeRecurrenceDue } from "./native-recurrence-due"
 import { startNativeRecurrenceSettlement } from "./native-recurrence-settle-job"
 import { readNativeRecurrenceClock } from "./native-service-clock"
 import type { RecurrencePassage } from "../../missions/recurrence-contract"
+import { recurrenceRequestRefusal } from "../../missions/recurrence-store"
 
 type NativeContext = Pick<Plugin.Context, "storage" | "location">
 export const readNativeRecurrenceRunNow = Effect.fn("missions.readNativeRecurrenceRunNow")(function* (ctx: NativeContext, raw: unknown) {
@@ -18,9 +19,10 @@ export const readNativeRecurrenceRunNow = Effect.fn("missions.readNativeRecurren
   const pending = doc.pending && exact(doc.pending.passage) ? doc.pending : null
   const archived = doc.history.find(item => exact(item.passage))
   const passage = pending?.passage ?? archived?.passage
+  const reason = passage ? undefined : recurrenceRequestRefusal(doc, { ...input, action: "run-now" })
   return recurrenceManualResultSchema.parse({ ...input, version: 1, projectID: doc.projectID, projectCanonical: doc.projectCanonical,
     location: { directory: ctx.location.directory, ...(ctx.location.workspaceID === undefined ? {} : { workspaceID: ctx.location.workspaceID }) },
-    outcome: archived ? "settled" : pending?.admission ? "accepted" : "unknown", passageID: passage?.id ?? null,
+    outcome: archived ? "settled" : pending?.admission ? "accepted" : reason ? "rejected" : "unknown", ...(reason ? { reason } : {}), passageID: passage?.id ?? null,
     messageID: passage?.messageID ?? null, admission: pending?.admission ?? null })
 })
 

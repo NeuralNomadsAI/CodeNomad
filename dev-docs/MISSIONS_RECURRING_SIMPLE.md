@@ -59,6 +59,14 @@ connection identity, inputs and frozen execution profiles at the existing bounda
 Each control has `requestID` idempotency and `expectedRevision` CAS.
 A duplicate request must not start a second Job, passage or coordinator message.
 A stale revision is a conflict, not permission to overwrite current state.
+Native stays the authoritative CAS: the exact status read reports `rejected`
+(`revision-conflict` or `control-conflict`) only when storage proves a request with
+no record never applied and never can — a later revision whose record provably was
+never evicted (the document bounds evicted revisions), or a pure pre-write refusal
+at its own revision. The route then releases the permit and answers 409
+`recurrence-revision-conflict` / `recurrence-control-conflict`; the UI releases
+those and the route's pre-permit 400/401, refreshes the row and explains the
+refusal. Everything else (including an unprovable profile change) stays unknown.
 
 If a reply is lost, retain that request identity and reread its status.
 Refresh, reconnect, remount and status reads never automatically resend it.
@@ -69,6 +77,8 @@ Stopped schedules cannot be played, resumed or run now.
 A schedule document keeps at most 64 control records. Admitting a new control
 evicts the oldest completed record; unresolved records are never evicted, and an
 evicted request's exact status reads unknown, which never authorizes a resend.
+`evictedControlRevision` bounds every evicted record's revision (a first bound is
+the current revision, covering evictions by older stores).
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
 later completed control that restarted or cancelled it. A Play/Resume whose native
 Job start fails while a fresh read positively shows no running daily Job completes
