@@ -36,7 +36,8 @@
 }
 
 .dropdown-item-highlight {
-  background-color: var(--menu-item-hover-bg);
+  /* The keyboard-selected row (what Enter/Tab inserts) stays distinct from hover. */
+  background-color: var(--menu-item-selected-bg);
   color: var(--dropdown-highlight-text);
 }
 

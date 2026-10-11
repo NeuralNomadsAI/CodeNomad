@@ -81,7 +81,7 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
             onCommit={next => selectSection(next - 1)} />
         </label>
         <label>
-          <select aria-label={t("missions.recurrence.section", { section: result().section + 1, total: result().sectionCount })}
+          <select class="mission-recurrence-section-select" aria-label={t("missions.recurrence.section", { section: result().section + 1, total: result().sectionCount })}
             value={result().section} onChange={event => selectSection(Number(event.currentTarget.value))}>
             <For each={result().sections}>{item => <option value={item.index}>{item.title ? `${item.title} - ` : ""}{t(labels[item.label])}</option>}</For>
           </select>
