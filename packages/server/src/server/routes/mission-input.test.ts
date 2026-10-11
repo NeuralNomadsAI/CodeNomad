@@ -136,7 +136,11 @@ test("targeted recovery fences saved-location mismatch and moves during every pr
   }
 })
 
-test("mission assignments and reports refresh degraded Git context and clear it on recovery", async () => {
+test("mission assignments and reports refresh degraded Git context and clear it on recovery", async t => {
+  // Exercise the advisory probe's result, not whether a loaded host finishes
+  // `git --version` within its two-second advisory deadline.
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  t.after(() => t.mock.timers.reset())
   const f = fixture()
   const originalPath = process.env.PATH
   try {
