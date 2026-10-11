@@ -6,7 +6,7 @@
 .mission-preferences p { margin-block: var(--space-xs); overflow-wrap: anywhere; }
 .mission-preferences label, .mission-model-library label { display: grid; gap: var(--space-xs); min-width: 0; margin-block: var(--space-sm); }
 .mission-preferences-scope { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
-.mission-preferences select, .mission-model-library select, .mission-model-library input { width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs); color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0; font-size: var(--font-size-sm); text-overflow: ellipsis; }
+.mission-preferences select, .mission-model-library select, .mission-model-library input { width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs); color: var(--text-primary); background: var(--surface-field); border: 1px solid var(--border-base); border-radius: 0; font-size: var(--font-size-sm); text-overflow: ellipsis; }
 .mission-preferences select:focus-visible, .mission-model-library select:focus-visible, .mission-model-library input:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .mission-preferences-actions { display: flex; flex-wrap: nowrap; gap: var(--space-xs); margin-block: var(--space-sm); }
 .mission-preferences-actions > button { flex: 1; min-width: 0; padding-inline: var(--space-xs); }
@@ -31,7 +31,7 @@
 .mission-depth > header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs); }
 .mission-depth > header > span, .mission-depth-effective, .mission-depth-path { font-size: var(--font-size-xs); color: var(--text-secondary); }
 .mission-depth-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-block: var(--space-xs); }
-.mission-depth input { width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0; padding: var(--space-xs); }
+.mission-depth input { width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); color: var(--text-primary); background: var(--surface-field); border: 1px solid var(--border-base); border-radius: 0; padding: var(--space-xs); }
 .mission-depth .window-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .mission-control > .mission-disclosure:has(.mission-flow) > h3 .mission-disclosure-trigger { color: var(--text-primary); font-weight: 600; }
 @container mission-panel (max-width: 340px) {

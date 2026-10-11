@@ -169,11 +169,11 @@
 }
 
 .toast-history-item-unread {
-  background: color-mix(in srgb, var(--accent-primary) 5%, var(--surface-base));
+  background: color-mix(in srgb, var(--accent-primary) 5%, var(--surface-overlay));
 }
 
 .toast-history-item-unread:hover {
-  background: color-mix(in srgb, var(--accent-primary) 8%, var(--surface-base));
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--surface-overlay));
 }
 
 /* ==================== Indicator ==================== */

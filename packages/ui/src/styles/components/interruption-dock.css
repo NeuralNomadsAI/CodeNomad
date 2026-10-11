@@ -8,7 +8,7 @@
   flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-base));
   border-inline-start: 3px solid var(--accent-primary);
-  background: var(--surface-base);
+  background: var(--surface-overlay);
   color: var(--text-primary);
 }
 .interruption-dock:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
@@ -37,7 +37,7 @@
 .interruption-origin-actions { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; }
 .interruption-parent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--font-size-xs); }
 .interruption-origin-actions .window-action { margin-inline-start: auto; flex-shrink: 0; }
-.interruption-external-preview { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-base); text-align: start; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.interruption-external-preview { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; min-height: var(--touch-target-size-compact); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-control); text-align: start; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .interruption-external-preview > span[title] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .interruption-external-preview > svg { flex-shrink: 0; }
 .interruption-external-preview:hover { background: var(--surface-interactive-hover); }
@@ -54,7 +54,7 @@
 .interruption-dock[hidden], .interruption-dock [hidden] { display: none; }
 .interruption-dock.is-collapsed .window-header { border-bottom: 0; }
 .interruption-dock .form-request,
-.interruption-dock .tool-call-permission { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; border: 0; margin: 0; padding: 0; gap: 0; background: var(--surface-base); }
+.interruption-dock .tool-call-permission { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; border: 0; margin: 0; padding: 0; gap: 0; background: var(--surface-overlay); }
 .interruption-dock .form-request-fields,
 .interruption-permission-content { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-md); scrollbar-width: auto; scrollbar-gutter: stable; scroll-padding-block: var(--space-md); }
 .interruption-permission-content { display: flex; flex-direction: column; gap: var(--space-sm); }

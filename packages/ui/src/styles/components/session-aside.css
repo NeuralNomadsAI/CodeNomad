@@ -29,7 +29,7 @@
   resize: vertical;
   padding: var(--space-sm);
   border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-field);
   color: var(--text-primary);
 }
 

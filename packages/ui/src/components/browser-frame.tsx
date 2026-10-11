@@ -893,7 +893,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           <Show when={viewportMenuOpen()}>
             <div
               class="absolute right-0 top-full z-20 mt-1 min-w-[13rem] max-w-[calc(100vw-2rem)] overflow-y-auto border border-base shadow-xl"
-              style={{ background: "var(--surface-base)", color: "var(--text-primary)", "max-height": "min(28rem, calc(100dvh - 8rem))" }}
+              style={{ background: "var(--surface-overlay)", color: "var(--text-primary)", "max-height": "min(28rem, calc(100dvh - 8rem))" }}
               role="menu"
             >
               {VIEWPORT_OPTIONS.map((option) => {

@@ -71,7 +71,7 @@
   padding: 10px;
   overflow-wrap: anywhere;
   border: 1px solid var(--border-base);
-  background: var(--surface-primary);
+  background: var(--surface-inset);
   color: var(--text-secondary);
   font-size: 11px;
 }

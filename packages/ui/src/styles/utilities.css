@@ -25,8 +25,21 @@
   color: var(--accent-primary);
 }
 
-.bg-surface-base {
-  background-color: var(--surface-base);
+/* Surface roles (see tokens.css): fields, reading canvas, floating surfaces, output/status blocks. */
+.bg-surface-field {
+  background-color: var(--surface-field);
+}
+
+.bg-surface-canvas {
+  background-color: var(--surface-canvas);
+}
+
+.bg-surface-overlay {
+  background-color: var(--surface-overlay);
+}
+
+.bg-surface-inset {
+  background-color: var(--surface-inset);
 }
 
 .bg-surface-secondary {
@@ -208,7 +221,7 @@ details[open] > summary .disclosure-chevron {
 .form-input {
   @apply w-full px-3 text-sm;
   min-height: var(--control-height);
-  background-color: var(--surface-base);
+  background-color: var(--surface-field);
   border: 1px solid var(--border-base);
   border-radius: 0;
   color: var(--text-primary);

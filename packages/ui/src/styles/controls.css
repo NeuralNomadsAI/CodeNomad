@@ -13,6 +13,7 @@
 @import "./components/folder-loading.css";
 @import "./components/dropdown.css";
 @import "./components/selector.css";
+@import "./components/native-select.css";
 @import "./components/env-vars.css";
 @import "./components/directory-browser.css";
 @import "./components/directory-browser-address.css";

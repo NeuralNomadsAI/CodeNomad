@@ -4,6 +4,7 @@ import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
 import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
 import { useAssetsChannel } from "./assets-channel"
+import { resolveCssColor } from "../../lib/css-color"
 
 export function ExtensionPanel(props: {
   entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext
@@ -27,8 +28,10 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   }).catch(() => { if (!disposed) setFailed(true) })
   const publish = () => {
     const style = getComputedStyle(globalThis.document.documentElement)
-    const colors = Object.fromEntries(Object.entries({ background: "--surface-secondary", surface: "--surface-base", text: "--text-primary",
+    const colors = Object.fromEntries(Object.entries({ background: "--surface-secondary", text: "--text-primary",
       muted: "--text-muted", border: "--border-base", focus: "--focus-ring-color" }).map(([key, token]) => [key, style.getPropertyValue(token).trim()]))
+    // The canvas role is a color-mix(); frames receive a concrete colour.
+    colors.surface = resolveCssColor("--surface-canvas")
     const context = { ...props.context, apiVersion: props.entry.manifest.apiVersion,
       ...(props.entry.manifest.apiVersion === 2 ? { colors } : {}) }
     if (authenticated) port?.postMessage({ type: "context", context })

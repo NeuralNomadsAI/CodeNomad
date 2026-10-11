@@ -1,13 +1,13 @@
 .mission-transcript-surface { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .mission-transcript-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.mission-reader { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--surface-base); }
+.mission-reader { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--surface-canvas); }
 .mission-reader .window-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mission-reader .window-action { display: flex; gap: var(--space-xs); align-items: center; flex-shrink: 0; }
 .mission-reader article { min-width: 0; max-width: 90ch; margin-block: var(--space-lg); margin-inline: 0; overflow-wrap: anywhere; }
 .mission-reader pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mission-reader-pagination { display: flex; align-items: center; gap: var(--space-sm); }
 .mission-reader-pagination > span { white-space: nowrap; }
-.mission-reader-pagination input { min-width: 3.5em; padding: var(--space-xs); border: 1px solid var(--border-base); background: var(--surface-base); color: var(--text-primary); }
+.mission-reader-pagination input { min-width: 3.5em; padding: var(--space-xs); border: 1px solid var(--border-base); background: var(--surface-field); color: var(--text-primary); }
 .mission-reader article > .window-toolbar { flex-wrap: wrap; }
 .mission-reader .window-toolbar > label { display: flex; align-items: center; gap: var(--space-sm); }
 .mission-report-technical { margin-block: var(--space-md); }
@@ -15,7 +15,7 @@
 .mission-report-technical[open] > summary { margin-block-end: var(--space-md); }
 .mission-editor { border: 1px solid var(--border-base); margin: var(--space-md) 0; }
 .mission-editor label { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
-.mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
+.mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
 .mission-editor textarea { min-height: 6em; resize: vertical; }
 .mission-editor p { color: var(--text-secondary); font-size: var(--font-size-sm); }
 .mission-editor .mission-delete-sessions { display: flex; align-items: flex-start; font-size: var(--font-size-sm); }

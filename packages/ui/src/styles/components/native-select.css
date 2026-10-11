@@ -1,0 +1,83 @@
+/* Native <select> elements are controls, not fields: the closed control matches
+   the selector trigger (control surface, chevron) and, where the engine supports
+   customizable selects (Chromium: Electron and WebView2), the open list matches
+   the shared menus. Elsewhere (WebKit) the system list remains.
+   :not([multiple]):not([size]) also outranks per-feature select rules. */
+select:not([multiple]):not([size]) {
+  background-color: var(--surface-control);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+select:not([multiple]):not([size]):hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+@supports (appearance: base-select) {
+  select,
+  select::picker(select) {
+    appearance: base-select;
+  }
+
+  select {
+    align-items: center;
+    /* base-select rounds the control by default; chrome stays square. */
+    border-radius: 0;
+  }
+
+  /* Same chevron as the selector triggers, rotated while the list is open. */
+  select::picker-icon {
+    content: "";
+    width: var(--icon-size, 1rem);
+    height: var(--icon-size, 1rem);
+    background-color: var(--icon-button-color, var(--text-muted));
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+    opacity: var(--icon-button-idle-opacity, 1);
+    transition: rotate 150ms ease;
+  }
+
+  select:open::picker-icon {
+    rotate: 180deg;
+  }
+
+  select::picker(select) {
+    padding: 0.25rem;
+    border: 1px solid var(--border-base);
+    border-radius: 0;
+    background-color: var(--surface-overlay);
+    box-shadow: var(--popover-shadow);
+    color: var(--text-primary);
+  }
+
+  /* Same item geometry and treatment as the action menus and selectors. */
+  select option {
+    box-sizing: border-box;
+    min-height: 2rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: 0;
+    background-color: transparent;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    line-height: 1.2;
+  }
+
+  select option:hover,
+  select option:focus-visible {
+    background-color: var(--menu-item-hover-bg);
+    outline: none;
+  }
+
+  select option:checked,
+  select option:checked:hover {
+    background-color: var(--menu-item-selected-bg);
+    font-weight: inherit;
+  }
+
+  select option::checkmark {
+    display: none;
+  }
+
+  select option:disabled {
+    opacity: 0.5;
+  }
+}

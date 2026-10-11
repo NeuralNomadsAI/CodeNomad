@@ -115,7 +115,7 @@
   padding: 8px 10px;
   border-radius: 0;
   border: 1px solid var(--border-base);
-  background: var(--surface-primary);
+  background: var(--surface-control);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -138,7 +138,7 @@
   padding: 12px;
   border-radius: 0;
   border: 1px solid var(--border-base);
-  background: var(--surface-primary);
+  background: var(--surface-control);
   cursor: pointer;
 }
 
@@ -216,7 +216,7 @@
   border: 1px solid var(--border-base);
   border-radius: 0;
   padding: 12px;
-  background: var(--surface-primary);
+  background: var(--surface-inset);
 }
 
 .remote-address-main {
@@ -259,7 +259,7 @@
 .remote-address-disclosure {
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: var(--surface-primary);
+  background: var(--surface-inset);
   overflow: hidden;
 }
 

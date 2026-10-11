@@ -7,7 +7,7 @@
 .file-viewer-toolbar-button:hover,
 .git-change-commit-button:hover:not(:disabled),
 .git-change-commit-button-overlay:hover {
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 

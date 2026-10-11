@@ -412,7 +412,7 @@ test("clicked previews bypass blocked background scans and follow the live palet
     console.log(`Cold file reader with blocked scans: ${Math.round(performance.now() - start)}ms`)
     await page.evaluate(() => (window as any).releaseScans())
     await page.evaluate(() => {
-      document.documentElement.style.setProperty("--surface-base", "#24313f")
+      document.documentElement.style.setProperty("--surface-canvas", "#24313f")
       document.documentElement.style.setProperty("--status-success", "#68ac93")
     })
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".monaco-editor-background")!).backgroundColor === "rgb(36, 49, 63)")

@@ -168,7 +168,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                           </div>
                         </div>
                         <Show when={window().usedPercent !== null}>
-                          <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-base)" }}>
+                          <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-inset)" }}>
                             <div
                               class="h-full transition-[width] duration-300"
                               style={{ width: `${Math.max(0, Math.min(100, window().usedPercent ?? 0))}%`, "background-color": barColor(window().usedPercent) }}

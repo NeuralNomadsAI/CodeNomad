@@ -8,7 +8,8 @@
   top: 0;
   z-index: 1;
   flex-shrink: 0;
-  background: var(--surface-base);
+  /* Opaque for sticky scrolling; a search-field handle sets the field role. */
+  background: var(--window-drag-handle-bg, var(--surface-chrome));
 }
 
 :is(.modal-surface, .window-shell) {

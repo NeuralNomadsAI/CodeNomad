@@ -1,7 +1,7 @@
 /* Session view + sidebar */
 .session-view {
   @apply flex flex-1 min-h-0 flex-col;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   color: inherit;
   overflow: hidden;
 }
@@ -125,7 +125,7 @@
   @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-1 border transition-colors;
   border-radius: 0;
   border-color: var(--border-base);
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   color: var(--text-primary);
 }
 
@@ -313,7 +313,7 @@
   padding: 0.4rem 0.65rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-canvas);
   min-height: 2rem;
   width: fit-content;
   max-width: 100%;
@@ -678,7 +678,7 @@
 }
 
 .session-new-button {
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   color: var(--text-primary);
   border: 1px solid var(--border-base);
 }

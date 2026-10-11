@@ -92,7 +92,7 @@
   padding: 0.875rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: color-mix(in oklab, var(--surface-base) 84%, var(--surface-secondary) 16%);
+  background: color-mix(in oklab, var(--surface-inset) 84%, var(--surface-secondary) 16%);
 }
 
 .providers-connect-select {
@@ -104,7 +104,7 @@
   padding: 1rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: color-mix(in oklab, var(--surface-base) 88%, var(--surface-secondary) 12%);
+  background: color-mix(in oklab, var(--surface-inset) 88%, var(--surface-secondary) 12%);
 }
 
 .providers-panel-header {
@@ -179,7 +179,7 @@
   padding: 0.875rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-inset);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
@@ -206,7 +206,7 @@
 
 .providers-success-card {
   border-color: color-mix(in oklab, var(--accent-primary) 34%, var(--border-base));
-  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-base));
+  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-inset));
   color: var(--text-primary);
 }
 
@@ -246,7 +246,7 @@
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-field);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   outline: none;
@@ -272,7 +272,7 @@
   overflow-x: auto;
   padding: 0.75rem;
   border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-inset);
   color: var(--text-primary);
   font-family: var(--font-mono, monospace);
   font-size: var(--font-size-sm);

@@ -97,7 +97,7 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
               <Show when={truncated()}><p class="mb-2 text-xs text-secondary">{t("backgroundProcessOutputDialog.truncatedNotice")}</p></Show>
               <Show when={!loading()}>
                 <pre
-                  class="border border-base bg-surface-secondary p-4 font-mono text-xs text-primary whitespace-pre-wrap break-all"
+                  class="border border-base bg-surface-inset p-4 font-mono text-xs text-primary whitespace-pre-wrap break-all"
                   innerHTML={ansiEnabled() ? outputHtml() : undefined}
                 >{ansiEnabled() ? undefined : output()}</pre>
               </Show>

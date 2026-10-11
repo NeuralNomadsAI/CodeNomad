@@ -13,7 +13,7 @@
   overflow-y: auto;
   scrollbar-gutter: auto;
   outline: none;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   color: inherit;
 
   /* Scrolling optimizations */

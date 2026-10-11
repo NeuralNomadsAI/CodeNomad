@@ -76,7 +76,7 @@
   min-height: 0;
   margin-top: 0.75rem;
   border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-canvas);
   overflow: hidden;
 }
 

@@ -1,6 +1,6 @@
 .mission-editor input:not([type="checkbox"]) {
   min-width: 0; width: 100%; min-height: var(--touch-target-size-compact); padding: var(--space-xs);
-  color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-base); border-radius: 0;
+  color: var(--text-primary); background: var(--surface-field); border: 1px solid var(--border-base); border-radius: 0;
 }
 .mission-conversation-picker { display: grid; gap: var(--space-xs); }
 .mission-conversation-results { max-height: 12rem; overflow-y: auto; }

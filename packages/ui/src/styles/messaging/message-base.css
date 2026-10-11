@@ -310,7 +310,7 @@
 .attachment-image-popover {
   position: fixed;
   padding: 8px;
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   border: 1px solid var(--border-base);
   border-radius: 0;
   box-shadow: var(--popover-shadow);

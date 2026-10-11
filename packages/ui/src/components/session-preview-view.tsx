@@ -57,7 +57,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   }
 
   return (
-    <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
+    <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
       <BrowserFrame
         active={props.active}
         onClose={() => showSessionChat(props.preview.storageKey)}

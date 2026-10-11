@@ -1,5 +1,6 @@
 import { createEffect, onCleanup, type Accessor } from "solid-js"
 import { useTheme } from "../theme"
+import { createCssColorResolver } from "../css-color"
 
 /** Monaco accepts concrete hex colors, rather than CSS variables. Resolve the
  * shared palette after its DOM update, including custom and Auto palettes. */
@@ -11,20 +12,8 @@ export function useMonacoTheme(api: Accessor<any>) {
     isDark()
     colorScheme()
     const root = document.documentElement
-    const canvas = document.createElement("canvas")
-    canvas.width = canvas.height = 1
-    const context = canvas.getContext("2d")!
-    const probe = document.createElement("span")
-    probe.hidden = true
-    root.append(probe)
-    const color = (token: string, alpha?: string) => {
-      probe.style.color = `var(${token})`
-      context.clearRect(0, 0, 1, 1)
-      context.fillStyle = getComputedStyle(probe).color
-      context.fillRect(0, 0, 1, 1)
-      const bytes = context.getImageData(0, 0, 1, 1).data
-      return `#${Array.from(bytes.slice(0, 3), n => n.toString(16).padStart(2, "0")).join("")}${alpha ?? ""}`
-    }
+    const resolver = createCssColorResolver(root)
+    const color = (token: string, alpha?: string) => `${resolver.resolve(token)}${alpha ?? ""}`
     const update = () => {
       monaco.editor.defineTheme("codenomad", {
         base: isDark() ? "vs-dark" : "vs", inherit: false,
@@ -40,12 +29,12 @@ export function useMonacoTheme(api: Accessor<any>) {
           { token: "delimiter", foreground: color("--text-muted").slice(1) },
         ],
         colors: {
-          "editor.background": color("--surface-base"), "editor.foreground": color("--text-primary"),
-          "editorGutter.background": color("--surface-base"),
+          "editor.background": color("--surface-canvas"), "editor.foreground": color("--text-primary"),
+          "editorGutter.background": color("--surface-canvas"),
           "editorLineNumber.foreground": color("--text-muted"), "editorLineNumber.activeForeground": color("--text-primary"),
           "editor.selectionBackground": color("--accent-primary", "30"),
           "editor.lineHighlightBackground": color("--accent-primary", "0a"),
-          "editorWidget.background": color("--surface-secondary"), "editorWidget.border": color("--border-base"),
+          "editorWidget.background": color("--surface-overlay"), "editorWidget.border": color("--border-base"),
           "editorBracketHighlight.foreground1": color("--text-primary"),
           "editorBracketHighlight.foreground2": color("--accent-primary"),
           "editorBracketHighlight.foreground3": color("--status-success"),
@@ -68,6 +57,6 @@ export function useMonacoTheme(api: Accessor<any>) {
     update()
     const observer = new MutationObserver(update)
     observer.observe(root, { attributes: true, attributeFilter: ["style", "class", "data-color-scheme"] })
-    onCleanup(() => { observer.disconnect(); probe.remove() })
+    onCleanup(() => { observer.disconnect(); resolver.dispose() })
   })
 }

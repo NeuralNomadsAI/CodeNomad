@@ -29,7 +29,7 @@ export default function SystemMessage(props: {
           <Show when={props.part.description}><span class="min-w-0 flex-1 truncate">{props.part.description}</span></Show>
         </button>
         <Show when={expanded()}>
-          <pre class="message-text m-0 max-h-96 overflow-auto border-t border-base bg-surface-base p-3 whitespace-pre-wrap break-words font-mono text-xs" data-part-type="system" data-part-id={props.part.id} dir="auto">{props.part.text}</pre>
+          <pre class="message-text m-0 max-h-96 overflow-auto border-t border-base bg-surface-inset p-3 whitespace-pre-wrap break-words font-mono text-xs" data-part-type="system" data-part-id={props.part.id} dir="auto">{props.part.text}</pre>
         </Show>
       </section>
     </Show>

@@ -54,7 +54,7 @@
   flex: 1;
   min-width: 0;
   padding: var(--space-xs) var(--space-sm);
-  background: var(--surface-base);
+  background: var(--surface-field);
   color: var(--text-primary);
   border: 1px solid var(--border-base);
 }

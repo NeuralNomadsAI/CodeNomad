@@ -51,7 +51,7 @@
   flex-direction: column;
   border-radius: var(--radius-xl);
   border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-overlay);
   box-shadow: var(--panel-shadow-strong);
   overflow: hidden;
 }
@@ -148,7 +148,7 @@
   gap: var(--space-md);
   padding: var(--space-sm) var(--space-md);
   border-bottom: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-overlay);
 }
 
 .permission-center-item-heading {

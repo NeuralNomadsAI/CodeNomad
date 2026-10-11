@@ -48,13 +48,13 @@ const savedEmphasisPairs = new Set([
 ])
 
 describe("palette quality", () => {
-  it("restores Classic's dev surface assignments including inset tool output", () => {
+  it("restores Classic's dev surface assignments with inset-role tool output", () => {
     const p = render("classic")
     assert.equal(p.get("--surface-base"), "#1A1A1A")
     assert.equal(p.get("--surface-secondary"), "#2A2A2A")
     assert.equal(p.get("--message-assistant-bg"), "#212529")
     assert.equal(p.get("--message-tool-bg"), "#212529")
-    assert.equal(p.get("--surface-code"), "#1A1A1A")
+    assert.equal(p.get("--surface-code"), "var(--surface-inset)")
   })
   it("has unique stable IDs, six soft light and four soft dark choices", () => {
     assert.equal(new Set(COLOR_SCHEME_IDS).size, COLOR_SCHEME_IDS.length)

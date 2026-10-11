@@ -93,7 +93,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     value={value}
                     disabled={props.disabled}
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
-                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder={t("envEditor.fields.value.placeholder")}
                     autocomplete={isSecureEnvVar(key) ? "new-password" : "off"}
                     spellcheck={isSecureEnvVar(key) ? false : undefined}
@@ -136,7 +136,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onInput={(e) => setNewKey(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
-            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.name.placeholder")}
           />
           <input
@@ -145,7 +145,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onInput={(e) => setNewValue(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
-            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.value.placeholder")}
             autocomplete="new-password"
           />

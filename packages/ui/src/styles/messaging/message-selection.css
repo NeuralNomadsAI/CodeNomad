@@ -11,7 +11,7 @@
   gap: 6px;
   padding: 6px 10px;
   /* Match other popups (dropdown-surface / panels) */
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   border: 1px solid var(--border-base);
   border-radius: 0;
   z-index: 50;
@@ -45,25 +45,25 @@
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--accent-primary);
-  background: color-mix(in oklab, var(--surface-base) 85%, var(--accent-primary));
+  background: color-mix(in oklab, var(--surface-inset) 85%, var(--accent-primary));
   border: 1px solid color-mix(in oklab, var(--accent-primary) 50%, transparent);
 }
 
 .message-delete-mode-count--before {
   color: var(--text-muted);
-  background: color-mix(in oklab, var(--surface-base) 90%, var(--text-muted));
+  background: color-mix(in oklab, var(--surface-inset) 90%, var(--text-muted));
   border-color: color-mix(in oklab, var(--text-muted) 30%, transparent);
 }
 
 .message-delete-mode-count--selection {
   color: var(--status-error);
-  background: color-mix(in oklab, var(--surface-base) 85%, var(--status-error));
+  background: color-mix(in oklab, var(--surface-inset) 85%, var(--status-error));
   border-color: color-mix(in oklab, var(--status-error) 40%, transparent);
 }
 
 .message-delete-mode-count--after {
   color: var(--status-success);
-  background: color-mix(in oklab, var(--surface-base) 85%, var(--status-success));
+  background: color-mix(in oklab, var(--surface-inset) 85%, var(--status-success));
   border-color: color-mix(in oklab, var(--status-success) 40%, transparent);
 }
 

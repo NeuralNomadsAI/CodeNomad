@@ -462,7 +462,8 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--surface-primary": colors.surfaceBase,
     "--surface-secondary": colors.surfaceSecondary,
     "--surface-muted": colors.surfaceMuted,
-    "--surface-code": colors.surfaceBase,
+    // Output blocks follow the inset role (title-bar tint), not the input base.
+    "--surface-code": "var(--surface-inset)",
     "--surface-hover": mix(colors.textPrimary, colors.surfaceSecondary, 0.04),
     "--border-base": colors.borderBase,
     "--border-secondary": mix(colors.borderBase, colors.surfaceSecondary, 0.72),
