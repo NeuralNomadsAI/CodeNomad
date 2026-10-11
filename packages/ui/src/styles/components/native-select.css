@@ -22,7 +22,7 @@ select:not([multiple]):not([size]):not(:focus-visible):hover:not(:disabled) {
 
   /* One line: a long value clips at the content edge, beside the chevron, instead
      of wrapping. The chevron is a background so the clip cannot hide it. */
-  select {
+  select:not([multiple]):not([size]) {
     display: inline-grid;
     align-content: center;
     white-space: nowrap;
@@ -39,25 +39,35 @@ select:not([multiple]):not([size]):not(:focus-visible):hover:not(:disabled) {
   /* Same chevron as the selector triggers, drawn in the theme's icon colour; it
      points up while the list is open. Outranks feature `background` shorthands. */
   select:not([multiple]):not([size]) {
-    --select-chevron: var(--icon-button-color, var(--text-muted));
+    --select-chevron: color-mix(in srgb, var(--icon-button-color) calc(var(--icon-button-idle-opacity) * 100%), transparent);
     /* Room for the chevron; the value clips before it. */
     padding-inline-end: 1.75rem;
     background-image:
-      linear-gradient(45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%),
-      linear-gradient(-45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%);
-    background-size: 0.375rem 0.375rem;
+      linear-gradient(45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%),
+      linear-gradient(-45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%);
+    background-size: 0.25rem 0.25rem;
     background-repeat: no-repeat;
-    background-position: right 0.875rem center, right 0.5rem center;
+    background-position: right 0.75rem center, right 0.5rem center;
+  }
+
+  select:not([multiple]):not([size]):hover:not(:disabled) {
+    --select-chevron: var(--icon-button-hover-color);
+  }
+
+  /* Customizable selects lose the native disabled dimming; match the selector triggers. */
+  select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   select:not([multiple]):not([size]):open {
     background-image:
-      linear-gradient(-45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%),
-      linear-gradient(45deg, transparent 42%, var(--select-chevron) 42%, var(--select-chevron) 58%, transparent 58%);
+      linear-gradient(-45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%),
+      linear-gradient(45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%);
   }
 
   select:not([multiple]):not([size]):dir(rtl) {
-    background-position: left 0.5rem center, left 0.875rem center;
+    background-position: left 0.5rem center, left 0.75rem center;
   }
 
   select::picker(select) {

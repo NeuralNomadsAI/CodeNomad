@@ -337,7 +337,8 @@ export const ThemeSchemeSettings: Component = () => {
               // Customizable selects open their list on arrows; keep stepping through
               // palettes with a live preview while the list is closed, as native selects do.
               if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || event.altKey) return
-              if (!CSS.supports("appearance", "base-select")) return
+              // Same detection as native-select.css enables customizable selects with.
+              if (!CSS.supports("(appearance: base-select) and (overflow-clip-margin: content-box)")) return
               const select = event.currentTarget
               if (select.matches(":open")) return
               const next = select.selectedIndex + (event.key === "ArrowDown" ? 1 : -1)

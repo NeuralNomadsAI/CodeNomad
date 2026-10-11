@@ -32,7 +32,6 @@
   flex: 0 0 auto;
   inline-size: 13rem;
   max-inline-size: 100%;
-  text-overflow: ellipsis;
 }
 
 .history-search-result {
