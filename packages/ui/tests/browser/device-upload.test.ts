@@ -3,6 +3,8 @@ import { after, before, test } from "node:test"
 import { chromium, type Browser, type Page } from "playwright"
 import type { ViteDevServer } from "vite"
 import { startDeviceUploadFixture } from "./fixtures/device-upload-server.mjs"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -20,6 +22,8 @@ async function setup(host = "web", context = "remote", params = "") {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: "en-US" })
   const prompts: any[] = [], paths: string[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  const observer = observeHeaderFixture(page)
+  await observer.install()
   await page.addInitScript(({ host, context }) => {
     ;(window as any).__CODENOMAD_RUNTIME_HOST__ = host
     ;(window as any).__CODENOMAD_WINDOW_CONTEXT__ = context
@@ -43,8 +47,23 @@ async function setup(host = "web", context = "remote", params = "") {
     }
     return route.fulfill({ json: {} })
   })
-  await page.goto(`${url}${params}`)
-  await page.waitForFunction(() => Boolean((window as any).fixture))
+  // A boot that never publishes the fixture reports its stage, page errors and
+  // module responses instead of only the readiness timeout.
+  try {
+    await runWithDiagnosticCleanup({
+      run: async () => {
+        await page.goto(`${url}${params}`)
+        await page.waitForFunction(() => Boolean((window as any).fixture))
+      },
+      diagnose: () => observer.diagnose(message => console.error(message)),
+      cleanup: async () => observer.detach(),
+      onObservationError: error => console.error("device-upload boot diagnostic failed", error),
+      onCleanupError: error => console.error("device-upload boot observer cleanup failed", error),
+    })
+  } catch (error) {
+    await page.close().catch(() => undefined)
+    throw error
+  }
   return { page, prompts, paths, errors }
 }
 
