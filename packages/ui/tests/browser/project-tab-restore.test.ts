@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory"] as const) {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
@@ -36,8 +36,11 @@ test(`${host} restores the active project and saved session identity before hydr
     const snapshot = { version: 1, revision: 1, savedAt: 1, layout: {}, session: {
       activeTabIndex: 1, tabs: ['D:/first', 'D:/second'].map(folder => ({
         kind: 'workspace', folder, occurrence: 0, activeSessionId: 'saved-session', activeParentSessionId: 'saved-session',
-         drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
-         ...(${JSON.stringify(mode)} === 'catalog' ? {
+         drafts: {}, attachments: {}, unseenIdleSince: {}, generationRecovery: {},
+         scrollSnapshots: ${JSON.stringify(mode)}.startsWith('foreground-') && ${JSON.stringify(mode)} !== 'foreground-user' && !${JSON.stringify(mode)}.match(/existing|git|inventory/) ? { 'saved-session': ${JSON.stringify(mode)} === 'foreground-history'
+           ? { scrollTop: 1200, atBottom: false, anchorKey: 'message-0120', anchorOffset: 4, followModeType: 'escaped', updatedAt: 5, windowIsLatest: false, windowCursor: 'saved-cursor', newerCursors: [null] }
+           : { scrollTop: 9000, atBottom: true, anchorKey: 'message-0200', anchorOffset: 0, followModeType: 'following', updatedAt: 5, windowIsLatest: true, newerCursors: [] } } : {},
+         ...(${JSON.stringify(mode)}.endsWith('catalog') || ${JSON.stringify(mode)} === 'foreground-history' ? {
            expandedSessionIds: ['saved-session', 'child'],
            sessionCatalog: ['saved-session', 'child', 'grandchild', 'other-worktree'].map((id, i) => ({
              id, title: 'Cached ' + id, parentId: i === 1 ? 'saved-session' : i === 2 ? 'child' : null,
@@ -48,7 +51,7 @@ test(`${host} restores the active project and saved session identity before hydr
          } : {}),
       }))
      } }
-     const catalogMode = ${JSON.stringify(mode)} === 'catalog'
+     const catalogMode = ${JSON.stringify(mode)}.endsWith('catalog') || ${JSON.stringify(mode)} === 'foreground-history'
      const persisted = catalogMode ? JSON.parse(sessionStorage.getItem('catalog-state') || 'null') : null
      const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot,
        ...(catalogMode ? { partitionProtocolVersion: 1 } : {}) })
@@ -165,6 +168,8 @@ test(`${host} restores the active project and saved session identity before hydr
     }
     if (foreground) {
       await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
+      assert.equal(requested.filter(path => path === "/workspaces/second/instance/api/session/saved-session/message").length, 1,
+        "restoring other workspaces must not restart and requeue the selected transcript read")
       assert.equal(await page.evaluate(() => (window as any).messageCount()), 200)
       assert.equal(released, false)
       if (mode === "foreground-inventory") {
@@ -225,7 +230,7 @@ test(`${host} restores the active project and saved session identity before hydr
       await page.locator('[data-session-id="grandchild"]').waitFor()
       assert.equal(await page.locator('[data-session-id="other-worktree"]').isVisible(), true,
         "a fresh renderer must display the catalog written through the native partition adapter")
-    } else {
+    } else if (mode !== "foreground-catalog" && mode !== "foreground-history") {
       await page.waitForFunction(index => (window as any).savedSnapshot?.session?.activeTabIndex === index, userSelection ? 0 : 1)
     }
     assert.deepEqual(errors, [])

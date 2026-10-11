@@ -4,6 +4,10 @@ import type { PermissionReceipt } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
+import {
+  cachedPermissionReceipts, invalidatePermissionReceipts, ownsPermissionReceipt, permissionReceiptKey,
+  readPermissionReceipts, rememberPermissionReceipts, type PermissionReceiptSnapshot,
+} from "../stores/permission-receipt-cache"
 
 interface PermissionReceiptsProps {
   instanceId: string
@@ -38,6 +42,12 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     let pages = 1
     let retryMore = false
     const scope = messageId ? { messageId } : { unanchored: true as const }
+    const key = permissionReceiptKey(instanceId, sessionId, scope)
+    const show = (snapshot: PermissionReceiptSnapshot) => {
+      setState("receipts", reconcile([...new Map(snapshot.receipts.map(receipt => [receipt.requestId, receipt])).values()], { key: "requestId" }))
+      setNext(snapshot.next)
+      pages = snapshot.pages
+    }
 
     const load = async (more = false) => {
       if (disposed) return
@@ -50,21 +60,21 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
       setBusy(true)
       setFailed(false)
       try {
-        let cursor = more ? untrack(next) : undefined
-        let receipts = more ? [...untrack(() => state.receipts)] : []
-        let fetched = 0
-        do {
-          const page = await serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, cursor, controller.signal)
+        if (!more) {
+          // Shared with remounts of this row; an unmount must not cancel it.
+          const snapshot = await readPermissionReceipts(instanceId, sessionId, scope, pages)
           if (disposed) return
-          receipts.push(...page.receipts.filter(receipt => receipt.sessionId === sessionId
-            && (messageId ? receipt.source?.messageId === messageId : !receipt.source)))
-          cursor = page.next
-          fetched++
-        } while (!more && cursor && fetched < pages)
+          show(snapshot)
+          return
+        }
+        const page = await serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, untrack(next), controller.signal)
         if (disposed) return
-        setState("receipts", reconcile([...new Map(receipts.map(receipt => [receipt.requestId, receipt])).values()], { key: "requestId" }))
-        setNext(cursor)
-        pages = more ? pages + 1 : fetched
+        const snapshot = {
+          receipts: [...untrack(() => state.receipts), ...page.receipts.filter(receipt => ownsPermissionReceipt(receipt, sessionId, scope))],
+          next: page.next, pages: pages + 1,
+        }
+        rememberPermissionReceipts(key, snapshot)
+        show(snapshot)
       } catch {
         if (!disposed) setFailed(true)
       } finally {
@@ -78,13 +88,23 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
         }
       }
     }
-    read = (more) => { void load(more ?? (untrack(failed) && retryMore)) }
+    read = (more) => {
+      const retry = more ?? (untrack(failed) && retryMore)
+      if (!retry) invalidatePermissionReceipts(key)
+      void load(retry)
+    }
+    const refresh = () => {
+      invalidatePermissionReceipts(key)
+      void load()
+    }
     const offEvent = serverEvents.on("permission.receiptsChanged", event => {
       if (event.type !== "permission.receiptsChanged" || event.instanceId !== instanceId || event.sessionId !== sessionId) return
-      if (!event.messageId || event.messageId === messageId) void load()
+      if (!event.messageId || event.messageId === messageId) refresh()
     })
-    const offOpen = serverEvents.onOpen(() => { void load() })
-    void load()
+    const offOpen = serverEvents.onOpen(refresh)
+    const cached = cachedPermissionReceipts(key)
+    if (cached) show(cached)
+    else void load()
     onCleanup(() => {
       disposed = true
       controller.abort()

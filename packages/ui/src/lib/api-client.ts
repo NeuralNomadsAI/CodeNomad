@@ -78,6 +78,7 @@ import { missionMutationRequest } from "./mission-mutation"
 import { missionLifecycleRequest } from "./mission-lifecycle-request"
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
+import { backgroundReads } from "./background-read-queue"
 
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
@@ -97,6 +98,14 @@ function buildEventsUrl(base: string | undefined, path: string): string {
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
+
+// Secondary panel (plugins, update status) and timeline/receipt reads share the
+// bounded background budget, so they never take the browser connections needed
+// by the selected transcript and its metadata during startup. Provider usage
+// stays direct: its superseded reads cannot be cancelled and would hold slots.
+function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>, priority: "normal" | "visible" = "visible"): Promise<T> {
+  return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
+}
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
   const output: Record<string, string> = {}
@@ -205,7 +214,7 @@ export const serverApi = {
   fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
     const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
     if (cursor) params.set("cursor", cursor)
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal }), "normal")
   },
   fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
@@ -213,14 +222,14 @@ export const serverApi = {
     })
   },
   fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
       method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
-    })
+    }))
   },
   fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
       method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
-    })
+    }))
   },
   querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
@@ -387,7 +396,7 @@ export const serverApi = {
   getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
     const params = new URLSearchParams({ directory: location.directory })
     if (location.workspaceID) params.set("workspaceID", location.workspaceID)
-    return request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal })
+    return secondaryRead(signal, () => request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal }))
   },
   getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
@@ -587,7 +596,7 @@ export const serverApi = {
     })
   },
   fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>("/api/opencode/update")
+    return secondaryRead(undefined, () => request<OpenCodeUpdateStatus>("/api/opencode/update"), "normal")
   },
   updateOpenCode(): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
