@@ -203,10 +203,10 @@ test("a partial Pause/Stop retry refused during preparation keeps the original p
       // Refused before the hold (connection) and after preparation re-entered it (root changed).
       f.health.available = false
       const offline = await f.control(action, `${action}_partial`, revision, true)
-      assert.deepEqual([offline.statusCode, offline.json().code], [503, "recurrence-not-dispatched"])
+      assert.deepEqual([offline.statusCode, offline.json().code], [503, undefined], "the original retry remains uncertain")
       f.health.available = true; f.health.ownedCalls = 2
       const changed = await f.control(action, `${action}_partial`, revision, true)
-      assert.deepEqual([changed.statusCode, changed.json().code], [503, "recurrence-not-dispatched"])
+      assert.deepEqual([changed.statusCode, changed.json().code], [503, undefined], "the original partial permit remains held")
       f.health.ownedCalls = Infinity
       assert.equal(f.native.writes, 2, "neither refused retry reached native")
       const other = await f.control("play", "play_other", revision + 1)
