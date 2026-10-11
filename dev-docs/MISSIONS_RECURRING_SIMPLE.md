@@ -114,7 +114,15 @@ evicted request's exact status reads unknown, which never authorizes a resend.
 `evictedControlRevision` bounds every evicted record's revision (a first bound is
 the current revision, covering evictions by older stores).
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
-later completed control that restarted or cancelled it. A Play/Resume whose native
+later completed control that restarted or cancelled it. While such an intent, or
+a reserved but unadmitted Run now, stays unknown, the snapshot offers only
+Resume/Pause/Stop/Check and the UI enables exactly those that native offers once
+its snapshot records the intent; the original is never resent. The backend admits
+that new request with its own permit only after a fresh exact native read through
+the current connection shows the original recorded and incomplete under the same
+owner; a committed superseding control retires the original permit, a no-effect
+refusal restores it. Run now itself still completes only on admission or archive.
+In-flight, preparing and partial Pause/Stop permits are never superseded. A Play/Resume whose native
 Job start fails while a fresh read positively shows no running daily Job completes
 its record with the schedule Interrupted (reason `error`), releasing the backend
 permit for an explicit Resume/Pause/Stop; a failed or running read stays unknown.

@@ -55,7 +55,7 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         // Refused before any record (stale revision or inadmissible state): proven
         // no effect, so the permit is released and the refusal is definitive.
         if (result.outcome === "rejected" && result.reason) {
-          prepared.hold.settled()
+          prepared.hold.settled(false)
           return reply.code(409).send({ error: "Recurrence control refused; nothing was applied", code: recurrenceRefusalCode(result.reason) })
         }
         if (result.outcome === "committed" && result.controlsComplete === true && result.revision === body.expectedRevision + 1

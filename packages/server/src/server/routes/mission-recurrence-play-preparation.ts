@@ -13,7 +13,8 @@ import { recurrenceControlHttpSchema, recurrenceControlStatusSchema } from "../.
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
 import { resolveRecurrenceRoot } from "./mission-recurrence-roots"
-import { captureRecurrenceControlHoldRead, holdRecurrenceControl, RecurrenceControlBusy } from "./mission-recurrence-holds"
+import { captureRecurrenceControlHoldRead, holdRecurrenceControl, reconcileRecurrenceControlHold, RecurrenceControlBusy } from "./mission-recurrence-holds"
+import { readSupersededRecurrenceIntent } from "./mission-recurrence-supersede"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
@@ -76,6 +77,19 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       }, { location: { directory }, ...locationRequestOptions({ directory }), signal }))
       current()
       hold.confirmPartial(status)
+    }
+    if (hold.superseded) {
+      // An explicit new control over an unknown start intent: native must still
+      // record that exact intent as incomplete under the same owner. A definitive
+      // read instead settles the original permit; this request then sends nothing.
+      const owner = { workspace, projectID: location.project.id, projectCanonical: location.project.canonical, checkout }
+      const status = await readSupersededRecurrenceIntent(client, hold.superseded, { directory }, signal)
+      current()
+      try { hold.confirmSuperseded(status, owner) } catch (error) {
+        hold.dispose()
+        reconcileRecurrenceControlHold(deps.fence, workspaceID, { directory }, hold.superseded, status, connection, owner)
+        throw error
+      }
     }
     const assertRoots = async () => {
       current()

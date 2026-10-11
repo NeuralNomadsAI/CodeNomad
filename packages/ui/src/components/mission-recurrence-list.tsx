@@ -24,6 +24,8 @@ const [releases, setReleases] = createSignal(0)
 const sameIntent = (a: RecurrenceControlIntent, b: RecurrenceControlIntent) => a.scheduleID === b.scheduleID && a.requestID === b.requestID
   && a.expectedRevision === b.expectedRevision && a.action === b.action && a.directory === b.directory
 const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
+const START_INTENTS: RecurrenceAction[] = ["play", "resume", "check", "run-now"]
+const SUPERSEDING: RecurrenceAction[] = ["resume", "pause", "stop", "check"]
 
 /** Schedule controls for one row: a single contextual primary action, Stop,
  * the remaining available actions for a secondary menu, and the explicit
@@ -49,7 +51,9 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false); setRefusal(undefined)
   })
   onCleanup(() => { generation++ })
-  const outstanding = () => props.schedule.controls.find(control => control.controlsComplete !== true)
+  const incomplete = () => props.schedule.controls.filter(control => control.controlsComplete !== true)
+  // A partial Pause/Stop keeps its exact retry ahead of any earlier unknown start intent.
+  const outstanding = () => [...incomplete()].reverse().find(control => control.action === "pause" || control.action === "stop") ?? incomplete()[0]
   const current = () => {
     releases()
     const intent = held()
@@ -60,7 +64,18 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     return current() ?? (control?.action ? { scheduleID: props.schedule.id, requestID: control.requestID,
       expectedRevision: control.expectedRevision, action: control.action, directory: props.directory } : undefined)
   }
-  const capable = (action: RecurrenceAction) => props.enabled() && !busy() && !heldIntent() && !outstanding() && props.schedule.actions.includes(action)
+  /** The held request is an unknown start intent (Play, Resume, Check or Run now) that
+   * the native snapshot records as incomplete, with no Pause/Stop partial. Native then
+   * offers and admits a new explicit Resume/Pause/Stop/Check that supersedes it; the
+   * original is never resent and its own exact status still settles it. */
+  const supersedable = () => {
+    const intent = heldIntent()
+    return Boolean(intent && START_INTENTS.includes(intent.action) && incomplete().every(control => control.action && START_INTENTS.includes(control.action))
+      && incomplete().some(control => control.requestID === intent.requestID && control.action === intent.action
+        && control.expectedRevision === intent.expectedRevision))
+  }
+  const capable = (action: RecurrenceAction) => props.enabled() && !busy() && props.schedule.actions.includes(action)
+    && (!heldIntent() && !outstanding() || SUPERSEDING.includes(action) && supersedable())
   const retryCapable = () => {
     const intent = heldIntent(), result = partial() ?? outstanding()
     return Boolean(intent && result && partialRecurrenceControl(result, intent)) && props.retryEnabled() && !busy()
@@ -77,6 +92,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     const rejected = rejectedRecurrenceControl(result, intent)
     if (completedRecurrenceControl(result, intent) || rejected) settle(intent, identity, rejected)
     else if (partialRecurrenceControl(result, intent)) { partialResults.set(identity, result); setPartial(result); props.refresh() }
+    // Still unknown: reread the row so native's offered superseding actions appear.
+    else props.refresh()
   }
   const act = async (action: RecurrenceAction, retry?: RecurrenceControlIntent) => {
     if (retry ? !retryCapable() : !capable(action)) return
@@ -114,7 +131,10 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
       if (intent.action === "run-now") {
         const result = await serverApi.missionRecurrenceRunNowStatus(props.instanceId, intent)
         const rejected = rejectedRecurrenceControl(result, intent)
-        if (captured === generation && key() === identity && (completedRecurrenceManual(result, intent) || rejected)) settle(intent, identity, rejected)
+        if (captured === generation && key() === identity) {
+          if (completedRecurrenceManual(result, intent) || rejected) settle(intent, identity, rejected)
+          else props.refresh()
+        }
       } else {
         const result = await serverApi.missionRecurrenceControlStatus(props.instanceId, intent.scheduleID, intent)
         if (captured === generation && key() === identity) {
@@ -146,10 +166,13 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     ? "missionsPanel.action.runNow" : action === "play" ? "missionsPanel.action.start" : action === "stop" ? "missionsPanel.action.stop"
     : `missionsPanel.action.${action}`)
   const description = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
-  const primaryAction = () => heldIntent() ? undefined : PRIMARY.find(action => props.schedule.actions.includes(action))
+  const primaryAction = () => !heldIntent() ? PRIMARY.find(action => props.schedule.actions.includes(action))
+    : supersedable() ? PRIMARY.find(action => SUPERSEDING.includes(action) && props.schedule.actions.includes(action)) : undefined
+  const statusAction = (): MissionPrimaryAction => ({ key: "status", label: t("missionsPanel.action.checkStatus"),
+    ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), onSelect: () => void check() })
   const primary = (): MissionPrimaryAction | undefined => {
-    if (heldIntent()) return { key: "status", label: t("missionsPanel.action.checkStatus"), ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), onSelect: () => void check() }
     const action = primaryAction()
+    if (heldIntent() && !action) return statusAction()
     return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), onSelect: () => act(action) } : undefined
   }
   // Always the schedule's own Stop, disabled when unavailable or a request is held,
@@ -164,7 +187,12 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     disabled: !capable("run-now"), onSelect: () => act("run-now") })
   const feedback = <Show when={heldIntent()} fallback={<Show when={refusal()}>{message => <small role="status">{t(message())}</small>}</Show>}>
     <small role="status">{t("missions.recurrence.uncertain")}</small></Show>
-  return { primary, stop: stopAction, runNow, retry, feedback }
+  // While a superseding action holds the primary place, the unknown intent's exact status read stays one click away.
+  const statusButton = <button type="button" class="window-text-button" title={statusAction().ariaLabel} aria-label={statusAction().ariaLabel}
+    disabled={statusAction().disabled} onClick={() => statusAction().onSelect()}>{statusAction().label}</button>
+  const superseding = createMemo(() => Boolean(heldIntent() && primaryAction()))
+  const secondary = () => superseding() ? statusButton : undefined
+  return { primary, stop: stopAction, runNow, retry, feedback, secondary }
 }
 
 /** Recurring schedules: picker entries for the shared mission list, and the
@@ -240,7 +268,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
           reading={props.passage ? props.passage.reading : reading(schedule().id)}
           onToggleReader={() => props.passage ? props.passage.onToggle() : read(schedule().id)}
           primary={controls.primary()} stop={controls.stop()} onOpenConversation={props.passage?.onOpenConversation}
-          runNow={controls.runNow()} feedback={controls.feedback} />
+          runNow={controls.runNow()} feedback={controls.feedback} secondary={controls.secondary()} />
         <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
         <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
           {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>

@@ -18,15 +18,41 @@ interface Held {
   binding: Binding; state: "preparing" | "dispatched" | "uncertain" | "partial"; retrying?: boolean; release(): void
   /** Fresh admission proving itself before it may retire this replaced-connection permit. */
   successor?: object
+  /** The uncertain start intent this explicit request supersedes, retained under its own key. */
+  supersedes?: Held
 }
 // Same bounded, fence-scoped mutation-admission retention as mission-creation-holds.
 // This tracks physical permits, never auth, timers, authority, scheduling or replay.
 const held = new WeakMap<WorktreeDeletionFence, Map<string, Held>>()
 const key = (workspaceID: string, scheduleID: string) => JSON.stringify([workspaceID, scheduleID])
+const retainedKey = (binding: Binding) => JSON.stringify([binding.workspaceID, binding.scheduleID, binding.requestID])
+// Native admits these over an incomplete start intent and completes it with them (recurrence-store).
+const START_INTENTS: readonly string[] = ["play", "resume", "check", "run-now"]
+const SUPERSEDING: readonly string[] = ["resume", "pause", "stop", "check"]
+
+/** The exact request's permit: the schedule's current one, or a superseded start intent. */
+function locate(registry: Map<string, Held> | undefined, workspaceID: string, request: Pick<RecurrenceControlRequest, "scheduleID" | "requestID">) {
+  const id = key(workspaceID, request.scheduleID), main = registry?.get(id)
+  if (main?.binding.requestID === request.requestID) return { id, record: main }
+  const retained = JSON.stringify([workspaceID, request.scheduleID, request.requestID]), record = registry?.get(retained)
+  return record ? { id: retained, record } : { id, record: main }
+}
+
+/** Releases a settled permit. A committed superseding request also retires every start
+ * intent it superseded (native completed them in the same write); a no-effect one
+ * returns its superseded intent to the schedule's slot, still uncertain. */
+function drop(registry: Map<string, Held>, id: string, record: Held, effective: boolean) {
+  registry.delete(id); record.release()
+  for (let old = record.supersedes; old; old = effective ? old.supersedes : undefined) {
+    if (registry.get(retainedKey(old.binding)) !== old) continue
+    if (effective) { registry.delete(retainedKey(old.binding)); old.release() }
+    else if (id === key(old.binding.workspaceID, old.binding.scheduleID)) { registry.delete(retainedKey(old.binding)); registry.set(id, old) }
+  }
+}
 
 export function captureRecurrenceControlHoldRead(fence: WorktreeDeletionFence, workspaceID: string,
   location: Binding["location"], request: RecurrenceControlRequest, connection: ServiceConnection): (() => boolean) | undefined {
-  const registry = held.get(fence), id = key(workspaceID, request.scheduleID), record = registry?.get(id)
+  const registry = held.get(fence), { id, record } = locate(registry, workspaceID, request)
   if (!record || record.state === "preparing" || record.binding.connection !== connection || !sameLocation(record.binding.location, location)
     || record.binding.requestID !== request.requestID || record.binding.expectedRevision !== request.expectedRevision
     || record.binding.action !== request.action) return undefined
@@ -44,7 +70,7 @@ export function captureRecurrenceControlHoldRead(fence: WorktreeDeletionFence, w
  * ownership and re-prove the owner, and can at most release the permit. */
 export function captureReplacedRecurrenceHoldRead(fence: WorktreeDeletionFence, workspaceID: string,
   location: Binding["location"], request: RecurrenceControlRequest, connection: ServiceConnection): (() => boolean) | undefined {
-  const registry = held.get(fence), id = key(workspaceID, request.scheduleID), record = registry?.get(id)
+  const registry = held.get(fence), { id, record } = locate(registry, workspaceID, request)
   if (!record || record.state === "preparing" || record.binding.connection === connection || current(record.binding.connection)
     || !record.binding.owner || !sameRequest(record.binding, { ...request, location })) return undefined
   return () => {
@@ -57,7 +83,7 @@ export function captureReplacedRecurrenceHoldRead(fence: WorktreeDeletionFence, 
  * status read must re-prove its owner before it can settle that permit. */
 export function recurrenceControlHeldElsewhere(fence: WorktreeDeletionFence, workspaceID: string,
   request: RecurrenceControlRequest, connection: ServiceConnection): boolean {
-  const record = held.get(fence)?.get(key(workspaceID, request.scheduleID))
+  const { record } = locate(held.get(fence), workspaceID, request)
   return !!record && record.state !== "preparing" && record.binding.connection !== connection && !!record.binding.owner
     && record.binding.requestID === request.requestID
 }
@@ -83,7 +109,7 @@ export function recurrenceNotDispatchedReply(error: unknown, context?: {
 }) {
   // An early connection failure precedes any native read, so an earlier
   // attempt's effect is unknowable here; only a retained permit marks it known.
-  const original = context && held.get(context.fence)?.get(key(context.workspaceID, context.request.scheduleID))
+  const original = context && locate(held.get(context.fence), context.workspaceID, context.request).record
   if (error instanceof RecurrenceControlOutstanding || context?.request.retry
     || original && original.binding.requestID === context?.request.requestID) return undefined
   return { status: error instanceof RecurrenceControlBusy ? 409 : 503,
@@ -107,27 +133,57 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
     && !previous.retrying && !previous.successor && previous.binding.connection !== binding.connection
     && !current(previous.binding.connection) && sameRequest(previous.binding, binding)
     && sameOwner(previous.binding.owner, binding.owner) && sameAdmission(previous.binding.admission, binding.admission)
-  if (previous && !reuses && !replaces) {
+  // An explicit new control may supersede a returned uncertain start intent,
+  // never an in-flight call or a successor currently proving its admission.
+  const superseding = previous && !retry && (previous.state === "uncertain" || previous.state === "partial")
+    && !previous.retrying && !previous.successor && previous.binding.requestID !== binding.requestID
+    && START_INTENTS.includes(previous.binding.action) && SUPERSEDING.includes(binding.action)
+    && sameLocation(previous.binding.location, binding.location)
+    && sameOwner(previous.binding.owner, binding.owner) && sameAdmission(previous.binding.admission, binding.admission)
+    && !registry.has(retainedKey(previous.binding)) ? previous : undefined
+  if (previous && !reuses && !replaces && !superseding) {
     const message = "Recurrence control remains uncertain; read its exact request status"
     throw previous.binding.requestID === binding.requestID ? new RecurrenceControlOutstanding(message) : new RecurrenceControlBusy(message)
   }
-  if (!previous && registry.size >= 128) throw new RecurrenceControlBusy("Recurrence mutation admission capacity exhausted")
+  if ((!previous || superseding) && registry.size >= 128) throw new RecurrenceControlBusy("Recurrence mutation admission capacity exhausted")
   // A deletion already waiting on the old permit blocks this fresh entry.
   const release = reuses ? previous!.release : enter()
   if (!release) return undefined
-  const record: Held = reuses ? previous! : { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release }
+  const record: Held = reuses ? previous! : { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release,
+    ...(superseding ? { supersedes: superseding } : replaces && previous!.supersedes ? { supersedes: previous!.supersedes } : {}) }
   if (reuses) record.retrying = true
   else if (replaces) previous!.successor = record
-  else registry.set(id, record)
+  else {
+    if (superseding) registry.set(retainedKey(superseding.binding), superseding)
+    registry.set(id, record)
+  }
   /** Whether this attempt still owns its schedule slot (a successor: still beside its predecessor). */
   const owned = () => replaces && registry!.get(id) !== record
     ? registry!.get(id) === previous && previous!.successor === record && !current(previous!.binding.connection)
     : registry!.get(id) === record
-  let proven = false
+  let proven = false, effective = true
   const requiresPartialProof = retry && !reuses
-  let partialProven = false
+  let partialProven = false, supersedeProven = false
   return {
     requiresPartialProof,
+    /** The exact uncertain start intent this request must prove before dispatch. */
+    superseded: superseding ? { scheduleID: superseding.binding.scheduleID, requestID: superseding.binding.requestID,
+      action: superseding.binding.action, expectedRevision: superseding.binding.expectedRevision } : undefined,
+    /** A fresh exact native read through the current connection must show the
+     * superseded request recorded and still incomplete, under the re-proven owner. */
+    confirmSuperseded(receipt: RecurrenceControlStatus, owner: RecurrenceHoldOwner) {
+      const old = record.supersedes, original = old?.binding
+      record.binding.connection.assertCurrent()
+      if (!old || !original || registry!.get(id) !== record || record.state !== "preparing" || registry!.get(retainedKey(original)) !== old
+        || old.state !== "uncertain" && old.state !== "partial" || !sameOwner(original.owner, owner) || !sameOwner(record.binding.owner, owner)
+        || receipt.version !== 1 || receipt.scheduleID !== original.scheduleID || receipt.requestID !== original.requestID
+        || receipt.action !== original.action || receipt.expectedRevision !== original.expectedRevision
+        || receipt.revision !== original.expectedRevision + 1 || receipt.outcome !== "unknown" || receipt.controlsComplete !== false
+        || original.action !== "run-now" && !recurrenceControlStateMatches(original.action, receipt.state)) {
+        throw new Error("Exact native start intent unavailable")
+      }
+      supersedeProven = true
+    },
     /** A fresh backend may admit an explicit retry, never reconstruct an old
      * permit. Only an exact native partial record authorizes its first dispatch. */
     confirmPartial(receipt: RecurrenceControlStatus) {
@@ -144,7 +200,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
       partialProven = true
     },
     dispatched() {
-      if (!owned() || requiresPartialProof && !partialProven
+      if (!owned() || requiresPartialProof && !partialProven || superseding && !supersedeProven
         || record.state !== "preparing" && !(record.state === "partial" && record.retrying)) throw new Error("Recurrence dispatch unavailable")
       record.binding.connection.assertCurrent()
       if (registry!.get(id) !== record) {
@@ -156,8 +212,8 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
       }
       record.state = "dispatched"
     },
-    /** Proven outcome: a committed receipt, or a native proof that nothing applied. */
-    settled() { if (record.state === "dispatched") proven = true },
+    /** Proven outcome: a committed receipt, or (`applied` false) a native proof that nothing applied. */
+    settled(applied = true) { if (record.state === "dispatched") { proven = true; effective = applied } },
     partial() { if (record.state === "dispatched") record.state = "partial" },
     dispose() {
       if (replaces && registry!.get(id) !== record) {
@@ -168,7 +224,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
       if (registry!.get(id) !== record) return
       record.retrying = false
       if (record.state !== "preparing" && !proven) { if (record.state !== "partial") record.state = "uncertain"; return }
-      registry!.delete(id); release()
+      drop(registry!, id, record, record.state !== "preparing" && effective)
     },
   }
 }
@@ -183,7 +239,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
 export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, workspaceID: string,
   location: Binding["location"], request: RecurrenceControlRequest, receipt: RecurrenceControlStatus, connection: ServiceConnection,
   owner?: RecurrenceHoldOwner): void {
-  const registry = held.get(fence), id = key(workspaceID, request.scheduleID), record = registry?.get(id)
+  const registry = held.get(fence), { id, record } = locate(registry, workspaceID, request)
   if (!record || record.state === "preparing") return
   const original = record.binding, replaced = original.connection !== connection
   if (replaced && !sameOwner(original.owner, owner)) return
@@ -194,7 +250,7 @@ export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, wor
       || receipt.scheduleID !== original.scheduleID || receipt.requestID !== original.requestID
       || receipt.expectedRevision !== original.expectedRevision || record.state === "partial") return
     ;(replaced ? connection : original.connection).assertCurrent()
-    registry!.delete(id); record.release()
+    drop(registry!, id, record, false)
     return
   }
   if (!sameLocation(location, original.location) || request.requestID !== original.requestID
@@ -204,7 +260,7 @@ export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, wor
     || receipt.revision !== original.expectedRevision + 1
     || original.action !== "run-now" && !recurrenceControlStateMatches(original.action, receipt.state)) return
   ;(replaced ? connection : original.connection).assertCurrent()
-  if (receipt.outcome === "committed" && receipt.controlsComplete === true) { registry!.delete(id); record.release() }
+  if (receipt.outcome === "committed" && receipt.controlsComplete === true) drop(registry!, id, record, true)
   else if (!replaced && receipt.controlsComplete === false) record.state = "partial"
 }
 
