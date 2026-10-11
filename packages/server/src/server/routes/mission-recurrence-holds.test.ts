@@ -17,12 +17,21 @@ const committed = { version: 1 as const, scheduleID: "schedule", requestID: "pla
   state: "running" as const, controlsComplete: true, outcome: "committed" as const }
 const pause = (binding: ReturnType<typeof playHold>, fence: WorktreeDeletionFence) =>
   holdRecurrenceControl(fence, { ...binding, requestID: "pause_next", action: "pause", expectedRevision: 2 }, () => fence.enter(["/project"]))
+/** A new Pause over the uncertain Play gets at most a superseding hold that cannot
+ * dispatch without exact native proof; disposing it returns the Play's retained permit. */
+function blocked(binding: ReturnType<typeof playHold>, fence: WorktreeDeletionFence, message?: string) {
+  let hold: ReturnType<typeof pause>
+  try { hold = pause(binding, fence) } catch (error) { assert.match(String(error), /remains uncertain/, message); return }
+  assert.ok(hold?.superseded, message)
+  assert.throws(() => hold!.dispatched(), /dispatch unavailable/, message)
+  hold!.dispose()
+}
 
 test("an exact committed Play receipt releases its retained permit: later controls and deletion proceed", async () => {
   const fence = new WorktreeDeletionFence(), binding = playHold(fence)
-  assert.throws(() => pause(binding, fence), /remains uncertain/)
+  blocked(binding, fence)
   reconcileRecurrenceControlHold(fence, "owned", binding.location, binding, { ...committed, controlsComplete: false, outcome: "unknown" }, binding.connection)
-  assert.throws(() => pause(binding, fence), /remains uncertain/, "unknown never releases")
+  blocked(binding, fence, "unknown never releases")
   reconcileRecurrenceControlHold(fence, "owned", binding.location, binding, committed, binding.connection)
   const next = pause(binding, fence)!
   next.dispatched(); next.settled(); next.dispose()
@@ -36,11 +45,11 @@ test("a replacement connection settles the original permit only with a freshly r
     const fence = new WorktreeDeletionFence(), binding = playHold(fence), replacement = connection()
     assert.equal(recurrenceControlHeldElsewhere(fence, "owned", binding, replacement), true)
     reconcileRecurrenceControlHold(fence, "owned", binding.location, binding, committed, replacement, fresh)
-    assert.throws(() => pause({ ...binding, connection: replacement }, fence), /remains uncertain/, `${label} owner refused`)
+    blocked({ ...binding, connection: replacement }, fence, `${label} owner refused`)
   }
   const fence = new WorktreeDeletionFence(), binding = playHold(fence), replacement = connection()
   reconcileRecurrenceControlHold(fence, "owned", { directory: "/elsewhere" }, binding, committed, replacement, { ...owner })
-  assert.throws(() => pause({ ...binding, connection: replacement }, fence), /remains uncertain/, "different directory refused")
+  blocked({ ...binding, connection: replacement }, fence, "different directory refused")
   reconcileRecurrenceControlHold(fence, "owned", binding.location, binding, { ...committed, controlsComplete: false, outcome: "unknown" }, replacement, { ...owner })
   assert.throws(() => holdRecurrenceControl(fence, { ...binding, connection: replacement, action: "pause" }, () => fence.enter(["/project"]), true),
     /uncertain/, "a replacement never inherits partial-retry admission")
@@ -80,4 +89,46 @@ test("retry without the original partial hold dispatches only after an exact nat
   proven.confirmPartial(partial); proven.dispatched(); proven.partial(); proven.dispose()
   assert.throws(() => holdRecurrenceControl(restarted, { ...binding, requestID: "request_two" }, () => () => {}), /uncertain/,
     "a proven reacquisition retains its partial permit like the original")
+})
+
+test("an explicit control supersedes an uncertain start intent only after exact native proof, retiring it once committed", async () => {
+  const recorded = { ...committed, action: "play" as const, controlsComplete: false, outcome: "unknown" as const }
+  const deleted = (fence: WorktreeDeletionFence) => Promise.race([fence.run("/project", ["/project"], async () => true),
+    new Promise<false>(resolve => setTimeout(() => resolve(false), 200))])
+  // Wrong identity, completion, revision, state or owner never dispatches; each attempt releases its own permit.
+  for (const [receipt, fresh] of [[{ ...recorded, requestID: "other" }, owner], [{ ...recorded, controlsComplete: true, outcome: "committed" as const }, owner],
+    [{ ...recorded, revision: 2 }, owner], [{ ...recorded, state: "paused" as const }, owner], [{ ...recorded, action: "resume" as const }, owner],
+    [recorded, { ...owner, checkout: "/other" }], [recorded, { ...owner, workspace: {} }]] as const) {
+    const fence = new WorktreeDeletionFence(), binding = playHold(fence), next = pause(binding, fence)!
+    assert.throws(() => next.confirmSuperseded(receipt, fresh), /start intent unavailable/)
+    assert.throws(() => next.dispatched(), /dispatch unavailable/)
+    next.dispose()
+    blocked(binding, fence, "the Play's permit is back in place")
+  }
+  // A no-effect refusal of the superseding request leaves the Play held.
+  let fence = new WorktreeDeletionFence(), binding = playHold(fence), next = pause(binding, fence)!
+  next.confirmSuperseded(recorded, owner); next.dispatched(); next.settled(false); next.dispose()
+  assert.equal(await deleted(fence), false, "the Play's permit is still retained")
+  // A committed superseding control retires the Play's permit with its own.
+  fence = new WorktreeDeletionFence(); binding = playHold(fence); next = pause(binding, fence)!
+  assert.deepEqual(next.superseded, { scheduleID: "schedule", requestID: "play_lost", action: "play", expectedRevision: 0 })
+  next.confirmSuperseded(recorded, { ...owner })
+  next.dispatched(); next.settled(); next.dispose()
+  assert.equal(await deleted(fence), true)
+  // An uncertain superseding request keeps both; its own committed read retires both.
+  fence = new WorktreeDeletionFence(); binding = playHold(fence); next = pause(binding, fence)!
+  next.confirmSuperseded(recorded, owner); next.dispatched(); next.dispose()
+  const pauseRequest = { ...binding, requestID: "pause_next", action: "pause" as const, expectedRevision: 2 }
+  reconcileRecurrenceControlHold(fence, "owned", binding.location, pauseRequest, { ...committed, requestID: "pause_next",
+    expectedRevision: 2, revision: 3, state: "paused" }, binding.connection)
+  assert.equal(await deleted(fence), true)
+  // In flight, preparing or a partial Pause/Stop: never superseded.
+  fence = new WorktreeDeletionFence()
+  const inflight = holdRecurrenceControl(fence, { ...binding, requestID: "play_inflight" }, () => fence.enter(["/project"]))!
+  inflight.dispatched()
+  assert.throws(() => pause(binding, fence), /remains uncertain/)
+  inflight.settled(); inflight.dispose()
+  const partialPause = holdRecurrenceControl(fence, pauseRequest, () => fence.enter(["/project"]))!
+  partialPause.dispatched(); partialPause.partial(); partialPause.dispose()
+  assert.throws(() => holdRecurrenceControl(fence, { ...pauseRequest, requestID: "stop_next", action: "stop" }, () => fence.enter(["/project"])), /remains uncertain/)
 })

@@ -41,13 +41,15 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     const retry = doc.controls.at(-1)
     if (qualified && partial && retry && !retry.controlsComplete && (retry.action === "pause" || retry.action === "stop")) actions.push(retry.action)
     const checkable = (state === "paused" || state === "stopped") && doc.pending && settleStatus !== undefined && !observed
+    // An unknown start intent admits only a superseding Resume/Pause/Stop/Check (controlRefusal).
+    const unknownIntent = doc.controls.some(item => !item.controlsComplete)
     if (qualified && !partial && state !== "stopped") {
-      if (state === "paused" && !doc.pending) actions.push("play")
+      if (state === "paused" && !doc.pending && !unknownIntent) actions.push("play")
       if (state === "interrupted" || state === "paused" && doc.pending) actions.push("resume")
       if (checkable) actions.push("check")
       if (state === "running" || state === "interrupted") actions.push("pause")
       actions.push("stop")
-      if (!doc.pending) actions.push("run-now")
+      if (!doc.pending && !unknownIntent) actions.push("run-now")
     }
     if (qualified && !partial && state === "stopped" && checkable) actions.push("check")
     // Starting while a live Job/observer is admitting the original start message.
