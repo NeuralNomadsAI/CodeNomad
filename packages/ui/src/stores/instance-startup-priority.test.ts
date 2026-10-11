@@ -98,7 +98,7 @@ it("warns when initial hydration fails before pending recovery can start", async
   }
 })
 
-for (const scenario of ["success", "reuse", "invalidation", "unrelated compaction"] as const) it(`startup metadata failure after ${scenario} only warns when still unrecovered`, async () => {
+for (const scenario of ["success", "reuse", "invalidation", "unrelated compaction"] as const) it(`startup metadata failure after ${scenario} stays incomplete only when unrecovered and warns on a consecutive failure`, async () => {
   const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees, oldPending = serverApi.getPendingRequests
   const oldToast = toast.custom
   toast.custom = () => "fixture-toast"
@@ -142,7 +142,14 @@ for (const scenario of ["success", "reuse", "invalidation", "unrelated compactio
     await new Promise<void>(resolve => setImmediate(resolve))
     const unrecovered = scenario === "invalidation" || scenario === "unrelated compaction"
     assert.equal(incompletePendingRecovery().has(id), unrecovered)
-    assert.equal(warnings(), before + Number(unrecovered))
+    // A single incomplete recovery is retained silently; only a consecutive one warns.
+    assert.equal(warnings(), before)
+    // The unrelated compaction is still active, so its next attempt is deferred rather than counted.
+    if (scenario === "invalidation") {
+      serverApi.getPendingRequests = async () => { throw new Error("Recovery still unavailable") }
+      await syncPendingRequests(id).catch(() => {})
+      assert.equal(warnings(), before + 1)
+    }
   } finally {
     failWorktrees(new Error("Fixture disposed"))
     removeInstance(otherId, { authoritative: false })

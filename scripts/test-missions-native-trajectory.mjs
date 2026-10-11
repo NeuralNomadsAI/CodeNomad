@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { randomUUID, createHash } from "node:crypto"
 import { createServer } from "node:http"
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { registerHooks, createRequire } from "node:module"
 import path from "node:path"
 import os from "node:os"
@@ -26,7 +26,7 @@ const dependencyHook = resolver && registerHooks({ resolve(specifier, context, n
 } })
 const temporary = path.join(os.tmpdir(), "opencode")
 await mkdir(temporary, { recursive: true })
-const root = await mkdtemp(path.join(temporary, "missions-native-trajectory-"))
+const root = await realpath(await mkdtemp(path.join(temporary, "missions-native-trajectory-")))
 const project = path.join(root, "project"), config = path.join(root, "config")
 const previousEnvironment = { ...process.env }, requests = [], checkpoints = [], gates = [], holds = new Map()
 const receipt = { status: "running", cli, artifacts: root, gates, checkpoints,
