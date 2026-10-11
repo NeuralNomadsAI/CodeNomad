@@ -7,6 +7,7 @@ import {
   closestCenter,
   createSortable,
   useDragDropContext,
+  type CollisionDetector,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import InstanceTab from "./instance-tab"
@@ -104,12 +105,16 @@ const SortableAppTab: Component<SortableAppTabProps> = (props) => {
   )
 }
 
+/** Horizontal distance the strip bound removed from the dragged tab. */
+type DragBound = { overshoot: number }
+
 /** Like a browser, a dragged tab stays within the tab list: the strip only spans
  * its tabs (the new-instance button follows them), so it would otherwise clip. */
-const KeepDraggedTabInStrip: Component<{ strip: () => HTMLElement | undefined }> = (props) => {
+const KeepDraggedTabInStrip: Component<{ strip: () => HTMLElement | undefined; bound: DragBound }> = (props) => {
   const [, { onDragStart, onDragEnd, addTransformer, removeTransformer }] = useDragDropContext()!
   const id = "keep-in-strip"
   onDragStart(({ draggable }) => {
+    props.bound.overshoot = 0
     const strip = props.strip()?.getBoundingClientRect()
     if (!strip) return
     const tab = draggable.layout
@@ -118,11 +123,27 @@ const KeepDraggedTabInStrip: Component<{ strip: () => HTMLElement | undefined }>
     addTransformer("draggables", draggable.id, {
       id,
       order: 100,
-      callback: (transform) => ({ ...transform, x: Math.min(max, Math.max(min, transform.x)) }),
+      callback: (transform) => {
+        const x = Math.min(max, Math.max(min, transform.x))
+        props.bound.overshoot = transform.x - x
+        return { ...transform, x }
+      },
     })
   })
-  onDragEnd(({ draggable }) => removeTransformer("draggables", draggable.id, id))
+  onDragEnd(({ draggable }) => {
+    removeTransformer("draggables", draggable.id, id)
+    props.bound.overshoot = 0
+  })
   return null
+}
+
+/** Picks the drop target from where the pointer drags the tab, not its bounded
+ * position: a wide tab held at the strip's end must still reach the end slot. */
+const closestUnboundedCenter = (bound: DragBound): CollisionDetector => (draggable, droppables, context) => {
+  if (!bound.overshoot) return closestCenter(draggable, droppables, context)
+  const center = draggable.transformed.center
+  const unbounded = { ...draggable, transformed: { center: { x: center.x + bound.overshoot, y: center.y } } }
+  return closestCenter(unbounded as typeof draggable, droppables, context)
 }
 
 const StaticAppTab: Component<SortableAppTabProps> = (props) => {
@@ -145,6 +166,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     onLongPress: (anchor) => props.onOpenLauncher?.(anchor),
   })
   let tabList: HTMLDivElement | undefined
+  const dragBound: DragBound = { overshoot: 0 }
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
@@ -261,9 +283,9 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                     </For>
                   }
                 >
-                  <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleDragEnd}>
+                  <DragDropProvider collisionDetector={closestUnboundedCenter(dragBound)} onDragEnd={handleDragEnd}>
                     <DragDropSensors>
-                      <KeepDraggedTabInStrip strip={() => tabList} />
+                      <KeepDraggedTabInStrip strip={() => tabList} bound={dragBound} />
                       <SortableProvider ids={tabIds()}>
                         <For each={props.tabs}>
                           {(tab) => (

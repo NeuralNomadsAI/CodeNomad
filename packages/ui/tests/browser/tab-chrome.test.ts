@@ -200,6 +200,36 @@ test("a tab dragged past the last one stays visible beside the new-instance butt
   } finally { await page.close() }
 })
 
+test("a wide tab held at the strip's edge still reaches the first and last slots", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  try {
+    await prepare(page)
+    const tabs = page.locator('[data-fixture="instances"] [role="tab"]')
+    const labels = () => tabs.allInnerTexts()
+    const drag = async (from: number, dx: number) => {
+      const box = (await tabs.nth(from).boundingBox())!
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 20 })
+      await page.mouse.up()
+      await page.waitForTimeout(200)
+    }
+    for (const dir of ["ltr", "rtl"]) {
+      await page.evaluate(dir => { document.dir = dir; (window as any).tabFixture.uneven() }, dir)
+      await page.waitForTimeout(100)
+      const toEnd = dir === "rtl" ? -1 : 1
+      const initial = await labels()
+      // The wide first tab, dragged well past the two narrow ones, lands last.
+      await drag(0, toEnd * 700)
+      assert.deepEqual(await labels(), [initial[1], initial[2], initial[0]], `${dir}: to the end`)
+      // And back past the first slot.
+      await drag(2, -toEnd * 700)
+      assert.deepEqual(await labels(), initial, `${dir}: to the start`)
+    }
+    await page.evaluate(() => { document.dir = "ltr"; (window as any).tabFixture.reset() })
+  } finally { await page.close() }
+})
+
 test("keyboard focus never leaves an overflowing tab under the new-instance button", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 800 } })
   try {

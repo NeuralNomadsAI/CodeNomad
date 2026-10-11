@@ -22,6 +22,8 @@ tabs[2] = { id: "sidecar:preview", kind: "sidecar", sidecarTab: {
   proxyBasePath: "/fixture/preview", shellUrl: "/fixture/preview",
 } }
 
+const short = (name: string): AppTabRecord => ({ id: `instance:${name}`, kind: "instance", instance: { ...instance, id: `fixture-${name}`, folder: `D:/${name}`, projectName: name } })
+
 function Fixture() {
   const { t } = useI18n()
   const [count, setCount] = createSignal(9)
@@ -29,6 +31,9 @@ function Fixture() {
   const [order, setOrder] = createSignal(tabs)
   ;(window as any).tabFixture = {
     count: setCount,
+    // One wide tab followed by two narrow ones.
+    uneven: () => { setOrder([tabs[0], short("docs"), short("api")]); setCount(3) },
+    reset: () => { setOrder(tabs); setCount(9) },
     palette: (id: string) => applyColorScheme(normalizeColorScheme(id)),
     choice: () => showChoiceDialog("Keep or discard?", [
       { value: "discard", label: "Discard", tone: "danger" },
