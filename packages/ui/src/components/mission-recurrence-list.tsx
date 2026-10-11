@@ -18,6 +18,11 @@ import { createRecurrenceControlIntent, completedRecurrenceControl, completedRec
 // Lost replies survive remounts. Only an exact status read releases the hold.
 const unresolved = new Map<string, RecurrenceControlIntent>()
 const partialResults = new Map<string, RecurrenceControlStatus>()
+// Bumped on each exact release, so every mounted control drops that request
+// even when the release lands after its context changed.
+const [releases, setReleases] = createSignal(0)
+const sameIntent = (a: RecurrenceControlIntent, b: RecurrenceControlIntent) => a.scheduleID === b.scheduleID && a.requestID === b.requestID
+  && a.expectedRevision === b.expectedRevision && a.action === b.action && a.directory === b.directory
 const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
 
 /** Schedule controls for one row: a single contextual primary action, Stop,
@@ -36,6 +41,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
     { equals: (a, b) => Boolean(a && a.client === b.client && a.generation === b.generation) })
   let generation = 0
+  // The exact partial request a refresh's own status read just confirmed, in its context.
+  let witness: { generation: number; intent: RecurrenceControlIntent } | undefined
   createEffect(() => {
     const identity = key(); props.active()
     connection()
@@ -43,9 +50,14 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   })
   onCleanup(() => { generation++ })
   const outstanding = () => props.schedule.controls.find(control => control.controlsComplete !== true)
+  const current = () => {
+    releases()
+    const intent = held()
+    return intent && unresolved.get(key()) === intent ? intent : undefined
+  }
   const heldIntent = () => {
     const control = outstanding()
-    return held() ?? (control?.action ? { scheduleID: props.schedule.id, requestID: control.requestID,
+    return current() ?? (control?.action ? { scheduleID: props.schedule.id, requestID: control.requestID,
       expectedRevision: control.expectedRevision, action: control.action, directory: props.directory } : undefined)
   }
   const capable = (action: RecurrenceAction) => props.enabled() && !busy() && !heldIntent() && !outstanding() && props.schedule.actions.includes(action)
@@ -53,10 +65,12 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     const intent = heldIntent(), result = partial() ?? outstanding()
     return Boolean(intent && result && partialRecurrenceControl(result, intent)) && props.retryEnabled() && !busy()
   }
-  const settle = (intent: RecurrenceControlIntent, identity: string, refusal?: string) => {
+  const settle = (intent: RecurrenceControlIntent, identity: string, refusal?: string, visible = true) => {
     if (unresolved.get(identity) !== intent) return
-    unresolved.delete(identity); partialResults.delete(identity)
-    if (key() !== identity) return
+    unresolved.delete(identity); partialResults.delete(identity); setReleases(value => value + 1)
+    // Only the request's own context shows its outcome and revalidates; a late
+    // release never overwrites a newer view's message or state.
+    if (!visible || key() !== identity) return
     setHeld(undefined); setPartial(undefined); setRefusal(refusal); props.refresh()
   }
   const finish = (result: RecurrenceControlStatus, intent: RecurrenceControlIntent, identity: string) => {
@@ -64,10 +78,10 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     if (completedRecurrenceControl(result, intent) || rejected) settle(intent, identity, rejected)
     else if (partialRecurrenceControl(result, intent)) { partialResults.set(identity, result); setPartial(result); props.refresh() }
   }
-  const act = async (action: RecurrenceAction, retry = false) => {
+  const act = async (action: RecurrenceAction, retry?: RecurrenceControlIntent) => {
     if (retry ? !retryCapable() : !capable(action)) return
     const identity = key(), captured = generation, instanceId = props.instanceId
-    const intent = retry ? heldIntent()! : createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
+    const intent = retry ?? createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
     unresolved.set(identity, intent); setHeld(intent); setBusy(true); setRefusal(undefined)
     try {
       if (action === "run-now") {
@@ -82,13 +96,18 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
       // anything else stays held for Check status, never resent. A refused retry
       // leaves the original partial request held.
       const refusal = retry ? undefined : recurrenceControlRefusalKey(error)
-      if (refusal) settle(intent, identity, refusal)
+      // The exact request is released wherever it is; only its own context sees the message.
+      if (refusal) settle(intent, identity, refusal, captured === generation)
     }
     finally { if (captured === generation) setBusy(false) }
   }
-  const check = async () => {
+  /** Read-only status read. A refresh (`reconcile`) records a witness only when its
+   * own completed read, still in this context, leaves the exact request partial. */
+  const check = async (reconcile = false): Promise<boolean> => {
     const intent = heldIntent(), identity = key(), captured = generation
-    if (!intent || busy() || !props.enabled()) return
+    witness = undefined
+    // A refresh's own row read must not skip it; the explicit button keeps the full gate.
+    if (!intent || busy() || !(reconcile ? props.retryEnabled() : props.enabled())) return false
     unresolved.set(identity, intent); setHeld(intent)
     setBusy(true)
     try {
@@ -98,10 +117,21 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
         if (captured === generation && key() === identity && (completedRecurrenceManual(result, intent) || rejected)) settle(intent, identity, rejected)
       } else {
         const result = await serverApi.missionRecurrenceControlStatus(props.instanceId, intent.scheduleID, intent)
-        if (captured === generation && key() === identity) finish(result, intent, identity)
+        if (captured === generation && key() === identity) {
+          finish(result, intent, identity)
+          if (reconcile && partialRecurrenceControl(result, intent)) witness = { generation, intent }
+        }
       }
     } catch { /* Retain the exact request identity. */ }
     finally { if (captured === generation) setBusy(false) }
+    return Boolean(witness)
+  }
+  /** Resends only the request its preceding read witnessed, once, in that same context. */
+  const resend = () => {
+    const read = witness, intent = heldIntent()
+    witness = undefined
+    return read && read.generation === generation && intent && sameIntent(intent, read.intent) && retryCapable()
+      ? act(read.intent.action, read.intent) : Promise.resolve()
   }
   const stop = async () => {
     if (!capable("stop")) return
@@ -118,7 +148,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const description = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
   const primaryAction = () => heldIntent() ? undefined : PRIMARY.find(action => props.schedule.actions.includes(action))
   const primary = (): MissionPrimaryAction | undefined => {
-    if (heldIntent()) return { key: "status", label: t("missionsPanel.action.checkStatus"), ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), onSelect: check }
+    if (heldIntent()) return { key: "status", label: t("missionsPanel.action.checkStatus"), ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), onSelect: () => void check() }
     const action = primaryAction()
     return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), onSelect: () => act(action) } : undefined
   }
@@ -126,10 +156,9 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   // so the toolbar never falls back to the one-time Mission wording.
   const stopAction = (): MissionPrimaryAction => ({ key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop })
   // The panel refresh first reads the exact request's status, then resends it
-  // only when that read leaves it partially applied.
+  // only when that completed read leaves it partially applied.
   const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.retryEnabled(),
-    reconcile: () => heldIntent() ? check() : Promise.resolve(),
-    resend: () => retryCapable() ? act(heldIntent()!.action, true) : Promise.resolve() }
+    reconcile: () => check(true), resend }
   // Always present for schedules, disabled while unavailable or a request is held.
   const runNow = (): MissionPrimaryAction => ({ key: "run-now", label: label("run-now"), ariaLabel: description("run-now"),
     disabled: !capable("run-now"), onSelect: () => act("run-now") })

@@ -13,9 +13,10 @@ import { partialInterrupt } from "./mission-native-execution-model"
 export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; onSelect: () => void | Promise<void> }
 
 /** Explicit refresh-then-resend of a selected item's unconfirmed control, owned
- * by the panel's refresh button. `reconcile` is read-only; `resend` replays the
- * exact original request identity and runs only from that explicit click. */
-export interface MissionControlRetry { pending: () => boolean; reconcile: () => Promise<void>; resend: () => Promise<void> }
+ * by the panel's refresh button. `reconcile` is read-only and resolves true only
+ * when its own completed read leaves the exact request resendable; `resend`
+ * replays that original identity and runs only after it, from that explicit click. */
+export interface MissionControlRetry { pending: () => boolean; reconcile: () => Promise<boolean>; resend: () => Promise<void> }
 
 /** Play/Pause/Stop for the selected Mission: one contextual primary action and
  * Stop. Unresolved requests are checked, and resent only on explicit refresh. */

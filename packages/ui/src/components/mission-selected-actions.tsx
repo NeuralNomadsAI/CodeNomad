@@ -29,7 +29,8 @@ export function MissionSelectedActions(props: {
   const recovery = createMissionRecoveryAction({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
     target: "coordinator", get activity() { return props.coordinatorActivity },
     get disabled() { return props.disabled || !props.active }, onAdmitted: () => props.onAdmitted() })
-  const unregister = props.registerRetry?.({ pending: lifecycle.retryable, reconcile: async () => {}, resend: lifecycle.resend })
+  // Its read is the panel's own mission map refresh; the durable control decides the resend.
+  const unregister = props.registerRetry?.({ pending: lifecycle.retryable, reconcile: async () => true, resend: lifecycle.resend })
   onCleanup(() => unregister?.())
   // A running Mission whose coordinator is observed idle without a report (no
   // active descendants) offers recovery in Play's place. Unknown activity, e.g.
