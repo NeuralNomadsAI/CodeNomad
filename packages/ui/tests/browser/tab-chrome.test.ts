@@ -226,6 +226,31 @@ test("keyboard focus keeps overflowing tabs clear of the sticky new-instance but
   } finally { await page.close() }
 })
 
+test("focusing the sticky new-instance button keeps the strip where it was", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 800 } })
+  try {
+    await prepare(page)
+    const bar = page.locator('[data-fixture="instances"]')
+    const offset = () => bar.locator(".tab-scroll").evaluate(e => Math.round(e.scrollLeft))
+    for (const dir of ["ltr", "rtl"]) {
+      await page.evaluate(dir => { document.dir = dir }, dir)
+      await bar.locator(".tab-scroll").evaluate(e => { e.scrollLeft = 0 })
+      await page.waitForTimeout(60)
+      // Shift+Tab from the bar actions lands on the button.
+      await bar.locator(".tab-bar-actions .new-tab-button").first().focus()
+      await page.keyboard.press("Shift+Tab")
+      assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("new-instance-button")), true)
+      assert.equal(await offset(), 0, `${dir}: keyboard focus scrolled the strip`)
+      await page.evaluate(() => (document.activeElement as HTMLElement).blur())
+      // Programmatic focus (e.g. a popup returning focus) behaves the same.
+      await bar.locator(".new-instance-button").evaluate(e => (e as HTMLElement).focus())
+      await page.waitForTimeout(60)
+      assert.equal(await offset(), 0, `${dir}: programmatic focus scrolled the strip`)
+    }
+    await page.evaluate(() => { document.dir = "ltr" })
+  } finally { await page.close() }
+})
+
 test("double-click, F2 and the context menu rename the tab's project through the shared dialog", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const patches: any[] = []

@@ -121,7 +121,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
               event.preventDefault()
               const active = document.activeElement
               const unclaimed = !active || active === document.body || Boolean(contentRef?.contains(active))
-              if (returnFocus && unclaimed) props.anchor?.focus()
+              if (returnFocus && unclaimed) props.anchor?.focus({ preventScroll: true })
               returnFocus = false
             }}>
             <header class="window-header">

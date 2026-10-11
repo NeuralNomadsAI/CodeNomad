@@ -122,6 +122,25 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     onClick: () => props.onNew(),
     onLongPress: (anchor) => props.onOpenLauncher?.(anchor),
   })
+
+  // Focusing the sticky new-instance button makes Chromium scroll its in-flow
+  // position (after the last tab) into view, although the button is always
+  // visible. Scroll events land after focus, so `offset` still holds the
+  // pre-focus position and the strip stays where it was.
+  let newButtonSlot!: HTMLDivElement
+  onMount(() => {
+    const viewport = newButtonSlot.closest<HTMLElement>(".tab-scroll")
+    if (!viewport) return
+    let offset = viewport.scrollLeft
+    const remember = () => { offset = viewport.scrollLeft }
+    const keep = () => { viewport.scrollLeft = offset }
+    viewport.addEventListener("scroll", remember, { passive: true })
+    newButtonSlot.addEventListener("focusin", keep)
+    onCleanup(() => {
+      viewport.removeEventListener("scroll", remember)
+      newButtonSlot.removeEventListener("focusin", keep)
+    })
+  })
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
@@ -229,6 +248,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                   // the sticky new-instance button would stay covered. Keyboard focus only:
                   // a pointer drag must not shift the tab under the cursor.
                   const target = event.target as HTMLElement
+                  if (!event.currentTarget.contains(target)) return
                   if (target.matches(":focus-visible")) target.scrollIntoView({ block: "nearest", inline: "nearest" })
                 }}
               >
@@ -268,7 +288,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 </Show>
               </div>
               {/* Like a browser, the new-instance button follows the last tab. */}
-              <div class="tab-strip-new">
+              <div class="tab-strip-new" ref={newButtonSlot}>
                 <button
                   class="new-tab-button new-instance-button"
                   {...newInstanceHandlers}
