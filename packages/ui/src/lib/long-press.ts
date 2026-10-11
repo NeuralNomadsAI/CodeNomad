@@ -33,6 +33,11 @@ export function createLongPressHandlers(options: { onClick: () => void; onLongPr
     onPointerUp: cancel,
     onPointerLeave: cancel,
     onPointerCancel: cancel,
+    // After a touch long press, the compatibility mouse events would refocus
+    // the button and dismiss the popup that just opened.
+    onTouchEnd(event: TouchEvent) {
+      if (swallowClick) event.preventDefault()
+    },
     onContextMenu(event: MouseEvent) {
       event.preventDefault()
       cancel()
@@ -45,8 +50,10 @@ export function createLongPressHandlers(options: { onClick: () => void; onLongPr
       options.onLongPress(event.currentTarget as HTMLElement)
     },
     onClick(event: MouseEvent) {
-      if (swallowClick) {
-        swallowClick = false
+      const ending = swallowClick
+      swallowClick = false
+      // Keyboard activation (detail 0) never ends a pointer long press.
+      if (ending && event.detail !== 0) {
         event.preventDefault()
         return
       }

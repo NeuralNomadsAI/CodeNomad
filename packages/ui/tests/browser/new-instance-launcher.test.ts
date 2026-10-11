@@ -114,3 +114,62 @@ test("creation and secondary actions close the launcher before running", async (
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("dismissal returns focus, aborted long presses keep keyboard activation, and the active row stays visible", async () => {
+  const { page, errors, calls } = await prepare()
+  try {
+    await plus(page).focus()
+    await page.keyboard.press("Alt+ArrowDown")
+    await openedWithFocus(page)
+    await page.keyboard.press("Escape")
+    await launcher(page).waitFor({ state: "detached" })
+    await page.waitForFunction(() => document.activeElement?.classList.contains("new-instance-button"))
+
+    // Long press, then release away from the button: no click ends it.
+    const box = (await plus(page).boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await launcher(page).waitFor()
+    await page.mouse.move(10, 400)
+    await page.mouse.up()
+    await page.keyboard.press("Escape")
+    await launcher(page).waitFor({ state: "detached" })
+    await plus(page).focus()
+    await page.keyboard.press("Enter")
+    assert.deepEqual(await calls(), ["home"])
+
+    await page.keyboard.press("Alt+ArrowDown")
+    await openedWithFocus(page)
+    await page.keyboard.press("ArrowUp")
+    await page.keyboard.type("project")
+    await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher [role=option]").length === 12)
+    const visible = await page.evaluate(() => {
+      const list = document.querySelector(".new-instance-launcher-recents")!.getBoundingClientRect()
+      const id = document.querySelector(".new-instance-launcher-search-input")!.getAttribute("aria-activedescendant")!
+      const row = document.getElementById(id)!.getBoundingClientRect()
+      return row.top >= list.top - 1 && row.bottom <= list.bottom + 1
+    })
+    assert.equal(visible, true)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a touch long press opens the launcher and keeps it open after the finger lifts", async () => {
+  const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 760 }, locale: "en-US" })
+  const page = await context.newPage()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).launcherFixture))
+    const box = (await plus(page).boundingBox())!
+    const cdp = await context.newCDPSession(page)
+    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] })
+    await launcher(page).waitFor()
+    await page.waitForTimeout(400)
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+    await page.waitForTimeout(400)
+    assert.equal(await launcher(page).count(), 1)
+    assert.deepEqual(await page.evaluate(() => [...(window as any).launcherFixture.calls]), [])
+  } finally { await context.close() }
+})

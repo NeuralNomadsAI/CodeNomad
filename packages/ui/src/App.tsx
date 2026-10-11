@@ -568,6 +568,10 @@ const App: Component = () => {
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
   const [launcherAnchor, setLauncherAnchor] = createSignal<HTMLElement>()
+  // The launcher is anchored to the tab bar: the home page or a closed tab bar retires it.
+  createEffect(() => {
+    if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
+  })
 
   function handleOpenSidecarPicker() {
     setSidecarPickerOpen(true)

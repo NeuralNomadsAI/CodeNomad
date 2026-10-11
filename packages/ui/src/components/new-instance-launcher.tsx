@@ -1,6 +1,6 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { ChevronRight, Folder, FolderPlus, GitBranch, Globe, Home, Hourglass, Loader2, MonitorUp, Plus, Search } from "lucide-solid"
+import { ChevronRight, Folder, FolderPlus, GitBranch, Globe, Home, Hourglass, MonitorUp, Plus, Search } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useI18n } from "../lib/i18n"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
@@ -31,7 +31,7 @@ interface NewInstanceLauncherProps {
 export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const { t } = useI18n()
   const { recentFolders } = useConfig()
-  const { remoteServers, connectingServerId, saveServer, connectSavedServer } = useRemoteServerProfiles()
+  const { remoteServers, saveServer, connectSavedServer } = useRemoteServerProfiles()
   const [query, setQuery] = createSignal("")
   const [activeIndex, setActiveIndex] = createSignal(0)
   const [serversExpanded, setServersExpanded] = createSignal(false)
@@ -53,19 +53,28 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
       || folder.path.toLowerCase().includes(needle))
   })
 
+  // An action or an outside click hands focus elsewhere; Escape returns it to the button.
+  let skipFocusReturn = false
+
   // Each opening starts from an empty filter on the most recent project.
   createEffect(on(() => props.open, (open) => {
     if (!open) return
     setQuery("")
     setActiveIndex(0)
     setServersExpanded(false)
+    skipFocusReturn = false
   }))
   createEffect(on(matches, () => setActiveIndex(0), { defer: true }))
+  // Keep the highlighted project visible, including after the filter changes.
+  createEffect(on([activeIndex, matches], ([index]) => {
+    listRef?.querySelector(`[data-launcher-index="${index}"]`)?.scrollIntoView({ block: "nearest" })
+  }))
 
   const close = () => props.onOpenChange(false)
   // Close first so the launched flow (dialog, tab, home page) owns focus.
   const run = (action: () => void) => {
     if (props.isLoading) return
+    skipFocusReturn = true
     close()
     action()
   }
@@ -78,9 +87,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   function moveActive(delta: number) {
     const count = matches().length
     if (!count) return
-    const next = (activeIndex() + delta + count) % count
-    setActiveIndex(next)
-    listRef?.querySelector(`[data-launcher-index="${next}"]`)?.scrollIntoView({ block: "nearest" })
+    setActiveIndex((activeIndex() + delta + count) % count)
   }
 
   function handleSearchKeyDown(event: KeyboardEvent) {
@@ -104,7 +111,14 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
         gutter={6}
       >
         <Popover.Portal>
-          <Popover.Content class="window-shell new-instance-launcher" aria-busy={props.isLoading}>
+          <Popover.Content class="window-shell new-instance-launcher" aria-busy={props.isLoading}
+            onPointerDownOutside={() => { skipFocusReturn = true }}
+            onCloseAutoFocus={(event) => {
+              // The popup has an anchor, not a Kobalte trigger: restore focus ourselves.
+              event.preventDefault()
+              if (!skipFocusReturn) props.anchor?.focus()
+              skipFocusReturn = false
+            }}>
             <header class="window-header">
               <Popover.Title class="window-title">{t("newInstanceLauncher.title")}</Popover.Title>
             </header>
@@ -195,17 +209,14 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
               <div class="new-instance-launcher-servers" role="group" aria-label={t("newInstanceLauncher.servers")}>
                 <For each={remoteServers()}>
                   {(server) => (
-                    <button type="button" class="new-instance-launcher-server" title={server.baseUrl}
+                    <button type="button" class="new-instance-launcher-server" title={server.baseUrl} disabled={props.isLoading}
                       onClick={() => run(() => void connectSavedServer(server.id))}>
                       <Globe class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
                       <span class="new-instance-launcher-recent-name">{server.name}</span>
-                      <Show when={connectingServerId() === server.id}>
-                        <Loader2 class="w-4 h-4 animate-spin icon-muted" aria-hidden="true" />
-                      </Show>
                     </button>
                   )}
                 </For>
-                <button type="button" class="new-instance-launcher-server" onClick={() => run(dialogs.addServer)}>
+                <button type="button" class="new-instance-launcher-server" disabled={props.isLoading} onClick={() => run(dialogs.addServer)}>
                   <Plus class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
                   <span class="new-instance-launcher-recent-name">{t("newInstanceLauncher.addServer")}</span>
                 </button>
@@ -214,7 +225,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
 
             <footer class="window-footer new-instance-launcher-footer">
               <Show when={canOpenRemoteWindows()}>
-                <button type="button" class="window-action" aria-expanded={serversExpanded()}
+                <button type="button" class="window-action" disabled={props.isLoading} aria-expanded={serversExpanded()}
                   onClick={() => setServersExpanded((value) => !value)}>
                   <Globe class="w-4 h-4" aria-hidden="true" />
                   <span>{t("newInstanceLauncher.servers")}</span>
@@ -222,12 +233,12 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 </button>
               </Show>
               <Show when={props.onOpenSidecar}>
-                <button type="button" class="window-action" onClick={() => run(() => props.onOpenSidecar?.())}>
+                <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(() => props.onOpenSidecar?.())}>
                   <MonitorUp class="w-4 h-4" aria-hidden="true" />
                   <span>{t("newInstanceLauncher.sidecar")}</span>
                 </button>
               </Show>
-              <button type="button" class="window-action new-instance-launcher-home" onClick={() => run(props.onOpenHome)}>
+              <button type="button" class="window-action new-instance-launcher-home" disabled={props.isLoading} onClick={() => run(props.onOpenHome)}>
                 <Home class="w-4 h-4" aria-hidden="true" />
                 <span>{t("newInstanceLauncher.fullHome")}</span>
               </button>
