@@ -140,7 +140,11 @@ its snapshot records the intent; the original is never resent. The backend admit
 that new request with its own permit only after a fresh exact native read through
 the current connection shows the original recorded and incomplete under the same
 owner; a committed superseding control retires the original permit, a no-effect
-refusal restores it. Run now itself still completes only on admission or archive.
+refusal restores it. If another client's exact read proves a retained middle
+intent had no effect while a newer control still supersedes it, only that
+intent's permit is released and the newer control inherits its predecessor, so
+a later no-effect restores (and a commit retires) the earlier intent instead of
+orphaning its permit. Run now itself still completes only on admission or archive.
 In-flight, preparing and partial Pause/Stop permits are never superseded. A Play/Resume whose native
 Job start fails while a fresh read positively shows no running daily Job completes
 its record with the schedule Interrupted (reason `error`), releasing the backend

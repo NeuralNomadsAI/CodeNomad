@@ -48,6 +48,12 @@ function locate(registry: Map<string, Held> | undefined, workspaceID: string, re
  * A no-effect request restores its superseded intent, still uncertain. */
 function drop(registry: Map<string, Held>, id: string, record: Held, effective: boolean) {
   registry.delete(id); record.release()
+  // A retained intent settled without effect leaves the chain: whoever superseded
+  // it now supersedes its own predecessor, which a later no-effect still restores.
+  if (!effective && id === retainedKey(record.binding)) {
+    for (const heir of registry.values()) if (heir.supersedes === record) heir.supersedes = record.supersedes
+    return
+  }
   for (let old = record.supersedes; old; old = effective ? old.supersedes : undefined) {
     if (registry.get(retainedKey(old.binding)) !== old) continue
     if (effective) { registry.delete(retainedKey(old.binding)); old.release() }
@@ -172,8 +178,9 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   // A deletion already waiting on the old permit blocks this fresh entry.
   const release = reuses ? previous!.release : enter()
   if (!release) return undefined
+  // A successor inherits its predecessor's superseded chain only when promoted.
   const record: Held = reuses ? previous! : { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release,
-    ...(superseding ? { supersedes: superseding } : replaces && previous!.supersedes ? { supersedes: previous!.supersedes } : {}) }
+    ...(superseding ? { supersedes: superseding } : {}) }
   if (reuses) record.retrying = true
   else if (replaces) previous!.successor = record
   else {
@@ -233,6 +240,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
         // Retire the replaced-connection permit only now: the fresh permit is
         // already entered, so deletion never observes an unheld checkout.
         previous!.successor = undefined
+        if (previous!.supersedes) record.supersedes = previous!.supersedes
         registry!.set(id, record)
         previous!.release()
       }
