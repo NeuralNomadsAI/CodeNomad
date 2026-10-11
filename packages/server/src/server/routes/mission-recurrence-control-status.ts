@@ -8,7 +8,7 @@ import { recurrenceControlRequestSchema, recurrenceControlStatusSchema } from ".
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { requestAdmission } from "../request-admission"
-import { captureRecurrenceControlHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
+import { captureRecurrenceControlHoldRead, captureReplacedRecurrenceHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
   recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -40,7 +40,10 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       const connection = await lifetime.wait(deps.manager.getSharedServiceConnection(id))
       if (!connection) throw new Error("Native connection unavailable")
       const heldRead = captureRecurrenceControlHoldRead(deps.fence, id, { directory }, input.data, connection)
-      const currentDeletion = heldRead ?? await lifetime.wait(captureDisplayIdentities(deps.fence, deps.manager, id, [base.directory, directory])) ?? (() => false)
+      // A permit retained from a retired connection may settle while deletion waits
+      // on it too, but only after the ownership and owner proofs below.
+      const replacedRead = heldRead ? undefined : captureReplacedRecurrenceHoldRead(deps.fence, id, { directory }, input.data, connection)
+      const currentDeletion = heldRead ?? replacedRead ?? await lifetime.wait(captureDisplayIdentities(deps.fence, deps.manager, id, [base.directory, directory])) ?? (() => false)
       const current = () => {
         lifetime.signal.throwIfAborted(); connection.assertCurrent()
         if (!currentDeletion() || deps.manager.get(id) !== workspace

@@ -50,6 +50,37 @@ test("a replacement connection settles the original permit only with a freshly r
   next.dispatched(); next.settled(); next.dispose()
 })
 
+test("a retired connection's partial permit is retired only at the proven successor's dispatch, with identical owner, root and profile", async () => {
+  const retired = () => { let live = true; return { retire: () => { live = false },
+    connection: { assertCurrent: () => { if (!live) throw new Error("retired") } } as never } }
+  const admission = { root: "root", profile: "profile" }
+  const partial = { version: 1 as const, scheduleID: "schedule", requestID: "pause_one", expectedRevision: 1, revision: 2,
+    action: "pause" as const, state: "paused" as const, controlsComplete: false, outcome: "unknown" as const }
+  const fence = new WorktreeDeletionFence(50), old = retired()
+  const binding = { workspaceID: "owned", scheduleID: "schedule", requestID: "pause_one", action: "pause" as const,
+    expectedRevision: 1, location: { directory: "/project" }, connection: old.connection, owner, admission }
+  const original = holdRecurrenceControl(fence, binding, () => fence.enter(["/project"]))!
+  original.dispatched(); original.partial(); original.dispose()
+  const fresh = { ...binding, connection: retired().connection }
+  assert.throws(() => holdRecurrenceControl(fence, fresh, () => fence.enter(["/project"]), true), /uncertain/, "a live original connection keeps its permit")
+  old.retire()
+  for (const [label, changed] of [["root", { ...fresh, admission: { ...admission, root: "other" } }],
+    ["profile", { ...fresh, admission: { ...admission, profile: "other" } }], ["unknown admission", { ...fresh, admission: undefined }],
+    ["project", { ...fresh, owner: { ...owner, projectID: "other" } }], ["plain repeat", fresh]] as const) {
+    assert.throws(() => holdRecurrenceControl(fence, changed, () => fence.enter(["/project"]), label !== "plain repeat"), /uncertain/, label)
+  }
+  const successor = holdRecurrenceControl(fence, fresh, () => fence.enter(["/project"]), true)!
+  assert.equal(successor.requiresPartialProof, true)
+  assert.throws(() => holdRecurrenceControl(fence, fresh, () => fence.enter(["/project"]), true), /uncertain/, "one successor at a time")
+  assert.throws(() => successor.dispatched(), /dispatch unavailable/, "unproven successor never dispatches")
+  successor.dispose()
+  assert.equal(await fence.run("/project", ["/project"], async () => true).catch(() => false), false, "the predecessor still holds")
+  const proven = holdRecurrenceControl(fence, fresh, () => fence.enter(["/project"]), true)!
+  proven.confirmPartial(partial)
+  proven.dispatched(); proven.settled(); proven.dispose()
+  assert.equal(await fence.run("/project", ["/project"], async () => true), true, "both permits released after settlement")
+})
+
 test("retry without the original partial hold dispatches only after an exact native partial receipt; it never adopts a new connection", () => {
   const fence = new WorktreeDeletionFence()
   const binding = { workspaceID: "owned", scheduleID: "schedule", requestID: "request_one",

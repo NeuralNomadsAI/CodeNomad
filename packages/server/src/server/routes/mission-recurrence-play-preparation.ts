@@ -56,23 +56,27 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
     || !sameLocation(location, { directory }) || !await deps.manager.ownsLocation(workspaceID, location, client, signal)) throw new Error("Foreign native Location")
   const checkout = await deps.manager.getWorktreeIdentityForPath(workspaceID, directory)
   if (!checkout) throw new Error("Checkout unavailable")
+  const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
+  current()
   let hold: ReturnType<typeof holdRecurrenceControl> | undefined
   try {
     hold = holdRecurrenceControl(deps.fence, { scheduleID: input.scheduleID, requestID: input.requestID,
       action: input.action, expectedRevision: input.expectedRevision,
       workspaceID, location: { directory }, connection, owner: { workspace, projectID: location.project.id,
-        projectCanonical: location.project.canonical, checkout } }, () => deps.fence.enter([checkout]), input.retry)
+        projectCanonical: location.project.canonical, checkout },
+      admission: { root: canonicalAuthority(physicalRoot), profile: canonicalAuthority(profile) } },
+    () => deps.fence.enter([checkout]), input.retry)
     if (!hold) throw new RecurrenceControlBusy("Worktree deletion in progress")
     if (hold.requiresPartialProof) {
-      // This is a new physical admission after backend restart, not a transfer
-      // of an old permit. Native storage must prove the exact prior partial action.
+      // This is a new physical admission (after a backend restart, or beside a
+      // permit retained from a retired connection), not a transfer of an old
+      // permit. Native storage must prove the exact prior partial action.
       const status = recurrenceControlStatusSchema.parse(await client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus({
         scheduleID: input.scheduleID, requestID: input.requestID, action: input.action, expectedRevision: input.expectedRevision,
       }, { location: { directory }, ...locationRequestOptions({ directory }), signal }))
       current()
       hold.confirmPartial(status)
     }
-    const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
     const assertRoots = async () => {
       current()
       if (await deps.manager.getWorktreeIdentityForPath(workspaceID, directory) !== checkout

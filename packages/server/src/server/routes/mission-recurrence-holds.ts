@@ -8,10 +8,17 @@ import type { ServiceConnection } from "../../workspaces/opencode-service"
  * physical checkout entered in the deletion fence. A replacement connection may
  * only settle the original permit after a fresh read proves all of them again. */
 export interface RecurrenceHoldOwner { workspace: object; projectID: string; projectCanonical: string; checkout: string }
+/** Canonical physical root and Settings profile authority of a human admission. */
+export interface RecurrenceHoldAdmission { root: string; profile: string }
 interface Binding extends RecurrenceControlRequest {
   workspaceID: string; location: { directory: string; workspaceID?: string }; connection: ServiceConnection; owner?: RecurrenceHoldOwner
+  admission?: RecurrenceHoldAdmission
 }
-interface Held { binding: Binding; state: "preparing" | "dispatched" | "uncertain" | "partial"; retrying?: boolean; release(): void }
+interface Held {
+  binding: Binding; state: "preparing" | "dispatched" | "uncertain" | "partial"; retrying?: boolean; release(): void
+  /** Fresh admission proving itself before it may retire this replaced-connection permit. */
+  successor?: object
+}
 // Same bounded, fence-scoped mutation-admission retention as mission-creation-holds.
 // This tracks physical permits, never auth, timers, authority, scheduling or replay.
 const held = new WeakMap<WorktreeDeletionFence, Map<string, Held>>()
@@ -27,6 +34,21 @@ export function captureRecurrenceControlHoldRead(fence: WorktreeDeletionFence, w
   // its physical permit is retained. This exact read is settlement, not mutation.
   return () => {
     record.binding.connection.assertCurrent()
+    return registry!.get(id) === record && record.state !== "preparing"
+  }
+}
+
+/** Settlement read of an exact permit retained from a retired connection, through
+ * the current one. Like the original read it may proceed while a deletion waits
+ * on that permit, but it only reads: the caller must still prove Location
+ * ownership and re-prove the owner, and can at most release the permit. */
+export function captureReplacedRecurrenceHoldRead(fence: WorktreeDeletionFence, workspaceID: string,
+  location: Binding["location"], request: RecurrenceControlRequest, connection: ServiceConnection): (() => boolean) | undefined {
+  const registry = held.get(fence), id = key(workspaceID, request.scheduleID), record = registry?.get(id)
+  if (!record || record.state === "preparing" || record.binding.connection === connection || current(record.binding.connection)
+    || !record.binding.owner || !sameRequest(record.binding, { ...request, location })) return undefined
+  return () => {
+    connection.assertCurrent()
     return registry!.get(id) === record && record.state !== "preparing"
   }
 }
@@ -74,21 +96,35 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   if (!registry) { registry = new Map(); held.set(fence, registry) }
   const id = key(binding.workspaceID, binding.scheduleID)
   const previous = registry.get(id)
-  if (previous && (!retry || previous.state !== "partial" || previous.retrying || previous.binding.connection !== binding.connection
-    || !sameLocation(previous.binding.location, binding.location) || previous.binding.requestID !== binding.requestID
-    || previous.binding.expectedRevision !== binding.expectedRevision
-    || previous.binding.action !== binding.action)) {
+  const reuses = !!previous && retry && previous.state === "partial" && !previous.retrying && !previous.successor
+    && previous.binding.connection === binding.connection && sameRequest(previous.binding, binding)
+  // Within the same backend the original partial/uncertain permit may outlive its
+  // retired connection. An explicit exact retry through the current connection
+  // may prepare a fresh admission beside it, but only with the identical
+  // re-proven owner, root and profile; it retires the old permit at dispatch,
+  // after the native partial proof, and never inherits or steals it.
+  const replaces = !!previous && retry && (previous.state === "partial" || previous.state === "uncertain")
+    && !previous.retrying && !previous.successor && previous.binding.connection !== binding.connection
+    && !current(previous.binding.connection) && sameRequest(previous.binding, binding)
+    && sameOwner(previous.binding.owner, binding.owner) && sameAdmission(previous.binding.admission, binding.admission)
+  if (previous && !reuses && !replaces) {
     const message = "Recurrence control remains uncertain; read its exact request status"
     throw previous.binding.requestID === binding.requestID ? new RecurrenceControlOutstanding(message) : new RecurrenceControlBusy(message)
   }
   if (!previous && registry.size >= 128) throw new RecurrenceControlBusy("Recurrence mutation admission capacity exhausted")
-  const release = previous?.release ?? enter()
+  // A deletion already waiting on the old permit blocks this fresh entry.
+  const release = reuses ? previous!.release : enter()
   if (!release) return undefined
-  const record: Held = previous ?? { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release }
-  if (previous) record.retrying = true
+  const record: Held = reuses ? previous! : { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release }
+  if (reuses) record.retrying = true
+  else if (replaces) previous!.successor = record
   else registry.set(id, record)
+  /** Whether this attempt still owns its schedule slot (a successor: still beside its predecessor). */
+  const owned = () => replaces && registry!.get(id) !== record
+    ? registry!.get(id) === previous && previous!.successor === record && !current(previous!.binding.connection)
+    : registry!.get(id) === record
   let proven = false
-  const requiresPartialProof = retry && !previous
+  const requiresPartialProof = retry && !reuses
   let partialProven = false
   return {
     requiresPartialProof,
@@ -97,7 +133,7 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
     confirmPartial(receipt: RecurrenceControlStatus) {
       const original = record.binding
       original.connection.assertCurrent()
-      if (registry!.get(id) !== record || !requiresPartialProof || record.state !== "preparing"
+      if (!owned() || !requiresPartialProof || record.state !== "preparing"
         || !["pause", "stop"].includes(original.action) || receipt.version !== 1
         || receipt.scheduleID !== original.scheduleID || receipt.requestID !== original.requestID
         || receipt.action !== original.action || receipt.expectedRevision !== original.expectedRevision
@@ -108,14 +144,27 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
       partialProven = true
     },
     dispatched() {
-      if (registry!.get(id) !== record || requiresPartialProof && !partialProven
+      if (!owned() || requiresPartialProof && !partialProven
         || record.state !== "preparing" && !(record.state === "partial" && record.retrying)) throw new Error("Recurrence dispatch unavailable")
+      record.binding.connection.assertCurrent()
+      if (registry!.get(id) !== record) {
+        // Retire the replaced-connection permit only now: the fresh permit is
+        // already entered, so deletion never observes an unheld checkout.
+        previous!.successor = undefined
+        registry!.set(id, record)
+        previous!.release()
+      }
       record.state = "dispatched"
     },
     /** Proven outcome: a committed receipt, or a native proof that nothing applied. */
     settled() { if (record.state === "dispatched") proven = true },
     partial() { if (record.state === "dispatched") record.state = "partial" },
     dispose() {
+      if (replaces && registry!.get(id) !== record) {
+        // Never promoted: the predecessor keeps its permit; drop only this one.
+        if (previous!.successor !== record) return
+        previous!.successor = undefined; release(); return
+      }
       if (registry!.get(id) !== record) return
       record.retrying = false
       if (record.state !== "preparing" && !proven) { if (record.state !== "partial") record.state = "uncertain"; return }
@@ -172,4 +221,19 @@ export async function readRecurrenceHoldOwner(manager: { getWorktreeIdentityForP
 function sameOwner(admitted: RecurrenceHoldOwner | undefined, fresh: RecurrenceHoldOwner | undefined) {
   return !!admitted && !!fresh && admitted.workspace === fresh.workspace && admitted.projectID === fresh.projectID
     && admitted.projectCanonical === fresh.projectCanonical && admitted.checkout === fresh.checkout
+}
+
+function sameAdmission(admitted: RecurrenceHoldAdmission | undefined, fresh: RecurrenceHoldAdmission | undefined) {
+  return !!admitted && !!fresh && admitted.root === fresh.root && admitted.profile === fresh.profile
+}
+
+function sameRequest(admitted: Binding, fresh: RecurrenceControlRequest & { location: Binding["location"] }) {
+  return sameLocation(admitted.location, fresh.location) && admitted.scheduleID === fresh.scheduleID
+    && admitted.requestID === fresh.requestID && admitted.expectedRevision === fresh.expectedRevision
+    && admitted.action === fresh.action
+}
+
+/** A retired connection never becomes current again. */
+function current(connection: ServiceConnection) {
+  try { connection.assertCurrent(); return true } catch { return false }
 }

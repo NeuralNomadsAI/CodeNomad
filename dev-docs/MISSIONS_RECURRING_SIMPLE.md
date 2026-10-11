@@ -86,7 +86,19 @@ and partial result in the current owned Location. Missing, foreign, completed or
 unknown records cannot authorize it. This never transfers an old permit, starts
 a Job or changes the request identity; native idempotency still decides effects.
 Failed preparation releases this fresh admission, but preserves a surviving
-original partial permit. A retry or a known held identity's repeat stays uncoded
+original partial permit.
+Within one backend, a partial or uncertain Pause/Stop permit can outlive its
+retired OpenCode connection (event-stream end, failed request, new daemon).
+An explicit exact retry through the current connection may then prepare a fresh
+admission beside it, never transfer it: the same workspace, native project and
+storage, directory, checkout, physical root and Settings profile must be
+re-proven, plus the same exact native partial record. The old permit is retired
+only at dispatch, after the fresh one is entered. An in-flight, still-preparing
+or already-replacing original, a live original connection, or any mismatch
+refuses without effects; a deletion already waiting on the old permit blocks the
+fresh entry. Status reads through the current connection may still settle that
+permit (committed and complete, with the owner re-proven) while such a deletion
+waits, and never resend. A retry or a known held identity's repeat stays uncoded
 on early failure: no dispatch in this attempt says nothing about earlier effects.
 Everything else (including an unprovable profile change) stays unknown.
 
