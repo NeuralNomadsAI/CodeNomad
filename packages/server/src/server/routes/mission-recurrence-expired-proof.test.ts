@@ -138,8 +138,12 @@ test("a native refusal before any record releases its permit once native proves 
     assert.equal((await f.send({ action: "stop", expectedRevision, requestID: "stop_blocked" })).json().code, "recurrence-not-dispatched")
     // A browser can never supply the proof time.
     assert.equal((await f.status({ ...play, issuedAt: 0 })).statusCode, 400)
-    // Advance past the original proof's lifetime: native's own clock proves expiry.
+    // At the bare lifetime a commit racing the boundary elsewhere may still land: no release yet.
     t.mock.timers.setTime(Date.now() + 30_000)
+    assert.equal((await f.status(play)).json().outcome, "unknown")
+    assert.equal(await f.deletionRuns(), false)
+    // Past the lifetime and its grace: native's own clock proves expiry.
+    t.mock.timers.setTime(Date.now() + 5_000)
     const late = await f.status(play)
     assert.deepEqual([late.statusCode, late.json().outcome, late.json().reason], [200, "rejected", "control-conflict"])
     assert.equal(typeof f.native.statusInputs.at(-1)!.issuedAt, "number", "the backend's exact held issue time")
@@ -164,10 +168,10 @@ test("an in-flight original delayed past its proof expiry never records after na
     await settle(() => f.native.controls === 1)
     // Dispatched and in flight: an exact read before expiry is unknown and retains it.
     assert.equal((await f.status(play)).json().outcome, "unknown")
-    t.mock.timers.setTime(Date.now() + 30_000)
+    t.mock.timers.setTime(Date.now() + 35_000)
     assert.equal((await f.status(play)).json().outcome, "rejected")
     // Even a wall clock moved back (proof fresh again) cannot let the in-flight call record.
-    t.mock.timers.setTime(Date.now() - 30_000)
+    t.mock.timers.setTime(Date.now() - 35_000)
     delayed.open()
     const reply = await original
     assert.deepEqual([reply.statusCode, reply.json().code], [409, "recurrence-control-conflict"])
@@ -188,7 +192,7 @@ test("expiry proof fails closed for an unheld identity, a mismatched owner after
     assert.equal((await f.send(play)).statusCode, 503)
     f.native.failBeforeRecord = false
     // An identity this backend holds no permit for never carries a proof time.
-    t.mock.timers.setTime(Date.now() + 30_000)
+    t.mock.timers.setTime(Date.now() + 35_000)
     const foreign = await f.status({ ...play, requestID: "play_unheld" })
     assert.equal(foreign.json().outcome, "unknown")
     assert.equal(f.native.statusInputs.at(-1)!.issuedAt, undefined)
@@ -210,7 +214,7 @@ test("an unrecorded Run now releases its permit once native proves its held proo
     const query = { requestID: run.requestID, expectedRevision: String(expectedRevision) }
     assert.equal((await f.runNowStatus(query)).json().outcome, "unknown")
     assert.equal(await f.deletionRuns(), false)
-    t.mock.timers.setTime(Date.now() + 30_000)
+    t.mock.timers.setTime(Date.now() + 35_000)
     const late = await f.runNowStatus(query)
     assert.deepEqual([late.json().outcome, late.json().reason, late.json().passageID], ["rejected", "control-conflict", null])
     assert.equal(await f.deletionRuns(), true)

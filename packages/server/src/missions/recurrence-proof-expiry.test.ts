@@ -21,8 +21,9 @@ async function fixture(name: string) {
 }
 
 test("only a proof this clock already expired counts; future-dated or fresh issue times never do", () => {
-  assert.equal(recurrenceProofExpired(1_000, 31_000), true)
-  assert.equal(recurrenceProofExpired(1_000, 30_999), false)
+  assert.equal(recurrenceProofExpired(1_000, 36_000), true)
+  assert.equal(recurrenceProofExpired(1_000, 35_999), false, "within the grace past the lifetime")
+  assert.equal(recurrenceProofExpired(1_000, 31_000), false, "at the bare lifetime a racing commit may still land")
   assert.equal(recurrenceProofExpired(60_000, 1_000), false, "future-dated may become fresh")
   assert.equal(recurrenceProofExpired(Number.NaN, 1e12), false)
 })
@@ -31,19 +32,19 @@ test("an unrecorded request is retired only with an expired proof, then never re
   const { store } = await fixture("retire")
   const play = { requestID: "play_lost", action: "play" as const, expectedRevision: 0 }
   assert.equal((await store.refusal("schedule", play))?.reason, undefined, "no proof time: unknown")
-  assert.equal((await store.refusal("schedule", play, 10_000, () => 39_999))?.reason, undefined, "still fresh: unknown")
-  assert.equal((await store.refusal("schedule", play, 10_000, () => 40_000))?.reason, "control-conflict")
+  assert.equal((await store.refusal("schedule", play, 10_000, () => 44_999))?.reason, undefined, "still fresh: unknown")
+  assert.equal((await store.refusal("schedule", play, 10_000, () => 45_000))?.reason, "control-conflict")
   assert.equal((await store.refusal("schedule", play))?.reason, "control-conflict", "retired identities stay refused")
   await assert.rejects(store.beginControl("schedule", play, current))
   assert.equal((await store.read("schedule"))!.revision, 0)
   // Run now: the same serialized retirement fences its reservation CAS.
   const run = { requestID: "run_lost", action: "run-now" as const, expectedRevision: 0 }
-  assert.equal((await store.refusal("schedule", run, 10_000, () => 40_000))?.reason, "control-conflict")
+  assert.equal((await store.refusal("schedule", run, 10_000, () => 45_000))?.reason, "control-conflict")
   await assert.rejects(store.reserveManual("schedule", "run_lost", 0, 2, { profileID: "profile", executionHost: "local", configYamlPath: "/c.yml" }, current))
   // A recorded request is never retired.
   const stop = { requestID: "stop_done", action: "stop" as const, expectedRevision: 0 }
   await store.beginControl("schedule", stop, current)
-  assert.equal((await store.refusal("schedule", stop, 10_000, () => 40_000))?.reason, undefined)
+  assert.equal((await store.refusal("schedule", stop, 10_000, () => 45_000))?.reason, undefined)
 })
 
 test("a request whose record may have been evicted is never retired by proof expiry", async () => {

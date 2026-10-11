@@ -114,14 +114,16 @@ transaction. Once the backend's clock considers the exact proof it still holds
 expired, its status reads (and the route's immediate read after a lost reply)
 send that backend-signed `issuedAt` — never a browser value. Native, serialized
 with those CASes, answers `rejected` (`control-conflict`) only when its own clock
-also finds it expired and the request has no record that could ever have been
+also finds it expired by a further 5 s grace (so a CAS racing the boundary in
+another process sharing the storage has committed) and the request has no record that could ever have been
 evicted; it then retires the request ID in that native host, so an in-flight
 original (or any later attempt of that ID) fails at the CAS even if the wall
 clock moves back, and keeps answering `rejected` for it. The route releases the
 permit holding exactly that `issuedAt`, Location and request (with the owner
 re-proven through a replaced connection), unblocking controls and deletion. An
-unexpired proof, an unheld identity (for example after a backend restart, with
-no hint) or a mismatch stays unknown. Retirement is process-local and bounded
+unexpired proof or a mismatch stays unknown, and an unheld identity (for example
+after a backend restart, with no hint) cannot trigger retirement: it stays
+unknown unless native has already retired it. Retirement is process-local and bounded
 (4096 IDs); another daemon sharing the same storage relies on the expired proof
 alone, and clients must not reuse a rejected request ID.
 Everything else (including an unprovable profile change) stays unknown.
