@@ -193,8 +193,14 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.ok(reads > beforeHidden)
     assert.equal(writes.length, 0)
     passageID = null
+    // The list and the current passage revalidate independently from the same
+    // native event; bind the tree assertion to the passage read it triggers.
+    const settledPassage = page.waitForResponse(async response => response.url().endsWith("/rec_current/current")
+      && (await response.json()).passageID === null)
     await page.evaluate(() => (window as any).passageFixture.settled())
     await card.locator("button.mission-past-run").getByText(/Completed$/).waitFor()
+    await settledPassage
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     assert.equal(await page.locator(".mission-tree").count(), 0, "settlement after the final session event removes the former passage tree through native invalidation")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel("What should the mission do?", { exact: true }).fill("One-shot from recurring")
