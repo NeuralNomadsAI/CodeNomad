@@ -64,8 +64,10 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         return reply.code(result.outcome === "committed" ? 200 : 503).send(result)
       }
     } catch (error) {
-      // Nothing reached native in this attempt: definitive for its identity.
-      const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error)
+      // Only a new first attempt can be described as unsent; retries and known
+      // earlier attempts keep their original uncertainty even on early failure.
+      const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error,
+        { fence: deps.fence, workspaceID: request.params.id, request: input.data })
       if (refused) return reply.code(refused.status).send(refused.body)
       request.log.warn({ code: "recurrence-control-unavailable" }, "Mission recurrence control unavailable")
       return reply.code(503).send({ error: "Recurrence control uncertain; read exact status before another action" })

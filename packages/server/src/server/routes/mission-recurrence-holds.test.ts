@@ -50,20 +50,34 @@ test("a replacement connection settles the original permit only with a freshly r
   next.dispatched(); next.settled(); next.dispose()
 })
 
-test("retry without the original partial hold never allocates a new permit or adopts a new connection", () => {
+test("retry without the original partial hold dispatches only after an exact native partial receipt; it never adopts a new connection", () => {
   const fence = new WorktreeDeletionFence()
   const binding = { workspaceID: "owned", scheduleID: "schedule", requestID: "request_one",
     action: "pause" as const, expectedRevision: 1, location: { directory: "/owned" },
     connection: { assertCurrent: () => {} } as never }
-  let allocated = 0
-  assert.throws(() => holdRecurrenceControl(fence, binding, () => { allocated++; return () => {} }, true), /Original partial.*unavailable/)
-  assert.equal(allocated, 0)
+  let allocated = 0, released = 0
+  const partial = { version: 1 as const, scheduleID: "schedule", requestID: "request_one", expectedRevision: 1, revision: 2,
+    action: "pause" as const, state: "paused" as const, controlsComplete: false, outcome: "unknown" as const }
+  for (const receipt of [{ ...partial, controlsComplete: true, outcome: "committed" as const }, { ...partial, requestID: "request_two" },
+    { ...partial, revision: 3 }, { ...partial, state: "running" as const }, { ...partial, controlsComplete: undefined }]) {
+    const reacquired = holdRecurrenceControl(fence, binding, () => { allocated++; return () => { released++ } }, true)!
+    assert.equal(reacquired.requiresPartialProof, true)
+    assert.throws(() => reacquired.dispatched(), /dispatch unavailable/, "unproven reacquisition never dispatches")
+    assert.throws(() => reacquired.confirmPartial(receipt), /Exact native partial/)
+    reacquired.dispose()
+  }
+  assert.deepEqual([allocated, released], [5, 5], "each refused reacquisition released its fresh permit")
   const original = holdRecurrenceControl(fence, binding, () => { allocated++; return () => {} })!
   original.dispatched(); original.partial(); original.dispose()
   const replacement = { ...binding, connection: { assertCurrent: () => {} } as never }
   assert.throws(() => holdRecurrenceControl(fence, replacement, () => { allocated++; return () => {} }, true), /uncertain/)
-  assert.equal(allocated, 1)
+  assert.equal(allocated, 6)
   const retry = holdRecurrenceControl(fence, binding, () => { allocated++; return () => {} }, true)!
+  assert.equal(retry.requiresPartialProof, false)
   retry.dispatched(); retry.settled(); retry.dispose()
-  assert.equal(allocated, 1, "a valid explicit retry reuses only the original physical permit")
+  assert.equal(allocated, 6, "a valid explicit retry reuses only the original physical permit")
+  const restarted = new WorktreeDeletionFence(), proven = holdRecurrenceControl(restarted, binding, () => () => {}, true)!
+  proven.confirmPartial(partial); proven.dispatched(); proven.partial(); proven.dispose()
+  assert.throws(() => holdRecurrenceControl(restarted, { ...binding, requestID: "request_two" }, () => () => {}), /uncertain/,
+    "a proven reacquisition retains its partial permit like the original")
 })
