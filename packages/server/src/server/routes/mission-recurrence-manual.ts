@@ -7,7 +7,7 @@ import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-prepara
 import { requestAdmission } from "../request-admission"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { captureRecurrenceControlHoldRead, readRecurrenceHoldOwner, reconcileRecurrenceControlHold,
-  recurrenceControlHeldElsewhere } from "./mission-recurrence-holds"
+  recurrenceControlHeldElsewhere, recurrenceNotDispatchedReply } from "./mission-recurrence-holds"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
@@ -64,10 +64,12 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
     if (!input.success) return reply.code(400).send({ error: "Invalid manual passage request" })
     const lifetime = requestAdmission(request, reply)
     let prepared: Awaited<ReturnType<typeof prepareHumanRecurrenceControl>> | undefined
+    let dispatched = false
     try {
       prepared = await prepareHumanRecurrenceControl(request, request.params.id,
         { ...input.data, scheduleID: request.params.scheduleID, action: "run-now" }, deps, lifetime.signal)
       prepared.current(); prepared.hold.dispatched()
+      dispatched = true
       const options = { location: prepared.location, ...locationRequestOptions(prepared.location) }
       let raw: unknown
       try { raw = await prepared.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNow(prepared.body, options) }
@@ -82,7 +84,12 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
         return reply.code(409).send({ error: "Manual passage refused; nothing was started", code: recurrenceRefusalCode(result.reason) })
       }
       return reply.code(result.outcome === "unknown" ? 503 : 200).send(result)
-    } catch { return reply.code(503).send({ error: "Manual admission uncertain; read status, do not resend" }) }
+    } catch (error) {
+      // Nothing reached native in this attempt: definitive for its identity.
+      const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error)
+      if (refused) return reply.code(refused.status).send(refused.body)
+      return reply.code(503).send({ error: "Manual admission uncertain; read status, do not resend" })
+    }
     finally { prepared?.dispose(); lifetime.dispose() }
   })
 }

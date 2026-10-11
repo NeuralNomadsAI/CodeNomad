@@ -1,5 +1,5 @@
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { recurrenceControlStateMatches, type RecurrenceControlRequest, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
+import { recurrenceControlStateMatches, recurrenceNotDispatchedCode, type RecurrenceControlRequest, type RecurrenceControlStatus } from "../../missions/recurrence-control-contract"
 import { sameLocation } from "../../opencode/compatibility/location"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 
@@ -40,18 +40,37 @@ export function recurrenceControlHeldElsewhere(fence: WorktreeDeletionFence, wor
     && record.binding.requestID === request.requestID
 }
 
+/** Admission refused before preparation could hold the schedule: another
+ * request's permit, a deletion entering the checkout, capacity, or a missing
+ * original partial permit. A refused repeat of the held identity itself is not
+ * one: that identity may already have been dispatched. */
+export class RecurrenceControlBusy extends Error {}
+class RecurrenceControlOutstanding extends Error {}
+
+/** Reply for a failure strictly before `dispatched()`: this attempt sent nothing.
+ * Busy admission is a conflict; other preparation failures stay unavailable. A
+ * refused repeat of an outstanding identity remains uncoded and uncertain. */
+export function recurrenceNotDispatchedReply(error: unknown) {
+  if (error instanceof RecurrenceControlOutstanding) return undefined
+  return { status: error instanceof RecurrenceControlBusy ? 409 : 503,
+    body: { error: "Recurrence request refused before dispatch; nothing was sent", code: recurrenceNotDispatchedCode } }
+}
+
 export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Binding,
   enter: () => (() => void) | undefined, retry = false) {
   let registry = held.get(fence)
   if (!registry) { registry = new Map(); held.set(fence, registry) }
   const id = key(binding.workspaceID, binding.scheduleID)
   const previous = registry.get(id)
-  if (retry && !previous) throw new Error("Original partial recurrence control hold unavailable; read exact status instead")
+  if (retry && !previous) throw new RecurrenceControlBusy("Original partial recurrence control hold unavailable; read exact status instead")
   if (previous && (!retry || previous.state !== "partial" || previous.retrying || previous.binding.connection !== binding.connection
     || !sameLocation(previous.binding.location, binding.location) || previous.binding.requestID !== binding.requestID
     || previous.binding.expectedRevision !== binding.expectedRevision
-    || previous.binding.action !== binding.action)) throw new Error("Recurrence control remains uncertain; read its exact request status")
-  if (!previous && registry.size >= 128) throw new Error("Recurrence mutation admission capacity exhausted")
+    || previous.binding.action !== binding.action)) {
+    const message = "Recurrence control remains uncertain; read its exact request status"
+    throw previous.binding.requestID === binding.requestID ? new RecurrenceControlOutstanding(message) : new RecurrenceControlBusy(message)
+  }
+  if (!previous && registry.size >= 128) throw new RecurrenceControlBusy("Recurrence mutation admission capacity exhausted")
   const release = previous?.release ?? enter()
   if (!release) return undefined
   const record: Held = previous ?? { binding: { ...binding, location: { ...binding.location } }, state: "preparing", release }

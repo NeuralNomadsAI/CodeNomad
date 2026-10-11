@@ -12,7 +12,7 @@ import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../
 import { recurrenceControlHttpSchema } from "../../missions/recurrence-control-contract"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
 import { resolveRecurrenceRoot } from "./mission-recurrence-roots"
-import { captureRecurrenceControlHoldRead, holdRecurrenceControl } from "./mission-recurrence-holds"
+import { captureRecurrenceControlHoldRead, holdRecurrenceControl, RecurrenceControlBusy } from "./mission-recurrence-holds"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
@@ -61,7 +61,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       action: input.action, expectedRevision: input.expectedRevision,
       workspaceID, location: { directory }, connection, owner: { workspace, projectID: location.project.id,
         projectCanonical: location.project.canonical, checkout } }, () => deps.fence.enter([checkout]), input.retry)
-    if (!hold) throw new Error("Worktree deletion in progress")
+    if (!hold) throw new RecurrenceControlBusy("Worktree deletion in progress")
     const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
     const assertRoots = async () => {
       current()

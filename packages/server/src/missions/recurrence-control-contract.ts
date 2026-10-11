@@ -6,6 +6,9 @@ export const recurrenceRefusalReasonSchema = z.enum(["revision-conflict", "contr
 /** Stable HTTP codes of a native-proven refusal: no effect, the permit is released. */
 export const recurrenceRefusalCode = (reason: z.infer<typeof recurrenceRefusalReasonSchema>) =>
   reason === "revision-conflict" ? "recurrence-revision-conflict" as const : "recurrence-control-conflict" as const
+/** Stable HTTP code of a request the route refused before dispatching it: this
+ * attempt sent nothing to native, so a new, never-resent identity has no effect. */
+export const recurrenceNotDispatchedCode = "recurrence-not-dispatched" as const
 export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceIDSchema,
   requestID: recurrenceIDSchema, action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]),
   expectedRevision: z.number().int().nonnegative().safe(),
@@ -23,6 +26,10 @@ export function recurrenceControlStateMatches(action: RecurrenceControlRequest["
 export const recurrenceControlHttpSchema = recurrenceControlRequestSchema.extend({
   directory: z.string().min(1).max(4096).optional(), retry: z.boolean().optional(),
 }).refine(input => !input.retry || input.action === "pause" || input.action === "stop", "Only partial denial controls can be retried")
+/** The `/control` endpoint body: Run now has its own route and native method, so
+ * it is refused here before any permit rather than stranding one at native. */
+export const recurrenceControlRouteSchema = recurrenceControlHttpSchema.refine(input => input.action !== "run-now",
+  "Run now uses its dedicated endpoint")
 export const recurrenceControlStatusSchema = recurrenceControlRecordSchema.omit({ action: true, targetsKnown: true }).partial({
   revision: true, state: true, controlsComplete: true, targets: true,
 }).extend({ version: z.literal(1), scheduleID: recurrenceIDSchema, outcome: z.enum(["committed", "unknown", "rejected"]),
