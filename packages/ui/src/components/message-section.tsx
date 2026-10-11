@@ -290,7 +290,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
-  const isSearchOpen = () => isSessionSearchOpen(props.instanceId, props.sessionId)
+  // Workspace metadata updates can re-evaluate the identity accessors without
+  // changing search visibility. Only a real close may cancel history reads.
+  const isSearchOpen = createMemo(() => isSessionSearchOpen(props.instanceId, props.sessionId))
   const setIsSearchOpen = (open: boolean) => setSessionSearchOpen(props.instanceId, props.sessionId, open)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")

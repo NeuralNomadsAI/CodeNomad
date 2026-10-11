@@ -5,7 +5,7 @@ import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partiti
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
-import { activeInstanceId } from "../../../src/stores/instances"
+import { activeInstanceId, instances, updateInstance } from "../../../src/stores/instances"
 import { activeSessionId } from "../../../src/stores/session-state"
 import { sessions, getSessionListIds, getSessionThreads, loading } from "../../../src/stores/session-state"
 import SessionList from "../../../src/components/session-list"
@@ -30,6 +30,8 @@ const SessionView = location.search.includes("foreground")
 if (SessionView || location.search.includes("catalog")) await import("../../../src/index.css")
 ;(window as any).messageCount = () => messageStoreBus.getOrCreate(activeInstanceId()!).getSessionMessageIds("saved-session").length
 ;(window as any).sessionListIds = getSessionListIds
+// Ordinary workspace updates (status, metadata) replace the instance object.
+;(window as any).touchWorkspaces = () => { for (const id of instances().keys()) updateInstance(id, { error: undefined }) }
 ;(window as any).catalogRows = (id: string) => [...(sessions().get(id)?.values() ?? [])]
 ;(window as any).decodeSavedState = () => {
   const commit = (window as any).committedState
@@ -69,7 +71,7 @@ function Fixture() {
     </ThemeProvider></I18nProvider></ConfigProvider></Show>
     <Show when={SessionView}>{View => <ConfigProvider><I18nProvider><ThemeProvider>
       <Show keyed when={activeInstanceId()}>{id => <Show when={sessions().get(id)?.has("saved-session")}>
-        {View()({ instanceId: id, instanceFolder: `D:/${id}`, sessionId: "saved-session",
+        {View()({ get instanceId() { return location.search.includes("foreground-slow") ? instances().get(id)!.id : id }, instanceFolder: `D:/${id}`, sessionId: "saved-session",
           get activeSessions() { return sessions().get(id)! }, isActive: true, escapeInDebounce: false })}
       </Show>}
       </Show>

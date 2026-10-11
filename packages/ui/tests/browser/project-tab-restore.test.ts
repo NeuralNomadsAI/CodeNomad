@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history"] as const) {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history", "foreground-slow"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
@@ -133,6 +133,11 @@ test(`${host} restores the active project and saved session identity before hydr
         body = { data: { id: "saved-session", title: "Saved conversation", projectID: "global", location: { directory: `D:/${path.split("/")[2]}` },
           time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } } }
       } else if (foreground && path.endsWith("/saved-session/message")) {
+        // Workspace updates keep arriving while a slow selected transcript is read.
+        if (mode === "foreground-slow") for (let i = 0; i < 3; i++) {
+          await page.evaluate(() => (window as any).touchWorkspaces())
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
         assert.equal(new URL(request.url()).searchParams.get("limit"), "200")
         body = { data: Array.from({ length: 200 }, (_, i) => ({ id: `message-${String(200-i).padStart(4, "0")}`,
           type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" }, time: { created: 201-i },
