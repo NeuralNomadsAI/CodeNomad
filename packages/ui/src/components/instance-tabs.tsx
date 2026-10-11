@@ -257,20 +257,20 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                   </DragDropProvider>
                 </Show>
               </div>
+              {/* Like a browser, the new-instance button follows the last tab. */}
+              <div class="tab-strip-new">
+                <button
+                  class="new-tab-button new-instance-button"
+                  {...newInstanceHandlers}
+                  title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
+                  aria-label={t("instanceTabs.new.ariaLabel")}
+                  aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
+                  aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
+                >
+                  <Plus class="w-4 h-4" />
+                </button>
+              </div>
           </TabScroll>
-          {/* Like a browser, the new-instance button follows the last tab. */}
-          <div class="tab-strip-new">
-            <button
-              class="new-tab-button new-instance-button"
-              {...newInstanceHandlers}
-              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
-              aria-label={t("instanceTabs.new.ariaLabel")}
-              aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
-              aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
-            >
-              <Plus class="w-4 h-4" />
-            </button>
-          </div>
           <div class="tab-bar-actions">
             <Show when={props.tabs.length > 1}>
               <div class="tab-shortcuts">

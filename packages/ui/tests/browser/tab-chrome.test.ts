@@ -174,6 +174,32 @@ test("upright tabs retain native pointer reordering and sidecar selection", asyn
   } finally { await page.close() }
 })
 
+test("a tab dragged past the last one stays visible beside the new-instance button", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  try {
+    await prepare(page)
+    for (const dir of ["ltr", "rtl"]) {
+      await page.evaluate(dir => { document.dir = dir; (window as any).tabFixture.count(3) }, dir)
+      await page.waitForTimeout(100)
+      const tab = page.locator('[data-fixture="instances"] [role="tab"]').last()
+      const box = (await tab.boundingBox())!
+      const step = dir === "rtl" ? -120 : 120
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(box.x + box.width / 2 + step, box.y + box.height / 2, { steps: 12 })
+      const during = await page.evaluate(() => {
+        const viewport = document.querySelector<HTMLElement>('[data-fixture="instances"] .tab-scroll')!
+        const dragged = document.querySelector('[data-fixture="instances"] .tab-draggable-active')!.getBoundingClientRect()
+        const clip = viewport.getBoundingClientRect()
+        return { hidden: Math.max(0, dragged.right - clip.right) + Math.max(0, clip.left - dragged.left), overflow: viewport.scrollWidth > viewport.clientWidth }
+      })
+      await page.mouse.up()
+      assert.deepEqual(during, { hidden: 0, overflow: false }, `${dir}: dragged tab is clipped or the strip scrolls`)
+    }
+    await page.evaluate(() => { document.dir = "ltr"; (window as any).tabFixture.count(9) })
+  } finally { await page.close() }
+})
+
 test("double-click, F2 and the context menu rename the tab's project through the shared dialog", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const patches: any[] = []
