@@ -90,9 +90,14 @@ original partial permit.
 Within one backend, a partial or uncertain Pause/Stop permit can outlive its
 retired OpenCode connection (event-stream end, failed request, new daemon).
 An explicit exact retry through the current connection may then prepare a fresh
-admission beside it, never transfer it: the same workspace, native project and
-storage, directory, checkout, physical root and Settings profile must be
-re-proven, plus the same exact native partial record. The old permit is retired
+admission beside it, never transfer it: the same backend workspace object,
+native project ID and canonical path (which OpenCode derives from the Git root),
+directory, checkout, physical root and Settings profile must be re-proven, plus
+the same exact native partial record (random request ID, revision and state).
+These are real ownership gates, but there is no daemon-storage identity
+challenge: a byte-identical copy of the native database served by another daemon
+at the same project/path is indistinguishable, and a retry's effects would land
+in that copy while the backend retires its permit. The old permit is retired
 only at dispatch, after the fresh one is entered. An in-flight, still-preparing
 or already-replacing original, a live original connection, or any mismatch
 refuses without effects; a deletion already waiting on the old permit blocks the
