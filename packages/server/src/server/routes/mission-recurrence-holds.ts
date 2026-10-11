@@ -78,8 +78,9 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
 /** An explicit exact completed request is positive publication evidence, and an
  * exact native `rejected` receipt proves no publication. Missing, unknown or
  * mismatched reads can never release a dispatched permit. Through a
- * replacement connection only a committed, complete receipt releases it, and only
- * when `owner` was freshly re-proven equal to the admitted owner; that connection
+ * replacement connection, a committed complete receipt or an exact proven native
+ * refusal of a non-partial request releases it only when `owner` was freshly
+ * re-proven equal to the admitted owner; that connection
  * never inherits the permit, a partial retry or any other admission right. */
 export function reconcileRecurrenceControlHold(fence: WorktreeDeletionFence, workspaceID: string,
   location: Binding["location"], request: RecurrenceControlRequest, receipt: RecurrenceControlStatus, connection: ServiceConnection,
