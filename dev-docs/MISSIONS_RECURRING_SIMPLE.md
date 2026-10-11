@@ -262,6 +262,10 @@ or background subagent. Passage-owned independent actors also cannot remain live
 Activity alone is insufficient; a final report alone is insufficient.
 Use bounded native observations, recheck identities and retain pending on unknown,
 incomplete or over-bound coverage. No exact event-log replay proof is required.
+The family walk shares the 4096-session whole-family control ceiling
+(`MAX_CONTROL_FAMILY_SESSIONS`) with one-time lifecycle control, so ordinary
+recursive delegation settles; a larger family stays pending as unknown coverage
+(no archive, no cursor advance); it is never assumed complete.
 
 Supported outcomes are:
 

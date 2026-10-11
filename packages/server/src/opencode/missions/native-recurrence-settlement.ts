@@ -1,6 +1,7 @@
 import type { MissionStorage } from "../../missions/journal"
 import type { RecurrenceDocument } from "../../missions/recurrence-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
+import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import { passageSourceCursors, passageStartInput, type PassageSource } from "../../missions/recurrence-input"
 import { samePassageObservation, type NativePassageObservation, type PassageSessionObservation } from "./native-passage-observation"
 
@@ -37,7 +38,7 @@ export async function observeNativePassageSettlement(input: {
   while (queue.length) {
     signal.throwIfAborted(); input.current()
     const next = queue.shift()!
-    if (seen.has(next.id) || seen.size >= 32) throw new Error("Passage family capacity")
+    if (seen.has(next.id)) throw new Error("Passage family moved")
     seen.add(next.id)
     const session = await native.session(next.id, next.id === passage.coordinatorSessionID ? passage.messageID : undefined)
     if (session.projectID !== doc.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
@@ -49,6 +50,9 @@ export async function observeNativePassageSettlement(input: {
     // observed history, never a reason to wait for or resend it.
     family.push(session)
     const ids = await native.children(next.id)
+    // The shared whole-family control ceiling: beyond it coverage is unknown, so the
+    // passage stays pending (never archived, cursors unchanged), not assumed complete.
+    if (seen.size + queue.length + ids.length > MAX_CONTROL_FAMILY_SESSIONS) throw new Error("Passage family capacity")
     children.set(next.id, ids)
     queue.push(...ids.map(id => ({ id, parentID: next.id })))
   }

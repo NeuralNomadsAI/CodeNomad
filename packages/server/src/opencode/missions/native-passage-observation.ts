@@ -7,6 +7,7 @@ import { Shell } from "@opencode/schema/shell"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
+import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
@@ -119,8 +120,10 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
     },
     children: async (id: string) => {
       assertCurrent()
-      const children = await query("SELECT id FROM session_v2 WHERE parent_id=? ORDER BY id LIMIT 33", [id])
-      if (children.length > 32 || children.some(row => typeof row.id !== "string")) throw new Error("Native passage family capacity")
+      // One bounded read: more rows than the whole-family ceiling is unknown coverage.
+      const children = await query("SELECT id FROM session_v2 WHERE parent_id=? ORDER BY id LIMIT ?", [id, MAX_CONTROL_FAMILY_SESSIONS + 1])
+      if (children.length > MAX_CONTROL_FAMILY_SESSIONS || children.some(row => typeof row.id !== "string"))
+        throw new Error("Native passage family capacity")
       return children.map(row => row.id as string)
     },
     requests: async (sessionIDs: readonly string[]) => {
@@ -138,7 +141,8 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       assertCurrent()
       // Sessionless pending Forms and uncorrelated running Shells cannot be
       // safely attributed away. Native shell list returns running records only.
-      return [...pendingForms, ...pendingPermissions].some(item => item.sessionID == null || sessionIDs.includes(String(item.sessionID)))
+      const family = new Set(sessionIDs)
+      return [...pendingForms, ...pendingPermissions].some(item => item.sessionID == null || family.has(String(item.sessionID)))
         || runningShells.some(item => item.status === "running")
     },
   } satisfies NativePassageObservation
