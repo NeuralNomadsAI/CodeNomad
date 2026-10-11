@@ -5,8 +5,8 @@ import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
 import {
-  cachedPermissionReceipts, invalidatePermissionReceipts, ownsPermissionReceipt, permissionReceiptKey,
-  readPermissionReceipts, rememberPermissionReceipts, type PermissionReceiptSnapshot,
+  acquirePermissionReceipts, cachedPermissionReceipts, invalidatePermissionReceipts, ownsPermissionReceipt,
+  permissionReceiptGeneration, permissionReceiptKey, rememberPermissionReceipts, type PermissionReceiptSnapshot,
 } from "../stores/permission-receipt-cache"
 
 interface PermissionReceiptsProps {
@@ -41,6 +41,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     let trailing = false
     let pages = 1
     let retryMore = false
+    let releaseRead = () => {}
     const scope = messageId ? { messageId } : { unanchored: true as const }
     const key = permissionReceiptKey(instanceId, sessionId, scope)
     const show = (snapshot: PermissionReceiptSnapshot) => {
@@ -61,19 +62,24 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
       setFailed(false)
       try {
         if (!more) {
-          // Shared with remounts of this row; an unmount must not cancel it.
-          const snapshot = await readPermissionReceipts(instanceId, sessionId, scope, pages)
+          // Shared with remounts of this row; dropped before dispatch once no row waits.
+          const acquired = acquirePermissionReceipts(instanceId, sessionId, scope, pages)
+          releaseRead = acquired.release
+          let snapshot: PermissionReceiptSnapshot
+          try { snapshot = await acquired.promise } finally { acquired.release() }
           if (disposed) return
           show(snapshot)
           return
         }
+        const generation = permissionReceiptGeneration()
         const page = await serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, untrack(next), controller.signal)
         if (disposed) return
         const snapshot = {
           receipts: [...untrack(() => state.receipts), ...page.receipts.filter(receipt => ownsPermissionReceipt(receipt, sessionId, scope))],
           next: page.next, pages: pages + 1,
         }
-        rememberPermissionReceipts(key, snapshot)
+        // An invalidation during this page means the base list may be stale.
+        if (permissionReceiptGeneration() === generation) rememberPermissionReceipts(key, snapshot)
         show(snapshot)
       } catch {
         if (!disposed) setFailed(true)
@@ -107,6 +113,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     else void load()
     onCleanup(() => {
       disposed = true
+      releaseRead()
       controller.abort()
       offEvent()
       offOpen()

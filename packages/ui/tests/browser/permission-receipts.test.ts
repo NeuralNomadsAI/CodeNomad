@@ -177,19 +177,13 @@ test("event bursts reconcile authoritatively with a trailing read, retry preserv
   } finally { await page.close() }
 })
 
-test("remounting a virtualized row shares its in-flight read and reuses the snapshot until a change", async () => {
+test("remounting a virtualized row reuses its completed snapshot until a change", async () => {
   const page = await browser.newPage()
   try {
     const requests: Route[] = []
     const errors = await prepare(page, route => { requests.push(route) })
     await page.goto(`${url}?direct`)
     await waitRequests(requests, 1)
-    for (let i = 0; i < 5; i++) {
-      await page.evaluate(() => (window as any).receiptFixture.active(false))
-      await page.evaluate(() => (window as any).receiptFixture.active(true))
-    }
-    await page.waitForTimeout(50)
-    assert.equal(requests.length, 1, "remounting must neither cancel nor repeat the pending read")
     await fulfill(requests[0], [receipt("one", "once")])
     await page.getByText("Autorisé une fois", { exact: true }).waitFor()
     for (let i = 0; i < 5; i++) {
@@ -198,7 +192,7 @@ test("remounting a virtualized row shares its in-flight read and reuses the snap
     }
     await page.getByText("Autorisé une fois", { exact: true }).waitFor()
     await page.waitForTimeout(50)
-    assert.equal(requests.length, 1, "a remounted row shows its retained snapshot")
+    assert.equal(requests.length, 1, "a remounted row shows its retained snapshot without another read")
     await page.evaluate(() => (window as any).receiptFixture.event())
     await waitRequests(requests, 2)
     await fulfill(requests[1], [])

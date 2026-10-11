@@ -99,10 +99,11 @@ function buildEventsUrl(base: string | undefined, path: string): string {
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
 
-// Secondary panel (plugins, update status) and timeline/receipt reads share the
-// bounded background budget, so they never take the browser connections needed
-// by the selected transcript and its metadata during startup. Provider usage
-// stays direct: its superseded reads cannot be cancelled and would hold slots.
+// Secondary panel (plugin controls) and timeline reads share the bounded
+// background budget, so they never take the browser connections needed by the
+// selected transcript and its metadata during startup. Provider usage stays
+// direct (superseded reads are fenced, not cancelled), as does the OpenCode
+// status read that Restart/Start await, so a stalled daemon read cannot hold it.
 function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>, priority: "normal" | "visible" = "visible"): Promise<T> {
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
 }
@@ -214,7 +215,7 @@ export const serverApi = {
   fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
     const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
     if (cursor) params.set("cursor", cursor)
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal }), "normal")
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
   },
   fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
@@ -596,7 +597,7 @@ export const serverApi = {
     })
   },
   fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
-    return secondaryRead(undefined, () => request<OpenCodeUpdateStatus>("/api/opencode/update"), "normal")
+    return request<OpenCodeUpdateStatus>("/api/opencode/update")
   },
   updateOpenCode(): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
