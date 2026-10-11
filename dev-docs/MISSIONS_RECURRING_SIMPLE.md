@@ -68,12 +68,21 @@ at its own revision. The route then releases the permit and answers 409
 now that fails before the route dispatches it (connection unavailable, Location
 ownership or deletion admission, another request's held permit) answers
 `recurrence-not-dispatched` (409 when another permit or a deletion blocks the
-hold, the permit table is full, or a retry has no original partial permit;
+hold or the permit table is full;
 otherwise 503). A refused repeat of an already held identity stays uncoded. `/control`
 refuses `run-now` with 400 before any permit; Run now has its own endpoint. The
 UI releases these coded refusals and the route's pre-permit 400/401 for a
 request's first attempt only, refreshes the row and explains the refusal; a
 refused exact partial retry keeps the original held request and server permit.
+After a backend restart, an explicit partial Pause/Stop retry may take a fresh
+physical admission. Before dispatch, an authenticated exact native status read
+must prove the original action, request ID, expected revision, recorded revision
+and partial result in the current owned Location. Missing, foreign, completed or
+unknown records cannot authorize it. This never transfers an old permit, starts
+a Job or changes the request identity; native idempotency still decides effects.
+Failed preparation releases this fresh admission, but preserves a surviving
+original partial permit. A retry or a known held identity's repeat stays uncoded
+on early failure: no dispatch in this attempt says nothing about earlier effects.
 Everything else (including an unprovable profile change) stays unknown.
 
 If a reply is lost, retain that request identity and reread its status.

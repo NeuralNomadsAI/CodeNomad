@@ -104,6 +104,13 @@ export class NativeMissionRecurrenceStore {
     current: () => true, profileSource?: RecurrenceDocument["profileSource"]): Promise<RecurrenceDocument> {
     return this.exclusive(async () => {
       const doc = await this.required(id), prior = doc.controls.find(item => item.requestID === input.requestID)
+      // A partial retry can still perform effects. Idempotent lookup must not
+      // bypass the frozen profile check merely because its record already exists.
+      if (profileSource && !prior?.controlsComplete
+        && (profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
+          || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource))) {
+        throw new Error("Recurrence profile changed")
+      }
       if (prior) {
         if (prior.action !== input.action || prior.expectedRevision !== input.expectedRevision) throw new Error("Recurrence request conflict")
         return doc
@@ -112,8 +119,6 @@ export class NativeMissionRecurrenceStore {
       if (refusal) throw new Error(refusal)
       makeControlRoom(doc)
       if (profileSource) {
-        if (profileSource.profileID !== doc.config.profileID || profileSource.executionHost !== doc.config.executionHost
-          || doc.profileSource && canonicalAuthority(doc.profileSource) !== canonicalAuthority(profileSource)) throw new Error("Recurrence profile changed")
         doc.profileSource = profileSource
       }
       if (input.action === "play" || input.action === "resume") doc.state = "running"

@@ -50,8 +50,14 @@ class RecurrenceControlOutstanding extends Error {}
 /** Reply for a failure strictly before `dispatched()`: this attempt sent nothing.
  * Busy admission is a conflict; other preparation failures stay unavailable. A
  * refused repeat of an outstanding identity remains uncoded and uncertain. */
-export function recurrenceNotDispatchedReply(error: unknown) {
-  if (error instanceof RecurrenceControlOutstanding) return undefined
+export function recurrenceNotDispatchedReply(error: unknown, context?: {
+  fence: WorktreeDeletionFence; workspaceID: string; request: RecurrenceControlRequest & { retry?: boolean }
+}) {
+  // No dispatch in this attempt is not proof about an earlier attempt with the
+  // same identity. In particular an early connection failure precedes hold lookup.
+  const original = context && held.get(context.fence)?.get(key(context.workspaceID, context.request.scheduleID))
+  if (error instanceof RecurrenceControlOutstanding || context?.request.retry
+    || original && original.binding.requestID === context?.request.requestID) return undefined
   return { status: error instanceof RecurrenceControlBusy ? 409 : 503,
     body: { error: "Recurrence request refused before dispatch; nothing was sent", code: recurrenceNotDispatchedCode } }
 }
@@ -62,7 +68,6 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   if (!registry) { registry = new Map(); held.set(fence, registry) }
   const id = key(binding.workspaceID, binding.scheduleID)
   const previous = registry.get(id)
-  if (retry && !previous) throw new RecurrenceControlBusy("Original partial recurrence control hold unavailable; read exact status instead")
   if (previous && (!retry || previous.state !== "partial" || previous.retrying || previous.binding.connection !== binding.connection
     || !sameLocation(previous.binding.location, binding.location) || previous.binding.requestID !== binding.requestID
     || previous.binding.expectedRevision !== binding.expectedRevision
@@ -77,9 +82,28 @@ export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Bin
   if (previous) record.retrying = true
   else registry.set(id, record)
   let proven = false
+  const requiresPartialProof = retry && !previous
+  let partialProven = false
   return {
+    requiresPartialProof,
+    /** A fresh backend may admit an explicit retry, never reconstruct an old
+     * permit. Only an exact native partial record authorizes its first dispatch. */
+    confirmPartial(receipt: RecurrenceControlStatus) {
+      const original = record.binding
+      original.connection.assertCurrent()
+      if (registry!.get(id) !== record || !requiresPartialProof || record.state !== "preparing"
+        || !["pause", "stop"].includes(original.action) || receipt.version !== 1
+        || receipt.scheduleID !== original.scheduleID || receipt.requestID !== original.requestID
+        || receipt.action !== original.action || receipt.expectedRevision !== original.expectedRevision
+        || receipt.revision !== original.expectedRevision + 1 || receipt.outcome !== "unknown"
+        || receipt.controlsComplete !== false || !recurrenceControlStateMatches(original.action, receipt.state)) {
+        throw new Error("Exact native partial recurrence record unavailable")
+      }
+      partialProven = true
+    },
     dispatched() {
-      if (registry!.get(id) !== record || record.state !== "preparing" && !(record.state === "partial" && record.retrying)) throw new Error("Recurrence dispatch unavailable")
+      if (registry!.get(id) !== record || requiresPartialProof && !partialProven
+        || record.state !== "preparing" && !(record.state === "partial" && record.retrying)) throw new Error("Recurrence dispatch unavailable")
       record.state = "dispatched"
     },
     /** Proven outcome: a committed receipt, or a native proof that nothing applied. */

@@ -9,7 +9,8 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { physical } from "../../missions/physical-path"
 import { resolveStandingProfileSource } from "../../missions/host-authority/profile-source"
 import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
-import { recurrenceControlHttpSchema } from "../../missions/recurrence-control-contract"
+import { recurrenceControlHttpSchema, recurrenceControlStatusSchema } from "../../missions/recurrence-control-contract"
+import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
 import { resolveRecurrenceRoot } from "./mission-recurrence-roots"
 import { captureRecurrenceControlHoldRead, holdRecurrenceControl, RecurrenceControlBusy } from "./mission-recurrence-holds"
@@ -62,6 +63,15 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       workspaceID, location: { directory }, connection, owner: { workspace, projectID: location.project.id,
         projectCanonical: location.project.canonical, checkout } }, () => deps.fence.enter([checkout]), input.retry)
     if (!hold) throw new RecurrenceControlBusy("Worktree deletion in progress")
+    if (hold.requiresPartialProof) {
+      // This is a new physical admission after backend restart, not a transfer
+      // of an old permit. Native storage must prove the exact prior partial action.
+      const status = recurrenceControlStatusSchema.parse(await client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceControlStatus({
+        scheduleID: input.scheduleID, requestID: input.requestID, action: input.action, expectedRevision: input.expectedRevision,
+      }, { location: { directory }, ...locationRequestOptions({ directory }), signal }))
+      current()
+      hold.confirmPartial(status)
+    }
     const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
     const assertRoots = async () => {
       current()
