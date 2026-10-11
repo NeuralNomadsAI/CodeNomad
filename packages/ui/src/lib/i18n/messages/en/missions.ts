@@ -303,6 +303,7 @@ export const missionMessages = {
   "missions.recurrence.refused.stale": "The schedule changed before this action arrived, so nothing was applied. Review its current state and try again.",
   "missions.recurrence.refused.conflict": "This action is not available in the schedule's current state, so nothing was applied.",
   "missions.recurrence.refused.notAdmitted": "This action was not admitted, so nothing was applied. Sign in again if needed, then retry.",
+  "missions.recurrence.refused.notSent": "This action was not sent, so nothing was applied. Review the schedule's current state, then try again if needed.",
   "missions.recurrence.reader": "Recurring schedule {id}",
   "missions.recurrence.section": "Section {section} of {total}",
 } as const

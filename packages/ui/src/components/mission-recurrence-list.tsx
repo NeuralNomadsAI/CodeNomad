@@ -24,7 +24,7 @@ const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
  * the remaining available actions for a secondary menu, and the explicit
  * refresh-then-resend of an unconfirmed control. */
 function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identity: string; instanceId: string;
-  directory: string; active: () => boolean; enabled: () => boolean; refresh: () => void }) {
+  directory: string; active: () => boolean; enabled: () => boolean; retryEnabled: () => boolean; refresh: () => void }) {
   const { t } = useI18n()
   const key = createMemo(() => JSON.stringify([props.identity, props.schedule.id]))
   const [held, setHeld] = createSignal(unresolved.get(key()))
@@ -51,7 +51,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const capable = (action: RecurrenceAction) => props.enabled() && !busy() && !heldIntent() && !outstanding() && props.schedule.actions.includes(action)
   const retryCapable = () => {
     const intent = heldIntent(), result = partial() ?? outstanding()
-    return Boolean(intent && result && partialRecurrenceControl(result, intent)) && props.enabled() && !busy()
+    return Boolean(intent && result && partialRecurrenceControl(result, intent)) && props.retryEnabled() && !busy()
   }
   const settle = (intent: RecurrenceControlIntent, identity: string, refusal?: string) => {
     if (unresolved.get(identity) !== intent) return
@@ -127,7 +127,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const stopAction = (): MissionPrimaryAction => ({ key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop })
   // The panel refresh first reads the exact request's status, then resends it
   // only when that read leaves it partially applied.
-  const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.enabled(),
+  const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.retryEnabled(),
     reconcile: () => heldIntent() ? check() : Promise.resolve(),
     resend: () => retryCapable() ? act(heldIntent()!.action, true) : Promise.resolve() }
   // Always present for schedules, disabled while unavailable or a request is held.
@@ -150,7 +150,10 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
     projectID: () => props.projectID, directory: () => props.scope, refresh: () => props.refresh + revision(), active: props.active })
-  const valid = () => !loading() && !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
+  // An exact retry names its held identity, not the snapshot revision: the
+  // explicit refresh's own in-flight row read must not silently skip it.
+  const admissible = () => !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
+  const valid = () => !loading() && admissible()
   const text = missionScheduleText(t, locale)
   const { date } = text
   /** One sentence; its action is the row's primary control (Check passage or Resume). */
@@ -198,7 +201,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       // Keyed by identity: a refreshed snapshot keeps the controls and their focus.
       const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
       const controls = createRecurrenceControls({ get schedule() { return schedule() }, get identity() { return JSON.stringify([props.instanceId, props.projectID, props.scope]) },
-        get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid,
+        get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid, retryEnabled: admissible,
         refresh: () => setRevision(value => value + 1) })
       const unregister = props.registerRetry?.(controls.retry)
       onCleanup(() => unregister?.())

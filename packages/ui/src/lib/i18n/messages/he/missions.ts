@@ -303,6 +303,7 @@ export const missionMessages = {
   "missions.recurrence.refused.stale": "לוח הזמנים השתנה לפני שהפעולה הגיעה, ולכן דבר לא הוחל. יש לבדוק את מצבו הנוכחי ולנסות שוב.",
   "missions.recurrence.refused.conflict": "פעולה זו אינה זמינה במצב הנוכחי של לוח הזמנים, ולכן דבר לא הוחל.",
   "missions.recurrence.refused.notAdmitted": "הפעולה לא התקבלה, ולכן דבר לא הוחל. יש להתחבר מחדש במידת הצורך ולנסות שוב.",
+  "missions.recurrence.refused.notSent": "הפעולה לא נשלחה, ולכן דבר לא הוחל. יש לבדוק את המצב הנוכחי של לוח הזמנים ולנסות שוב במידת הצורך.",
   "missions.recurrence.reader": "לוח זמנים חוזר {id}",
   "missions.recurrence.section": "קטע {section} מתוך {total}",
 } as const

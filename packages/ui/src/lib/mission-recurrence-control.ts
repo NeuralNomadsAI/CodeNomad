@@ -1,4 +1,5 @@
 import type { RecurrenceControlRequest, RecurrenceControlStatus } from "../../../server/src/missions/recurrence-control-contract"
+import type { recurrenceNotDispatchedCode as NotDispatchedCode } from "../../../server/src/missions/recurrence-control-contract"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
 import { HttpResponseError } from "./retryable-file-search"
 
@@ -36,17 +37,21 @@ export function partialRecurrenceControl(result: RecurrenceControlStatus, intent
     && result.requestID === intent.requestID && result.expectedRevision === intent.expectedRevision
     && result.revision === intent.expectedRevision + 1 && result.controlsComplete === false
 }
+// Type-bound to the route's code without importing its Node-side module.
+const recurrenceNotDispatchedCode: typeof NotDispatchedCode = "recurrence-not-dispatched"
 const refusalKeys = { "revision-conflict": "missions.recurrence.refused.stale", "control-conflict": "missions.recurrence.refused.conflict" } as const
 type RefusalReason = keyof typeof refusalKeys
 
 /** Message key when the route proves the original request had no effect, or
- * undefined when it must stay held. Only the native-proven conflict codes and the
- * route's pre-permit 400/401 qualify; 503, other statuses and transport loss may
- * follow a committed control and are never resent. */
+ * undefined when it must stay held. Only the native-proven conflict codes, the
+ * route's coded refusal before dispatch and its pre-permit 400/401 qualify;
+ * uncoded 503s, other statuses and transport loss may follow a committed control
+ * and are never resent. Callers apply it only to a request's first attempt. */
 export function recurrenceControlRefusalKey(error: unknown): string | undefined {
   if (!(error instanceof HttpResponseError)) return undefined
   if (error.status === 409 && error.code === "recurrence-revision-conflict") return refusalKeys["revision-conflict"]
   if (error.status === 409 && error.code === "recurrence-control-conflict") return refusalKeys["control-conflict"]
+  if ((error.status === 409 || error.status === 503) && error.code === recurrenceNotDispatchedCode) return "missions.recurrence.refused.notSent"
   if (!error.code && (error.status === 400 || error.status === 401)) return "missions.recurrence.refused.notAdmitted"
   return undefined
 }
