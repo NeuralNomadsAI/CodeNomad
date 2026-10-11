@@ -183,11 +183,13 @@ function deepestFirst(family: NativeControlFamily, rootID: string): string[][] {
   return [...levels.keys()].sort((left, right) => right - left).map(depth => levels.get(depth)!)
 }
 
+type CancellationDisposition = "native-acknowledged" | "observed-absent"
+
 /** After the root's own interrupt, late subagent deliveries may re-wake it.
  * Re-interrupt boundedly; on Stop also cancel the matching queued items. */
 export async function settleInterruptedRoot(options: Omit<Options, "deadline"> & {
   cancel?: (item: InboxItem) => boolean
-  onCancelled?: (inboxID: string) => void
+  onCancelled?: (inboxID: string, disposition: CancellationDisposition) => void
 }): Promise<boolean> {
   const { client, root, signal, current } = options
   let failed = false, overflowing = false
@@ -219,7 +221,7 @@ export type NativeInboxItem = Awaited<ReturnType<OpenCodeClient["session"]["inbo
 type InboxItem = NativeInboxItem
 
 async function cancelQueued(options: Pick<Options, "client" | "signal" | "current">, sessionID: string,
-  matches: (item: InboxItem) => boolean, onCancelled?: (inboxID: string) => void): Promise<{ count: number; complete: boolean }> {
+  matches: (item: InboxItem) => boolean, onCancelled?: (inboxID: string, disposition: CancellationDisposition) => void): Promise<{ count: number; complete: boolean }> {
   const { client, signal, current } = options
   const inbox = await client.session.inbox.list({ sessionID }, { signal })
   current()
@@ -228,14 +230,16 @@ async function cancelQueued(options: Pick<Options, "client" | "signal" | "curren
   const queued = inbox.filter(item => (item.type === "user" || item.type === "synthetic") && matches(item))
   for (const item of queued.slice(0, 128)) {
     current()
+    let disposition: CancellationDisposition = "native-acknowledged"
     try { await client.session.inbox.cancel({ sessionID, inboxID: item.id }, { signal }) }
     catch (error) {
       signal.throwIfAborted()
       const pending = await client.session.inbox.list({ sessionID }, { signal })
       if (pending.some(entry => entry.id === item.id)) throw error
+      disposition = "observed-absent"
     }
     current()
-    onCancelled?.(item.id)
+    onCancelled?.(item.id, disposition)
     count++
   }
   // Bounded batch; `complete: false` keeps the count and reports the remainder.

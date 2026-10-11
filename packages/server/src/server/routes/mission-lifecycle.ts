@@ -228,8 +228,8 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       const caught = await recheck(descendants, true)
       // Pause leaves queued deliveries parked behind resume:false until Play.
       const settled = await settleInterruptedRoot({ client, root, action, signal, current, checkpoint,
-        ...(action === "stop" ? { cancel: cancellable, onCancelled: (inboxID: string) => {
-          if (cancellations.length < MAX_STOP_CANCELLATIONS && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition: "native-acknowledged" })
+        ...(action === "stop" ? { cancel: cancellable, onCancelled: (inboxID: string, disposition: typeof cancellations[number]["disposition"]) => {
+          if (cancellations.length < MAX_STOP_CANCELLATIONS && !cancellations.some(item => item.inboxID === inboxID)) cancellations.push({ inboxID, disposition })
         } } : {}) })
       // Only a whole, quiet family read after the root settled confirms a full stop.
       const verified = await recheck(caught, false)

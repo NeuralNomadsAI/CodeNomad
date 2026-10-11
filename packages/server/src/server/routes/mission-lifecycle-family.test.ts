@@ -113,6 +113,33 @@ test("Pause interrupts the whole family but parks queued deliveries until Play",
   assert.equal(ack.descendants?.interrupted, 39)
 })
 
+for (const lostReply of [false, true]) {
+  test(`Stop settle cancellation preserves ${lostReply ? "observed absence" : "native acknowledgement"} evidence`, async () => {
+    const f = fixture("stop")
+    for (const id of [...f.native.keys()]) if (id !== "ses_coordinator") f.native.delete(id)
+    f.running.clear()
+    f.running.add("ses_coordinator")
+    const item = { id: "inb_late", type: "synthetic", payload: { metadata: { source: "subagent" } } }
+    const list = f.client.session.inbox.list
+    let reads = 0
+    f.client.session.inbox.list = async (input: any) => {
+      // Delivered after the route's first cancellation batch, during root settlement.
+      if (input.sessionID === "ses_coordinator" && ++reads === 2) f.inboxes.set(input.sessionID, [item])
+      return list(input)
+    }
+    const cancel = f.client.session.inbox.cancel
+    f.client.session.inbox.cancel = async (input: any) => {
+      await cancel(input)
+      if (lostReply) throw new Error("Cancellation response lost; item may instead have been consumed")
+    }
+    const ack = (await f.send()).nativeAcknowledgement
+    if (ack.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+    assert.deepEqual(ack.cancellations, [{ inboxID: item.id,
+      disposition: lostReply ? "observed-absent" : "native-acknowledged" }])
+    assert.equal(ack.descendants?.complete, true, "whole-family verification still determines Stop completion")
+  })
+}
+
 test("a sub-agent that cannot be confirmed stopped makes the receipt partial", async () => {
   const f = fixture("pause", { stuck: "ses_coordinator_0_0_0" })
   const ack = (await f.send()).nativeAcknowledgement
