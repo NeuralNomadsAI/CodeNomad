@@ -234,6 +234,12 @@ test("not-dispatched is coded only for a first attempt, never for a retry or a h
     await b.app.close()
     const restarted = f.backend(), retry = await restarted.send({ ...pause, retry: true })
     assert.deepEqual([retry.statusCode, retry.json().code], [503, undefined], retry.body)
+    // A non-retry repeat the restarted backend no longer holds fails before any native
+    // read: its code speaks for this attempt only, never for the original send.
+    const unknownRepeat = await restarted.send(pause)
+    assert.deepEqual([unknownRepeat.statusCode, unknownRepeat.json().code], [503, "recurrence-not-dispatched"], unknownRepeat.body)
+    assert.match(unknownRepeat.json().error, /this attempt sent nothing/)
+    assert.equal((await f.record(pause.requestID))?.controlsComplete, false, "the original effect stays partial and unresolved")
     assert.equal(f.native.controls, 1)
     await restarted.app.close()
   } finally { await rm(f.base, { recursive: true, force: true }) }

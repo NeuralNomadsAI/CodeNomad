@@ -6,8 +6,11 @@ export const recurrenceRefusalReasonSchema = z.enum(["revision-conflict", "contr
 /** Stable HTTP codes of a native-proven refusal: no effect, the permit is released. */
 export const recurrenceRefusalCode = (reason: z.infer<typeof recurrenceRefusalReasonSchema>) =>
   reason === "revision-conflict" ? "recurrence-revision-conflict" as const : "recurrence-control-conflict" as const
-/** Stable HTTP code of a request the route refused before dispatching it: this
- * attempt sent nothing to native, so a new, never-resent identity has no effect. */
+/** Stable HTTP code of a request the route refused before dispatching it. It
+ * proves only that THIS attempt sent nothing to native, so it means "no effect"
+ * solely for an identity the client never sent before. The route codes retries
+ * and repeats of identities it still holds as uncertain instead, but cannot know
+ * about earlier attempts it no longer holds (for example after a backend restart). */
 export const recurrenceNotDispatchedCode = "recurrence-not-dispatched" as const
 export const recurrenceControlRequestSchema = z.object({ scheduleID: recurrenceIDSchema,
   requestID: recurrenceIDSchema, action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]),

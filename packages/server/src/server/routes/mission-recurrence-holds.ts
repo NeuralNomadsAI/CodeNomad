@@ -47,19 +47,25 @@ export function recurrenceControlHeldElsewhere(fence: WorktreeDeletionFence, wor
 export class RecurrenceControlBusy extends Error {}
 class RecurrenceControlOutstanding extends Error {}
 
-/** Reply for a failure strictly before `dispatched()`: this attempt sent nothing.
- * Busy admission is a conflict; other preparation failures stay unavailable. A
- * refused repeat of an outstanding identity remains uncoded and uncertain. */
+/** Reply for a failure strictly before `dispatched()`: THIS attempt sent nothing.
+ * Busy admission is a conflict; other preparation failures stay unavailable.
+ * The code is never evidence about another attempt with the same identity: an
+ * explicit retry, or a repeat of an identity this backend still holds, stays
+ * uncoded. Without such a permit (for example after a backend restart, when the
+ * failure also precedes any native read) the route cannot know whether the
+ * client sent that identity before, so only a client's genuine first attempt may
+ * treat the code as "no effect"; a client repeating an identity must keep it
+ * uncertain and read its exact status. */
 export function recurrenceNotDispatchedReply(error: unknown, context?: {
   fence: WorktreeDeletionFence; workspaceID: string; request: RecurrenceControlRequest & { retry?: boolean }
 }) {
-  // No dispatch in this attempt is not proof about an earlier attempt with the
-  // same identity. In particular an early connection failure precedes hold lookup.
+  // An early connection failure precedes any native read, so an earlier
+  // attempt's effect is unknowable here; only a retained permit marks it known.
   const original = context && held.get(context.fence)?.get(key(context.workspaceID, context.request.scheduleID))
   if (error instanceof RecurrenceControlOutstanding || context?.request.retry
     || original && original.binding.requestID === context?.request.requestID) return undefined
   return { status: error instanceof RecurrenceControlBusy ? 409 : 503,
-    body: { error: "Recurrence request refused before dispatch; nothing was sent", code: recurrenceNotDispatchedCode } }
+    body: { error: "Recurrence request refused before dispatch; this attempt sent nothing", code: recurrenceNotDispatchedCode } }
 }
 
 export function holdRecurrenceControl(fence: WorktreeDeletionFence, binding: Binding,

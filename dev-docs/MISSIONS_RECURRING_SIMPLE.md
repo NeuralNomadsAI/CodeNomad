@@ -69,7 +69,12 @@ now that fails before the route dispatches it (connection unavailable, Location
 ownership or deletion admission, another request's held permit) answers
 `recurrence-not-dispatched` (409 when another permit or a deletion blocks the
 hold or the permit table is full;
-otherwise 503). A refused repeat of an already held identity stays uncoded. `/control`
+otherwise 503). The code proves only that this attempt sent nothing: it means
+"no effect" solely for an identity the client never sent before. A refused
+repeat of an identity the backend still holds stays uncoded, but a backend that
+no longer holds it (for example after a restart, failing before any native read)
+cannot know an earlier send, so clients that repeat an identity must keep it
+uncertain and read its exact status. `/control`
 refuses `run-now` with 400 before any permit; Run now has its own endpoint. The
 UI releases these coded refusals and the route's pre-permit 400/401 for a
 request's first attempt only, refreshes the row and explains the refusal; a
