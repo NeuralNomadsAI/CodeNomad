@@ -130,7 +130,8 @@
   --log-level-debug: var(--text-muted);
   --log-level-default: var(--text-primary);
   --focus-ring-color: var(--accent-primary);
-  --focus-ring-offset: var(--surface-base);
+  /* The gap matches the surfaces focusable controls usually rest on. */
+  --focus-ring-offset: var(--surface-canvas);
   --control-ghost-bg: color-mix(in oklab, var(--text-primary) 6%, transparent);
   --status-success-ring: color-mix(in oklab, var(--status-success) 45%, transparent);
   --border-critical: var(--status-error);

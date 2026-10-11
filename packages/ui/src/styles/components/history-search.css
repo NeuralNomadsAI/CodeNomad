@@ -26,6 +26,15 @@
   gap: var(--space-sm);
 }
 
+/* Customizable selects size to the shown value; keep the scope stable across choices
+   (wide enough for the longest translation) so the options beside it do not jump. */
+.history-search-options .history-search-scope {
+  flex: 0 0 auto;
+  inline-size: 13rem;
+  max-inline-size: 100%;
+  text-overflow: ellipsis;
+}
+
 .history-search-result {
   display: flex;
   flex-direction: column;

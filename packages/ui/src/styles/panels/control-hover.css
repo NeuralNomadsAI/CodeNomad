@@ -1,4 +1,4 @@
-/* These controls rest on the base canvas, not the generic panel surface.
+/* These controls rest flush on the reading canvas, not the generic panel surface.
    Keep that canvas and add the same local overlay as message/session rows. */
 .files-toggle-button:hover,
 .files-header-icon-button:hover,

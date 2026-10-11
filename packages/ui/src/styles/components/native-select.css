@@ -2,14 +2,13 @@
    the selector trigger (control surface, chevron) and, where the engine supports
    customizable selects (Chromium: Electron and WebView2), the open list matches
    the shared menus. Elsewhere (WebKit) the system list remains.
-   :not([multiple]):not([size]) also outranks per-feature select rules. */
-select:not([multiple]):not([size]) {
+   :not([multiple]):not([size]) outranks per-feature select backgrounds; keyboard focus
+   is left to each select's own focus treatment (border, background). */
+select:not([multiple]):not([size]):not(:focus-visible) {
   background-color: var(--surface-control);
-  border-color: var(--border-base);
-  color: var(--text-primary);
 }
 
-select:not([multiple]):not([size]):hover:not(:disabled) {
+select:not([multiple]):not([size]):not(:focus-visible):hover:not(:disabled) {
   background-color: var(--surface-hover);
 }
 
@@ -21,6 +20,8 @@ select:not([multiple]):not([size]):hover:not(:disabled) {
 
   select {
     align-items: center;
+    /* Keep the native width (widest option) instead of resizing with the value. */
+    field-sizing: fixed;
     /* base-select rounds the control by default; chrome stays square. */
     border-radius: 0;
   }

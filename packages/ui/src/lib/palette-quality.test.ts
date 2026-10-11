@@ -90,7 +90,17 @@ describe("palette quality", () => {
       assert.notEqual(p.get("--message-assistant-bg"), p.get("--surface-base"))
       assert.notEqual(p.get("--message-user-bg"), p.get("--message-assistant-bg"))
       assert.equal(p.get("--message-tool-bg"), p.get("--message-assistant-bg"))
-      assert.notEqual(p.get("--surface-code"), p.get("--message-tool-bg"))
+      // Output blocks follow the inset role (title-bar tint: 25% secondary in OKLab) and
+      // must stay visibly distinct from tool cards. Classic Light pins its V1 code surface.
+      const code = p.get("--surface-code")!
+      if (code.startsWith("#")) assert.notEqual(code, p.get("--message-tool-bg"))
+      else {
+        assert.equal(code, "var(--surface-inset)")
+        const insetLab = lab(c.surfaceSecondary).map((v, i) => .25 * v + .75 * lab(c.surfaceBase)[i])
+        const toolLab = lab(p.get("--message-tool-bg")!)
+        const codeDistance = Math.hypot(...insetLab.map((v, i) => v - toolLab[i])) * 100
+        assert.ok(codeDistance >= 2, `inset output vs tool card: ${codeDistance}`)
+      }
       assert.notEqual(p.get("--surface-secondary"), p.get("--message-tool-bg"))
     })
     it(`${scheme.id}: keeps distinct participant roles or explicit V1 Classic identity`, () => {

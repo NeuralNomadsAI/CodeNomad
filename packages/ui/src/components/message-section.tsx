@@ -1427,7 +1427,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
                   <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
                     <div class="history-search-options">
-                    <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
+                    <select class="selector-input history-search-scope" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
                       onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
                       <option value="session">{t("history.session")}</option>
                       <option value="workspace">{t("history.workspace")}</option>

@@ -478,7 +478,7 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--accent-primary": colors.accentPrimary,
     "--accent-hover": mix(dark ? "#FFFFFF" : "#000000", colors.accentPrimary, dark ? 0.14 : 0.18),
     "--focus-ring-color": colors.accentPrimary,
-    "--focus-ring-offset": colors.surfaceBase,
+    "--focus-ring-offset": "var(--surface-canvas)",
     "--list-item-highlight-bg": alpha(selection, dark ? 0.2 : 0.12),
     "--list-item-highlight-bg-solid": mix(selection, colors.surfaceSecondary, dark ? 0.22 : 0.12),
     "--list-item-highlight-border": alpha(selection, dark ? 0.4 : 0.25),

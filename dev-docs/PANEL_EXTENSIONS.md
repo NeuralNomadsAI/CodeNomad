@@ -138,7 +138,7 @@ revokes activation. The injected context advertises that package's API version.
 API 2 also receives `context.colors` (`background`, `surface`, `text`, `muted`,
 `border`, `focus`) from the current host palette. Palette changes republish context.
 `background` matches the native panel sections (`--surface-secondary`); `surface`
-is the inset base canvas. Apply `background` to the panel document so its
+is the reading canvas (`--surface-canvas`, resolved to a concrete colour). Apply `background` to the panel document so its
 `color-scheme` cannot substitute a browser-default canvas color.
 
 ```js
