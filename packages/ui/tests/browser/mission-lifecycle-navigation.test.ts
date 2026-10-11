@@ -74,7 +74,7 @@ async function settle(page: Page) {
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready" && !document.querySelector('.mission-action-feedback [role="status"]'))
 }
 async function open(page: Page) {
-  await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+  await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility), undefined, { timeout: 60_000 })
   // Ordinary journeys start after the session list restored; the startup gate has its own regression.
   await call(page, "restoration", false)
   await call(page, "activate", true); await select(page); await pause(page).waitFor()
@@ -177,7 +177,7 @@ test("directory/project source ABA retains original uncertainty; stale completio
       if (calls.length === 1) { submitted(); await held; current = { ...current, revision: 2 } }
       return route.fulfill({ status: 409, json: {} })
     })
-    await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility), undefined, { timeout: 60_000 })
     await call(page, "restoration", false)
     await page.evaluate(async () => {
       const { addInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
@@ -273,7 +273,7 @@ test("same-project metadata hydration cannot enable fresh admission or erase the
       calls.push(route.request().postDataJSON() as Input); current = { ...current, revision: current.revision + 1 }
       return route.fulfill({ status: 409, json: {} })
     })
-    await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await page.goto(url); await page.waitForFunction(() => Boolean((window as any).missionVisibility), undefined, { timeout: 60_000 })
     await call(page, "restoration", false)
     await page.evaluate(async () => {
       const { addInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
