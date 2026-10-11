@@ -26,7 +26,8 @@ interface Held {
 const held = new WeakMap<WorktreeDeletionFence, Map<string, Held>>()
 const key = (workspaceID: string, scheduleID: string) => JSON.stringify([workspaceID, scheduleID])
 const retainedKey = (binding: Binding) => JSON.stringify([binding.workspaceID, binding.scheduleID, binding.requestID])
-// Native admits these over an incomplete start intent and completes it with them (recurrence-store).
+// Native admits explicit superseding controls over these incomplete start intents.
+// Play/Resume/Check complete with the new control; Run now completes only on passage admission/archive.
 const START_INTENTS: readonly string[] = ["play", "resume", "check", "run-now"]
 const SUPERSEDING: readonly string[] = ["resume", "pause", "stop", "check"]
 
@@ -38,9 +39,10 @@ function locate(registry: Map<string, Held> | undefined, workspaceID: string, re
   return record ? { id: retained, record } : { id, record: main }
 }
 
-/** Releases a settled permit. A committed superseding request also retires every start
- * intent it superseded (native completed them in the same write); a no-effect one
- * returns its superseded intent to the schedule's slot, still uncertain. */
+/** Releases a settled permit. A committed superseding request also retires the
+ * physical permits of its superseded start intents. This does not complete a
+ * Run now record: its passage admission/archive remains native authority.
+ * A no-effect request restores its superseded intent, still uncertain. */
 function drop(registry: Map<string, Held>, id: string, record: Held, effective: boolean) {
   registry.delete(id); record.release()
   for (let old = record.supersedes; old; old = effective ? old.supersedes : undefined) {
