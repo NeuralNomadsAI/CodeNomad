@@ -64,6 +64,9 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         return reply.code(result.outcome === "committed" ? 200 : 503).send(result)
       }
     } catch (error) {
+      // Drop only this attempt's still-preparing admission before classification.
+      // dispose is idempotent and preserves any original partial/uncertain permit.
+      if (!dispatched) prepared?.dispose()
       // Only a new first attempt can be described as unsent; retries and known
       // earlier attempts keep their original uncertainty even on early failure.
       const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error,

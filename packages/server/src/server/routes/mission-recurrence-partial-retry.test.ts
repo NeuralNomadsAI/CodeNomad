@@ -85,7 +85,7 @@ async function fixture() {
     },
     recurrenceRunNow: async () => { native.controls++; throw new Error("Unexpected Run now") },
   }
-  const env = { principal: human.id as string, owns: true, available: true, yaml }
+  const env = { principal: human.id as string, owns: true, available: true, yaml, retireAfterPreparation: false }
   /** One CodeNomad backend incarnation: its own fence (in-memory permits) and connection. */
   const backend = () => {
     const fence = new WorktreeDeletionFence(), connection = { current: true, client: { location: {
@@ -101,7 +101,11 @@ async function fixture() {
       // Fault injection only: simulate the principal changing after the native read.
       return verified && { ...verified, sessionId: env.principal }
     } },
-      bridgeToken: "token", fence, manager, settings: { configYamlPathForAuthority: () => env.yaml,
+      get bridgeToken() {
+        // Signing is the last step in preparation; retire before the route resumes.
+        if (env.retireAfterPreparation) queueMicrotask(() => { connection.current = false })
+        return "token"
+      }, fence, manager, settings: { configYamlPathForAuthority: () => env.yaml,
         getProfileScope: () => canonicalScope("stable", env.yaml, base, base) } }
     registerMissionRecurrenceControl(app, deps as never)
     registerMissionRecurrenceManual(app, deps as never)
@@ -232,5 +236,23 @@ test("not-dispatched is coded only for a first attempt, never for a retry or a h
     assert.deepEqual([retry.statusCode, retry.json().code], [503, undefined], retry.body)
     assert.equal(f.native.controls, 1)
     await restarted.app.close()
+  } finally { await rm(f.base, { recursive: true, force: true }) }
+})
+
+test("a first attempt retired after preparation stays coded as unsent on both mutation routes", async () => {
+  const f = await fixture()
+  try {
+    f.env.retireAfterPreparation = true
+    for (const manual of [false, true]) {
+      const b = f.backend(), expectedRevision = await f.revision()
+      try {
+        const response = manual ? await b.runNow({ expectedRevision, requestID: "manual_retired" })
+          : await b.send({ action: "play", expectedRevision, requestID: "play_retired" })
+        assert.deepEqual([response.statusCode, response.json().code], [503, "recurrence-not-dispatched"], response.body)
+        assert.equal(f.native.controls, 0, "no native mutation was sent")
+        assert.equal(await f.revision(), expectedRevision, "no control record or passage was written")
+        assert.equal(await b.deletionRuns(), true, "the preparing admission is released")
+      } finally { await b.app.close() }
+    }
   } finally { await rm(f.base, { recursive: true, force: true }) }
 })

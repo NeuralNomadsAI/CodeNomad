@@ -85,6 +85,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       }
       return reply.code(result.outcome === "unknown" ? 503 : 200).send(result)
     } catch (error) {
+      if (!dispatched) prepared?.dispose()
       const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error, { fence: deps.fence,
         workspaceID: request.params.id, request: { ...input.data, scheduleID: request.params.scheduleID, action: "run-now" } })
       if (refused) return reply.code(refused.status).send(refused.body)
