@@ -71,8 +71,12 @@ test("a long paste inserts its placeholder natively, keeping the caret and undo 
       undone.push(await input.inputValue())
     }
     assert.equal(undone.at(-1), "", `undo continues past the paste: ${JSON.stringify(undone)}`)
+    assert.equal(await page.evaluate(() => (window as any).fixture.attachments().length), 0)
     for (let step = 0; step < 6; step += 1) await input.press("Control+Shift+z")
     assert.equal(await input.inputValue(), "hello [pasted #1] more")
+    // Redo brings back the pasted content with its placeholder, not an empty token.
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments().map((a: any) => a.source)),
+      [{ type: "text", value: "x".repeat(200) }])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
