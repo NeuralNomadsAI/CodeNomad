@@ -5,6 +5,7 @@ import type { ProviderUsage } from "./types"
 import { codexCredential } from "./codex-credential"
 import { parseCodexUsage } from "./providers/oauth"
 import { parseCodexSelectionQuota } from "./codex-selection-quota"
+import { fetchBoundedJson } from "./bounded-fetch"
 
 interface UsageScope {
   instanceId: string
@@ -15,7 +16,6 @@ interface UsageScope {
 }
 type Snapshot = { identity: string; usage: ProviderUsage; fetchedAt: number }
 const CACHE_TTL_MS = 60_000
-const MAX_RESPONSE_BYTES = 65_536
 
 // Only normalized quota snapshots and irreversible identity digests are retained.
 // Native credential exports (including refresh tokens) stay on the server stack.
@@ -117,33 +117,7 @@ export async function fetchCodexSelectionQuota(access: string, accountID: string
 }
 
 async function fetchQuota(access: string, accountID: string, signal: AbortSignal, selection: boolean): Promise<ProviderUsage> {
-  const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
-    signal, redirect: "error", headers: { Authorization: `Bearer ${access}`, "ChatGPT-Account-Id": accountID, "Content-Type": "application/json" },
-  })
-  if (!response.ok || !response.body) {
-    await response.body?.cancel().catch(() => {})
-    throw new Error("Quota unavailable")
-  }
-  const reader = response.body.getReader()
-  const abort = () => { void reader.cancel().catch(() => {}) }
-  signal.addEventListener("abort", abort, { once: true })
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      signal.throwIfAborted()
-      const chunk = await reader.read()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > MAX_RESPONSE_BYTES) throw new Error("Quota response too large")
-      chunks.push(chunk.value)
-    }
-    signal.throwIfAborted()
-    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-    return selection ? parseCodexSelectionQuota(payload) : parseCodexUsage(payload)
-  } finally {
-    signal.removeEventListener("abort", abort)
-    await reader.cancel().catch(() => {})
-    reader.releaseLock()
-  }
+  const payload = await fetchBoundedJson("https://chatgpt.com/backend-api/wham/usage",
+    { Authorization: `Bearer ${access}`, "ChatGPT-Account-Id": accountID, "Content-Type": "application/json" }, signal)
+  return selection ? parseCodexSelectionQuota(payload) : parseCodexUsage(payload)
 }

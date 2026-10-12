@@ -70,6 +70,14 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             : null
           const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
           signal.throwIfAborted()
+          if (provider?.id === "opencode-go") {
+            // Go quota follows the session provider's own login: a Go key or the
+            // Console sign-in, never the other integration's selected account.
+            const integrationID = await connection.client.provider.get({ providerID: params.data.providerId, location: { directory: location.directory } }, { signal })
+              .then(info => info.location.directory === location.directory ? info.data.integrationID ?? info.data.id : undefined, () => undefined)
+            for (const alias of ["opencode-go", "opencode"]) if (alias !== integrationID) delete auth[alias]
+            signal.throwIfAborted()
+          }
           if (provider?.id === "claude-code") {
             auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
             signal.throwIfAborted()

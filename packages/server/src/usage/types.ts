@@ -13,6 +13,8 @@ export interface ProviderResult {
   usage: ProviderUsage | null
   fetchedAt: number
   error?: string
+  /** Upstream HTTP status of a failed read; server-only, never serialized. */
+  status?: number
 }
 
 export interface UsageProvider {

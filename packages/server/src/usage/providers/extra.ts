@@ -350,7 +350,7 @@ function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases"> & {
           return rateLimited()
         }
         if (response.status === 401 || response.status === 403) {
-          return result(this.id, this.name, { ok: false, configured: true, error: input.reauthError })
+          return result(this.id, this.name, { ok: false, configured: true, error: input.reauthError, status: response.status })
         }
         if (!response.ok) return result(this.id, this.name, { ok: false, configured: true, error: `API error: ${response.status}` })
         const usage = buildClaudeUsage((await response.json()) as Record<string, unknown>)
@@ -366,12 +366,15 @@ function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases"> & {
 // A session's quota must come from the login that session uses: OpenCode's
 // Anthropic OAuth for `anthropic`, and for opencode-claude's `claude-code` the
 // Claude Code login the route resolves on the daemon host.
-const claude = createClaudeProvider({
+// Fresh instances carry no rate-limit fallback snapshot from another account,
+// so account selection never mistakes a cached read for current evidence.
+export const createAnthropicClaudeUsage = () => createClaudeProvider({
   id: "claude",
   aliases: ["claude", "anthropic"],
   credential: auth => authClaudeCredential(auth, ["anthropic", "claude"]),
   reauthError: "Claude session expired. Reconnect the Anthropic integration in OpenCode.",
 })
+const claude = createAnthropicClaudeUsage()
 
 const claudeCode = createClaudeProvider({
   id: "claude-code",

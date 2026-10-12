@@ -82,6 +82,7 @@ import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } f
 import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
 import { ProviderAccountsService, AccountSelectionFailed } from "../provider-accounts/service"
 import { registerProviderAccountsRoutes } from "./routes/provider-accounts"
+import { observeProviderQuotaFailures } from "../provider-accounts/quota-observer"
 import { deferPendingDiscovery, grantPendingReconciliation, PENDING_DISCOVERY_DEFERRED, PENDING_RECONCILIATION_HEADER } from "../workspaces/pending-discovery"
 
 interface HttpServerDeps {
@@ -318,6 +319,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   const accounts = new ProviderAccountsService(deps.settings)
+  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
+  app.addHook("onClose", async () => stopQuotaObserver())
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),

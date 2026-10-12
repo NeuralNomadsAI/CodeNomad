@@ -1,6 +1,6 @@
 import { ClientError, type CredentialEntry } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import type { AuthFile } from "./types"
+import type { AuthEntry, AuthFile } from "./types"
 import { readOpenCodeAuth } from "./shared"
 
 // Server-only. The projection holds secrets: never log, cache or return it.
@@ -8,15 +8,25 @@ export function projectCredentials(entries: readonly CredentialEntry[]): AuthFil
   const auth: AuthFile = {}
   for (const entry of entries) {
     if (!entry.active) continue
-    const value = entry.value
-    if (value.type === "external") continue
-    const accountId = value.metadata?.accountID
-    auth[entry.integrationID] = value.type === "key"
-      ? { type: "api", key: value.key }
-      : { type: "oauth", access: value.access, refresh: value.refresh, expires: value.expires,
-        ...(typeof accountId === "string" ? { accountId } : {}) }
+    const projected = projectCredential(entry)
+    if (projected) auth[entry.integrationID] = projected
   }
   return auth
+}
+
+/** One explicit (possibly inactive) credential in the legacy auth.json entry shape. Server-only. */
+export function projectCredential(entry: CredentialEntry): AuthEntry | null {
+  const value = entry.value
+  if (value.type !== "key" && value.type !== "oauth") return null
+  const accountId = value.metadata?.accountID
+  // OpenCode Console credentials scope requests by organization and server.
+  const orgId = value.metadata?.orgID
+  const server = value.metadata?.server
+  const scope = { ...(typeof orgId === "string" ? { orgId } : {}), ...(typeof server === "string" ? { server } : {}) }
+  return value.type === "key"
+    ? { type: "api", key: value.key, ...scope }
+    : { type: "oauth", access: value.access, refresh: value.refresh, expires: value.expires,
+      ...(typeof accountId === "string" ? { accountId } : {}), ...scope }
 }
 
 /**

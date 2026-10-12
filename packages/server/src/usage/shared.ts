@@ -157,7 +157,7 @@ export function resolveWindowLabel(windowSeconds: number | null): string {
 export function result(
   providerId: string,
   providerName: string,
-  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string },
+  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number },
 ): ProviderResult {
   return {
     providerId,
@@ -167,6 +167,7 @@ export function result(
     usage: input.usage ?? null,
     fetchedAt: Date.now(),
     ...(input.error ? { error: input.error } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
   }
 }
 
@@ -174,9 +175,14 @@ export function notConfigured(providerId: string, providerName: string): Provide
   return result(providerId, providerName, { ok: false, configured: false, error: "Not configured" })
 }
 
+/** Only the status is retained; upstream bodies may echo credentials. */
+export class ProviderHttpError extends Error {
+  constructor(readonly status: number) { super(`Provider returned HTTP ${status}`) }
+}
+
 export async function fetchJson(url: string, init: RequestInit = {}): Promise<any> {
   const response = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-  if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`)
+  if (!response.ok) throw new ProviderHttpError(response.status)
   return response.json()
 }
 
@@ -192,6 +198,7 @@ export async function safeFetch(
       ok: false,
       configured: true,
       error: error instanceof Error ? error.message : "Request failed",
+      ...(error instanceof ProviderHttpError ? { status: error.status } : {}),
     })
   }
 }

@@ -11,7 +11,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "このアカウントを使用",
   "settings.accounts.error": "操作に失敗しました。更新して現在の状態を確認してください。",
   "settings.accounts.autoSelect": "アカウントを自動選択",
-  "settings.accounts.autoSelectHint": "次の送信前にCodex使用率が100%なら、利用可能と確認できたOAuthアカウントを選択します。選択はサービス全体に適用され、失敗したリクエストは再送しません。",
+  "settings.accounts.autoSelectHint": "次の送信前に、このサブスクリプションアカウントのクォータを使い切っていれば、使い切ったと判明していない別の保存済みアカウントに切り替えます。選択はサービス全体に適用され、失敗したリクエストは再送しません。",
   "settings.providers.models.title": "モデル",
   "settings.websearch.title": "ウェブ検索",
   "settings.websearch.description": "エージェントがウェブで情報を検索する際のプロバイダーを選択します。変更は自動的に保存されます。",

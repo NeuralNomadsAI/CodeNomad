@@ -13,6 +13,7 @@ const [directory, setDirectory] = createSignal("/a")
 let connections: any[] = [{ type: "credential", id: "one", label: "First", method: "key" }, { type: "credential", id: "two", label: "Second", method: "oauth" }, { type: "env", name: "PROVIDER_KEY" }]
 const writes: any[] = []
 const external = new URLSearchParams(location.search).has("external")
+const integrationId = new URLSearchParams(location.search).get("integration") ?? "provider"
 let fail = false, reads = 0
 let deferParent = false, releaseParent: (() => void) | undefined
 const mutate = async (action: string, input: any) => {
@@ -29,7 +30,7 @@ const client: any = { provider: { list: async () => {
 } },
   model: { list: async () => ({ data: [] }) },
   websearch: { providers: async () => ({ data: [] }) },
-  integration: { list: async () => { reads++; return { data: [{ id: "provider", name: "Fixture provider", methods: external
+  integration: { list: async () => { reads++; return { data: [{ id: integrationId, name: "Fixture provider", methods: external
     ? [{ type: "external", id: "fixture-source", label: "Native credential source", form: [{ key: "resource", type: "string", label: "Resource", required: true }] }]
     : [{ type: "key", label: "API key" }], connections: structuredClone(connections) }] } }, connect: {
       external: async (input: any) => {
@@ -44,7 +45,7 @@ await applyUiSettings({})
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><main style={{ width: "min(700px, 100%)" }}>
   {new URLSearchParams(location.search).has("parent")
     ? <ProviderManagerModal instanceId="accounts" location={{ directory: directory() }} embedded />
-    : <ProviderAccounts instanceId="accounts" integrationId="provider" client={client} location={{ directory: directory() }} />}
+    : <ProviderAccounts instanceId="accounts" integrationId={integrationId} client={client} location={{ directory: directory() }} />}
 </main></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { writes, reads: () => reads, setDirectory, fail: () => { fail = true },
   deferParent: () => { deferParent = true }, parentPending: () => Boolean(releaseParent),

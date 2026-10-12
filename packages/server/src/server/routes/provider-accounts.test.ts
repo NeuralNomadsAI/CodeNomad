@@ -8,15 +8,18 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 async function fixture() {
   const app = Fastify()
   const workspace = { id: "w", path: "D:/project" }
-  const state = { current: true, reads: 0, owned: true, available: true, supported: true, enabled: false, fail: false }
+  const state = { current: true, reads: 0, owned: true, available: true, supported: true, enabled: false, fail: false,
+    integrations: [] as string[], policy: {} as Record<string, boolean> }
   const connection = { client: {}, assertCurrent: () => { if (!state.current) throw new Error("private-native-detail") } }
   const accounts = {
-    snapshot: async (_connection: unknown, directory: string) => {
+    snapshot: async (_connection: unknown, directory: string, integrationID: string) => {
       state.reads++; assert.equal(directory, "/project")
+      state.integrations.push(integrationID)
       if (state.fail) throw new Error("secret-access-token")
       return { supported: state.supported, enabled: state.enabled, logins: { one: "one@example.com" } }
     },
-    setEnabled: (enabled: boolean) => { state.enabled = enabled },
+    supports: (integrationID: string) => ["openai", "opencode-go", "opencode"].includes(integrationID),
+    setEnabled: (enabled: boolean, integrationID = "openai") => { state.enabled = enabled; state.policy[integrationID] = enabled },
   } as unknown as ProviderAccountsService
   const fence = new WorktreeDeletionFence()
   registerProviderAccountsRoutes(app, { accounts, worktreeDeletionFence: fence, workspaceManager: {
@@ -63,6 +66,25 @@ test("opt-in writes are explicit, supported-only and fenced against deletion", a
     const disabled = await f.app.inject({ method: "PUT", url: f.url, payload: { directory: "D:/project", enabled: false } })
     assert.equal(disabled.statusCode, 200)
     assert.equal(f.state.enabled, false)
+  } finally { await f.app.close() }
+})
+
+test("any registered integration reads and writes its own policy; unregistered ones refuse writes", async () => {
+  const f = await fixture()
+  try {
+    const go = "/api/workspaces/w/provider-accounts/opencode-go"
+    const read = await f.app.inject({ url: `${go}?directory=D:/project` })
+    assert.equal(read.statusCode, 200)
+    assert.deepEqual(f.state.integrations, ["opencode-go"])
+    const write = await f.app.inject({ method: "PUT", url: go, payload: { directory: "D:/project", enabled: true } })
+    assert.equal(write.statusCode, 200)
+    assert.deepEqual(f.state.policy, { "opencode-go": true })
+    for (const enabled of [true, false]) {
+      const refused = await f.app.inject({ method: "PUT", url: "/api/workspaces/w/provider-accounts/deepinfra",
+        payload: { directory: "D:/project", enabled } })
+      assert.equal(refused.statusCode, 409)
+    }
+    assert.deepEqual(f.state.policy, { "opencode-go": true })
   } finally { await f.app.close() }
 })
 

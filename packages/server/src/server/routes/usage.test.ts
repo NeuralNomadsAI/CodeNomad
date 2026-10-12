@@ -11,7 +11,8 @@ import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
 function harness() {
   const expires = Date.now() + 3600000
   const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
-    daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>() }
+    daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>(),
+    integrations: {} as Record<string, string> }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
@@ -20,16 +21,22 @@ function harness() {
     if (state.fail) throw new Error("secret-refresh Authorization secret-token")
     if (url.pathname === "/api/session/missing") return Response.json({ _tag: "SessionNotFoundError", sessionID: "missing" }, { status: 404 })
     if (url.pathname.startsWith("/api/session/")) return Response.json({ data: { id: "session", location: { directory: state.directory } } })
-    if (url.pathname.startsWith("/api/provider/")) return Response.json({ location: { directory: state.directory }, data: {
-      id: "openai", name: "OpenAI", activation: "auto", package: "openai",
-    } })
+    if (url.pathname.startsWith("/api/provider/")) {
+      const id = decodeURIComponent(url.pathname.split("/")[3])
+      return Response.json({ location: { directory: state.directory }, data: {
+        id, name: id, activation: "auto", package: id, ...(state.integrations[id] ? { integrationID: state.integrations[id] } : {}),
+      } })
+    }
     if (url.pathname === "/api/integration/openai") return Response.json({ location: { directory: state.directory }, data: {
       id: "openai", name: "OpenAI", methods: [], connections: [{ type: "credential", method: "oauth", id: state.switched ? "other" : "selected", label: "Secret account" }],
     } })
     if (url.pathname === "/api/credential") return Response.json({ data: [{ id: "selected", integrationID: "openai", active: true, label: "Secret account",
       value: { type: "oauth", methodID: "chatgpt-headless", access: "secret-token", refresh: "secret-refresh", expires,
         metadata: { accountID: "secret-account" } },
-    }, { id: "key", integrationID: "deepinfra", active: true, label: "Key", value: { type: "key", key: "secret-deepinfra" } }] },
+    }, { id: "key", integrationID: "deepinfra", active: true, label: "Key", value: { type: "key", key: "secret-deepinfra" } },
+    { id: "go", integrationID: "opencode-go", active: true, label: "Go", value: { type: "key", key: "secret-go-key" } },
+    { id: "console", integrationID: "opencode", active: true, label: "Console", value: { type: "oauth", methodID: "device",
+      access: "secret-console", refresh: "secret-console-refresh", expires, metadata: { orgID: "org_fixture", server: "https://opencode.ai/console" } } }] },
     { status: state.oldEndpoint ? 404 : 200 })
     return Response.json({}, { status: 404 })
   } })
@@ -140,6 +147,37 @@ test("other providers use the daemon's selected native credential, never returni
     assert.equal(response.json().windows.credits_balance.valueLabel, "$4.00")
     assert.equal([response.body, ...logs].join("").includes("secret-"), false)
   } finally { globalThis.fetch = previousFetch; await app.close() }
+})
+
+test("OpenCode Go reads the session provider's own native login, without env cookies", async () => {
+  const { app, state, logs } = harness()
+  const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
+  delete process.env.OPENCODE_GO_WORKSPACE_ID; delete process.env.OPENCODE_GO_AUTH_COOKIE
+  const requests: Array<{ url: string; authorization: string | null; org: string | null }> = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers)
+    requests.push({ url: String(input), authorization: headers.get("authorization"), org: headers.get("x-org-id") })
+    return Response.json({ usage: { rolling: { status: "ok", percent: 42, resetsAt: new Date(Date.now() + 3_600_000).toISOString() } } })
+  }
+  const goUrl = url.replace("/usage/openai", "/usage/opencode-go")
+  try {
+    const key = await app.inject({ url: goUrl })
+    assert.equal(key.json().ok, true)
+    assert.equal(key.json().windows["5h"].usedPercent, 42)
+    state.integrations["opencode-go"] = "opencode"
+    assert.equal((await app.inject({ url: goUrl })).json().ok, true)
+    assert.deepEqual(requests, [
+      { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer secret-go-key", org: null },
+      { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer secret-console", org: "org_fixture" },
+    ])
+    assert.equal([key.body, ...logs].join("").includes("secret-"), false)
+  } finally {
+    globalThis.fetch = previousFetch
+    await app.close()
+    if (previous.workspace !== undefined) process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
+    if (previous.cookie !== undefined) process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
+  }
 })
 
 test("claude-code sessions read Claude Code's login on the daemon host, never returning it", async () => {
