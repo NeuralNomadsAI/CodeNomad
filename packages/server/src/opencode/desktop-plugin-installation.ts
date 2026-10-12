@@ -6,8 +6,9 @@ import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { PRESENCE_INTERVAL_MS, PRESENCE_READY_SUFFIX } from "./desktop-plugin-presence"
 
-// Covers a full presence check and staggered Location timers.
-export const PRESENCE_READY_WAIT_MS = 8_000
+// Two presence checks plus a scan. Paid in full only when no marker can come:
+// no Location loaded yet, or pre-marker plugin copies still loaded after an upgrade.
+export const PRESENCE_READY_WAIT_MS = 5_000
 const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { assertNativePluginPath, type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"

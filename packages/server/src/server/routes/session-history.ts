@@ -23,6 +23,8 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     const root = manager.getServiceLocation(request.params.id)
     if (!root) return reply.code(404).send({ error: "Workspace not found" })
     const client = await manager.getSharedServiceClient()
+    // Await plugin registration before reading and authorizing the session.
+    await manager.desktopPluginsReady()
     const session = input.sessionID ? await client.session.get({ sessionID: input.sessionID }) : undefined
     if (session && !await manager.ownsLocation(request.params.id, session.location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
     // Only native/validated local worktrees supply query locations. A cursor
@@ -44,7 +46,6 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (location.directory !== directory || !await manager.ownsLocation(request.params.id, location, client)) {
       return reply.code(403).send({ error: "History location does not belong to workspace" })
     }
-    await manager.desktopPluginsReady()
     try {
       const result = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "history",
         input: JSON.parse(JSON.stringify({ ...input, cursor: cursor?.page })), location: { directory } },
@@ -82,12 +83,12 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (!parsed.success) return reply.code(400).send({ error: "Invalid pruning batch" })
     const input = parsed.data
     const client = await deps.workspaceManager.getSharedServiceClient()
+    // Before authorization: ownership checks and fence entry must stay adjacent.
+    await deps.workspaceManager.desktopPluginsReady()
     const session = await client.session.get({ sessionID: input.sessionID })
     if (!await deps.workspaceManager.ownsLocation(request.params.id, session.location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
     const identity = await deps.workspaceManager.getWorktreeIdentityForPath(request.params.id, session.location.directory)
     if (!identity) return reply.code(403).send({ error: "Session does not belong to workspace" })
-    // Before the deletion fence: waiting for plugin registration must not hold it.
-    await deps.workspaceManager.desktopPluginsReady()
     const release = deps.worktreeDeletionFence.enter([identity])
     if (!release) return reply.code(409).send({ error: "Worktree deletion is in progress" })
     try {

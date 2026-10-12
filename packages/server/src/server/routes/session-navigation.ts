@@ -12,12 +12,12 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick
       const parsed = inputs[method].safeParse(request.body)
       if (!parsed.success) return reply.code(400).send({ error: "Invalid history navigation request" })
       const client = await deps.workspaceManager.getSharedServiceClient()
-      const session = await client.session.get({ sessionID: parsed.data.sessionID })
-      const location = readLocationRef(session.location)
-      if (!await deps.workspaceManager.ownsLocation(request.params.id, location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
       // The first timeline/history read after a backend start would otherwise
       // reach the plugin before it observed this backend and be refused.
       await deps.workspaceManager.desktopPluginsReady()
+      const session = await client.session.get({ sessionID: parsed.data.sessionID })
+      const location = readLocationRef(session.location)
+      if (!await deps.workspaceManager.ownsLocation(request.params.id, location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
       const controller = new AbortController()
       const abort = () => { if (!reply.raw.writableEnded) controller.abort() }
       reply.raw.once("close", abort)

@@ -57,9 +57,15 @@ test("a follower without presence does not acknowledge, and an older backend's d
   const older = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-ready-older-"))
   t.after(() => Promise.all([fs.rm(current, { recursive: true, force: true }), fs.rm(older, { recursive: true, force: true })]))
   await fs.writeFile(path.join(older, "def-456.lease"), "")
+  const idle = await followPresence(current, async () => () => {})
+  await delay(20)
+  assert.deepEqual(await markers(current), [], "a follower without presence acknowledges nothing")
+  await idle()
+  await fs.writeFile(path.join(current, "abc-123.lease"), "")
   const stop = await followPresence([current, older], async () => () => {})
   t.after(stop)
-  assert.deepEqual([...await markers(current), ...await markers(older)], [], "read-only legacy leases are not acknowledged")
+  await waitForMarkers(current, ["abc-123.lease.ready"])
+  assert.deepEqual(await markers(older), [], "read-only legacy leases are never marked")
 })
 
 test("readiness never rejects and settles at once when the backend stops before any plugin registers", async t => {
