@@ -64,8 +64,13 @@ export function clearSearchHighlights(root: HTMLElement): void {
   }
 }
 
-/** One mounted message owns its contribution; another row cannot clear it. */
-export function applySearchHighlights(root: HTMLElement, query: string, active?: SessionSearchMatch | null, scrollActive = false): void {
+/**
+ * One mounted message owns its contribution; another row cannot clear it.
+ * `revealOutside` positions the active range in the scrollers enclosing `root`
+ * (the virtualized transcript); nested scrollers inside `root` are revealed here.
+ */
+export function applySearchHighlights(root: HTMLElement, query: string, active?: SessionSearchMatch | null, scrollActive = false,
+  revealOutside?: (range: Range) => void): void {
   clearSearchHighlights(root)
   if (!query.trim()) return
   const view = root.ownerDocument.defaultView!
@@ -97,7 +102,8 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
         owner.scrollFrame = undefined
         if (owners.get(root) === owner && activeRange!.startContainer.isConnected) {
           needsScroll = false
-          revealSearchRange(activeRange!)
+          revealSearchRange(activeRange!, revealOutside ? root : undefined)
+          revealOutside?.(activeRange!)
         }
       })
     }

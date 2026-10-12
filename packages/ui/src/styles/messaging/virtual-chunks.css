@@ -1,0 +1,13 @@
+/* Chunks of a long message list (`components/virtual-chunk-list.tsx`). A chunk is
+   layout-neutral inside its flex-column list; a placeholder only holds a height. */
+.virtual-chunk {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+  min-width: 0;
+}
+
+/* Block-flow lists (message text parts) keep their normal margin behavior. */
+.virtual-chunk--flow {
+  display: block;
+}

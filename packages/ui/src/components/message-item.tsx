@@ -6,6 +6,7 @@ import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
+import VirtualChunkList from "./virtual-chunk-list"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { isTauriHost } from "../lib/runtime-env"
@@ -38,6 +39,8 @@ interface MessageItemProps {
   technicalCleanupParts: () => TechnicalCleanupPart[]
   onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
+  /** Active search part; its chunk stays rendered in long text runs. */
+  activePartId?: string
 }
 
 export default function MessageItem(props: MessageItemProps) {
@@ -714,8 +717,16 @@ export default function MessageItem(props: MessageItemProps) {
           </div>
         </Show>
 
-        <For each={messageParts()}>
-          {(part) => {
+        <VirtualChunkList
+          each={messageParts()}
+          keyed
+          class="virtual-chunk--flow"
+          cacheKey={`${props.instanceId}:${props.sessionId}:${props.record.id}:${props.contentStartPartId ?? ""}:parts`}
+          itemKey={(part) => typeof part.id === "string" ? part.id : ""}
+          pinned={(part) => Boolean(props.activePartId) && part.id === props.activePartId}
+        >
+          {(item) => {
+            const part = item()
             return (
               <div class="message-part-shell">
                 <MessagePart
@@ -730,7 +741,7 @@ export default function MessageItem(props: MessageItemProps) {
               </div>
             )
           }}
-        </For>
+        </VirtualChunkList>
 
         <Show when={fileAttachments().length > 0}>
           <div class="message-attachments mt-1">

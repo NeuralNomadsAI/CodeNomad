@@ -38,3 +38,28 @@ test("reader settlement sleeps between layouts and cannot resurrect cancelled ow
     globalThis.cancelAnimationFrame = previousCancel
   }
 })
+
+test("a retained reader follows content compensated above its visible part", () => {
+  const previousFrame = globalThis.requestAnimationFrame, previousCancel = globalThis.cancelAnimationFrame
+  const frames: FrameRequestCallback[] = []
+  const offsets: number[] = []
+  globalThis.requestAnimationFrame = fn => frames.push(fn)
+  globalThis.cancelAnimationFrame = () => {}
+  try {
+    const reader = createVirtualReaderSettlement({
+      enabled: () => true,
+      getAnchor: () => ({ key: "long-turn", offset: -4000 }),
+      align: anchor => { offsets.push(anchor.offset) },
+    })
+    reader.shift(300)
+    assert.equal(frames.length, 0, "Without a retained reader there is nothing to shift")
+    reader.settle(reader.capture())
+    // A chunk above the viewport grew by 300 px and the list scrolled with it.
+    reader.shift(300)
+    frames.shift()!(0)
+    assert.deepEqual(offsets, [-4300], "The row top moves up with the compensation instead of being pulled back")
+  } finally {
+    globalThis.requestAnimationFrame = previousFrame
+    globalThis.cancelAnimationFrame = previousCancel
+  }
+})

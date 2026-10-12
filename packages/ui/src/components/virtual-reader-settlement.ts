@@ -33,6 +33,10 @@ export function createVirtualReaderSettlement(options: {
     cancel,
     notify,
     capture: () => ({ anchor: anchor ?? options.getAnchor(), generation }),
+    /** Content above the anchor's visible part was compensated by `delta` px of scrolling. */
+    shift: (delta: number) => {
+      if (anchor) anchor = { key: anchor.key, offset: anchor.offset - delta }
+    },
     settle: (next: { anchor: VirtualItemAnchor | undefined; generation: number } | undefined) => {
       if (!next?.anchor || next.generation !== generation) return
       anchor = next.anchor

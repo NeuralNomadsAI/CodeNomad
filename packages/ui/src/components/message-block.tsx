@@ -1,17 +1,13 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
+import VirtualChunkList from "./virtual-chunk-list"
 import SystemMessage from "./system-message"
 import type { SessionInboxUser } from "@opencode/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import {
-  buildRecordDisplayData,
-  clearRecordDisplayCacheForInstance,
-  MESSAGE_PART_REVEAL_STEP,
-  revealHiddenRecordParts,
-} from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
@@ -197,6 +193,7 @@ interface MessageContentItemProps {
   technicalCleanupParts: () => TechnicalCleanupPart[]
   onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
+  activePartId?: string
 }
 
 function isSupportedPartType(part: unknown): boolean {
@@ -297,6 +294,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         technicalCleanupParts={props.technicalCleanupParts}
         onTechnicalCleanupHoverChange={props.onTechnicalCleanupHoverChange}
         onContentRendered={props.onContentRendered}
+        activePartId={props.activePartId}
       />
     </Show>
   )
@@ -476,14 +474,22 @@ type CompactionDisplayItem = {
 }
 
 type SystemDisplayItem = { type: "system"; key: string; part: Extract<ClientPart, { type: "system" }> }
-type HiddenPartsDisplayItem = { type: "hidden-parts"; key: string; messageId: string; count: number; start: number }
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem | HiddenPartsDisplayItem
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem
+
+function displayItemPartIds(item: MessageBlockItem): string[] {
+  switch (item.type) {
+    case "content": return item.partIds
+    case "tool": case "compaction": return [item.partId]
+    case "exploration": return item.tools.map((tool) => tool.partId)
+    case "reasoning": return item.parts.map((part) => part.partId)
+    default: return typeof item.part.id === "string" ? [item.part.id] : []
+  }
+}
 
 interface MessageDisplayBlock {
   messageId: string
   status: MessageRecord["status"]
   items: MessageBlockItem[]
-  truncated: boolean
 }
 
 interface MessageBlockProps {
@@ -517,8 +523,8 @@ interface MessageBlockProps {
   onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
   isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
   setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
-  /** Leaves bottom-following and holds `target` `viewportOffset` px below the transcript top. */
-  alignRevealedParts?: (target: HTMLElement, viewportOffset: number) => void
+  /** Positions the active search range in the enclosing virtualized transcript. */
+  revealSearchRange?: (range: Range) => void
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -563,7 +569,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!element) return
     if (shouldScrollActive && relevantActiveMatch) lastInlineScrolledSearchMatchId = relevantActiveMatch.id
 
-    const frame = requestAnimationFrame(() => applySearchHighlights(element, query, relevantActiveMatch, shouldScrollActive))
+    const frame = requestAnimationFrame(() => applySearchHighlights(element, query, relevantActiveMatch, shouldScrollActive, props.revealSearchRange))
     onCleanup(() => {
       cancelAnimationFrame(frame)
       clearSearchHighlights(element)
@@ -655,7 +661,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       return item
     }
 
-    const isDisplayPart = (part: ClientPart) => {
+    const displayParts = orderedParts.filter((part) => {
       if (part.type === "step-finish") {
         return isVisibleStepFinish(part, info, props.usageMetricsVisibility() !== "hidden")
       }
@@ -666,25 +672,13 @@ export default function MessageBlock(props: MessageBlockProps) {
         || (part.id && props.store().getPermissionState(current.id, part.id)?.active)
         || (part.id && pendingFormToolTargets().has(technicalPartKey(current.id, part.id)))
       )
-    }
-    const groupParts = (parts: ClientPart[]) => groupTechnicalParts(parts.filter(isDisplayPart), (part) => {
+    })
+    const groupedParts = groupTechnicalParts(displayParts, (part) => {
       const partId = typeof part.id === "string" ? part.id : ""
       return partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined
     })
-    // `null` marks omitted parts; grouping each side separately keeps groups from spanning them.
-    const groupedParts = displayData.hiddenCount > 0
-      ? [...groupParts(orderedParts.slice(0, displayData.gapIndex)), null, ...groupParts(orderedParts.slice(displayData.gapIndex))]
-      : groupParts(orderedParts)
 
     groupedParts.forEach((group, groupIndex) => {
-      if (!group) {
-        flushContent()
-        items.push({
-          type: "hidden-parts", key: `${current.id}:hidden-parts`, messageId: current.id,
-          count: displayData.hiddenCount, start: displayData.hiddenStart,
-        })
-        return
-      }
       if (group.kind === "exploration" || group.kind === "shell") {
         flushContent()
         const tools = group.parts.flatMap((part) => {
@@ -793,7 +787,7 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     flushContent()
 
-    const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
+    const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items }
     sessionCache.messageBlocks.set(current.id, {
       signature: cacheSignature,
       displayData,
@@ -818,14 +812,20 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resultBlock
   })
 
-  const isToolDisplayItemVisible = (item: ToolDisplayItem) => {
+  const isPendingToolItem = (item: ToolDisplayItem) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
-    if (part?.type !== "tool" || props.toolVisibility(part.tool || "") !== "hidden") return true
+    if (part?.type !== "tool") return false
     if (
       part.pendingPermission?.active ||
       props.store().getPermissionState(item.messageId, item.partId)?.active
     ) return true
     return pendingFormToolTargets().has(`${item.messageId}:${item.partId}`)
+  }
+
+  const isToolDisplayItemVisible = (item: ToolDisplayItem) => {
+    const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
+    if (part?.type !== "tool" || props.toolVisibility(part.tool || "") !== "hidden") return true
+    return isPendingToolItem(item)
   }
 
   const technicalGroupStartsHere = (group: TranscriptTechnicalGroup | undefined) => !group || group.parts[0]?.messageId === props.messageId
@@ -852,68 +852,21 @@ export default function MessageBlock(props: MessageBlockProps) {
     return true
   }
 
-  // Reveal in place: keep the reveal point where it was activated and move keyboard
-  // focus there, since the placeholder unmounts or ends up below the revealed parts.
-  const revealInPlace = (button: HTMLButtonElement, item: HiddenPartsDisplayItem) => {
-    const revealCount = Math.min(item.count, MESSAGE_PART_REVEAL_STEP)
-    const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + revealCount) ?? []
-    const stream = button.closest<HTMLElement>(".message-stream")
-    const activationTop = button.getBoundingClientRect().top
-    const hadFocus = document.activeElement === button
-    revealHiddenRecordParts(props.instanceId, item.messageId)
-    requestAnimationFrame(() => {
-      const element = blockRef()
-      if (!element) return
-      // Revealed parts may merge into an earlier row or a collapsed group that renders
-      // no member elements; group roots list their members for this lookup. A rendered
-      // member wins over its group so an expanded group does not focus its header.
-      const found = revealedIds.reduce<HTMLElement | null>((match, partId) => {
-        if (match) return match
-        const id = CSS.escape(partId)
-        return element.querySelector<HTMLElement>(`[data-part-id="${id}"]`)
-          ?? element.querySelector<HTMLElement>(`[data-group-part-ids~="${id}"]`)
-      }, null)
-      const groupToggle = found?.matches("[data-group-part-ids]")
-        ? found.querySelector<HTMLElement>(".message-technical-group-toggle")
-        : null
-      const revealPoint = groupToggle ?? found
-      // The virtualizer and bottom-following keep the message end fixed while a partly
-      // scrolled row grows, which can push the revealed parts far above the viewport.
-      if (revealPoint && stream?.isConnected) {
-        props.alignRevealedParts?.(revealPoint, activationTop - stream.getBoundingClientRect().top)
-      }
-      if (!hadFocus) return
-      // Respect focus moved elsewhere meanwhile. The clicked button may stay mounted when
-      // revealed parts merge into the row above it, so it does not mark the reveal point.
-      const active = document.activeElement
-      if (active && active !== document.body && active !== button) return
-      // Nothing revealed rendered (hidden tools/thinking): stay at the next placeholder if any.
-      const target = revealPoint ?? element.querySelector<HTMLElement>(".message-hidden-parts-button") ?? element
-      if (target === groupToggle || target.matches(".message-hidden-parts-button")) {
-        target.focus({ preventScroll: true })
-        return
-      }
-      if (!target.hasAttribute("tabindex")) {
-        target.setAttribute("tabindex", "-1")
-        const release = () => {
-          // Switching windows also blurs; keep the target so focus can return to it.
-          if (!document.hasFocus()) return
-          target.removeAttribute("tabindex")
-          target.removeEventListener("blur", release)
-        }
-        target.addEventListener("blur", release)
-      }
-      target.focus({ preventScroll: true })
-    })
-  }
-
   const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
     .filter(isDisplayItemVisible)
     .map((item) => item.key)))
+  // Navigation targets and pending interruptions stay rendered however far they are.
+  const activePartId = () => isActiveSearchResult() ? activeSearchMatch()?.partId : undefined
+  const isPinnedDisplayItem = (item: MessageBlockItem) => {
+    const partId = activePartId()
+    if (partId && displayItemPartIds(item).includes(partId)) return true
+    if (item.type === "tool") return isPendingToolItem(item)
+    return item.type === "exploration" && item.tools.some(isPendingToolItem)
+  }
   return (
     <Show when={block()}>
       {(resolvedBlock) => (
-        <Show when={resolvedBlock().truncated || resolvedBlock().items.some(isDisplayItemVisible)}>
+        <Show when={resolvedBlock().items.some(isDisplayItemVisible)}>
           <div
             ref={(element) => {
               setBlockRef(element)
@@ -924,7 +877,12 @@ export default function MessageBlock(props: MessageBlockProps) {
             data-search-result={isSearchResult() ? "true" : undefined}
             data-search-active={isActiveSearchResult() ? "true" : undefined}
           >
-            <Index each={resolvedBlock().items}>
+            <VirtualChunkList
+              each={resolvedBlock().items}
+              cacheKey={`${props.instanceId}:${props.sessionId}:${resolvedBlock().messageId}:items`}
+              itemKey={(item) => item.key}
+              pinned={isPinnedDisplayItem}
+            >
               {(item) => (
               <Switch>
                 <Match when={item().type === "content"}>
@@ -953,6 +911,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       hovered,
                     )}
                     onContentRendered={handleContentRendered}
+                    activePartId={activePartId()}
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
@@ -1070,27 +1029,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                     technicalCleanupPartKeys={technicalCleanupPartKeys}
                   />
                 </Match>
-                <Match when={item().type === "hidden-parts"}>
-                  <div class="message-hidden-parts">
-                    <span class="message-hidden-parts-label">
-                      {t((item() as HiddenPartsDisplayItem).count === 1 ? "messageBlock.hiddenParts.one" : "messageBlock.hiddenParts.other", {
-                        count: (item() as HiddenPartsDisplayItem).count,
-                      })}
-                    </span>
-                    <button
-                      type="button"
-                      class="button-secondary message-hidden-parts-button"
-                      onClick={(event) => revealInPlace(event.currentTarget, item() as HiddenPartsDisplayItem)}
-                    >
-                      {t("messageBlock.hiddenParts.show", {
-                        count: Math.min((item() as HiddenPartsDisplayItem).count, MESSAGE_PART_REVEAL_STEP),
-                      })}
-                    </button>
-                  </div>
-                </Match>
               </Switch>
               )}
-            </Index>
+            </VirtualChunkList>
           </div>
         </Show>
       )}
@@ -1221,7 +1162,6 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     <Show when={!singleton()} fallback={<For each={props.tools}>{renderTool}</For>}>
     <div
       class="message-technical-group message-exploration-group"
-      data-group-part-ids={props.tools.map((item) => item.partId).join(" ")}
       data-delete-technical-selected={deleteGroupHovered() || groupTools().some((item) => props.technicalCleanupPartKeys().has(item.key)) ? "true" : undefined}
     >
       <Show when={props.showHeader !== false && props.summaryTools?.length}>
@@ -1285,7 +1225,15 @@ function ExplorationGroup(props: ExplorationGroupProps) {
             </Show>
             <Show when={expanded(key)}>
               <div class="message-technical-group-parts">
-                <For each={segment.items}>{renderTool}</For>
+                <VirtualChunkList
+                  each={segment.items}
+                  keyed
+                  cacheKey={`${props.instanceId}:${props.sessionId}:${key}:tools`}
+                  itemKey={(item) => item.key}
+                  pinned={(item) => item.partId === props.activePartId}
+                >
+                  {(item) => renderTool(item())}
+                </VirtualChunkList>
               </div>
             </Show>
           </>
@@ -1649,7 +1597,6 @@ function ReasoningGroupCard(props: {
     <Show when={summaryParts().length > 1} fallback={<For each={props.parts}>{renderCard}</For>}>
     <div
       class="message-technical-group message-reasoning-group"
-      data-group-part-ids={props.parts.map((item) => item.partId).join(" ")}
       data-delete-technical-selected={deleteGroupHovered() || summaryParts().some((item) => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))) ? "true" : undefined}
     >
       <Show when={props.showHeader !== false}>
@@ -1692,7 +1639,15 @@ function ReasoningGroupCard(props: {
       </Show>
       <Show when={expanded()}>
         <div class="message-technical-group-parts message-reasoning-group-parts">
-          <For each={props.parts}>{renderCard}</For>
+          <VirtualChunkList
+            each={props.parts}
+            keyed
+            cacheKey={`${props.instanceId}:${props.sessionId}:${props.parts[0]?.messageId}:${props.parts[0]?.partId}:reasoning`}
+            itemKey={(item) => item.partId}
+            pinned={(item) => item.partId === props.activePartId}
+          >
+            {(item) => renderCard(item())}
+          </VirtualChunkList>
         </div>
       </Show>
     </div>
