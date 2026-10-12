@@ -27,6 +27,8 @@ interface ManagerOptions {
   openTunnel?: OpenTunnel
   /** Restricts resuming at launch to one backend per config directory. */
   lease?: RemoteControlOwnerLease
+  /** Bounds tunnel establishment only (tests). */
+  startTimeoutMs?: number
 }
 
 export class RemoteControlManager {
@@ -162,12 +164,20 @@ export class RemoteControlManager {
     const openTunnel = this.options.openTunnel ?? (async (options: OpenRemoteTunnelOptions) => (await import("./tunnel-runtime")).openRemoteTunnel(options))
     try {
       const target = await this.ingress.start()
-      const tunnel = await openTunnel({
-        route: this.options.registry.route(),
-        target,
-        ...(this.options.tunnelApi ? { api: this.options.tunnelApi } : {}),
-        signal: AbortSignal.timeout(START_TIMEOUT_MS),
-      })
+      // OpenTunnel closes a connection whenever its signal aborts, even after it
+      // connected. The deadline bounds the start only, never the live tunnel.
+      const deadline = new AbortController()
+      const timer = setTimeout(() => deadline.abort(new Error("Remote Control start timed out")), this.options.startTimeoutMs ?? START_TIMEOUT_MS)
+      timer.unref?.()
+      let tunnel: RemoteTunnel
+      try {
+        tunnel = await openTunnel({
+          route: this.options.registry.route(),
+          target,
+          ...(this.options.tunnelApi ? { api: this.options.tunnelApi } : {}),
+          signal: deadline.signal,
+        })
+      } finally { clearTimeout(timer) }
       if (generation !== this.generation) {
         await tunnel.close()
         throw new Error("Remote Control was stopped")
