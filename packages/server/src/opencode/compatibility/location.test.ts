@@ -3,6 +3,7 @@ import { test } from "node:test"
 import { OpenCode } from "@opencode/client"
 import { createRuntimeFetch } from "./transport"
 import { rememberRuntime } from "./runtime"
+import { MINIMUM_OPENCODE_VERSION } from "../runtime-support"
 import {
   LOCATION_CONTEXT_HEADER, applyLocationContext, locationRequestOptions,
   moveSessionToLocation, readLocationContext, readLocationRef, sameLocation,
@@ -113,7 +114,7 @@ test("directory-only credential context remains global", async () => {
 
 test("generated worktree methods preserve project payloads without location serialization", async () => {
   const endpoint = { url: "http://localhost:4321", auth: { type: "basic" as const, username: "fixture", password: "fixture" } }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const requests: Array<{ method: string; url: URL; body: any }> = []
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
     const request = new Request(input, init)
