@@ -10,7 +10,7 @@ import {
 
 test("generated calls preserve obsolete identity for rejection before upstream dispatch", async () => {
   const endpoint = { url: "http://localhost:1234" }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.0.27", pid: 1, discovery: "info" })
   const location = { directory: "/work/100% 工作", workspaceID: "workspace-1" }
   let calls = 0
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async () => {
@@ -101,7 +101,7 @@ test("session routes ignore ambient location context without a native slot", () 
 
 test("directory-only credential context remains global", async () => {
   const endpoint = { url: "http://localhost:1234" }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.0.27", pid: 1, discovery: "info" })
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
     const request = new Request(input, init)
     assert.equal(request.headers.has(LOCATION_CONTEXT_HEADER), false)

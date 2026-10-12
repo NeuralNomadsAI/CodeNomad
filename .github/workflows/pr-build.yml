@@ -171,6 +171,10 @@ jobs:
           $cli = Join-Path $sandbox 'node_modules/@opencode/cli-windows-x64/bin/opencode.exe'
           & $cli --version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --test packages/server/scripts/native-plugin-build.test.mjs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-plugin-runtime-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-automation-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli

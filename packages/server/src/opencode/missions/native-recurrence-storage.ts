@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { stableToken } from "../../missions/journal"

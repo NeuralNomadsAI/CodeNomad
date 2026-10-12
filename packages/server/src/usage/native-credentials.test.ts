@@ -14,6 +14,8 @@ const entries: CredentialEntry[] = [
   { id: "b", integrationID: "anthropic", label: "Old", active: false, value: { type: "key", key: "inactive" } },
   { id: "c", integrationID: "anthropic", label: "Pro", active: true,
     value: { type: "oauth", methodID: "claude", access: "secret-access", refresh: "secret-refresh", expires: 42, metadata: { accountID: "acct", email: "a@b.c" } } },
+  { id: "external", integrationID: "azure", label: "CLI reference", active: true,
+    value: { type: "external", methodID: "azure-cli", metadata: { resource: "fixture-only" } } },
 ]
 
 test("projects only each integration's active native credential, without unrelated metadata", () => {

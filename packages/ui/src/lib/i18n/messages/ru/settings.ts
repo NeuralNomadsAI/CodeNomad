@@ -61,7 +61,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} не прошёл полную проверку с этим выпуском CodeNomad. Само по себе это не препятствует подключению.",
   "settings.opencode.setup.error": "Не удалось проверить выбранный исполняемый файл.",
   "settings.opencode.setup.minimum": "Минимальная версия",
-  "settings.opencode.setup.minimumReason": "В OpenCode {version} появилась нативная метка времени начала шага, необходимая для отображения разговоров. Более ранним версиям нужны удалённые преобразования событий.",
+  "settings.opencode.setup.minimumReason": "Этому выпуску CodeNomad требуется OpenCode {version} или новее с нативной средой плагинов Effect 4.0.1 и Schema. Более ранние среды не могут загрузить эти плагины.",
   "settings.opencode.setup.canonical_api": "Работающая служба не предоставляет API сеансов, разрешений, форм и очереди ввода, необходимый этому выпуску CodeNomad.",
   "settings.opencode.setup.session_environment": "Работающая служба не может заменить окружение сеанса, что необходимо перед отправкой запросов или команд.",
   "settings.opencode.setup.daemon": "Работающая служба",
