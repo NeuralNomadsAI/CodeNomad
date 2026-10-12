@@ -49,11 +49,10 @@ try {
     : execFileSync("opencode2", ["--version"], { cwd: root, encoding: "utf8", env })
   assert.match(terminalVersion, new RegExp(MINIMUM_OPENCODE_VERSION.replaceAll(".", "\\.")))
   const commandDirectory = path.dirname(findPathOpenCode(options))
-  for (const name of ["opencode", "opencode2"]) {
-    for (const extension of process.platform === "win32" ? ["", ".cmd", ".ps1"] : [""]) {
-      await rm(path.join(commandDirectory, name + extension), { force: true })
-    }
-  }
+  const removeCommands = () => Promise.all(["opencode", "opencode2"].flatMap(name =>
+    (process.platform === "win32" ? ["", ".cmd", ".ps1"] : [""]).map(extension =>
+      rm(path.join(commandDirectory, name + extension), { force: true }))))
+  await removeCommands()
   await installSharedOpenCode(MINIMUM_OPENCODE_VERSION, options)
   assert.ok(findPathOpenCode(options), "same-version npm install repairs missing terminal commands")
   if (process.platform === "win32") {
@@ -65,8 +64,11 @@ try {
     const child = spawn(binary, ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], { env, stdio: ["ignore", "pipe", "pipe"] })
     try {
       await once(child.stdout, "data")
+      // Same-version repair still uses direct npm/preflight. Missing launchers
+      // force that write path instead of the already-satisfied no-op path.
+      await removeCommands()
       let executed = false
-      await assert.rejects(installSharedOpenCode("2.0.11", { ...options,
+      await assert.rejects(installSharedOpenCode(MINIMUM_OPENCODE_VERSION, { ...options,
         probe: async () => ({ valid: true, version: MINIMUM_OPENCODE_VERSION }),
         execute: async () => { executed = true },
       }), error => error.code === "installation_in_use")
@@ -78,8 +80,10 @@ try {
       await closed
       await copyFile(backup, binary)
     }
+    await installSharedOpenCode(MINIMUM_OPENCODE_VERSION, options)
+    assert.ok(findPathOpenCode(options), "repair succeeds after the mapped fixture executable exits")
     assert.match(execFileSync(binary, ["--version"], { encoding: "utf8", env }), new RegExp(MINIMUM_OPENCODE_VERSION.replaceAll(".", "\\.")))
-    console.log("PASS: Windows live-executable update deferred before npm; original installation retained")
+    console.log("PASS: Windows live-executable repair deferred before npm; original installation retained")
   }
   console.log(`PASS: shared user npm installation with isolated bundled Node, no system Node PATH; backend and terminal both resolve ${MINIMUM_OPENCODE_VERSION}`)
 } finally { await rm(root, { recursive: true, force: true }) }
