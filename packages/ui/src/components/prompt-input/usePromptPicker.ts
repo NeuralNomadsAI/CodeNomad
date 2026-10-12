@@ -43,7 +43,21 @@ type PromptPickerController = {
   handlePickerClose: () => void
 }
 
-const MENTION_BOUNDARY = /[\s([{<"'`]/
+// An "@" after these characters is mid-word (e-mail, "packages/@scope/x"); after
+// anything else, including CJK text and brackets, it starts a mention.
+const MID_WORD_BEFORE_AT = /[A-Za-z0-9_./\\:+~-]/
+
+/** The mention being typed at the end of `textBeforeCursor`, or -1. */
+function findMentionStart(textBeforeCursor: string) {
+  // The nearest word-start "@" in the current token, so "@packages/@scope/x"
+  // keeps searching from its first "@".
+  for (let index = textBeforeCursor.length - 1; index >= 0; index--) {
+    const char = textBeforeCursor[index]
+    if (/\s/.test(char)) return -1
+    if (char === "@" && (index === 0 || !MID_WORD_BEFORE_AT.test(textBeforeCursor[index - 1]))) return index
+  }
+  return -1
+}
 
 export function usePromptPicker(options: PromptPickerOptions): PromptPickerController {
   const [showPicker, setShowPicker] = createSignal(false)
@@ -74,13 +88,13 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
     }
 
     const textBeforeCursor = value.substring(0, cursorPos)
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@")
+    const mentionStart = findMentionStart(textBeforeCursor)
 
     const previousAtPosition = atPosition()
 
-    if (lastAtIndex === -1) {
+    if (!textBeforeCursor.includes("@")) {
       setIgnoredAtPositions(new Set<number>())
-    } else if (previousAtPosition !== null && lastAtIndex !== previousAtPosition) {
+    } else if (previousAtPosition !== null && mentionStart !== previousAtPosition) {
       setIgnoredAtPositions((prev) => {
         const next = new Set(prev)
         next.delete(previousAtPosition)
@@ -88,20 +102,14 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
       })
     }
 
-    // A mention starts a word: "packages/@scope/x" or "user@example.com" stay plain text.
-    if (lastAtIndex !== -1 && (lastAtIndex === 0 || MENTION_BOUNDARY.test(value[lastAtIndex - 1]))) {
-      const textAfterAt = value.substring(lastAtIndex + 1, cursorPos)
-      const hasSpace = textAfterAt.includes(" ") || textAfterAt.includes("\n")
-
-      if (!hasSpace && cursorPos === lastAtIndex + textAfterAt.length + 1) {
-        if (!ignoredAtPositions().has(lastAtIndex)) {
-          setPickerMode("mention")
-          setAtPosition(lastAtIndex)
-          setSearchQuery(textAfterAt)
-          setShowPicker(true)
-        }
-        return
+    if (mentionStart !== -1) {
+      if (!ignoredAtPositions().has(mentionStart)) {
+        setPickerMode("mention")
+        setAtPosition(mentionStart)
+        setSearchQuery(textBeforeCursor.substring(mentionStart + 1))
+        setShowPicker(true)
       }
+      return
     }
 
     setShowPicker(false)
