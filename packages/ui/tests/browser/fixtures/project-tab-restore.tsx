@@ -8,6 +8,7 @@ import { appSessionRestoreGateActive } from "../../../src/stores/app-session-res
 import { activeInstanceId, createInstance, instances, updateInstance } from "../../../src/stores/instances"
 import { closeInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { canContinueOpenCodeSetup, continueOpenCodeSetup, openOpenCodeSetup, refreshOpenCodeSetup, runOpenCodeSetup } from "../../../src/stores/opencode-setup"
+import { serverEvents } from "../../../src/lib/server-events"
 import { activeSessionId } from "../../../src/stores/session-state"
 import { sessions, getSessionListIds, getSessionThreads, loading } from "../../../src/stores/session-state"
 import SessionList from "../../../src/components/session-list"
@@ -48,6 +49,7 @@ if (SessionView || location.search.includes("catalog")) await import("../../../s
     await refreshOpenCodeSetup()
   },
   closeFirst: () => closeInstanceTab("first"),
+  discover: (workspace: unknown) => (serverEvents as any).dispatchBatch([{ type: "workspace.created", workspace }]),
 }
 if (location.search.includes("inventory")) {
   let release!: () => void
