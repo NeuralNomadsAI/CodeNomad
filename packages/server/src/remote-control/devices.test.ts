@@ -32,6 +32,24 @@ test("nothing is written until Remote Control needs its route", (t) => {
   assert.equal(fs.existsSync(file), true)
 })
 
+test("the start choice survives restarts and is written only when it changes", (t) => {
+  const { file, open } = fixture(t)
+  const registry = open()
+  registry.setStartsOnLaunch(false)
+  assert.equal(fs.existsSync(file), false)
+
+  registry.setStartsOnLaunch(true)
+  assert.equal(open().startsOnLaunch(), true)
+  // Compact rewrite as a marker: an unchanged choice must not rewrite the file.
+  const compact = JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8")))
+  fs.writeFileSync(file, compact)
+  open().setStartsOnLaunch(true)
+  assert.equal(fs.readFileSync(file, "utf8"), compact)
+
+  open().setStartsOnLaunch(false)
+  assert.equal(open().startsOnLaunch(), false)
+})
+
 test("pairing at the device limit replaces and reports the least recently seen device", (t) => {
   const { open, advance } = fixture(t)
   const registry = open()

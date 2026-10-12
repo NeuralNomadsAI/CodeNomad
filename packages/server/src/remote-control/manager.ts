@@ -56,6 +56,7 @@ export class RemoteControlManager {
     return {
       manageable: true,
       enabled: this.enabled,
+      startsOnLaunch: this.options.registry.startsOnLaunch(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
       pairedDevices: this.options.registry.list().length,
@@ -67,11 +68,22 @@ export class RemoteControlManager {
   async start(): Promise<RemoteControlStartResponse> {
     this.enabled = true
     this.error = undefined
+    this.options.registry.setStartsOnLaunch(true)
     const tunnel = await this.ensureTunnel()
     return { status: this.status(), pairing: this.pairingFor(tunnel) }
   }
 
+  /** Reconnects at launch when the user left Remote Control on. Issues no pairing code. */
+  async resume(): Promise<void> {
+    if (this.enabled || !this.options.registry.startsOnLaunch()) return
+    this.enabled = true
+    this.error = undefined
+    // A failure is reported through status(); the choice stays until an explicit Stop.
+    await this.ensureTunnel().catch(() => undefined)
+  }
+
   async stop(): Promise<RemoteControlStatus> {
+    this.options.registry.setStartsOnLaunch(false)
     this.enabled = false
     this.error = undefined
     this.generation += 1

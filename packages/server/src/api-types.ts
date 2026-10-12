@@ -699,6 +699,8 @@ export interface RemoteControlStatus {
   /** False for requests arriving through Remote Control: only the host manages it. */
   manageable: boolean
   enabled: boolean
+  /** The user started Remote Control and has not stopped it: it reconnects at launch. */
+  startsOnLaunch: boolean
   state: "stopped" | "connecting" | "connected" | "reconnecting" | "error"
   /** Public HTTPS origin while the tunnel is connected. */
   remoteUrl?: string

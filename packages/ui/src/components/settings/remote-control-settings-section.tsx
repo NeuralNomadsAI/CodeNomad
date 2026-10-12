@@ -1,4 +1,4 @@
-import { For, Show, createSignal, onMount, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { toDataURL } from "qrcode"
 import { Copy, Link2, Loader2, MonitorUp, RefreshCw, ShieldCheck, Unplug } from "lucide-solid"
 import type { RemoteControlDevice, RemoteControlPairing, RemoteControlStatus } from "../../../../server/src/api-types"
@@ -7,6 +7,8 @@ import { useI18n } from "../../lib/i18n"
 import { getLogger } from "../../lib/logger"
 
 const log = getLogger("actions")
+// Only while the tunnel is (re)connecting, e.g. when it resumes at launch.
+const CONNECTING_POLL_MS = 3_000
 
 export const RemoteControlSettingsSection: Component = () => {
   const { t } = useI18n()
@@ -17,19 +19,28 @@ export const RemoteControlSettingsSection: Component = () => {
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const [copied, setCopied] = createSignal(false)
+  let pairingExpiry: ReturnType<typeof setTimeout> | undefined
+
+  const clearPairing = () => {
+    clearTimeout(pairingExpiry)
+    setPairing(null)
+    setQrCode(null)
+  }
+
+  const load = async () => {
+    const next = await serverApi.fetchRemoteControlStatus()
+    setStatus(next)
+    // A link only works while the tunnel is connected.
+    if (next.state !== "connected") clearPairing()
+    // Paired devices stay listed, and revocable, while Remote Control is off.
+    setDevices(next.manageable ? (await serverApi.fetchRemoteControlDevices()).devices : [])
+  }
 
   const refresh = async () => {
     setLoading(true)
     setError(null)
     try {
-      const next = await serverApi.fetchRemoteControlStatus()
-      setStatus(next)
-      if (next.manageable && next.enabled && next.state === "connected") {
-        const result = await serverApi.fetchRemoteControlDevices()
-        setDevices(result.devices)
-      } else {
-        setDevices([])
-      }
+      await load()
     } catch (cause) {
       setError(message(cause))
     } finally {
@@ -37,7 +48,17 @@ export const RemoteControlSettingsSection: Component = () => {
     }
   }
 
+  const connecting = createMemo(() => status()?.state === "connecting" || status()?.state === "reconnecting")
+  createEffect(() => {
+    if (!connecting()) return
+    const timer = setInterval(() => void load().catch(() => undefined), CONNECTING_POLL_MS)
+    onCleanup(() => clearInterval(timer))
+  })
+  onCleanup(() => clearTimeout(pairingExpiry))
+
   const showPairing = async (next: RemoteControlPairing) => {
+    clearTimeout(pairingExpiry)
+    pairingExpiry = setTimeout(clearPairing, Math.max(0, Date.parse(next.expiresAt) - Date.now()))
     setPairing(next)
     setQrCode(null)
     try {
@@ -70,15 +91,20 @@ export const RemoteControlSettingsSection: Component = () => {
     setError(null)
     try {
       setStatus(await serverApi.stopRemoteControl())
-      setPairing(null)
-      setQrCode(null)
-      setDevices([])
+      clearPairing()
     } catch (cause) {
       setError(message(cause))
     } finally {
       setLoading(false)
     }
   }
+
+  const stopButton = () => (
+    <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void stop()} disabled={loading()}>
+      <Unplug class="w-4 h-4" />
+      {t("remoteControl.stop")}
+    </button>
+  )
 
   const createPairing = async () => {
     setLoading(true)
@@ -150,20 +176,21 @@ export const RemoteControlSettingsSection: Component = () => {
             <Show
               when={status()?.enabled}
               fallback={
-                <button class="selector-button w-auto" type="button" onClick={() => void start()} disabled={loading()}>
-                  <Link2 class="w-4 h-4" />
-                  {t("remoteControl.start")}
-                </button>
+                <>
+                  <button class="selector-button w-auto" type="button" onClick={() => void start()} disabled={loading()}>
+                    <Link2 class="w-4 h-4" />
+                    {t("remoteControl.start")}
+                  </button>
+                  {/* A failed resume stays on for the next launch until it is stopped. */}
+                  <Show when={status()?.startsOnLaunch}>{stopButton()}</Show>
+                </>
               }
             >
               <button class="selector-button w-auto" type="button" onClick={() => void createPairing()} disabled={loading() || status()?.state !== "connected"}>
                 <Link2 class="w-4 h-4" />
                 {t("remoteControl.newLink")}
               </button>
-              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void stop()} disabled={loading()}>
-                <Unplug class="w-4 h-4" />
-                {t("remoteControl.stop")}
-              </button>
+              {stopButton()}
             </Show>
           </div>
         </Show>
@@ -191,7 +218,7 @@ export const RemoteControlSettingsSection: Component = () => {
         )}
       </Show>
 
-      <Show when={status()?.manageable !== false && status()?.enabled}>
+      <Show when={status()?.manageable}>
         <div class="settings-card">
           <div class="settings-card-header">
             <div class="settings-card-heading-with-icon">

@@ -690,6 +690,9 @@ async function main() {
     }
   }
 
+  // Started earlier by the user and not stopped since; runs in the background.
+  void remoteControlManager.resume()
+
   if (options.launch) {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }

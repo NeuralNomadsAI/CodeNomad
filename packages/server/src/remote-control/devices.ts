@@ -21,6 +21,8 @@ interface StoredState {
   version: 1
   route: string
   devices: StoredDevice[]
+  /** Set by Start and cleared only by Stop, so Remote Control resumes after a restart. */
+  enabled?: boolean
 }
 
 /**
@@ -45,6 +47,17 @@ export class RemoteDeviceRegistry {
   route(): string {
     if (!this.persisted) this.persist()
     return this.state.route
+  }
+
+  startsOnLaunch(): boolean {
+    return this.state.enabled === true
+  }
+
+  /** Records the user's Start/Stop choice; installations that never started stay unwritten. */
+  setStartsOnLaunch(enabled: boolean): void {
+    if (this.startsOnLaunch() === enabled) return
+    this.state.enabled = enabled
+    this.persist()
   }
 
   /** Issues a new pairing code; any earlier unused code stops working. */
@@ -178,7 +191,7 @@ function readState(filePath: string): StoredState | null {
     typeof device === "object" && device !== null
     && typeof device.id === "string" && typeof device.name === "string" && /^[0-9a-f]{64}$/.test(String(device.tokenHash))
     && !Number.isNaN(Date.parse(String(device.createdAt))) && !Number.isNaN(Date.parse(String(device.lastSeenAt))))
-  return { version: 1, route: candidate.route, devices }
+  return { version: 1, route: candidate.route, devices, ...(candidate.enabled === true ? { enabled: true } : {}) }
 }
 
 function publicDevice(device: StoredDevice): RemoteControlDevice {
