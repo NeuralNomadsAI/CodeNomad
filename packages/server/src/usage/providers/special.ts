@@ -116,10 +116,14 @@ function parseOpenCodeGoUsage(html: string, now = Date.now()) {
 }
 
 // The selected native Go key or OpenCode Console credential, without refreshing
-// tokens. Self-hosted Console tokens are never sent to opencode.ai.
+// tokens. Self-hosted Console credentials (keys or tokens) are never sent to opencode.ai.
 export function openCodeGoAuth(auth: AuthFile): OpenCodeGoAuth | null {
   const entry = getAuthEntry(auth, ["opencode-go", "opencode"])
   if (!entry) return null
+  if (entry.server !== undefined) {
+    const server = getString(entry.server)
+    try { if (!server || new URL(server).origin !== "https://opencode.ai") return null } catch { return null }
+  }
   const orgID = getString(entry.orgId)
   const scope = orgID ? { orgID } : {}
   if (entry.type === "api") {
@@ -127,8 +131,6 @@ export function openCodeGoAuth(auth: AuthFile): OpenCodeGoAuth | null {
     return key ? { token: key, ...scope } : null
   }
   if (entry.type !== "oauth" || oauthTokenNeedsRefresh(entry)) return null
-  const server = getString(entry.server)
-  try { if (server && new URL(server).origin !== "https://opencode.ai") return null } catch { return null }
   const access = getString(entry.access)
   return access ? { token: access, ...scope } : null
 }

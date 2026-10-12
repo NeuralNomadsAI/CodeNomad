@@ -7,6 +7,7 @@ import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
+import { clearProviderUsageCache } from "../../usage/service"
 
 function harness() {
   const expires = Date.now() + 3600000
@@ -177,6 +178,40 @@ test("OpenCode Go reads the session provider's own native login, without env coo
     await app.close()
     if (previous.workspace !== undefined) process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
     if (previous.cookie !== undefined) process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
+  }
+})
+
+test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Console credentials to Go", async () => {
+  const { app, state, logs } = harness()
+  const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
+  delete process.env.OPENCODE_GO_WORKSPACE_ID; delete process.env.OPENCODE_GO_AUTH_COOKIE
+  const requests: Array<{ url: string; authorization: string | null; cookie: string | null }> = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers)
+    requests.push({ url: String(input), authorization: headers.get("authorization"), cookie: headers.get("cookie") })
+    return new Response('<script>rollingUsage:{usagePercent:12,resetInSec:60}</script>')
+  }
+  state.integrations.opencode = "opencode"
+  const zenUrl = url.replace("/usage/openai", "/usage/opencode")
+  clearProviderUsageCache()
+  try {
+    const unconfigured = await app.inject({ url: zenUrl })
+    assert.equal(unconfigured.json().configured, false, "previous Not configured result")
+    assert.deepEqual(requests, [])
+    process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_fixture"; process.env.OPENCODE_GO_AUTH_COOKIE = "fixture-cookie"
+    clearProviderUsageCache()
+    const scraped = await app.inject({ url: zenUrl })
+    assert.equal(scraped.json().windows["5h"].usedPercent, 12)
+    assert.deepEqual(requests, [{ url: "https://opencode.ai/workspace/wrk_fixture/go", authorization: null, cookie: "auth=fixture-cookie" }])
+    assert.equal([unconfigured.body, scraped.body, ...logs].join("").includes("secret-"), false)
+  } finally {
+    globalThis.fetch = previousFetch
+    await app.close()
+    if (previous.workspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID
+    else process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
+    if (previous.cookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE
+    else process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
   }
 })
 

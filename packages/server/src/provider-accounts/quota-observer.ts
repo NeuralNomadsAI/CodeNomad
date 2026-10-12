@@ -35,7 +35,7 @@ function limitName(body: unknown): { limitName?: string } {
  * and failures are dropped silently (native errors can contain credentials).
  */
 export function observeProviderQuotaFailures(bus: EventBus, accounts: Pick<ProviderAccountsService,
-  "observeSwitch" | "observeStepStart" | "markQuotaFailure">) {
+  "observeSwitch" | "observeStepStart" | "markQuotaFailure" | "switchWatermark">) {
   const seen = new Set<string>()
   const recent = new Map<string, number>()
   const queues = new WeakMap<ServiceConnection, { tail: Promise<unknown>; pending: number }>()
@@ -55,7 +55,9 @@ export function observeProviderQuotaFailures(bus: EventBus, accounts: Pick<Provi
     if (!connection || !once(event.id)) return
     const created = typeof event.created === "number" && Number.isFinite(event.created) ? event.created : Date.now()
     if (event.type === "credential.switched") {
-      if (typeof event.data?.integrationID === "string") accounts.observeSwitch(connection, event.data.integrationID, created)
+      const credentialID = event.data?.credentialID
+      if (typeof event.data?.integrationID === "string") accounts.observeSwitch(connection, event.data.integrationID, created,
+        typeof credentialID === "string" || credentialID === null ? credentialID : undefined)
       return
     }
     if (event.type === "session.step.started") {
@@ -65,8 +67,10 @@ export function observeProviderQuotaFailures(bus: EventBus, accounts: Pick<Provi
       }
       return
     }
-    const failure = quotaFailure(event)
-    if (!failure) return
+    const parsed = quotaFailure(event)
+    if (!parsed) return
+    // Switches observed after receipt (from other relay queues) fence the later attribution.
+    const failure = { ...parsed, watermark: accounts.switchWatermark(connection) }
     // A failed step is usually followed by its failed execution.
     const previous = recent.get(failure.sessionID)
     if (previous !== undefined && Math.abs(failure.failedAt - previous) < FAILURE_DEDUPE_MS) return

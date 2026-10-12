@@ -11,7 +11,7 @@ import { ProviderHttpError } from "../usage/shared"
 import { createSelectionAdapters } from "./adapters"
 import { quotaMarkTtl } from "./quota-marks"
 import { observeProviderQuotaFailures, quotaFailure } from "./quota-observer"
-import { ProviderAccountsService } from "./service"
+import { definiteRejection, ProviderAccountsService } from "./service"
 
 const usage = (used: number): ProviderUsage => ({ windows: { "5h": { usedPercent: used, remainingPercent: 100 - used, windowSeconds: 18_000, resetAt: Date.now() + 3_600_000 } } })
 const goKey = (id: string, active = false): CredentialEntry => ({ id, integrationID: "opencode-go", label: id, active, value: { type: "key", key: `secret-${id}` } })
@@ -21,7 +21,8 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
   const integrationID = options.integrationID ?? "opencode-go"
   const entries = options.entries ?? [goKey("one", true), goKey("two"), goKey("three")]
   const state = { entries, order: entries.map(entry => entry.id), provider: options.providerID ?? "opencode-go", calls: [] as string[],
-    reads: [] as string[], quota: {} as Record<string, ProviderUsage | number | undefined> }
+    reads: [] as string[], quota: {} as Record<string, ProviderUsage | number | undefined>,
+    onCredentialList: undefined as (() => void) | undefined }
   let policy: Record<string, any> = {}
   const settings = {
     getOwner: () => policy,
@@ -41,7 +42,7 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
         const entry = state.entries.find(entry => entry.id === id)!
         return { type: "credential", id, label: entry.label, method: entry.value.type === "key" ? "key" : "oauth" }
       }) } }))
-    else if (req.url === "/api/credential") res.end(JSON.stringify({ data: state.entries }))
+    else if (req.url === "/api/credential") { res.end(JSON.stringify({ data: state.entries })); state.onCredentialList?.() }
     else if (req.url?.endsWith("/activate")) {
       const id = req.url.split("/")[3]
       state.order = [id, ...state.order.filter(item => item !== id)]
@@ -63,7 +64,7 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
       if (!result) throw new Error("Quota unavailable")
       return result
     },
-  }))
+  }), 50)
   const bus = new EventBus()
   const stop = observeProviderQuotaFailures(bus, service)
   const emit = (event: Record<string, unknown>) => {
@@ -73,8 +74,8 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
   const activations = () => state.calls.filter(call => call.endsWith("/activate")).length
   return { state, service, connection, emit, activations, integrationID,
     send: () => service.beforeSend(connection, "ses_go", AbortSignal.timeout(3000), async directory => directory === "/project"),
-    mark: (failedAt = Date.now(), limitName = "5 hour") => service.markQuotaFailure(connection,
-      { sessionID: "ses_go", failedAt, limitName }, AbortSignal.timeout(3000)),
+    mark: (failedAt = Date.now(), limitName = "5 hour", watermark?: number) => service.markQuotaFailure(connection,
+      { sessionID: "ses_go", failedAt, limitName, ...(watermark === undefined ? {} : { watermark }) }, AbortSignal.timeout(3000)),
     close: () => { stop(); return new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections() }) },
   }
 }
@@ -153,7 +154,7 @@ test("the event observer marks only provider.quota failures, once per failure", 
       error: { type: "provider.quota", status: 429, message: "limit", response: { body } } } }
     f.emit(failed); f.emit(failed)
     f.emit({ id: "evt_exec", type: "session.execution.failed", created: base + 5, data: { sessionID: "ses_go", error: failed.data.error } })
-    await until(() => f.state.calls.filter(call => call === "GET /api/credential").length === 1)
+    await until(() => f.state.calls.filter(call => call === "GET /api/credential").length === 2)
     await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(f.state.calls.filter(call => call.startsWith("GET /api/session/")).length, 1, "deduplicated")
     await f.send()
@@ -192,6 +193,82 @@ test("reactive marks rotate Claude to an unreadable candidate but never Codex", 
       assert.equal(f.state.order[0], rotates ? "two" : "one", integrationID)
     } finally { await f.close() }
   }
+})
+
+test("definite client errors rule candidates out; transport, rate-limit and 5xx stay unknown", async () => {
+  const f = await goFixture({ entries: [goKey("one", true), goKey("two"), goKey("three"), goKey("four")] })
+  try {
+    f.service.setEnabled(true, "opencode-go")
+    f.state.quota.one = usage(100)
+    // e.g. a Zen key without Go (402), a missing endpoint (404) or a malformed request (400).
+    Object.assign(f.state.quota, { two: 402, three: 404, four: 400 })
+    await f.send()
+    assert.equal(f.activations(), 0, "never switch to a rejected account (or its Zen billing)")
+    for (const status of [408, 429, 503]) {
+      f.state.quota.four = status
+      f.state.order = ["one", "two", "three", "four"]
+      for (const entry of f.state.entries) entry.active = entry.id === "one"
+      const before = f.activations()
+      await f.send()
+      assert.equal(f.activations(), before + 1, `HTTP ${status} is not a definite rejection`)
+      assert.equal(f.state.order[0], "four")
+    }
+  } finally { await f.close() }
+  for (const [status, rejected] of [[400, true], [402, true], [404, true], [451, true], [408, false], [429, false], [500, false], [503, false]] as const) {
+    assert.equal(definiteRejection(status), rejected, String(status))
+  }
+})
+
+test("a native switch arriving late from another relay queue never marks the new account", async () => {
+  const switchTo = (f: Awaited<ReturnType<typeof goFixture>>, id: string) => {
+    f.state.order = [id, ...f.state.order.filter(item => item !== id)]
+    for (const entry of f.state.entries) entry.active = entry.id === id
+  }
+  for (const scenario of ["switch read before its event arrives", "switch during the settle wait"] as const) {
+    const f = await goFixture()
+    try {
+      f.service.setEnabled(true, "opencode-go")
+      const started = Date.now() - 1000
+      f.service.observeStepStart(f.connection, "ses_go", started, "opencode-go")
+      let served = 0
+      if (scenario === "switch read before its event arrives") {
+        // A TUI or another backend already selected healthy "two": attribution reads see it,
+        // while its credential.switched event is still queued behind another relay key.
+        switchTo(f, "two")
+        f.state.onCredentialList = () => {
+          if (++served === 1) setTimeout(() => f.service.observeSwitch(f.connection, "opencode-go", Date.now(), "two"), 10)
+        }
+      } else {
+        f.state.onCredentialList = () => { if (++served === 1) setTimeout(() => switchTo(f, "two"), 10) }
+      }
+      assert.equal(await f.mark(started + 500), false, scenario)
+      f.state.onCredentialList = undefined
+      // No account was marked: an unknown, unmarked current account never rotates.
+      for (const id of ["two", "one"]) {
+        switchTo(f, id)
+        await f.send()
+      }
+      assert.equal(f.activations(), 0, scenario)
+    } finally { await f.close() }
+  }
+})
+
+test("attribution follows the account known active at step start and the receipt watermark", async () => {
+  const f = await goFixture()
+  try {
+    f.service.setEnabled(true, "opencode-go")
+    const now = Date.now()
+    // The last known switch before the step selected "two"; native now reports "one".
+    f.service.observeSwitch(f.connection, "opencode-go", now - 10_000, "two")
+    f.service.observeStepStart(f.connection, "ses_go", now - 1000, "opencode-go")
+    assert.equal(await f.mark(now - 500), false, "selection differs from the account active when the step started")
+    f.service.observeSwitch(f.connection, "opencode-go", now - 9_000, "one")
+    // A switch observed between receipt and processing fences the mark even with an older timestamp.
+    const watermark = f.service.switchWatermark(f.connection)
+    f.service.observeSwitch(f.connection, "opencode-go", now - 8_000, "one")
+    assert.equal(await f.mark(now - 500, "5 hour", watermark), false, "switch observed after receipt")
+    assert.equal(await f.mark(now - 500, "5 hour", f.service.switchWatermark(f.connection)), true)
+  } finally { await f.close() }
 })
 
 test("quota failure parsing and mark lifetimes", () => {

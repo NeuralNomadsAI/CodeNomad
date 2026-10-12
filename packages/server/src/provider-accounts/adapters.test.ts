@@ -5,6 +5,7 @@ import { adapterForProvider, createSelectionAdapters } from "./adapters"
 import { quotaState } from "./service"
 import { ProviderHttpError } from "../usage/shared"
 import type { AuthFile, ProviderResult, ProviderUsage } from "../usage/types"
+import { openCodeGoAuth } from "../usage/providers/special"
 
 const hour = 3_600_000
 const window = (usedPercent: number | null, windowSeconds: number | null = 18_000) =>
@@ -69,7 +70,14 @@ test("expiring Console tokens and self-hosted Console servers stay unread instea
   const selfHosted = adapter.credential(oauth("opencode", "self", "device", Date.now() + hour, { server: "https://console.example.com" }))!
   await assert.rejects(expiring.read(signal()))
   await assert.rejects(selfHosted.read(signal()))
+  // Service-account keys carry the same Console server: never send a self-hosted key to opencode.ai.
+  for (const server of ["https://console.example.com", "not a url", ""]) {
+    const selfHostedKey = adapter.credential(key("opencode", "svc-self", "secret-self-key", { server, orgID: "org_self" }))!
+    await assert.rejects(selfHostedKey.read(signal()), error => !(error instanceof ProviderHttpError))
+  }
   assert.equal(h.go.length, 0)
+  assert.deepEqual(openCodeGoAuth({ opencode: { type: "api", key: "k", server: "https://opencode.ai/console", orgId: "org" } }), { token: "k", orgID: "org" })
+  assert.equal(openCodeGoAuth({ opencode: { type: "api", key: "k", server: "https://console.example.com" } }), null)
   assert.equal(adapter.credential(oauth("opencode", "other", "browser")), null)
   assert.equal(adapter.credential({ ...key("opencode", "blank"), value: { type: "key", key: " " } }), null)
   assert.equal(h.adapters.get("opencode-go")!.credential(key("opencode", "foreign")), null)
@@ -116,7 +124,12 @@ test("default readers send the candidate's own credential to the existing Usage 
       { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 100, nextResetTime: resetAt },
       { type: "TIME_LIMIT", percentage: 0, nextResetTime: resetAt },
     ] } }))
-    if (url.includes("api.anthropic.com")) return new Response(JSON.stringify({ limits: [{ kind: "session", percent: 15, resets_at: resetAt }] }))
+    if (url.includes("api.anthropic.com")) {
+      return new Headers(init?.headers).get("authorization") === "Bearer secret-access-gone"
+        ? new Response("{}", { status: 404 })
+        : new Response(JSON.stringify({ limits: [{ kind: "session", percent: 15, resets_at: resetAt }] }))
+    }
+    if (url.includes("api.minimax.io")) return new Response("{}", { status: 402 })
     return new Response("{}", { status: 404 })
   }
   try {
@@ -129,6 +142,11 @@ test("default readers send the candidate's own credential to the existing Usage 
       { url: "https://api.z.ai/api/monitor/usage/quota/limit", authorization: "Bearer fixture-zai-key" },
       { url: "https://api.anthropic.com/api/oauth/usage", authorization: "Bearer secret-access-spare" },
     ])
+    // Readers keep definite HTTP statuses so selection can rule the account out.
+    const gone = adapters.get("anthropic")!.credential(oauth("anthropic", "gone", "claude"))!
+    await assert.rejects(gone.read(signal()), error => error instanceof ProviderHttpError && error.status === 404)
+    const minimax = adapters.get("minimax-coding-plan")!.credential(key("minimax-coding-plan", "lapsed"))!
+    await assert.rejects(minimax.read(signal()), error => error instanceof ProviderHttpError && error.status === 402)
   } finally { globalThis.fetch = previous }
 })
 

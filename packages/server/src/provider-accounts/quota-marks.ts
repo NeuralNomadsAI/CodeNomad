@@ -10,6 +10,8 @@ export interface QuotaFailure {
   failedAt: number
   /** Go's `metadata.limitName`: "5 hour", "weekly" or "monthly". */
   limitName?: string
+  /** Switch watermark captured when the failure was received from the relay. */
+  watermark?: number
 }
 
 // OpenCode keeps no reset time for provider.quota failures. A rolling 5-hour
@@ -25,9 +27,12 @@ export function quotaMarkTtl(limitName?: string) {
  */
 export class QuotaMarks {
   private readonly marks = new Map<string, number>()
-  private readonly switches = new Map<string, number>()
+  private readonly switches = new Map<string, { at: number; seq: number; credentialID?: string | null }>()
   private readonly steps = new Map<string, { at: number; providerID?: string }>()
   private manualAt = -Infinity
+  private manualSeq = 0
+  /** Arrival order of observed switches; events from separate relay queues can arrive late. */
+  private sequence = 0
 
   constructor(private readonly now = () => Date.now()) {}
 
@@ -51,15 +56,29 @@ export class QuotaMarks {
   manualChange() {
     this.marks.clear()
     this.manualAt = this.now()
+    this.manualSeq = ++this.sequence
   }
 
-  switched(integrationID: string, at = this.now()) {
+  /** `credentialID` is the newly active credential when known (null: none). */
+  switched(integrationID: string, at = this.now(), credentialID?: string | null) {
     if (!Number.isFinite(at)) return
-    if (!this.switches.has(integrationID) && this.switches.size >= MAX_MARKS) this.switches.delete(this.switches.keys().next().value!)
-    this.switches.set(integrationID, Math.max(this.switches.get(integrationID) ?? -Infinity, at))
+    const previous = this.switches.get(integrationID)
+    if (!previous && this.switches.size >= MAX_MARKS) this.switches.delete(this.switches.keys().next().value!)
+    this.switches.set(integrationID, { at: Math.max(previous?.at ?? -Infinity, at), seq: ++this.sequence,
+      ...(credentialID !== undefined ? { credentialID } : previous && "credentialID" in previous ? { credentialID: previous.credentialID } : {}) })
   }
   switchedSince(integrationID: string, at: number) {
-    return Math.max(this.switches.get(integrationID) ?? -Infinity, this.manualAt) >= at
+    return Math.max(this.switches.get(integrationID)?.at ?? -Infinity, this.manualAt) >= at
+  }
+  watermark() { return this.sequence }
+  /** Any switch of this integration (or manual change) observed after `watermark`. */
+  changedAfter(integrationID: string, watermark: number) {
+    return Math.max(this.switches.get(integrationID)?.seq ?? 0, this.manualSeq) > watermark
+  }
+  /** The credential last observed becoming active no later than `at`, when known. */
+  activeAt(integrationID: string, at: number): string | null | undefined {
+    const latest = this.switches.get(integrationID)
+    return latest && latest.at <= at && "credentialID" in latest ? latest.credentialID : undefined
   }
 
   stepStarted(sessionID: string, at: number, providerID?: string) {

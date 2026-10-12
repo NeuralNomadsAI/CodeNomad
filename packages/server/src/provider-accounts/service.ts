@@ -5,7 +5,7 @@ import { ProviderHttpError } from "../usage/shared"
 import type { ProviderUsage } from "../usage/types"
 import type { ProviderAccountsSnapshot } from "../api-types"
 import { readLocationRef } from "../opencode/compatibility/location"
-import { acceptsMethod, adapterForProvider, createSelectionAdapters, type SelectionAdapters, type SelectionCredential } from "./adapters"
+import { acceptsMethod, adapterForProvider, createSelectionAdapters, type SelectionAdapter, type SelectionAdapters, type SelectionCredential } from "./adapters"
 import { QuotaMarks, type QuotaFailure } from "./quota-marks"
 
 export class AccountSelectionFailed extends Error {
@@ -20,7 +20,9 @@ export class ProviderAccountsService {
   private readonly states = new WeakMap<ServiceConnection, ConnectionState>()
   constructor(private readonly settings: Pick<SettingsService, "getOwner" | "mergePatchOwner">,
     quota = fetchCodexSelectionQuota,
-    private readonly adapters: SelectionAdapters = createSelectionAdapters({ codexQuota: quota })) {}
+    private readonly adapters: SelectionAdapters = createSelectionAdapters({ codexQuota: quota }),
+    /** Lets switch events queued on other relay keys arrive before a mark is recorded. */
+    private readonly markSettleMs = 500) {}
 
   private state(connection: ServiceConnection) {
     let state = this.states.get(connection)
@@ -132,7 +134,7 @@ export class ProviderAccountsService {
           || latestSession.model?.id !== session.model.id || !await validate(directory)) return
         connection.assertCurrent(); signal.throwIfAborted()
         if (epoch !== state.epoch || state.manual || policyRevision !== this.policyRevision || !this.enabled(integrationID)) return
-        state.marks.switched(integrationID)
+        state.marks.switched(integrationID, undefined, candidate.id)
         try { await connection.client.credential.activate({ credentialID: candidate.id }, { signal }) }
         catch { throw new AccountSelectionFailed() }
         return // One attempt only, including ambiguous transport failures. No replay.
@@ -149,8 +151,12 @@ export class ProviderAccountsService {
   }
 
   /** Bookkeeping from the native event stream; synchronous and bounded. */
-  observeSwitch(connection: ServiceConnection, integrationID: string, at: number) {
-    this.state(connection).marks.switched(integrationID, at)
+  observeSwitch(connection: ServiceConnection, integrationID: string, at: number, credentialID?: string | null) {
+    this.state(connection).marks.switched(integrationID, at, credentialID)
+  }
+  /** Captured synchronously when a quota failure is received from the relay. */
+  switchWatermark(connection: ServiceConnection) {
+    return this.state(connection).marks.watermark()
   }
   observeStepStart(connection: ServiceConnection, sessionID: string, at: number, providerID?: string) {
     this.state(connection).marks.stepStarted(sessionID, at, providerID)
@@ -159,10 +165,15 @@ export class ProviderAccountsService {
   /**
    * Marks the account that served a native `provider.quota` failure. Only an
    * unambiguous attribution marks: a credential switch since the failing step
-   * started, a manual change, a disabled policy or an unregistered provider skip it.
+   * started or observed after the failure was received (including during a short
+   * settle wait for other relay queues), a selection that differs from the
+   * account known active when the step started, a changed selection or identity
+   * after the settle re-read, a manual change, a disabled policy or an
+   * unregistered provider skip it.
    */
   async markQuotaFailure(connection: ServiceConnection, failure: QuotaFailure, signal: AbortSignal) {
     const state = this.state(connection)
+    const watermark = failure.watermark ?? state.marks.watermark()
     const step = state.marks.stepFor(failure.sessionID, failure.failedAt)
     const epoch = state.epoch
     connection.assertCurrent(); signal.throwIfAborted()
@@ -178,21 +189,39 @@ export class ProviderAccountsService {
     const integration = await this.integration(connection, directory, integrationID, signal)
     const selected = integration.connections[0]
     if (selected?.type !== "credential" || !acceptsMethod(adapter, selected.method)) return false
-    const entries = await connection.client.credential.list({ signal })
-    const entry = entries.find(entry => entry.integrationID === integrationID && entry.id === selected.id && entry.active)
-    if (!entry || !adapter.credential(entry)) return false
+    const known = state.marks.activeAt(integrationID, step.startedAt)
+    if (known !== undefined && known !== selected.id) return false
+    const identity = await this.activeIdentity(connection, adapter, selected.id, signal)
+    if (!identity) return false
+    const fenced = () => epoch !== state.epoch || state.manual > 0 || state.marks.switchedSince(integrationID, step.startedAt)
+      || state.marks.changedAfter(integrationID, watermark)
+    if (fenced()) return false
+    if (this.markSettleMs > 0) await sleep(this.markSettleMs, signal)
+    // The selection read above may already reflect a switch whose event is still queued.
+    const latest = await this.integration(connection, directory, integrationID, signal)
+    const current = latest.connections[0]
+    if (current?.type !== "credential" || current.id !== selected.id
+      || await this.activeIdentity(connection, adapter, selected.id, signal) !== identity) return false
     connection.assertCurrent(); signal.throwIfAborted()
-    if (epoch !== state.epoch || state.manual || state.marks.switchedSince(integrationID, step.startedAt)) return false
+    if (fenced()) return false
     state.marks.mark(integrationID, selected.id, failure.limitName)
     return true
+  }
+
+  private async activeIdentity(connection: ServiceConnection, adapter: SelectionAdapter, credentialID: string, signal: AbortSignal) {
+    const entries = await connection.client.credential.list({ signal })
+    const entry = entries.find(entry => entry.integrationID === adapter.integrationID && entry.id === credentialID && entry.active)
+    return entry ? adapter.credential(entry)?.identity : undefined
   }
 
   private async read(credential: SelectionCredential, connection: ServiceConnection, signal: AbortSignal): Promise<ReadState> {
     try { return quotaState(await credential.read(signal)) }
     catch (error) {
       signal.throwIfAborted(); connection.assertCurrent()
-      // Unauthorized or unentitled (e.g. no Go subscription) is never a candidate.
-      return error instanceof ProviderHttpError && (error.status === 401 || error.status === 403) ? "rejected" : "unknown"
+      // A definite client error (unauthorized, unentitled, wrong product such as a
+      // Zen key, missing endpoint) is never a candidate. Only reads not performed,
+      // transport failures, timeouts, rate limits and 5xx stay unknown.
+      return error instanceof ProviderHttpError && definiteRejection(error.status) ? "rejected" : "unknown"
     }
   }
 
@@ -203,6 +232,19 @@ export class ProviderAccountsService {
     connection.assertCurrent(); signal.throwIfAborted()
     return result.data
   }
+}
+
+function sleep(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason); return }
+    const abort = () => { clearTimeout(timer); reject(signal.reason) }
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve() }, ms)
+    signal.addEventListener("abort", abort, { once: true })
+  })
+}
+
+export function definiteRejection(status: number) {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429
 }
 
 // Past reset snapshots and empty/non-numeric usage are not availability evidence.

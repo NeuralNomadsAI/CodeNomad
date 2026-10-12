@@ -1,5 +1,5 @@
 import type { UsageProvider } from "../types"
-import { fetchJson, getCredential, notConfigured, result, toNumber, toTimestamp, toUsageWindow } from "../shared"
+import { fetchJson, getCredential, notConfigured, ProviderHttpError, result, toNumber, toTimestamp, toUsageWindow } from "../shared"
 
 const INACTIVE_WINDOW_STATUS = 3
 
@@ -92,6 +92,7 @@ function createMiniMaxProvider(input: {
           ok: false,
           configured: true,
           error: error instanceof Error ? error.message : "Request failed",
+          ...(error instanceof ProviderHttpError ? { status: error.status } : {}),
         })
       }
     },

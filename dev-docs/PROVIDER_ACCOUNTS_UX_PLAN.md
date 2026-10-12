@@ -73,10 +73,17 @@ Usage-backed adapters reuse the Usage tab readers with a one-entry projection
 that keeps only plan windows with a positive duration. Those readers keep their
 display transport (15-second timeout, no response-size cap); Codex and Go use
 the bounded credential-free transport in `usage/bounded-fetch.ts` (64 KiB,
-redirects rejected, abortable). HTTP 401/403 marks a candidate as rejected.
+redirects rejected, abortable). Readers keep the upstream HTTP status, and any
+definite client error (4xx except 408/429, e.g. a Zen key answering 402 or a
+missing endpoint) rejects a candidate, including for reactive adapters, so an
+unrelated account (or Zen billing account) is never activated. Only reads not
+performed, transport failures, timeouts, rate limits and 5xx stay unknown.
 Inactive Anthropic/Console OAuth tokens near or past expiry, enterprise Copilot
-tokens and self-hosted Console servers are left unread (unknown) rather than
-refreshed or sent to the public endpoint.
+tokens and self-hosted Console credentials (OAuth tokens and service-account
+keys alike) are left unread (unknown) rather than refreshed or sent to the
+public endpoint. The Usage tab sends native Go credentials only for the
+`opencode-go` provider (ID or canonical); pay-as-you-go Zen sessions keep the
+env-cookie behaviour.
 
 The Go usage endpoint (`GET https://opencode.ai/zen/go/v1/usage`) is
 unversioned and only partly verified: the parser accepts the current
@@ -124,6 +131,12 @@ registered adapter with an enabled policy → the integration's active
 credential. The mark is skipped when a credential switch (native
 `credential.switched`, our own activation or a manual change) happened since the
 failing step started (or within 60 seconds when its start was not observed).
+Because `credential.switched` can arrive late through another relay queue, the
+switch watermark is captured when the failure is received; after the attribution
+reads the backend waits a short settle bound (500 ms), re-reads the selection
+and the active credential's identity, and skips the mark if any switch was
+observed after receipt, the selection or identity changed, or the selection
+differs from the credential last observed active when the step started.
 
 Marks live in memory per connection (at most 256), keyed by integration and
 credential ID. Go's `metadata.limitName` sets the lifetime: `5 hour` marks last

@@ -352,7 +352,7 @@ function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases"> & {
         if (response.status === 401 || response.status === 403) {
           return result(this.id, this.name, { ok: false, configured: true, error: input.reauthError, status: response.status })
         }
-        if (!response.ok) return result(this.id, this.name, { ok: false, configured: true, error: `API error: ${response.status}` })
+        if (!response.ok) return result(this.id, this.name, { ok: false, configured: true, error: `API error: ${response.status}`, status: response.status })
         const usage = buildClaudeUsage((await response.json()) as Record<string, unknown>)
         cachedUsage = usage
         return result(this.id, this.name, { ok: true, configured: true, usage })
