@@ -5,7 +5,9 @@ import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partiti
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
-import { activeInstanceId, instances, updateInstance } from "../../../src/stores/instances"
+import { activeInstanceId, createInstance, instances, updateInstance } from "../../../src/stores/instances"
+import { closeInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
+import { canContinueOpenCodeSetup, continueOpenCodeSetup, openOpenCodeSetup, refreshOpenCodeSetup, runOpenCodeSetup } from "../../../src/stores/opencode-setup"
 import { activeSessionId } from "../../../src/stores/session-state"
 import { sessions, getSessionListIds, getSessionThreads, loading } from "../../../src/stores/session-state"
 import SessionList from "../../../src/components/session-list"
@@ -39,6 +41,14 @@ if (SessionView || location.search.includes("catalog")) await import("../../../s
 }
 ;(window as any).reloadWorktrees = reloadWorktrees
 ;(window as any).sessionListLoading = (id: string) => loading().fetchingSessions.get(id)
+;(window as any).runtimeRecovery = { canContinueOpenCodeSetup, continueOpenCodeSetup, refreshOpenCodeSetup, runOpenCodeSetup,
+  openFirst: async () => { const { instanceId } = await createInstance("D:/first"); selectInstanceTab(instanceId) },
+  retryFirst: async () => {
+    openOpenCodeSetup(async () => { const { instanceId } = await createInstance("D:/first"); selectInstanceTab(instanceId) })
+    await refreshOpenCodeSetup()
+  },
+  closeFirst: () => closeInstanceTab("first"),
+}
 if (location.search.includes("inventory")) {
   let release!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })
@@ -78,4 +88,4 @@ function Fixture() {
     </ThemeProvider></I18nProvider></ConfigProvider>}</Show>
   </div>
 }
-render(() => <Fixture />, document.getElementById("root")!)
+;(window as any).disposeRestoreFixture = render(() => <Fixture />, document.getElementById("root")!)

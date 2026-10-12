@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history", "foreground-slow"] as const) {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history", "foreground-slow", "foreground-runtime-update", "foreground-runtime-continue", "foreground-runtime-user", "foreground-runtime-closed", "foreground-runtime-failure", "foreground-runtime-settings", "foreground-runtime-disposed"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
@@ -87,6 +87,10 @@ test(`${host} restores the active project and saved session identity before hydr
   const requested: string[] = []
   const cursors: string[] = []
   let includeLinked = true
+  const runtimeRecovery = mode.includes("runtime-")
+  let runtimeReady = !runtimeRecovery
+  const creations: string[] = []
+  let restarts = 0
   const projects: any[] = mode === "foreground-existing"
     ? ["first", "second", ...Array.from({ length: 6 }, (_, i) => `extra-${i}`)].map(id => ({
         id, path: `D:/${id}`, status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`,
@@ -97,9 +101,15 @@ test(`${host} restores the active project and saved session identity before hydr
     requested.push(path)
     if (!path.startsWith("/api/") && !path.startsWith("/workspaces/")) return route.continue()
     let body: unknown = {}
-    if (path === "/api/workspaces") {
+    if (path === "/api/opencode/update" || path === "/api/opencode/service") {
+      if (path.endsWith("/service")) { restarts++; runtimeReady = true }
+      body = { state: "ready", serviceState: runtimeReady ? "ready" : "incompatible", minimumVersion: "2.0.27" }
+    } else if (path === "/api/workspaces") {
       if (request.method() === "POST") {
         const input = request.postDataJSON()
+        creations.push(input.path)
+        if (!runtimeReady) return route.fulfill({ status: mode === "foreground-runtime-failure" && input.path.endsWith("first") ? 503 : 426,
+          json: { error: "opencode_update_required" } })
         const id = input.path.endsWith("first") ? "first" : "second"
         body = { id, path: input.path, status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`,
           binaryId: "fixture", binaryLabel: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), requestId: input.requestId }
@@ -154,6 +164,56 @@ test(`${host} restores the active project and saved session identity before hydr
   })
   try {
     await page.goto(`${url}${foreground || mode === "catalog" ? `?${mode}` : ""}`)
+    if (runtimeRecovery) {
+      await page.locator('[data-restoring="false"]').waitFor()
+      await page.waitForFunction(() => (window as any).runtimeRecovery.canContinueOpenCodeSetup())
+      assert.equal(await page.getByRole("tab").count(), 0)
+      assert.deepEqual([...creations].sort(), ["D:/first", "D:/second"])
+      released = true
+      releaseSecondary()
+      // A ready status alone must not replay a refused workspace creation.
+      runtimeReady = true
+      await page.evaluate(() => (window as any).runtimeRecovery.refreshOpenCodeSetup())
+      assert.equal(creations.length, 2)
+      if (mode === "foreground-runtime-disposed") {
+        await page.evaluate(() => (window as any).disposeRestoreFixture())
+        assert.equal(await page.evaluate(() => (window as any).runtimeRecovery.canContinueOpenCodeSetup()), false)
+        await page.evaluate(() => (window as any).runtimeRecovery.continueOpenCodeSetup())
+        assert.equal(creations.length, 2, "disposed startup cannot reopen projects")
+        assert.deepEqual(errors, [])
+        return
+      }
+      if (mode === "foreground-runtime-settings") {
+        await page.evaluate(() => (window as any).runtimeRecovery.runOpenCodeSetup("restart", { resumeWorkspace: false }))
+        assert.equal(creations.length, 2, "settings maintenance does not resume dismissed restoration")
+        assert.equal(await page.evaluate(() => (window as any).runtimeRecovery.canContinueOpenCodeSetup()), true)
+      }
+      if (mode === "foreground-runtime-user") await page.evaluate(() => (window as any).runtimeRecovery.retryFirst())
+      if (mode === "foreground-runtime-closed") {
+        await page.evaluate(() => (window as any).runtimeRecovery.openFirst())
+        await page.getByRole("tab", { name: "D:/first", exact: true }).waitFor()
+        await page.evaluate(() => (window as any).runtimeRecovery.closeFirst())
+      }
+      if (mode === "foreground-runtime-update") {
+        runtimeReady = false
+        await page.evaluate(() => (window as any).runtimeRecovery.runOpenCodeSetup("restart"))
+        assert.equal(restarts, 1)
+      } else await page.evaluate(() => (window as any).runtimeRecovery.continueOpenCodeSetup())
+      const second = page.getByRole("tab", { name: "D:/second", exact: true })
+      await second.waitFor()
+      if (mode === "foreground-runtime-user") assert.equal(await page.getByRole("tab", { name: "D:/first", exact: true }).getAttribute("aria-selected"), "true")
+      else if (mode !== "foreground-runtime-closed") assert.equal(await second.getAttribute("aria-selected"), "true")
+      assert.equal(await page.getByRole("tab").count(), ["foreground-runtime-closed", "foreground-runtime-failure"].includes(mode) ? 1 : 2)
+      assert.equal(creations.filter(folder => folder === "D:/second").length, 2)
+      assert.equal(creations.filter(folder => folder === "D:/first").length, mode === "foreground-runtime-failure" ? 1 : 2,
+        "never duplicate a manually reopened tab or replay a non-426 failure")
+      if (mode !== "foreground-runtime-closed") await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
+      const count = creations.length
+      await page.evaluate(() => (window as any).runtimeRecovery.continueOpenCodeSetup())
+      assert.equal(creations.length, count, "recovery is consumed once")
+      assert.deepEqual(errors, [])
+      return
+    }
     const selected = page.getByRole("tab", { name: "D:/second", exact: true })
     await selected.waitFor()
     assert.equal(await selected.getAttribute("aria-selected"), "true", "project selection must not wait for its conversation requests")

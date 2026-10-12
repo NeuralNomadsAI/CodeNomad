@@ -27,6 +27,8 @@ import {
 import { runWithSerializedCommits } from "../../stores/app-session-restore-queue"
 import { shouldWaitForSavedSessionList } from "../../stores/app-session-restore-readiness"
 import { waitForSettledPrerequisite } from "../trailing-resync"
+import { HttpResponseError } from "../retryable-file-search"
+import { registerOpenCodeRestoreRecovery } from "../../stores/opencode-setup"
 const log = getLogger("actions")
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
 const OPERATION_TIMEOUT_MS = 30_000
@@ -38,12 +40,13 @@ function startupTimeout(snapshot: RestorableSessionState): number {
   return Math.max(MINIMUM_STARTUP_TIMEOUT_MS,
     INITIAL_LOAD_TIMEOUT_MS + Math.max(1, workspaceCount) * (CREATE_TIMEOUT_MS + CLEANUP_TIMEOUT_MS) + 5_000)
 }
-function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController) {
+function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController, onUpdateRequired: () => void) {
   const orderRevision = appTabOrderRevision()
   const selectionRevision = appTabSelectionRevision()
   let ownedActiveTabId: string | null = null
   return {
-    snapshot, signal, capture,
+    snapshot, signal, capture, onUpdateRequired,
+    deferredWorkspaces: new Map<number, () => boolean>(),
     selectActive(tabId: string | null, requested: boolean) {
       if (appTabSelectionRevision() !== selectionRevision) return
       const current = activeAppTabId()
@@ -60,9 +63,9 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
 }
 type RestoreContext = ReturnType<typeof createRestoreContext>
 const waitForWorkspaceMountAdoption = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
-async function restoreTabs(context: RestoreContext): Promise<void> {
+async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>): Promise<void> {
   const { snapshot, signal, capture } = context
-  const sidecars = snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
+  const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
   try {
     await runAbortable(async (operationSignal) => {
       await waitForInitialWorkspaceLoad(operationSignal)
@@ -77,6 +80,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
      : { kind: tab.kind }), Array.from(instances().values())
        .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
+    .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !capture.restoredTabIds()[match.tabIndex]))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
   existing.forEach(({ tabIndex, existingWorkspaceId }) => {
@@ -98,7 +102,8 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     if (signal.aborted) return
     const tab = snapshot.tabs[match.tabIndex]
     if (!tab || tab.kind !== "workspace") return
-    const canCommitCreation = capture.createRestoredTabCommitGuard(match.tabIndex)
+    const canCommitCreation = retryIndexes?.get(match.tabIndex) ?? capture.createRestoredTabCommitGuard(match.tabIndex)
+    if (!canCommitCreation()) return
     try {
       const binding = await runAbortable(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
@@ -158,6 +163,13 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         message: `Timed out restoring sessions for ${tab.folder}`, signal,
       })
     } catch (error) {
+      // Only a definitive runtime refusal before a tab was bound is retryable.
+      // Timeouts, lost replies and later hydration failures are never replayed.
+      if (!signal.aborted && !capture.restoredTabIds()[match.tabIndex]
+        && error instanceof HttpResponseError && error.status === 426 && error.message === "opencode_update_required") {
+        context.deferredWorkspaces.set(match.tabIndex, canCommitCreation)
+        context.onUpdateRequired()
+      }
       if (!signal.aborted) log.warn("Skipped workspace while restoring app session", { folder: tab.folder, error })
     }
   }
@@ -187,17 +199,42 @@ export function useAppSessionRestore(): void {
   const capture = useAppSessionCapture()
   const controller = new AbortController()
   let disposed = false
+  let context: RestoreContext | undefined
+  let initialRestore = Promise.resolve()
+  let recovering: Promise<void> | undefined
+  let unregisterRecovery = () => {}
+  const canRecover = () => !disposed && clientStateIsPrimary() && restorePreviousStateEnabled() && Boolean(loadedRestorableSession())
+  const resumeRestoration = (): Promise<void> => recovering ??= (async () => {
+    // Collect all concurrent refusals, even if setup finishes during startup.
+    await initialRestore
+    if (!context || !canRecover()) return
+    const retryIndexes = new Map([...context.deferredWorkspaces]
+      .filter(([index, current]) => current() && !capture.restoredTabIds()[index])
+      .map(([index, current]) => [index, () => canRecover() && current()] as const))
+    context.deferredWorkspaces.clear()
+    if (!retryIndexes.size) return
+    await runAbortable(async signal => {
+      await restoreTabs({ ...context!, signal }, retryIndexes)
+      if (!signal.aborted) context!.applyOrder()
+    }, { signal: controller.signal, timeoutMs: startupTimeout(context.snapshot) })
+  })().catch(error => {
+    if (!disposed) log.error("Failed to resume saved workspaces after OpenCode setup", error)
+  }).finally(() => { recovering = undefined })
+  const offerRecovery = () => {
+    unregisterRecovery()
+    unregisterRecovery = registerOpenCodeRestoreRecovery(resumeRestoration)
+  }
   onMount(() => {
     const snapshot = loadedRestorableSession()
     const shouldRestore = shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)
     setShowFolderSelection(snapshot?.homeActive === true)
-    void (async () => {
+    initialRestore = (async () => {
       try {
         await capture.ready
         if (!shouldRestore) return capture.start()
         capture.start(snapshot!)
         await runAbortable(async (signal) => {
-          const context = createRestoreContext(snapshot!, signal, capture)
+          context = createRestoreContext(snapshot!, signal, capture, offerRecovery)
           await restoreTabs(context)
           if (signal.aborted) return
           context.applyOrder()
@@ -216,6 +253,7 @@ export function useAppSessionRestore(): void {
   })
   onCleanup(() => {
     disposed = true
+    unregisterRecovery()
     controller.abort(new Error("App session restore disposed"))
     releaseAppSessionRestoreGate()
   })
