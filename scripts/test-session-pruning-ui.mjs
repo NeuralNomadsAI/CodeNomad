@@ -55,6 +55,8 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     getServiceLocation: () => location,
     getWorktrees: async () => ({ worktrees: [] }),
     getSharedServiceClient: async () => client,
+    // The isolated fixture provisions and registers the plugin before routes are used.
+    desktopPluginsReady: async () => {},
     getSessionEnvironment: async () => {
       const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
       return sessionEnvironment({})
