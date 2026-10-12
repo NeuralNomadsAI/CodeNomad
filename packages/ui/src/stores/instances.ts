@@ -1584,7 +1584,7 @@ async function createInstance(
   projectName?: string,
   options?: {
     signal?: AbortSignal
-    shouldCreateCommit?: () => boolean
+    shouldCreateCommit?: (instanceId: string) => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
@@ -1659,7 +1659,7 @@ async function createInstance(
       throw new Error(terminal.message || `Restore-created workspace ${workspace.id} ${terminal.status}`)
     }
     const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
-      || options?.shouldCreateCommit?.() === false
+      || options?.shouldCreateCommit?.(workspace.id) === false
     if (!discarded) {
       workspaceListReconciliationFence.markMutation(workspace.id)
       options?.onBeforeCreateCommit?.(workspace.id)

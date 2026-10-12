@@ -117,7 +117,8 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
         const create = () => createInstance(tab.folder, tab.projectName, {
           signal: operationSignal,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
-          shouldCreateCommit: canCommitCreation,
+          shouldCreateCommit: id => canCommitCreation() && (!hasLocalRestoredTab(capture, match.tabIndex)
+            || capture.restoredTabIds()[match.tabIndex] === getInstanceAppTabId(id)),
           onBeforeCreateCommit: (id) => seedRestoredWorkspaceState(id, tab),
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
@@ -215,25 +216,31 @@ export function useAppSessionRestore(): void {
   let recovering: Promise<void> | undefined
   let unregisterRecovery = () => {}
   const canRecover = () => !disposed && clientStateIsPrimary() && restorePreviousStateEnabled() && Boolean(loadedRestorableSession())
-  const resumeRestoration = (): Promise<void> => recovering ??= (async () => {
-    // Collect all concurrent refusals, even if setup finishes during startup.
-    await initialRestore
-    // Late refusals from that pass may have re-registered this continuation
-    // after setup consumed it. Drain them before a retry can offer new work.
-    unregisterRecovery()
-    if (!context || !canRecover()) return
-    const retryIndexes = new Map([...context.deferredWorkspaces]
-      .filter(([index, current]) => current() && !hasLocalRestoredTab(capture, index))
-      .map(([index, current]) => [index, () => canRecover() && current()] as const))
-    context.deferredWorkspaces.clear()
-    if (!retryIndexes.size) return
-    await runAbortable(async signal => {
-      await restoreTabs({ ...context!, signal }, retryIndexes)
-      if (!signal.aborted) context!.applyOrder()
-    }, { signal: controller.signal, timeoutMs: startupTimeout(context.snapshot) })
-  })().catch(error => {
-    if (!disposed) log.error("Failed to resume saved workspaces after OpenCode setup", error)
-  }).finally(() => { recovering = undefined })
+  const resumeRestoration = (): Promise<void> => {
+    // A new explicit Continue may consume a fresh refusal while a sibling is
+    // still recovering. Process that request after the current pass, not as a
+    // join that would silently lose the consumed continuation.
+    if (recovering) return recovering.then(resumeRestoration)
+    return recovering = (async () => {
+      // Collect all concurrent refusals, even if setup finishes during startup.
+      await initialRestore
+      // Late refusals from that pass may have re-registered this continuation
+      // after setup consumed it. Drain them before a retry can offer new work.
+      unregisterRecovery()
+      if (!context || !canRecover()) return
+      const retryIndexes = new Map([...context.deferredWorkspaces]
+        .filter(([index, current]) => current() && !hasLocalRestoredTab(capture, index))
+        .map(([index, current]) => [index, () => canRecover() && current()] as const))
+      context.deferredWorkspaces.clear()
+      if (!retryIndexes.size) return
+      await runAbortable(async signal => {
+        await restoreTabs({ ...context!, signal }, retryIndexes)
+        if (!signal.aborted) context!.applyOrder()
+      }, { signal: controller.signal, timeoutMs: startupTimeout(context.snapshot) })
+    })().catch(error => {
+      if (!disposed) log.error("Failed to resume saved workspaces after OpenCode setup", error)
+    }).finally(() => { recovering = undefined })
+  }
   const offerRecovery = () => {
     unregisterRecovery()
     unregisterRecovery = registerOpenCodeRestoreRecovery(resumeRestoration)
