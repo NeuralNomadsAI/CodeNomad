@@ -22,13 +22,13 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
 after(async () => { await browser?.close(); await server?.close() })
-async function open(run: (page: Page) => Promise<void>) {
+async function open(run: (page: Page) => Promise<void>, query = "") {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-    await page.goto(url)
+    await page.goto(url + query)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.getByText("Normal assistant response", { exact: true }).waitFor()
     await run(page)
@@ -139,3 +139,13 @@ test("search refreshes on system visibility changes and still finds assistant te
   assert.ok((await page.evaluate(() => (window as any).fixture.snapshot())).messageReads < 10,
     "paging must not subscribe the search effect to its own window mutations")
 }))
+test("native structured errors and failed runs render their cause in the transcript", async () => open(async page => {
+  const errors = page.locator(".message-error-block")
+  await page.getByText("Run failed before the next model step", { exact: false }).waitFor()
+  assert.deepEqual((await errors.allTextContents()).map(text => text.trim()), [
+    "⚠️ Quota reached for this account",
+    "⚠️ Run failed before the next model step",
+  ])
+  // Successful runs keep their idle control record invisible.
+  assert.equal(await page.getByText(/^idle$/).count(), 0)
+}, "?failed"))

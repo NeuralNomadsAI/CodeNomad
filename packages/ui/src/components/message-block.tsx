@@ -793,6 +793,16 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     flushContent()
 
+    // Error-only records (a failed step or a run that failed outside model steps)
+    // have no renderable part; keep one content row so their error is shown.
+    if (blockContentKeys.length === 0 && info?.role === "assistant" && info.error) {
+      const placeholder = orderedParts.find((part) => typeof part.id === "string" && part.type === "text")
+      if (placeholder) {
+        pendingParts.push(placeholder)
+        flushContent()
+      }
+    }
+
     const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
     sessionCache.messageBlocks.set(current.id, {
       signature: cacheSignature,

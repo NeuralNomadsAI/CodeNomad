@@ -22,6 +22,13 @@ const nativeMessages: any[] = [
   { id: "msg_01", type: "user", text: "Continue the task", time: { created: 1 } },
   { id: "msg_02", type: "system", text, description: "Context updated", time: { created: 2 } },
   { id: "msg_03", type: "assistant", agent: "build", model, content: [{ type: "text", text: "Normal assistant response" }], time: { created: 3, completed: 4 } },
+  // Opt-in: a run that failed outside a model step, after an assistant step with a V2 structured error.
+  ...(new URLSearchParams(location.search).has("failed") ? [
+    { id: "msg_04", type: "assistant", agent: "build", model, content: [], time: { created: 5, completed: 6 },
+      error: { type: "provider.quota", message: "Quota reached for this account", status: 429 } },
+    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 },
+      error: { type: "session.execution", message: "Run failed before the next model step" } },
+  ] : []),
 ]
 const info = { id: sessionId, title: "System fixture", agent: "build", model, projectID: "fixture", location: { directory: "/fixture" },
   cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 4 } }

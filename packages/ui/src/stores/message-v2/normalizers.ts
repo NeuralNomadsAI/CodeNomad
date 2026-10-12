@@ -88,6 +88,10 @@ function structuredError(error: { type: string; message: string; status?: number
   return { ...error, name: error.type === "aborted" ? "MessageAbortedError" : error.type, data: { message: error.message } }
 }
 
+function failedIdleError(source: SessionMessageInfo) {
+  return source.type === "idle" && source.outcome === "failed" ? source.error : undefined
+}
+
 function normalizeStatus(source: SessionMessageInfo): Message["status"] {
   if (source.type === "idle") return source.outcome === "failed" || source.outcome === "interrupted" ? "error" : "complete"
   if (source.type === "assistant") {
@@ -133,6 +137,8 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         }
       : {}),
     ...(source.type === "compaction" && source.status === "failed" ? { error: structuredError(source.error) } : {}),
+    // A run can fail before or between model steps; only the idle record carries that cause.
+    ...(failedIdleError(source) ? { error: structuredError(failedIdleError(source)!) } : {}),
     ...(source.type === "user" ? { text: source.text } : {}),
   }
 
@@ -192,8 +198,11 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       sessionID: sessionId, messageID: source.id }]
   } else if (source.type === "idle") {
     // Native execution control record, not assistant-authored transcript text.
-    // Keep its ID/time for cursor/anchor authority without rendering "idle".
-    parts = []
+    // Keep its ID/time for cursor/anchor authority without rendering "idle";
+    // a failed run's cause renders through the shared message error row.
+    parts = failedIdleError(source)
+      ? [normalizeMessagePart({ id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id }) as ClientPart]
+      : []
   } else if (source.type === "compaction") {
     parts = [{
       id: source.id,

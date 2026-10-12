@@ -267,10 +267,10 @@ export default function MessageItem(props: MessageItemProps) {
     if (error.name === "MessageAbortedError") {
       return t("messageItem.errors.requestAborted")
     }
-    if (error.name === "UnknownError") {
-      return error.data?.message || t("messageItem.errors.unknownFallback")
-    }
-    return null
+    // Native V2 structured errors (provider.quota, provider errors, run failures)
+    // carry their own display message under any type name.
+    const message = error.data?.message
+    return typeof message === "string" && message.trim() ? message : t("messageItem.errors.unknownFallback")
   }
 
   const hasContent = () => {
