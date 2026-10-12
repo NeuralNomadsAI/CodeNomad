@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "Produktionsserver",
   "folderSelection.servers.dialog.url": "Server-URL",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.beispiel.de",
+  "folderSelection.servers.dialog.urlHint": "Eine Serveradresse oder ein auf diesem Computer erstellter Kopplungslink der Fernsteuerung.",
   "folderSelection.servers.dialog.skipTls": "TLS-Verifizierung für selbstsignierte Zertifikate überspringen.",
   "folderSelection.servers.dialog.cancel": "Abbrechen",
   "folderSelection.servers.dialog.save": "Speichern",

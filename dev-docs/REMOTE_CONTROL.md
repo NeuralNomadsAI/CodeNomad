@@ -74,6 +74,11 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   only once Remote Control is used.
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
+- A desktop CodeNomad pairs as a device: pasting a pairing link into Add server
+  saves only the tunnel origin and opens the remote window once on the link
+  (`lib/remote-pairing-link.ts`). The code is never stored with the server;
+  re-pairing a saved server reuses its window storage, which keeps the device
+  cookie across launches. Covered by `tests/browser/remote-server-pairing.test.ts`.
 
 ## Validation
 

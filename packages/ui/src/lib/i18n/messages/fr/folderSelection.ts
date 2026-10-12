@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "Serveur de production",
   "folderSelection.servers.dialog.url": "URL du serveur",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "L’adresse d’un serveur, ou un lien d’appairage du Contrôle à distance créé sur cet ordinateur.",
   "folderSelection.servers.dialog.skipTls": "Ignorer la vérification TLS pour les certificats auto-signés.",
   "folderSelection.servers.dialog.cancel": "Annuler",
   "folderSelection.servers.dialog.save": "Enregistrer",

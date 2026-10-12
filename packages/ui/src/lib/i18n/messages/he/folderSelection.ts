@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "שרת ייצור",
   "folderSelection.servers.dialog.url": "כתובת השרת",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "כתובת שרת, או קישור צימוד של השליטה מרחוק שנוצר במחשב זה.",
   "folderSelection.servers.dialog.skipTls": "דלג על אימות TLS עבור תעודות בחתימה עצמית.",
   "folderSelection.servers.dialog.cancel": "ביטול",
   "folderSelection.servers.dialog.save": "שמור",

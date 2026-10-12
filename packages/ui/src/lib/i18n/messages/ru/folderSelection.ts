@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "Продакшн сервер",
   "folderSelection.servers.dialog.url": "URL сервера",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "Адрес сервера или ссылка сопряжения удалённого управления, созданная на том компьютере.",
   "folderSelection.servers.dialog.skipTls": "Пропустить проверку TLS для самоподписанных сертификатов.",
   "folderSelection.servers.dialog.cancel": "Отмена",
   "folderSelection.servers.dialog.save": "Сохранить",

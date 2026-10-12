@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "उत्पादन सर्भर",
   "folderSelection.servers.dialog.url": "सर्भर URL",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "सर्भरको ठेगाना, वा त्यो कम्प्युटरमा बनाइएको रिमोट कन्ट्रोल पेयरिङ लिङ्क।",
   "folderSelection.servers.dialog.skipTls": "स्व-हस्ताक्षरित प्रमाणपत्रहरूको लागि TLS प्रमाणीकरण छोड्नुहोस्।",
   "folderSelection.servers.dialog.cancel": "रद्द गर्नुहोस्",
   "folderSelection.servers.dialog.save": "बचत गर्नुहोस्",

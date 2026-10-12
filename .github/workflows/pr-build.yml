@@ -310,6 +310,7 @@ jobs:
           packages/ui/src/lib/model-visibility.test.ts
           packages/ui/src/lib/retained-size.test.ts
           packages/ui/src/lib/provider-auth.test.ts
+          packages/ui/src/lib/remote-pairing-link.test.ts
           packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/session-transcript-lru.test.ts

@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "生产服务器",
   "folderSelection.servers.dialog.url": "服务器 URL",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "服务器地址，或在该电脑上创建的远程控制配对链接。",
   "folderSelection.servers.dialog.skipTls": "为自签名证书跳过 TLS 验证。",
   "folderSelection.servers.dialog.cancel": "取消",
   "folderSelection.servers.dialog.save": "保存",

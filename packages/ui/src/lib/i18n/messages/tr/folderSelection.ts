@@ -85,6 +85,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "Production Sunucusu",
   "folderSelection.servers.dialog.url": "Sunucu URL'si",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "Bir sunucu adresi veya o bilgisayarda oluşturulan bir Uzaktan Kontrol eşleştirme bağlantısı.",
   "folderSelection.servers.dialog.skipTls": "Kendinden imzalı sertifikalar için TLS doğrulamasını atla.",
   "folderSelection.servers.dialog.cancel": "İptal",
   "folderSelection.servers.dialog.save": "Kaydet",

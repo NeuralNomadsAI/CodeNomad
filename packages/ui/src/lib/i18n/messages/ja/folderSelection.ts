@@ -96,6 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.namePlaceholder": "本番サーバー",
   "folderSelection.servers.dialog.url": "サーバー URL",
   "folderSelection.servers.dialog.urlPlaceholder": "https://server.example.com",
+  "folderSelection.servers.dialog.urlHint": "サーバーのアドレス、またはそのコンピューターで作成したリモートコントロールのペアリングリンク。",
   "folderSelection.servers.dialog.skipTls": "自己署名証明書の TLS 検証をスキップします。",
   "folderSelection.servers.dialog.cancel": "キャンセル",
   "folderSelection.servers.dialog.save": "保存",
