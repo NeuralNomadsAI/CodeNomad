@@ -43,6 +43,8 @@ type PromptPickerController = {
   handlePickerClose: () => void
 }
 
+const MENTION_BOUNDARY = /[\s([{<"'`]/
+
 export function usePromptPicker(options: PromptPickerOptions): PromptPickerController {
   const [showPicker, setShowPicker] = createSignal(false)
   const [pickerMode, setPickerMode] = createSignal<PickerMode>("mention")
@@ -86,7 +88,8 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
       })
     }
 
-    if (lastAtIndex !== -1) {
+    // A mention starts a word: "packages/@scope/x" or "user@example.com" stay plain text.
+    if (lastAtIndex !== -1 && (lastAtIndex === 0 || MENTION_BOUNDARY.test(value[lastAtIndex - 1]))) {
       const textAfterAt = value.substring(lastAtIndex + 1, cursorPos)
       const hasSpace = textAfterAt.includes(" ") || textAfterAt.includes("\n")
 

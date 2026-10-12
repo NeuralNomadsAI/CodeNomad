@@ -94,6 +94,29 @@ test("Ctrl+V extends an ignored picker query without sending; empty-result Enter
   } finally { await f.page.close() }
 })
 
+test("an @ inside a word stays plain text, so a pasted scoped path sends unchanged", async () => {
+  const f = await setup()
+  try {
+    await f.page.evaluate(() => navigator.clipboard.writeText("packages/@yarn-tool/fix-all/index.ts"))
+    await f.input.focus()
+    await f.input.press("Control+v")
+    await f.input.pressSequentially(" user@example")
+    await f.assertDraft("packages/@yarn-tool/fix-all/index.ts user@example")
+    assert.equal(await f.picker.count(), 0)
+    assert.equal(f.searches.length, 0, "no file search for a mid-word @")
+    await f.input.press("Enter")
+    await f.page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("textarea")?.value === "")
+    assert.equal(f.prompts.length, 1)
+    assert.match(JSON.stringify(f.prompts[0]), /packages\/@yarn-tool\/fix-all\/index\.ts user@example/)
+    assert.equal(await f.page.evaluate(() => (window as any).fixture.attachments().length), 0)
+
+    // A word-start @, including after an opening bracket, still opens the picker.
+    await f.input.pressSequentially("(@serv")
+    await f.picker.waitFor()
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.close() }
+})
+
 test("Tab autocomplete and Enter attach a selected file without sending; the next Enter sends", async () => {
   const f = await setup()
   try {
