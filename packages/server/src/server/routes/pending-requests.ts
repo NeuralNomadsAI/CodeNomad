@@ -66,7 +66,7 @@ async function drainOwnershipReads<T>(reads: Promise<T>[]): Promise<T[]> {
 const missingHost = (host: string) => lstat(host).then(() => false, error => (error as NodeJS.ErrnoException).code === "ENOENT")
 
 export interface PendingRequestsRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation" | "desktopPluginsReady">
   worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked">
   /** Test seam only; production always uses the real Git common-directory reader. */
   readGitCommonDirectory?: typeof readGitCommonDirectory
@@ -297,6 +297,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       // Even an all-excluded historical batch must negotiate real RPC capability.
       // The established root is the only bootstrap, never an inactive candidate.
       const expected = new Set(resolved.length ? resolved.map((entry) => entry.directory) : [root])
+      // A start-up read must not reach the plugin before it registered for this
+      // backend and be taken as unsupported. Bounded; revalidated below.
+      await manager.desktopPluginsReady()
+      assertCurrent()
       const url = new URL("/api/rpc/codenomad.pending-requests/snapshot", connection.endpoint.url)
       url.searchParams.set("location[directory]", bootstrapDirectory)
       phase = "native-read"

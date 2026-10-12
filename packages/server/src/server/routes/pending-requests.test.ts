@@ -60,6 +60,7 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
     getServiceDirectoryForPath: async (_id, candidate) => state.allowed.has(candidate) ? candidate : undefined,
     getWorktreeIdentityForPath: async (_id, candidate) => state.allowed.has(candidate) ? root : undefined,
     getHostPathForServicePath: async (_id, candidate) => candidate,
+    desktopPluginsReady: async () => {},
     ownsLocation: async (_id, location) => {
       state.ownershipReads.push(location.directory)
       state.onOwnership()

@@ -8,7 +8,7 @@ import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "../../opencode/session-pruning/history-contract"
 
 export interface HistoryRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees" | "desktopPluginsReady">
   worktreeDeletionFence: WorktreeDeletionFence
 }
 const cursorSchema = z.object({ directory: z.string().max(4096), page: z.string().max(4096).optional(), binding: z.string().length(64) }).strict()
@@ -44,6 +44,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (location.directory !== directory || !await manager.ownsLocation(request.params.id, location, client)) {
       return reply.code(403).send({ error: "History location does not belong to workspace" })
     }
+    await manager.desktopPluginsReady()
     try {
       const result = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "history",
         input: JSON.parse(JSON.stringify({ ...input, cursor: cursor?.page })), location: { directory } },
@@ -85,6 +86,8 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (!await deps.workspaceManager.ownsLocation(request.params.id, session.location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
     const identity = await deps.workspaceManager.getWorktreeIdentityForPath(request.params.id, session.location.directory)
     if (!identity) return reply.code(403).send({ error: "Session does not belong to workspace" })
+    // Before the deletion fence: waiting for plugin registration must not hold it.
+    await deps.workspaceManager.desktopPluginsReady()
     const release = deps.worktreeDeletionFence.enter([identity])
     if (!release) return reply.code(409).send({ error: "Worktree deletion is in progress" })
     try {

@@ -87,6 +87,8 @@ interface WorkspaceManagerOptions {
     connection: import("./opencode-service").ServiceConnection,
     deadlineAt?: number,
   ) => Promise<boolean>
+  /** Bounded wait for bundled plugins to register for this backend (never rejects). */
+  desktopPluginsReady?: () => Promise<void>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -242,6 +244,11 @@ export class WorkspaceManager {
 
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  /** Await before a bundled-plugin RPC: plugins register only after observing this backend's lease. */
+  desktopPluginsReady(): Promise<void> {
+    return this.options.desktopPluginsReady?.() ?? Promise.resolve()
   }
 
   async reserveWorktreeDeletion(directory: string): Promise<() => void> {

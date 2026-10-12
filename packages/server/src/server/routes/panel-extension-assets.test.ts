@@ -14,7 +14,7 @@ test("asset routes require explicit API2 consent, exact digest and owned session
   const pkg=await readPanelExtensionArchive(fixtureArchive("<p>Assets</p>",{apiVersion:2,permissions:["session.context","session.assets.read"]}))
   let calls=0, owned=true, revoke=false, move=false, directoryNow="/repo", output:unknown={status:"page",entries:[],cursor:null}
   const client={session:{get:async()=>({location:{directory:directoryNow}})},rpc:{call:async()=>{calls++;if(revoke)await store.activate(pkg.manifest.id,pkg.digest,false);if(move)directoryNow="/moved";return{output}}}}
-  registerPanelExtensionAssetRoutes(app,{store,workspaceManager:{getSharedServiceConnection:async()=>({client,assertCurrent(){}}) as any,ownsLocation:async()=>owned}})
+  registerPanelExtensionAssetRoutes(app,{store,workspaceManager:{getSharedServiceConnection:async()=>({client,assertCurrent(){}}) as any,ownsLocation:async()=>owned,desktopPluginsReady:async()=>{}}})
   const body={instanceId:"i",digest:pkg.digest,sessionID:"s"}
   const send=(extra={})=>app.inject({method:"POST",url:`/api/panel-extensions/${pkg.manifest.id}/assets`,payload:{...body,...extra}})
   try {
@@ -46,7 +46,7 @@ test("final session/ownership reads cannot return asset bytes after disable, rep
       if (++sessions === 2 && boundary === "session") { started(); await held }
       return { location: { directory: "/repo" } }
     } }, rpc: { call: async () => ({ output: { status: "asset", mime: "text/plain", uri: "data:text/plain;base64,c2VjcmV0" } }) } }
-    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: { getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, ownsLocation: async () => {
+    registerPanelExtensionAssetRoutes(app, { store, workspaceManager: { desktopPluginsReady: async () => {}, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, ownsLocation: async () => {
       if (++ownership === 2 && boundary === "ownership") { started(); await held }
       return true
     } } })
@@ -79,6 +79,7 @@ test("asset bytes from a superseded OpenCode connection never reach the response
       return { output: { status: "asset", mime: "text/plain", uri: "data:text/plain;base64,c2VjcmV0" } }
     } } }
     registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+      desktopPluginsReady: async () => {},
       getSharedServiceConnection: async () => ({ client, assertCurrent() { if (!current) throw new Error("OpenCode connection changed") } }) as any,
       ownsLocation: async () => { if (++ownership === 2 && boundary === "final ownership") { started(); await held } return true },
     } })

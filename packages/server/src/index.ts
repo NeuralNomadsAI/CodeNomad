@@ -421,6 +421,7 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
     prepareDesktopPlugins,
+    desktopPluginsReady: () => pruningLifecycle.ready(),
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")

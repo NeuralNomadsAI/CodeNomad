@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from "node:crypto"
 import { constants } from "node:fs"
-import { lstat, mkdir, open, readFile, rename, rm, writeFile, utimes } from "node:fs/promises"
+import { lstat, mkdir, open, readFile, rename, rm, stat, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { PRESENCE_INTERVAL_MS } from "./desktop-plugin-presence"
+import { PRESENCE_INTERVAL_MS, PRESENCE_READY_SUFFIX } from "./desktop-plugin-presence"
+
+// Covers a full presence check and staggered Location timers.
+export const PRESENCE_READY_WAIT_MS = 8_000
+const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { assertNativePluginPath, type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 
@@ -149,9 +154,23 @@ export async function installDesktopPluginPresence(
     }).catch(() => {})
   }, PRESENCE_INTERVAL_MS)
   timer.unref()
-  return async () => {
+  // Plugins register at their next presence check; the marker confirms every
+  // follower in the daemon process has observed this lease while registered.
+  // Bounded: an older plugin without markers only delays the first RPC.
+  const readyMarker = `${lease}${PRESENCE_READY_SUFFIX}`
+  let disposed = false
+  const ready = (async () => {
+    for (const deadline = Date.now() + PRESENCE_READY_WAIT_MS; !disposed && Date.now() < deadline;) {
+      if (await stat(readyMarker).then(() => true, () => false)) return true
+      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false })
+    }
+    return false
+  })()
+  return Object.assign(async () => {
+    disposed = true
     clearInterval(timer)
     await pending
     await rm(lease, { force: true })
-  }
+    await rm(readyMarker, { force: true })
+  }, { ready })
 }

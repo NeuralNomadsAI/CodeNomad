@@ -8,7 +8,7 @@ import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadR
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 
 export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
-  store: PanelExtensionStore; workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
+  store: PanelExtensionStore; workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "desktopPluginsReady">
 }) {
   const authority = { instanceId: z.string().min(1).max(256), digest: z.string().regex(/^[a-f0-9]{64}$/) }
   const idSchema = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/) }).strict()
@@ -27,6 +27,7 @@ export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
         const session = await client.session.get({ sessionID: input.sessionID })
         if (!await deps.workspaceManager.ownsLocation(instanceId, session.location, client)) return reply.code(403).send({ error: "Unowned session" })
         const location = readLocationRef(session.location)
+        await deps.workspaceManager.desktopPluginsReady()
         connection.assertCurrent()
         const result = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method, input,
           location: { directory: location.directory } }, { ...locationRequestOptions(location), signal: AbortSignal.timeout(15_000) })

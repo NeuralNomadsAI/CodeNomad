@@ -19,6 +19,8 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: History
       }
       const identity = await deps.workspaceManager.getWorktreeIdentityForPath(request.params.id, session.location.directory)
       if (!identity) return reply.code(403).send({ error: "Session does not belong to workspace" })
+      // Before the deletion fence: waiting for plugin registration must not hold it.
+      await deps.workspaceManager.desktopPluginsReady()
       const release = deps.worktreeDeletionFence.enter([identity])
       if (!release) return reply.code(409).send({ error: "Worktree deletion is in progress" })
       try {
