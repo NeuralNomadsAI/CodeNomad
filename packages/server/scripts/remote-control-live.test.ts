@@ -10,7 +10,8 @@ import https from "node:https"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { createRequire } from "node:module"
+import { pathToFileURL } from "node:url"
 import { openRemoteTunnel } from "@codenomad/remote-tunnel"
 import { startRemoteSurface } from "../src/remote-control/test-support/surface"
 
@@ -39,8 +40,11 @@ function request(url: string, options: { method?: string; headers?: Record<strin
 
 async function removeThrowawayTunnel(dataHome: string): Promise<void> {
   // The facade never deletes identities; the qualification uses the SDK directly.
-  const sdk = path.resolve(fileURLToPath(import.meta.url), "../../../remote-tunnel/node_modules/@opentunnel/client/dist/promise/index.js")
-  const { create, OpenTunnelStorage } = await import(pathToFileURL(sdk).href)
+  // Resolved from the adapter package, wherever npm placed the SDK (nested or hoisted).
+  const lookup = createRequire(new URL("../../remote-tunnel/package.json", import.meta.url)).resolve.paths("@opentunnel/client") ?? []
+  const root = lookup.map((directory) => path.join(directory, "@opentunnel", "client")).find((directory) => fs.existsSync(directory))
+  if (!root) throw new Error("OpenTunnel SDK not found for throwaway tunnel removal")
+  const { create, OpenTunnelStorage } = await import(pathToFileURL(path.join(root, "dist", "promise", "index.js")).href)
   const client = create({ store: OpenTunnelStorage.xdg({ env: { ...process.env, XDG_DATA_HOME: dataHome } }) })
   try {
     await client.tunnel.remove({ profile: PROFILE })

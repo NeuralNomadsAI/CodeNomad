@@ -12,8 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@opentunnel/client": "0.4.1",
-    "effect": "4.0.2",
+    "@opentunnel/client": "0.5.1",
+    "effect": "4.0.1",
     "typescript": "^5.6.3"
   }
 }

@@ -12,9 +12,10 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 
 - `packages/remote-tunnel` wraps `@opentunnel/client` behind CodeNomad-owned
   types. The server build bundles it into `dist/remote-control/tunnel-runtime.js`
-  with its own Effect 4.0.x: the SDK peers `effect ^4.0.0` and imports
-  `effect/http`, while `@opencode/client` pins `4.0.0-rc.112`. A strict npm
-  install of both side by side fails with `ERESOLVE`, so the published server keeps no runtime
+  with the Effect copy it resolves (the SDK peers `effect ^4.0.0`; since
+  OpenCode 2.0.27 the workspace shares one stable 4.0.x). It was introduced
+  while `@opencode/client` pinned `4.0.0-rc.112`, where a strict npm install of
+  both side by side failed with `ERESOLVE`; the published server still keeps no runtime
   dependency on the private workspace package.
 - CodeNomad claims one random route (`codenomad-<hex>`, persisted) on the
   device's shared `default` identity. OpenCode's `opencode pair --remote` and
@@ -102,6 +103,11 @@ upstream affects Bun only.
 
 - [anomalyco/opentunnel#34](https://github.com/anomalyco/opentunnel/pull/34):
   both clients enforce the `max_conns` they advertise.
+- [anomalyco/opentunnel#45](https://github.com/anomalyco/opentunnel/issues/45)
+  (0.5.1): API calls retry transient failures (5xx, Cloudflare 52x) with capped
+  backoff, errors name the HTTP status, and `connect` keeps an unexpired saved
+  certificate when the check still fails. CodeNomad does not enable the 0.5.0
+  per-route PROXY protocol: the ingress expects plain HTTP.
 - Open topics: atomic identity writes with a provisioning lock, an in-process
-  connection target (no loopback hop, preserved peer address), per-connection
-  flow control, and relay-side `max_conns` enforcement.
+  connection target (no loopback hop, preserved peer address) and
+  per-connection flow control. The repository now accepts issues only.
