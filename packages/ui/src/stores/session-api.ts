@@ -100,6 +100,7 @@ import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from 
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 
 const log = getLogger("api")
+const sessionLog = getLogger("session")
 const sessionListRequestIds = new Map<string, number>()
 const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
@@ -1634,11 +1635,12 @@ async function loadMessages(
   let committed = false
   let deferRelease = false
   const showLoading = intent === "open" || intent === "latest"
-  // The loading flag belongs to this load's epoch, not to the identities that
-  // make its result current: a discarded result still releases it unless a
-  // newer load has taken over, so the view can load the session again.
+  // The loading flag belongs to the session's current load epoch, not to the
+  // identities that make a result current: a discarded result still releases
+  // it unless a newer load has taken over, so the view can load the session
+  // again. A non-spinner load that superseded a spinner load owns it too.
   const releaseLoadingFlag = () => {
-    if (showLoading && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearMessageLoadingFlag(instanceId, sessionId)
+    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearMessageLoadingFlag(instanceId, sessionId)
   }
   const staleReason = () => {
     if (options?.signal?.aborted) return undefined
@@ -1873,7 +1875,7 @@ async function loadMessages(
     if (!committed && !deferRelease) {
       // Diagnostic only (session logger): names the identity that discarded a result.
       const reason = staleReason()
-      if (reason) log.warn("Discarded stale message load", { instanceId, sessionId, reason })
+      if (reason) sessionLog.warn("Discarded stale message load", { instanceId, sessionId, reason })
     }
     if (!deferRelease) releaseLoadingFlag()
     finishMessageLoad(instanceId, sessionId, loadEpoch)
