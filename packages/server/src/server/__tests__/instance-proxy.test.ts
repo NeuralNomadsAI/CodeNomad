@@ -234,6 +234,19 @@ describe("instance proxy location enforcement", () => {
     assert.deepEqual(root.json().body, { title: "Owned root", location: { directory: "/repo" } })
   })
 
+  it("admits only owned external integration connection requests", async () => {
+    const { app, requestCount } = await harness()
+    const url = "/workspaces/workspace/instance/api/integration/azure/connect/external"
+    const payload = { methodID: "azure-cli", answer: { resource: "fixture-only" } }
+    const response = await app.inject({ method: "POST", url: `${url}?location[directory]=/repo/worktree`, payload })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json().body, payload)
+    assert.equal(response.json().headers.authorization, "Basic internal-secret")
+    assert.equal((await app.inject({ method: "POST", url: `${url}?location[directory]=/other`, payload })).statusCode, 403)
+    assert.equal((await app.inject({ method: "POST", url: `${url}/export`, payload })).statusCode, 403)
+    assert.equal(requestCount(), 1)
+  })
+
   it("keeps native credential export and creation outside the workspace proxy", async () => {
     const { app, requestCount } = await harness()
     for (const method of ["GET", "POST"] as const) {

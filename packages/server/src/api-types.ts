@@ -599,7 +599,7 @@ export interface OpenCodeUpdateStatus {
   minimumVersion: string
   recommendedVersion: string
   versionAssessment: "tested" | "untested" | "incompatible"
-  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
+  incompatibilityReason?: "plugin_runtime" | "step_timestamp" | "canonical_api" | "session_environment"
   state: "missing" | "update_required" | "ready" | "error"
   binaryPath: string
   installationSource?: "path" | "user"

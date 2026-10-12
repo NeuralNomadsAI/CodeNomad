@@ -5,7 +5,6 @@
 @import "./components/prompt-help.css";
 @import "./messaging/message-section.css";
 @import "./messaging/virtual-follow-list.css";
-@import "./messaging/message-selection.css";
 @import "./messaging/delete-overlays.css";
 @import "./messaging/technical-groups.css";
 @import "./messaging/hidden-message-parts.css";

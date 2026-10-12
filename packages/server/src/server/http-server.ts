@@ -804,7 +804,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
   if (pathname.replace(/\/+$/, "") === "/api/project") {
-    const projects = await wait((await clientForRequest()).project.list({ signal }))
+    const projects = await wait((await clientForRequest()).project.list(undefined, { signal }))
     const ownedProjects = await Promise.all(projects.map(async (project) => {
       if (!await wait(workspaceManager.ownsDirectory(workspaceId, project.canonical))) return null
       const sandboxes = (await Promise.all(project.sandboxes.map(async (directory) => (
@@ -1455,7 +1455,7 @@ async function ownsSessionListScope(
   if (!scope.project) return "foreign"
   const serviceClient = client ?? await manager.getSharedServiceClient()
   signal?.throwIfAborted()
-  const project = (await serviceClient.project.list({ signal })).find((candidate) => candidate.id === scope.project)
+  const project = (await serviceClient.project.list(undefined, { signal })).find((candidate) => candidate.id === scope.project)
   signal?.throwIfAborted()
   if (!project) return "foreign"
   const directory = scope.subpath === undefined
@@ -1525,7 +1525,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["DELETE", /^\/api\/credential\/[^/]+$/],
     ["PATCH", /^\/api\/credential\/[^/]+$/],
     ["POST", /^\/api\/credential\/[^/]+\/activate$/],
-    ["POST", /^\/api\/integration\/[^/]+\/connect\/(?:key|oauth|command)$/],
+    ["POST", /^\/api\/integration\/[^/]+\/connect\/(?:key|oauth|command|external)$/],
     ["GET", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
     ["DELETE", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
     ["POST", /^\/api\/integration\/[^/]+\/connect\/oauth\/[^/]+\/complete$/],

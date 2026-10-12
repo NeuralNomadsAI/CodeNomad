@@ -61,7 +61,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} यो CodeNomad संस्करणसँग पूर्ण रूपमा प्रमाणित गरिएको छैन। यस कारणले मात्र जडान रोकिन्दैन।",
   "settings.opencode.setup.error": "छानिएको कार्यान्वयन फाइल प्रमाणित गर्न सकिएन।",
   "settings.opencode.setup.minimum": "न्यूनतम संस्करण",
-  "settings.opencode.setup.minimumReason": "OpenCode {version} ले कुराकानी प्रदर्शनलाई आवश्यक पर्ने चरण सुरु भएको मूल समय थपेको हो। पुराना संस्करणलाई हटाइएका घटना रूपान्तरण आवश्यक पर्छन्।",
+  "settings.opencode.setup.minimumReason": "यस CodeNomad संस्करणलाई मूल Effect 4.0.1 र Schema प्लगइन रनटाइमका लागि OpenCode {version} वा नयाँ संस्करण चाहिन्छ। पुराना रनटाइमले यी प्लगइनहरू लोड गर्न सक्दैनन्।",
   "settings.opencode.setup.canonical_api": "चलिरहेको सेवाले यो CodeNomad संस्करणलाई आवश्यक पर्ने सत्र, अनुमति, फारम र इनबक्स API प्रदान गर्दैन।",
   "settings.opencode.setup.session_environment": "चलिरहेको सेवाले सत्रको वातावरण बदल्न सक्दैन, जुन प्रम्प्ट वा आदेश पठाउनुअघि आवश्यक हुन्छ।",
   "settings.opencode.setup.daemon": "चलिरहेको सेवा",

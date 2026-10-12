@@ -106,6 +106,29 @@ test("provider manager keeps per-account drafts across dropdown and external swi
   } finally { await page.close() }
 })
 
+test("external provider auth preserves failed form drafts and never falls back or replays", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?parent&external`)
+    await page.getByRole("button", { name: "Add account", exact: true }).click()
+    const panel = page.locator(".providers-connect-panel")
+    await panel.getByLabel("Resource").fill("fixture-resource")
+    await page.evaluate(() => (window as any).fixture.fail())
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await page.getByRole("alert").waitFor()
+    assert.equal(await panel.getByLabel("Resource").inputValue(), "fixture-resource")
+    const expected = { action: "external", integrationID: "provider", methodID: "fixture-source", answer: { resource: "fixture-resource" }, location: { directory: "/a" } }
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [expected])
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await panel.waitFor({ state: "detached" })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [expected, expected])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("dropdown design simulates opt-in rotation and hides the option for one account", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   const errors: string[] = []

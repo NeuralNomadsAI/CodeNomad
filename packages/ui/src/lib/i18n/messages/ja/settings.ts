@@ -61,7 +61,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} は、この CodeNomad リリースで完全には検証されていません。これだけを理由に接続が拒否されることはありません。",
   "settings.opencode.setup.error": "選択した実行ファイルを確認できませんでした。",
   "settings.opencode.setup.minimum": "最小バージョン",
-  "settings.opencode.setup.minimumReason": "OpenCode {version} で、会話表示に必要なネイティブのステップ開始時刻が導入されました。それ以前のバージョンには、削除済みのイベント変換が必要です。",
+  "settings.opencode.setup.minimumReason": "この CodeNomad リリースには、Effect 4.0.1 と Schema のネイティブプラグインランタイムを備えた OpenCode {version} 以降が必要です。以前のランタイムではこれらのプラグインを読み込めません。",
   "settings.opencode.setup.canonical_api": "実行中のサービスは、この CodeNomad リリースに必要なセッション、権限、フォーム、受信キューの API を提供していません。",
   "settings.opencode.setup.session_environment": "実行中のサービスは、プロンプトやコマンドの送信前に必要なセッション環境の置き換えに対応していません。",
   "settings.opencode.setup.daemon": "実行中のサービス",

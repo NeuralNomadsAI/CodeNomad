@@ -18,7 +18,7 @@
     "transaction.ts", "tui.ts", "tui-reload.ts"
   ],
   "dependencies": {
-    "@opencode/plugin": "2.0.24",
+    "@opencode/plugin": "2.0.27",
     "zod": "^3.25.76"
   }
 }
