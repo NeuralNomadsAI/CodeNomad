@@ -194,6 +194,14 @@ describe("native session message normalization", () => {
     assert.deepEqual(failed.info.error, { ...error, name: "provider.quota", data: { message: "Usage limit reached" } })
     assert.deepEqual(failed.message.parts.map(part => part.type), ["text"])
 
+    // Exhausted restarts fail the run with an "aborted" explanation that must stay its own.
+    const exhausted = normalizeSessionMessage("session", {
+      id: "idle-exhausted", type: "idle", outcome: "failed", time: { created: 4 },
+      error: { type: "aborted", message: "Execution was interrupted repeatedly and will not be resumed automatically." },
+    } as SessionMessageInfo)
+    assert.equal(exhausted.info.error?.name, "aborted")
+    assert.equal(exhausted.info.error?.data?.message, "Execution was interrupted repeatedly and will not be resumed automatically.")
+
     // Without a cause, and for interruptions or successes, the control record stays invisible.
     for (const source of [
       { id: "idle-bare", type: "idle", outcome: "failed", time: { created: 5 } },

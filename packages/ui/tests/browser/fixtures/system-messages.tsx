@@ -18,17 +18,36 @@ import "../../../src/index.css"
 const instanceId = "system-instance", sessionId = "system-session"
 const model = { providerID: "fixture", id: "fixture" }
 const text = "Today's date is now: Sun Sep 20 2026\n<system-reminder>Keep this context &amp; intact.</system-reminder>"
+const quota = { type: "provider.quota", message: "Quota reached for this account", status: 429 }
+const readTool = { type: "tool", id: "call_read", name: "read", time: { created: 5 },
+  state: { status: "completed", input: { path: "a.ts" }, content: [{ type: "text", text: "file" }] } }
+// Opt-in failed runs, as OpenCode records them on the step and/or the run's idle record.
+const failedRunMessages: Record<string, any[]> = {
+  // The failed step's error is propagated to the idle record: one error row, after the step's last text.
+  duplicate: [
+    { id: "msg_04", type: "assistant", agent: "build", model, time: { created: 5, completed: 6 }, error: quota,
+      content: [{ type: "text", text: "Before the tool" }, readTool, { type: "text", text: "After the tool" }] },
+    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 }, error: quota },
+  ],
+  // A run that failed between model steps: only the idle record carries the cause.
+  between: [
+    { id: "msg_04", type: "assistant", agent: "build", model, content: [readTool], finish: "tool-calls", time: { created: 5, completed: 6 } },
+    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 },
+      error: { type: "session.execution", message: "Run failed before the next model step" } },
+  ],
+  // Restarts exhausted after an interrupted step keep the run's own explanation.
+  exhausted: [
+    { id: "msg_04", type: "assistant", agent: "build", model, content: [], time: { created: 5, completed: 6 },
+      error: { type: "aborted", message: "Step interrupted" } },
+    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 },
+      error: { type: "aborted", message: "Execution was interrupted repeatedly and will not be resumed automatically." } },
+  ],
+}
 const nativeMessages: any[] = [
   { id: "msg_01", type: "user", text: "Continue the task", time: { created: 1 } },
   { id: "msg_02", type: "system", text, description: "Context updated", time: { created: 2 } },
   { id: "msg_03", type: "assistant", agent: "build", model, content: [{ type: "text", text: "Normal assistant response" }], time: { created: 3, completed: 4 } },
-  // Opt-in: a run that failed outside a model step, after an assistant step with a V2 structured error.
-  ...(new URLSearchParams(location.search).has("failed") ? [
-    { id: "msg_04", type: "assistant", agent: "build", model, content: [], time: { created: 5, completed: 6 },
-      error: { type: "provider.quota", message: "Quota reached for this account", status: 429 } },
-    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 },
-      error: { type: "session.execution", message: "Run failed before the next model step" } },
-  ] : []),
+  ...(failedRunMessages[new URLSearchParams(location.search).get("failed") ?? ""] ?? []),
 ]
 const info = { id: sessionId, title: "System fixture", agent: "build", model, projectID: "fixture", location: { directory: "/fixture" },
   cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 4 } }

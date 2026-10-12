@@ -22,6 +22,7 @@ import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
+import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryMessagePreview from "./history-message-preview"
@@ -102,7 +103,8 @@ export default function MessageSection(props: MessageSectionProps) {
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
-    const visible = messageIds().filter((messageId) => {
+    const ids = messageIds()
+    const visible = ids.filter((messageId, index) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -129,7 +131,7 @@ export default function MessageSection(props: MessageSectionProps) {
       }
 
       if (info.error) {
-        return true
+        return !isDuplicateRunFailure(ids, index, resolvedStore.getMessageInfo)
       }
 
       const timeInfo = info.time as { created: number; completed?: number } | undefined

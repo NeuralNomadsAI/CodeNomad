@@ -246,6 +246,16 @@ function MessageContentItem(props: MessageContentItemProps) {
     return Boolean(lastTextPartId && visibleParts().some((part) => part.id === lastTextPartId))
   })
 
+  // A record's error renders once: in the row with its last displayed content,
+  // or in the error-only placeholder row when it has no renderable content.
+  const showsRecordError = createMemo(() => {
+    const current = record()
+    if (current?.role !== "assistant" || !messageInfo()?.error) return false
+    const reversed = [...buildRecordDisplayData(props.instanceId, current).orderedParts].reverse()
+    const last = reversed.find((part) => isVisibleContentPart(part)) ?? reversed.find((part) => isContentPartType(part.type))
+    return Boolean(last?.id && props.partIds.includes(last.id))
+  })
+
   const showAgentMeta = createMemo(() => {
     const current = record()
     if (!current) return false
@@ -286,6 +296,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         sessionId={props.sessionId}
         contentStartPartId={props.startPartId}
         showTechnicalCleanup={isFinalAssistantTextBlock()}
+        showError={showsRecordError()}
         showAgentMeta={showAgentMeta()}
         onRevert={props.onRevert}
         onFork={props.onFork}

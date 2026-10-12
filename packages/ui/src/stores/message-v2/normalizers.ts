@@ -84,8 +84,10 @@ export interface NormalizedSessionMessage {
   info: MessageInfo
 }
 
-function structuredError(error: { type: string; message: string; status?: number }): NonNullable<MessageInfo["error"]> {
-  return { ...error, name: error.type === "aborted" ? "MessageAbortedError" : error.type, data: { message: error.message } }
+// A failed run's own explanation (e.g. exhausted restarts, typed "aborted") must not
+// collapse into the generic interrupted-step label, so idle errors keep their native name.
+function structuredError(error: { type: string; message: string; status?: number }, nativeName = false): NonNullable<MessageInfo["error"]> {
+  return { ...error, name: error.type === "aborted" && !nativeName ? "MessageAbortedError" : error.type, data: { message: error.message } }
 }
 
 function failedIdleError(source: SessionMessageInfo) {
@@ -138,7 +140,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       : {}),
     ...(source.type === "compaction" && source.status === "failed" ? { error: structuredError(source.error) } : {}),
     // A run can fail before or between model steps; only the idle record carries that cause.
-    ...(failedIdleError(source) ? { error: structuredError(failedIdleError(source)!) } : {}),
+    ...(failedIdleError(source) ? { error: structuredError(failedIdleError(source)!, true) } : {}),
     ...(source.type === "user" ? { text: source.text } : {}),
   }
 

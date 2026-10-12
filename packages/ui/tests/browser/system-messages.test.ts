@@ -139,13 +139,27 @@ test("search refreshes on system visibility changes and still finds assistant te
   assert.ok((await page.evaluate(() => (window as any).fixture.snapshot())).messageReads < 10,
     "paging must not subscribe the search effect to its own window mutations")
 }))
-test("native structured errors and failed runs render their cause in the transcript", async () => open(async page => {
-  const errors = page.locator(".message-error-block")
-  await page.getByText("Run failed before the next model step", { exact: false }).waitFor()
-  assert.deepEqual((await errors.allTextContents()).map(text => text.trim()), [
-    "⚠️ Quota reached for this account",
-    "⚠️ Run failed before the next model step",
-  ])
+const errorRows = async (page: Page, last: string) => {
+  await page.getByText(last, { exact: false }).waitFor()
+  return (await page.locator(".message-error-block").allTextContents()).map(text => text.trim())
+}
+test("a failed step's error shows once, after its last text, not again for the run", async () => open(async page => {
+  assert.deepEqual(await errorRows(page, "Quota reached for this account"), ["⚠️ Quota reached for this account"])
+  const rows = page.locator('[data-message-id="msg_04"][data-view="message-item"]')
+  assert.equal(await rows.count(), 2)
+  assert.equal(await rows.filter({ hasText: "After the tool" }).locator(".message-error-block").count(), 1)
+  assert.equal(await page.locator('[data-message-id="msg_05"]').count(), 0)
+}, "?failed=duplicate"))
+test("a run that failed between steps shows its cause without an empty Copy action", async () => open(async page => {
+  assert.deepEqual(await errorRows(page, "Run failed before the next model step"), ["⚠️ Run failed before the next model step"])
+  const row = page.locator('[data-message-id="msg_05"][data-view="message-item"]')
+  assert.equal(await row.getByRole("button", { name: "Copy", exact: true }).count(), 0)
   // Successful runs keep their idle control record invisible.
   assert.equal(await page.getByText(/^idle$/).count(), 0)
-}, "?failed"))
+}, "?failed=between"))
+test("exhausted restarts explain the failure after the interrupted step", async () => open(async page => {
+  assert.deepEqual(await errorRows(page, "Execution was interrupted repeatedly"), [
+    "⚠️ Request was aborted",
+    "⚠️ Execution was interrupted repeatedly and will not be resumed automatically.",
+  ])
+}, "?failed=exhausted"))

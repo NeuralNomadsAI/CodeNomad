@@ -35,6 +35,8 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   contentStartPartId?: string
   showTechnicalCleanup?: boolean
+  /** False on a record's content rows other than the one that carries its error. */
+  showError?: boolean
   technicalCleanupParts: () => TechnicalCleanupPart[]
   onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
@@ -255,7 +257,7 @@ export default function MessageItem(props: MessageItemProps) {
 
   const errorMessage = () => {
     const info = props.messageInfo
-    if (!info || info.role !== "assistant" || !info.error) return null
+    if (!info || info.role !== "assistant" || !info.error || props.showError === false) return null
 
     const error = info.error
     if (error.name === "ProviderAuthError") {
@@ -306,6 +308,8 @@ export default function MessageItem(props: MessageItemProps) {
     text: getRawContent,
   })
 
+  // Error-only rows have no text of their own to copy.
+  const canCopyMessage = () => getRawContent().length > 0
   const canSpeakMessage = () => getRawContent().trim().length > 0 && speech.canUseSpeech()
 
   const handleCopy = async () => {
@@ -461,12 +465,14 @@ export default function MessageItem(props: MessageItemProps) {
         },
       )
     } else if (includePrimaryActions && canUseHistoryActions()) {
-      items.push({
-        key: "copy",
-        label: copyLabel(),
-        icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
-        onSelect: handleCopy,
-      })
+      if (canCopyMessage()) {
+        items.push({
+          key: "copy",
+          label: copyLabel(),
+          icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: handleCopy,
+        })
+      }
 
       if (canSpeakMessage()) {
         items.push({
@@ -596,14 +602,16 @@ export default function MessageItem(props: MessageItemProps) {
             <Show when={isUser()}>
               <div class="message-action-group">
                 <Show when={canUseHistoryActions()}>
-                  <button
-                    class="message-action-button"
-                    onClick={handleCopy}
-                    title={copyLabel()}
-                    aria-label={copyLabel()}
-                  >
-                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
+                  <Show when={canCopyMessage()}>
+                    <button
+                      class="message-action-button"
+                      onClick={handleCopy}
+                      title={copyLabel()}
+                      aria-label={copyLabel()}
+                    >
+                      <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </Show>
 
                   <Show when={canSpeakMessage()}>
                     <SpeechActionButton
@@ -663,14 +671,16 @@ export default function MessageItem(props: MessageItemProps) {
             </Show>
             <Show when={!isUser()}>
               <div class="message-action-group">
-                <button
-                  class="message-action-button"
-                  onClick={handleCopy}
-                  title={copyLabel()}
-                  aria-label={copyLabel()}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
+                <Show when={canCopyMessage()}>
+                  <button
+                    class="message-action-button"
+                    onClick={handleCopy}
+                    title={copyLabel()}
+                    aria-label={copyLabel()}
+                  >
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
 
                 <Show when={canSpeakMessage()}>
                   <SpeechActionButton
