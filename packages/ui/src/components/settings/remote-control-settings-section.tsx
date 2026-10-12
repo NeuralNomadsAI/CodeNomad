@@ -30,8 +30,8 @@ export const RemoteControlSettingsSection: Component = () => {
   const load = async () => {
     const next = await serverApi.fetchRemoteControlStatus()
     setStatus(next)
-    // A link only works while the tunnel is connected.
-    if (next.state !== "connected") clearPairing()
+    // The server cancels the code when Remote Control turns off; a reconnect keeps it valid.
+    if (!next.enabled) clearPairing()
     // Paired devices stay listed, and revocable, while Remote Control is off.
     setDevices(next.manageable ? (await serverApi.fetchRemoteControlDevices()).devices : [])
   }
@@ -182,7 +182,7 @@ export const RemoteControlSettingsSection: Component = () => {
                     {t("remoteControl.start")}
                   </button>
                   {/* A failed resume stays on for the next launch until it is stopped. */}
-                  <Show when={status()?.startsOnLaunch}>{stopButton()}</Show>
+                  <Show when={status()?.startsOnLaunch && status()?.state === "error"}>{stopButton()}</Show>
                 </>
               }
             >

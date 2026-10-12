@@ -41,6 +41,34 @@ test("after a failed resume, paired devices stay listed and Stop forgets the cho
   } finally { await page.close() }
 })
 
+test("a backend that did not resume offers no Stop that would clear the owner's choice", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  try {
+    await page.goto(`${url}?scenario=skipped`)
+    await page.getByText("Remote Control is off", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Start Remote Control" }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Stop Remote Control" }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("a pairing link survives a reconnect and disappears once Remote Control stops", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  const setState = (state: string) => page.evaluate((value) => (window as unknown as { setRemoteState: (state: string) => void }).setRemoteState(value), state)
+  try {
+    await page.goto(`${url}?scenario=connected`)
+    await page.getByRole("button", { name: "Create new pairing link" }).click()
+    const link = page.getByText("https://codenomad-fixture.tunnel.test/remote-pair#fixture-code", { exact: true })
+    await link.waitFor()
+    await setState("reconnecting")
+    await page.getByRole("button", { name: "Refresh" }).click()
+    await page.getByText("Reconnecting…", { exact: true }).waitFor()
+    assert.equal(await link.isVisible(), true)
+    await setState("stopped")
+    await page.getByRole("button", { name: "Refresh" }).click()
+    await link.waitFor({ state: "detached" })
+  } finally { await page.close() }
+})
+
 test("a resuming tunnel updates by itself until it can create pairing links", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {

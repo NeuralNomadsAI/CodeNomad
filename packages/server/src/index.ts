@@ -49,6 +49,7 @@ import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
 import { RemoteDeviceRegistry } from "./remote-control/devices"
 import { RemoteControlManager } from "./remote-control/manager"
+import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 
 const require = createRequire(import.meta.url)
 
@@ -518,6 +519,7 @@ async function main() {
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
   const remoteControlManager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
+    lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     logger: logger.child({ component: "remote-control" }),

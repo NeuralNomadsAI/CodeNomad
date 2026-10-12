@@ -31,7 +31,11 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - Start records the choice in the registry file and only Stop clears it. A
   launch after Start reconnects in the background (`manager.resume()`) and
   issues no pairing code; shutdown, a fatal tunnel stop and a failed resume keep
-  the choice, so the next launch retries. Settings polls the status only while
+  the choice, so the next launch retries. Only one backend per config
+  directory resumes (`remote-control.owner`, live-PID lease replaced after a
+  crash): OpenTunnel gives a route to one bridge and a contender retries until
+  it takes over, so a second backend would otherwise silently serve the paired
+  devices. An explicit Start is not blocked. Settings polls the status only while
   the tunnel is (re)connecting, keeps paired devices listed while it is off and
   offers Stop after a failed resume.
 
@@ -77,8 +81,9 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   host-only paths including encoded ones, loopback privileges, spoofed headers,
   upgrades, revocation of a live stream, skipped local auth and tunnel failure.
 - `manager.test.ts` covers resuming after a restart, Stop, never-started
-  installations and failed resumes; `tests/browser/remote-control-settings.test.ts`
-  the settings panel after a failed or slow resume.
+  installations, failed resumes and backends sharing a configuration;
+  `owner-lease.test.ts` the lease; `tests/browser/remote-control-settings.test.ts`
+  the settings panel after a failed, skipped or slow resume and across a reconnect.
 - `scripts/remote-control-live.test.ts` (opt-in,
   `CODENOMAD_REMOTE_CONTROL_LIVE=1`) repeats the flow through the hosted
   relay, using a throwaway profile and data directory, and deletes that tunnel

@@ -7,6 +7,7 @@ import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tu
 import { createLogger } from "../logger"
 import { RemoteDeviceRegistry } from "./devices"
 import { RemoteControlManager } from "./manager"
+import { RemoteControlOwnerLease } from "./owner-lease"
 
 const logger = createLogger({ level: "silent" } as never)
 
@@ -18,10 +19,16 @@ function fixture(t: test.TestContext) {
   let failure: Error | null = null
   const managers: RemoteControlManager[] = []
   t.after(() => Promise.all(managers.map((manager) => manager.shutdown())))
-  // Each launch is a new manager over the same registry file, as after a restart.
+  // Backend PIDs still running; each launch gets its own.
+  const alive = new Set<number>()
+  let nextPid = 100
+  // Each launch is a new manager over the same config directory, as after a restart.
   const launch = () => {
+    const pid = nextPid++
+    alive.add(pid)
     const manager = new RemoteControlManager({
       registry: new RemoteDeviceRegistry(file),
+      lease: new RemoteControlOwnerLease(path.join(directory, "remote-control.owner"), pid, (candidate) => alive.has(candidate)),
       router: () => null,
       logger,
       openTunnel: async (options) => {
@@ -37,10 +44,32 @@ function fixture(t: test.TestContext) {
       },
     })
     managers.push(manager)
-    return manager
+    return Object.assign(manager, { exit: () => alive.delete(pid) })
   }
   return { file, opened, launch, fail: (error: Error | null) => { failure = error } }
 }
+
+test("only one backend sharing the configuration resumes, until it goes away", async (t) => {
+  const { opened, launch } = fixture(t)
+  const first = launch()
+  await first.start()
+  await first.shutdown()
+  first.exit()
+
+  const app = launch()
+  await app.resume()
+  const second = launch()
+  await second.resume()
+  assert.equal(opened.length, 2)
+  assert.deepEqual({ enabled: second.status().enabled, state: second.status().state }, { enabled: false, state: "stopped" })
+
+  // A crashed owner leaves its lease behind; the next launch replaces it.
+  app.exit()
+  const next = launch()
+  await next.resume()
+  assert.equal(opened.length, 3)
+  assert.equal(next.status().state, "connected")
+})
 
 test("a started Remote Control reconnects at the next launch without a pairing link", async (t) => {
   const { opened, launch } = fixture(t)
@@ -80,7 +109,10 @@ test("an installation that never started writes nothing and does not connect at 
 
 test("a failed launch keeps the choice, reports the error and retries next time", async (t) => {
   const { opened, launch, fail } = fixture(t)
-  await launch().start()
+  const first = launch()
+  await first.start()
+  await first.shutdown()
+  first.exit()
 
   fail(new Error("relay unavailable"))
   const failed = launch()

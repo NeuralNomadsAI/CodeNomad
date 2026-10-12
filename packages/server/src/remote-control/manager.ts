@@ -10,6 +10,7 @@ import type { Logger } from "../logger"
 import { deviceNameFromUserAgent, pairingFromCode, type RemoteDeviceRegistry } from "./devices"
 import type { RemoteGateDeps } from "./gate"
 import { RemoteIngress } from "./ingress"
+import type { RemoteControlOwnerLease } from "./owner-lease"
 
 // First use provisions the device tunnel and its certificate, which can take a minute.
 const START_TIMEOUT_MS = 5 * 60_000
@@ -24,6 +25,8 @@ interface ManagerOptions {
   /** Self-hosted OpenTunnel API; the hosted relay when omitted. */
   tunnelApi?: string
   openTunnel?: OpenTunnel
+  /** Restricts resuming at launch to one backend per config directory. */
+  lease?: RemoteControlOwnerLease
 }
 
 export class RemoteControlManager {
@@ -69,6 +72,8 @@ export class RemoteControlManager {
     this.enabled = true
     this.error = undefined
     this.options.registry.setStartsOnLaunch(true)
+    // An explicit Start proceeds even if another backend holds the lease.
+    this.options.lease?.tryAcquire()
     const tunnel = await this.ensureTunnel()
     return { status: this.status(), pairing: this.pairingFor(tunnel) }
   }
@@ -76,6 +81,10 @@ export class RemoteControlManager {
   /** Reconnects at launch when the user left Remote Control on. Issues no pairing code. */
   async resume(): Promise<void> {
     if (this.enabled || !this.options.registry.startsOnLaunch()) return
+    if (this.options.lease && !this.options.lease.tryAcquire()) {
+      this.options.logger.info("Remote Control runs in another CodeNomad backend with this configuration; not resuming")
+      return
+    }
     this.enabled = true
     this.error = undefined
     // A failure is reported through status(); the choice stays until an explicit Stop.
@@ -171,6 +180,7 @@ export class RemoteControlManager {
         this.error = error ?? "Remote Control tunnel stopped"
         this.enabled = false
         this.options.registry.cancelPairing()
+        this.options.lease?.release()
         void this.ingress.stop()
         this.options.logger.warn({ err: error }, "Remote Control tunnel stopped")
       })
@@ -181,6 +191,7 @@ export class RemoteControlManager {
       if (generation === this.generation && this.enabled) {
         this.enabled = false
         this.error = error instanceof Error ? error.message : String(error)
+        this.options.lease?.release()
       }
       this.options.logger.warn({ err: error }, "Remote Control failed to start")
       throw error
@@ -189,6 +200,7 @@ export class RemoteControlManager {
 
   private async release(): Promise<void> {
     this.options.registry.cancelPairing()
+    this.options.lease?.release()
     const tunnel = this.tunnel
     this.tunnel = null
     await Promise.allSettled([tunnel?.close(), this.ingress.stop()])
