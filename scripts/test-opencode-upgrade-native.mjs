@@ -48,7 +48,10 @@ const info = async () => {
 }
 const result = { root, port }
 try {
-  await installSharedOpenCode("2.0.15", options)
+  // Seed the historical native-upgrade boundary using npm in this fixture's
+  // private prefix. Production installation correctly refuses pre-minimum targets.
+  await run(node, [npm, "install", "--global", "--prefix", env.npm_config_prefix,
+    "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", "@opencode/cli@2.0.15"])
   // Keep an independent controller so cleanup still works after failed replacement.
   await copyFile(binary, bootstrap)
   await run(bootstrap, ["service", "set", "port", String(port)])

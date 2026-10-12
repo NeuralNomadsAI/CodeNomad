@@ -7,7 +7,17 @@ policy. Current recommendation and dependency pins are defined by
 [server](../packages/server/package.json), [UI](../packages/ui/package.json) and
 [pruning](../packages/server/src/opencode/session-pruning/package.json) manifests.
 
-## Release contract
+## Current release contract
+
+The native plugin floor is now **2.0.27**, for the demonstrated stable Effect
+4.0.1/Schema boundary. The 2.0.26 fixture fails both with an embedded 4.0.1
+runtime and with the current schema code on the older host. Plugins now share
+the daemon's Effect/SDK, and setup reports `plugin_runtime` before client calls
+or provisioning. This applies to the next release/dev builds only: source
+changes never upgrade or restart an existing user's service. See
+[current qualification evidence](OPENCODE_V2_COMPATIBILITY.md).
+
+## Original timestamp transition contract (historical)
 
 - The technical minimum is **2.0.7**. Published 2.0.4–2.0.6 events lack
   `session.step.started.data.started`; 2.0.7 introduces it. The pinned Solid

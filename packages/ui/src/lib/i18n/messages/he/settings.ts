@@ -61,7 +61,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} לא נבדקה במלואה עם גרסה זו של CodeNomad. עובדה זו לבדה אינה מונעת התחברות.",
   "settings.opencode.setup.error": "לא ניתן לאמת את קובץ ההפעלה שנבחר.",
   "settings.opencode.setup.minimum": "גרסה מינימלית",
-  "settings.opencode.setup.minimumReason": "OpenCode {version} הוסיפה את חותמת הזמן המקורית לתחילת שלב הנדרשת להצגת שיחות. גרסאות קודמות דורשות המרות אירועים שהוסרו.",
+  "settings.opencode.setup.minimumReason": "גרסה זו של CodeNomad דורשת OpenCode {version} ומעלה עבור סביבת התוספים המקורית של Effect 4.0.1 ו-Schema. סביבות ישנות יותר אינן יכולות לטעון תוספים אלה.",
   "settings.opencode.setup.canonical_api": "השירות הפעיל אינו מספק את ממשק ה-API לשיחות, הרשאות, טפסים ותור הקלט הנדרש לגרסה זו של CodeNomad.",
   "settings.opencode.setup.session_environment": "השירות הפעיל אינו יכול להחליף את סביבת השיחה, פעולה הנדרשת לפני שליחת הודעות או פקודות.",
   "settings.opencode.setup.daemon": "השירות הפעיל",

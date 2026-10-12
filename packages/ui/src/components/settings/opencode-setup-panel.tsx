@@ -97,7 +97,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
             <div class="settings-info-row"><span>{t("settings.opencode.setup.recommended")}</span><span>{data().recommendedVersion}</span></div>
           </div>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.minimumReason", { version: data().minimumVersion })}</p>
-          <Show when={data().incompatibilityReason && data().incompatibilityReason !== "step_timestamp"}>
+          <Show when={data().incompatibilityReason && data().incompatibilityReason !== "step_timestamp" && data().incompatibilityReason !== "plugin_runtime"}>
             <p role="alert">{t(`settings.opencode.setup.${data().incompatibilityReason}`)}</p>
           </Show>
         </details>

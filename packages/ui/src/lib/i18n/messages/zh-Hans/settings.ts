@@ -61,7 +61,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} 尚未与此 CodeNomad 版本进行完整验证。仅凭这一点不会阻止连接。",
   "settings.opencode.setup.error": "无法验证所选可执行文件。",
   "settings.opencode.setup.minimum": "最低版本",
-  "settings.opencode.setup.minimumReason": "OpenCode {version} 引入了对话显示所需的原生步骤开始时间戳。更早版本需要已移除的事件转换。",
+  "settings.opencode.setup.minimumReason": "此 CodeNomad 版本需要 OpenCode {version} 或更高版本提供的原生 Effect 4.0.1 和 Schema 插件运行时。较旧的运行时无法加载这些插件。",
   "settings.opencode.setup.canonical_api": "运行中的服务未提供此 CodeNomad 版本所需的会话、权限、表单和收件队列 API。",
   "settings.opencode.setup.session_environment": "运行中的服务无法替换会话环境，而发送提示或命令前需要执行此操作。",
   "settings.opencode.setup.daemon": "运行中的服务",

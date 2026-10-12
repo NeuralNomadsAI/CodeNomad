@@ -1,6 +1,6 @@
 import { Context, Effect, Option, Predicate, Schema } from "effect"
 import path from "node:path"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 import { Form } from "@opencode/schema/form"
 import { Permission } from "@opencode/schema/permission"
 import { Shell } from "@opencode/schema/shell"

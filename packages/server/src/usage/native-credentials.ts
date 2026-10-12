@@ -9,6 +9,7 @@ export function projectCredentials(entries: readonly CredentialEntry[]): AuthFil
   for (const entry of entries) {
     if (!entry.active) continue
     const value = entry.value
+    if (value.type === "external") continue
     const accountId = value.metadata?.accountID
     auth[entry.integrationID] = value.type === "key"
       ? { type: "api", key: value.key }

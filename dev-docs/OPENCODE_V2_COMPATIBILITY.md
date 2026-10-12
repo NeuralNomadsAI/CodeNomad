@@ -14,9 +14,10 @@ compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
-PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.24**
-is the recommended release-tested target, not the minimum. Unlisted versions,
+The current technical minimum and recommended target are **2.0.27**: shipped
+native plugins consume the stable Effect 4.0.1/Schema host contract. Isolated
+2.0.26 loading fails at that boundary; see the transition evidence below.
+PR #696's previous timestamp-based floor was 2.0.7. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
 APIs or session environment support produce a concrete incompatibility reason.
@@ -406,6 +407,41 @@ path imports the runtime client (its OpenCode imports are type-only). Do not
 describe that suite as green or fold unrelated UI fixes into this qualification.
 Detailed receipts, package integrity hashes and command logs belong in the PR.
 
+### 2.0.27 Effect transition investigation (2026-10-12)
+
+OpenCode 2.0.27 changes its native Effect runtime from **4.0.0-rc.112** to
+**4.0.1**. The unmodified CodeNomad 2.0.24 bundle reproduces the cross-runtime
+fiber failure (`cache.stackFrame`) in an isolated official 2.0.27 CLI; CI
+exposes the same failure on Windows, Linux and macOS. Updating the embedded
+runtime alone is not backward-compatible: a 4.0.1/2.0.27 bundle loads and serves
+the pending snapshot on 2.0.27, but fails on 2.0.26 with `cache.scheduler`.
+
+Externalizing Effect and the public plugin SDK prevents two runtimes from
+executing one native fiber. It is not sufficient to keep the old schema package:
+2.0.24 schemas call the retired `Schema.isStartsWith` on 2.0.27. Conversely,
+2.0.27 schemas call `Schema.isStartingWith`, absent from the 2.0.26 host runtime.
+The old 2.0.7 CLI also lacks the host's bare plugin-module resolution used by the
+external bundle. These are measured contracts, not untested-version exclusions.
+
+The implementation aligns client/plugin dependencies at 2.0.27 and shares
+`packages/server/scripts/native-plugin-build.mjs` across pruning, Missions and automation.
+Application dependencies remain bundled; Effect and the public OpenCode plugin
+entrypoints resolve to the daemon's instances. Remote Control's independently
+bundled OpenTunnel runtime remains separate: it runs in CodeNomad, not in the
+OpenCode plugin graph. No relay identity, route or shared daemon is changed.
+
+With this implementation, isolated 2.0.27 automation, full pruning/history/proxy and
+one-time Missions suites pass. The pending smoke verifies native Form recovery,
+cold empty coverage and settlement; the 64 focused migration tests and server/UI
+typechecks pass. This is Windows evidence, not completed cross-platform CI or
+packaged desktop qualification. The approved compromise for the next release
+and dev prereleases is a **2.0.27 minimum plus host-owned Effect/SDK**, rather than
+maintaining both unstable RC and stable Schema contracts. Runtime admission now
+reports `plugin_runtime`, with localized setup diagnostics, before functional
+calls or plugin provisioning. Newer/custom labels retain bounded authenticated
+contract recognition, not a tested-version allowlist. This source change does
+not upgrade or restart an installed CLI/daemon or deploy the running desktop.
+
 ### Capability-checked loaded-only pending recovery
 
 The bundled pruning entry also registers the fixed read-only
@@ -414,7 +450,7 @@ lifecycle. Registration requires the actual native RPC capability, not a runtime
 or Effect version allowlist. Each read validates the native graph/queue contracts
 below and fails non-authoritatively if they are absent or incompatible. Tested
 versions are evidence, not permission to block an untested version. The global
-minimum remains **2.0.7**. Existing pruning/history
+minimum is **2.0.27** after the demonstrated Effect/Schema transition above. Existing pruning/history
 methods retain their own support and write checks.
 
 The reader uses private native LocationServiceMap, Location, Form and Permission

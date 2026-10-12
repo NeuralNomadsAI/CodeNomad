@@ -15,7 +15,7 @@
   "dependencies": {
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
-    "@opencode/client": "2.0.24",
+    "@opencode/client": "2.0.27",
     "@solidjs/router": "^0.13.0",
     "@suid/material": "^0.19.0",
     "@suid/system": "^0.14.0",

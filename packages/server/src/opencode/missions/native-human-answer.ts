@@ -4,7 +4,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Form } from "@opencode/schema/form"
 import { Location } from "@opencode/schema/location"
 import { Context, Effect, Option, Predicate, Schema } from "effect"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { MISSION_JOURNAL_STORAGE_PREFIX, MissionJournal, stableToken, type MissionStorage } from "../../missions/journal"
 import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBindingSchema, humanAnswerRpcInputSchema,
