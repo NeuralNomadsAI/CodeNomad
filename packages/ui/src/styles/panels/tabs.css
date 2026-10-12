@@ -11,10 +11,6 @@
   border-bottom: 0;
 }
 
-.tab-bar-session {
-  background-color: var(--surface-canvas);
-}
-
 .tab-container {
   @apply flex items-center justify-between gap-1 px-2 py-1;
 }
@@ -124,11 +120,6 @@
 .tab-draggable .tab-pill:active,
 .tab-draggable .tab-pill-button:active {
   cursor: grabbing;
-}
-
-.tab-strip-spacer {
-  @apply flex-1;
-  min-width: 1px;
 }
 
 .tab-shortcuts {
@@ -320,35 +311,3 @@
   background-color: var(--new-tab-hover-bg);
 }
 
-/* Session tabs */
-.session-tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-1.5 max-w-[150px] transition-colors text-sm;
-  font-family: var(--font-family-sans);
-  outline: none;
-  border: 1px solid var(--tab-border);
-  margin-inline-end: -1px;
-}
-
-.session-tab-base:focus-visible {
-  @apply ring-2 ring-offset-1;
-  ring-color: var(--accent-primary);
-  ring-offset-color: var(--surface-base);
-}
-
-.session-tab-active {
-  background-color: var(--session-tab-active-bg);
-  color: var(--session-tab-active-text);
-  font-weight: var(--font-weight-medium);
-}
-
-.session-tab-inactive {
-  color: var(--session-tab-inactive-text);
-}
-
-.session-tab-inactive:hover {
-  background-color: var(--session-tab-hover-bg);
-}
-
-.session-tab-special {
-  color: var(--session-tab-inactive-text);
-}
