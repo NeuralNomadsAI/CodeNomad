@@ -248,8 +248,13 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     if (isLongPaste) {
       e.preventDefault()
 
+      // Number above detached tokens too: a new placeholder lands before its
+      // attachment and must never revive an undone paste with the same number.
       const { highestPaste } = findHighestAttachmentCounters(options.prompt())
-      const count = highestPaste + 1
+      const detachedPastes = [...(detached.get(draftKey())?.keys() ?? [])]
+        .filter((tokenKey) => tokenKey.startsWith("pasted:"))
+        .map((tokenKey) => Number(tokenKey.slice("pasted:".length)))
+      const count = Math.max(highestPaste, ...detachedPastes) + 1
       setPasteCount(count)
 
       const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`

@@ -53,6 +53,29 @@ test("ArrowUp keeps a draft; sent history is recalled only from an empty compose
   } finally { await page.close() }
 })
 
+test("a paste after undoing another sends the visible paste, never the undone one", async () => {
+  const { page, errors, input } = await setup()
+  const sent: string[] = []
+  await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname.endsWith("/prompt")) sent.push(route.request().postData() ?? "")
+    return route.fulfill({ json: { data: {} } })
+  })
+  try {
+    await page.evaluate(() => navigator.clipboard.writeText("A".repeat(200)))
+    await input.press("Control+v")
+    await input.press("Control+z")
+    assert.equal(await input.inputValue(), "")
+    await page.evaluate(() => navigator.clipboard.writeText("B".repeat(200)))
+    await input.press("Control+v")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments().map((a: any) => a.source.value[0])), ["B"])
+    await input.press("Enter")
+    await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("textarea")?.value === "")
+    assert.equal(sent.length, 1)
+    assert.ok(sent[0]!.includes("B".repeat(200)) && !sent[0]!.includes("A".repeat(200)), "only the visible paste is sent")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a long paste inserts its placeholder natively, keeping the caret and undo history", async () => {
   const { page, errors, input } = await setup()
   try {
