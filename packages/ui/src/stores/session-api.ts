@@ -32,6 +32,7 @@ import {
   setMessagesLoaded,
   advanceMessageLoadEpoch,
   finishMessageLoad,
+  clearMessageLoadingFlag,
   getMessageLoadSignal,
   supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
@@ -1631,7 +1632,25 @@ async function loadMessages(
   const liveMessageRevision = getOpenCodeMessageRevision(instanceId, sessionId)
   let retryAfterRevisionConflict = false
   let committed = false
+  let deferRelease = false
   const showLoading = intent === "open" || intent === "latest"
+  // The loading flag belongs to this load's epoch, not to the identities that
+  // make its result current: a discarded result still releases it unless a
+  // newer load has taken over, so the view can load the session again.
+  const releaseLoadingFlag = () => {
+    if (showLoading && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearMessageLoadingFlag(instanceId, sessionId)
+  }
+  const staleReason = () => {
+    if (options?.signal?.aborted) return undefined
+    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return "superseded"
+    if (instances().get(instanceId)?.client !== instanceClient) return "client"
+    if (sessions().get(instanceId)?.has(sessionId) !== true) return "session"
+    if (!generationCurrent()) return "generation"
+    if (historyAuthority && messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId)) !== historyAuthority) return "history"
+    if (getOpenCodeMutationRevision(instanceId, sessionId) !== mutationRevision) return "mutation"
+    if (store.getMessageWindow(sessionId) !== expectedWindow) return "window"
+    return undefined
+  }
 
   if (showLoading) {
     setLoading((prev) => {
@@ -1833,6 +1852,8 @@ async function loadMessages(
         committed = true
       }
     }
+    // A revision conflict keeps the flag through its bounded, backed-off retry.
+    deferRelease = retryAfterRevisionConflict
   } catch (error) {
     if (signal.aborted || !isCurrentLoad()) return false
     if (error instanceof MissingHistoryAnchorError && intent === "open" && isCurrent()) {
@@ -1849,34 +1870,39 @@ async function loadMessages(
     }
     throw error
   } finally {
-    if (showLoading && ownsLoadState()) {
-      setLoading((prev) => {
-        const next = { ...prev }
-        const loadingSet = next.loadingMessages.get(instanceId)
-        if (loadingSet) loadingSet.delete(sessionId)
-        return next
-      })
+    if (!committed && !deferRelease) {
+      // Diagnostic only (session logger): names the identity that discarded a result.
+      const reason = staleReason()
+      if (reason) log.warn("Discarded stale message load", { instanceId, sessionId, reason })
     }
+    if (!deferRelease) releaseLoadingFlag()
     finishMessageLoad(instanceId, sessionId, loadEpoch)
   }
 
-  if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
-    if (revisionRetry >= MAX_LATEST_WINDOW_REVISION_RETRIES) {
-      const error = new Error(tGlobal("messageSection.loadError.detail"))
-      setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
-      throw error
+  if (retryAfterRevisionConflict) {
+    try {
+      if (sessions().get(instanceId)?.has(sessionId)) {
+        if (revisionRetry >= MAX_LATEST_WINDOW_REVISION_RETRIES) {
+          const error = new Error(tGlobal("messageSection.loadError.detail"))
+          setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
+          throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, LATEST_WINDOW_RETRY_DELAY_MS * (2 ** revisionRetry)))
+        signal.throwIfAborted()
+        if (!isCurrent()) return false
+        return await loadMessages(instanceId, sessionId, {
+          force: true,
+          intent: intent === "open" && planned.cursor ? "latest" : intent,
+          registerInvalidation: options?.registerInvalidation,
+          signal: options?.signal,
+          revisionRetry: revisionRetry + 1,
+          anchorMessageId: options?.anchorMessageId,
+        })
+      }
+    } finally {
+      // No-op once the retry has started its own load; otherwise this exit owns the flag.
+      releaseLoadingFlag()
     }
-    await new Promise((resolve) => setTimeout(resolve, LATEST_WINDOW_RETRY_DELAY_MS * (2 ** revisionRetry)))
-    signal.throwIfAborted()
-    if (!isCurrent()) return false
-    return loadMessages(instanceId, sessionId, {
-      force: true,
-      intent: intent === "open" && planned.cursor ? "latest" : intent,
-      registerInvalidation: options?.registerInvalidation,
-      signal: options?.signal,
-      revisionRetry: revisionRetry + 1,
-      anchorMessageId: options?.anchorMessageId,
-    })
   }
 
   if (!isCurrent()) return false

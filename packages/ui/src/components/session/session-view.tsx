@@ -32,7 +32,7 @@ import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
-import { messagesLoaded, sessions } from "../../stores/session-state"
+import { sessionMessagesNeedLoad, sessions } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
@@ -394,7 +394,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     session,
     shouldLoad: () => {
       const id = session()?.id
-      return Boolean(id && !messagesLoaded().get(props.instanceId)?.has(id))
+      // A load in progress closes the gate; if it ends without loading the
+      // session (superseded or invalidated by a startup refresh), reopening the
+      // gate reloads it, as switching sessions would.
+      return Boolean(id && sessionMessagesNeedLoad(props.instanceId, id))
     },
     loadMessages,
     waitForHydration: waitForInstanceReady,

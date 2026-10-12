@@ -1146,6 +1146,11 @@ function isSessionMessagesLoading(instanceId: string, sessionId: string): boolea
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
 }
 
+/** The active view must start a load: neither loaded nor being loaded by anyone. */
+function sessionMessagesNeedLoad(instanceId: string, sessionId: string): boolean {
+  return !messagesLoaded().get(instanceId)?.has(sessionId) && !isSessionMessagesLoading(instanceId, sessionId)
+}
+
 function getSessionMessagesLoadError(instanceId: string, sessionId: string): string | undefined {
   return messageLoadErrors().get(instanceId)?.get(sessionId)
 }
@@ -1356,6 +1361,7 @@ export {
   isCurrentMessageLoad,
   getMessageLoadSignal,
   finishMessageLoad,
+  clearMessageLoadingFlag,
   supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
   clearInstanceMessageLoads,
@@ -1423,6 +1429,7 @@ export {
   getPersistentExpandedSessionIds,
   setActiveSessionFromList,
   isSessionMessagesLoading,
+  sessionMessagesNeedLoad,
   getSessionMessagesLoadError,
   getSessionInfo,
   cleanupBlankSessions,

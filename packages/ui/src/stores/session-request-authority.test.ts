@@ -354,7 +354,7 @@ describe("session request authority", () => {
         assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_0198", "msg_0199"])
         assert.equal(store.getMessageWindow(sessionId), window)
         assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), snapshot)
-        assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), false)
+        assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
       } finally { controller.abort(); seek.resolve({ data: [], cursor: {} }); cleanup() }
     })
   }
