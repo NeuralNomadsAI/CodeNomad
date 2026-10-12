@@ -174,8 +174,10 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         state: normalizedState,
       } as unknown as ClientPart
     })
-    if (parts.length === 0 && source.error) {
-      parts = [normalizeMessagePart({
+    // A failed step that streamed only reasoning or tool calls still needs a
+    // content row to carry its error (the run's duplicate idle failure is hidden).
+    if (source.error && !parts.some((part) => part.type === "text")) {
+      parts = [...parts, normalizeMessagePart({
         id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id,
       }) as ClientPart]
     }

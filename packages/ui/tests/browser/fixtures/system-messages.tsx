@@ -35,6 +35,17 @@ const failedRunMessages: Record<string, any[]> = {
     { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 },
       error: { type: "session.execution", message: "Run failed before the next model step" } },
   ],
+  // A step that failed after streaming only reasoning or tool calls still shows its error once.
+  reasoning: [
+    { id: "msg_04", type: "assistant", agent: "build", model, time: { created: 5, completed: 6 }, error: quota,
+      content: [{ type: "reasoning", text: "Thinking about the change" }] },
+    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 }, error: quota },
+  ],
+  tools: [
+    { id: "msg_04", type: "assistant", agent: "build", model, time: { created: 5, completed: 6 }, error: quota,
+      content: [readTool] },
+    { id: "msg_05", type: "idle", outcome: "failed", time: { created: 7 }, error: quota },
+  ],
   // Restarts exhausted after an interrupted step keep the run's own explanation.
   exhausted: [
     { id: "msg_04", type: "assistant", agent: "build", model, content: [], time: { created: 5, completed: 6 },

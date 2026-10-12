@@ -163,3 +163,13 @@ test("exhausted restarts explain the failure after the interrupted step", async 
     "⚠️ Execution was interrupted repeatedly and will not be resumed automatically.",
   ])
 }, "?failed=exhausted"))
+for (const scenario of ["reasoning", "tools"]) {
+  test(`a step that failed after streaming only ${scenario} shows its error once`, async () => open(async page => {
+    const rows = await errorRows(page, "Quota reached for this account")
+    assert.equal(rows.length, 1, rows.join(" | "))
+    assert.ok(rows[0].endsWith("Quota reached for this account"))
+    // The step owns the failure: the run's duplicate idle record stays hidden.
+    assert.equal(await page.locator('[data-message-id="msg_05"]').count(), 0)
+    assert.equal(await page.locator('[data-message-id="msg_04"] .message-error-block').count(), 1)
+  }, `?failed=${scenario}`))
+}
