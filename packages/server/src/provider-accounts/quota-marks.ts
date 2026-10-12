@@ -67,6 +67,11 @@ export class QuotaMarks {
     this.switches.set(integrationID, { at: Math.max(previous?.at ?? -Infinity, at), seq: ++this.sequence,
       ...(credentialID !== undefined ? { credentialID } : previous && "credentialID" in previous ? { credentialID: previous.credentialID } : {}) })
   }
+  /** A failed or ambiguous activation: the active credential is no longer known. */
+  activeUnknown(integrationID: string) {
+    const previous = this.switches.get(integrationID)
+    if (previous) this.switches.set(integrationID, { at: previous.at, seq: previous.seq })
+  }
   switchedSince(integrationID: string, at: number) {
     return Math.max(this.switches.get(integrationID)?.at ?? -Infinity, this.manualAt) >= at
   }

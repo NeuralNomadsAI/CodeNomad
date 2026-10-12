@@ -21,7 +21,7 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
   const integrationID = options.integrationID ?? "opencode-go"
   const entries = options.entries ?? [goKey("one", true), goKey("two"), goKey("three")]
   const state = { entries, order: entries.map(entry => entry.id), provider: options.providerID ?? "opencode-go", calls: [] as string[],
-    reads: [] as string[], quota: {} as Record<string, ProviderUsage | number | undefined>,
+    reads: [] as string[], quota: {} as Record<string, ProviderUsage | number | undefined>, failActivation: false,
     onCredentialList: undefined as (() => void) | undefined }
   let policy: Record<string, any> = {}
   const settings = {
@@ -43,6 +43,7 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
         return { type: "credential", id, label: entry.label, method: entry.value.type === "key" ? "key" : "oauth" }
       }) } }))
     else if (req.url === "/api/credential") { res.end(JSON.stringify({ data: state.entries })); state.onCredentialList?.() }
+    else if (req.url?.endsWith("/activate") && state.failActivation) { res.statusCode = 500; res.end("{}") }
     else if (req.url?.endsWith("/activate")) {
       const id = req.url.split("/")[3]
       state.order = [id, ...state.order.filter(item => item !== id)]
@@ -96,6 +97,24 @@ test("Go rotates from an exhausted account to an unknown-but-unmarked candidate"
     assert.deepEqual(f.state.order, ["three", "one", "two"])
     assert.equal(f.activations(), 1)
     assert.deepEqual(f.state.reads, ["one", "two", "three"])
+  } finally { await f.close() }
+})
+
+test("a failed activation never blocks marking the account that stayed active", async () => {
+  const f = await goFixture()
+  try {
+    f.service.setEnabled(true, "opencode-go")
+    f.state.quota.one = usage(100)
+    f.state.failActivation = true
+    await assert.rejects(f.send(), (error: Error) => error.constructor.name === "AccountSelectionFailed")
+    assert.deepEqual(f.state.order, ["one", "two", "three"], "the native selection did not change")
+    f.state.failActivation = false
+    f.state.quota.one = undefined
+    const started = Date.now() + 1
+    f.service.observeStepStart(f.connection, "ses_go", started, "opencode-go")
+    assert.equal(await f.mark(started + 1), true, "the failure is attributed to the account still active")
+    await f.send()
+    assert.equal(f.state.order[0], "two")
   } finally { await f.close() }
 })
 

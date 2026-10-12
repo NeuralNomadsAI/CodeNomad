@@ -136,7 +136,11 @@ export class ProviderAccountsService {
         if (epoch !== state.epoch || state.manual || policyRevision !== this.policyRevision || !this.enabled(integrationID)) return
         state.marks.switched(integrationID, undefined, candidate.id)
         try { await connection.client.credential.activate({ credentialID: candidate.id }, { signal }) }
-        catch { throw new AccountSelectionFailed() }
+        catch {
+          // Native state is unknown (failed or ambiguous); never attribute later failures to the candidate.
+          state.marks.activeUnknown(integrationID)
+          throw new AccountSelectionFailed()
+        }
         return // One attempt only, including ambiguous transport failures. No replay.
       }
     })()
