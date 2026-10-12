@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "モバイル識別情報、タッチ、ピクセル密度を設定して再読み込みします。ブラウザーエンジン、キーボード、システムバーは再現しません。",
   "browser.viewport.emulationUnavailable": "デバイスのエミュレーションにはデスクトップアプリのネイティブ Web プレビューが必要です。",
-  "sessionList.filter.includeMainSessions": "メインセッションを表示",
-  "sessionList.filter.includeSubsessions": "サブセッションを表示",
+  "sessionList.filter.includeMainSessions": "メインセッション",
+  "sessionList.filter.includeSubsessions": "サブセッション",
   "session.pruning.maintenance_required": "セッションまたはストレージが使用中です。現在の処理が完了してから、クリーンアップを再試行してください。",
   "session.pruning.unavailable": "クリーンアッププラグインが利用できないか、応答しませんでした。CodeNomadを開き直して再試行してください。",
   "session.pruning.conflict": "選択後にメッセージが変更されました。再読み込みして内容を選択し直してください。",

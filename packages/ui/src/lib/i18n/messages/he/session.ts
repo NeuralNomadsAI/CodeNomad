@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "טוען מחדש עם זיהוי נייד, מגע וצפיפות פיקסלים. מנוע הדפדפן, המקלדת וסרגלי המערכת אינם מדומים.",
   "browser.viewport.emulationUnavailable": "הדמיית מכשיר דורשת תצוגה מקדימה מקורית של האינטרנט ביישום למחשב.",
-  "sessionList.filter.includeMainSessions": "הצגת סשנים ראשיים",
-  "sessionList.filter.includeSubsessions": "הצגת תת־סשנים",
+  "sessionList.filter.includeMainSessions": "סשנים ראשיים",
+  "sessionList.filter.includeSubsessions": "תת־סשנים",
   "session.pruning.maintenance_required": "הסשן או האחסון שלו עסוקים. יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",
   "session.pruning.unavailable": "תוסף הניקוי אינו זמין או שלא הגיב. יש לפתוח את CodeNomad מחדש ולנסות שוב.",
   "session.pruning.conflict": "ההודעה השתנתה מאז שנבחרה. יש לטעון אותה מחדש ולבחור את התוכן שוב.",

@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Recharge avec identité mobile, tactile et densité de pixels. Le moteur du navigateur, le clavier et les barres système ne sont pas simulés.",
   "browser.viewport.emulationUnavailable": "L’émulation nécessite un aperçu Web natif dans l’application de bureau.",
-  "sessionList.filter.includeMainSessions": "Afficher les sessions principales",
-  "sessionList.filter.includeSubsessions": "Afficher les sous-sessions",
+  "sessionList.filter.includeMainSessions": "Sessions principales",
+  "sessionList.filter.includeSubsessions": "Sous-sessions",
   "session.pruning.maintenance_required": "La session ou son stockage est occupé. Attendez la fin de l’opération en cours, puis réessayez le nettoyage.",
   "session.pruning.unavailable": "Le plugin de nettoyage est indisponible ou n’a pas répondu. Rouvrez CodeNomad puis réessayez.",
   "session.pruning.conflict": "Le message a changé depuis sa sélection. Rechargez-le puis sélectionnez à nouveau le contenu.",

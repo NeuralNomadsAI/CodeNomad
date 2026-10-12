@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Перезагрузка с мобильной идентификацией, сенсорным вводом и плотностью пикселей. Движок браузера, клавиатура и системные панели не эмулируются.",
   "browser.viewport.emulationUnavailable": "Для эмуляции устройства нужен нативный веб-предпросмотр в настольном приложении.",
-  "sessionList.filter.includeMainSessions": "Показывать основные сессии",
-  "sessionList.filter.includeSubsessions": "Показывать подсессии",
+  "sessionList.filter.includeMainSessions": "Основные сессии",
+  "sessionList.filter.includeSubsessions": "Подсессии",
   "session.pruning.maintenance_required": "Сессия или её хранилище заняты. Дождитесь завершения текущей операции и повторите очистку.",
   "session.pruning.unavailable": "Плагин очистки недоступен или не ответил. Откройте CodeNomad заново и повторите попытку.",
   "session.pruning.conflict": "Сообщение изменилось после выбора. Перезагрузите его и выберите содержимое снова.",

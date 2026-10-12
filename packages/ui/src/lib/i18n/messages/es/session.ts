@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Recarga con identidad móvil, entrada táctil y densidad de píxeles. No simula el motor del navegador, el teclado ni las barras del sistema.",
   "browser.viewport.emulationUnavailable": "La emulación requiere una vista previa web nativa en la aplicación de escritorio.",
-  "sessionList.filter.includeMainSessions": "Mostrar sesiones principales",
-  "sessionList.filter.includeSubsessions": "Mostrar subsesiones",
+  "sessionList.filter.includeMainSessions": "Sesiones principales",
+  "sessionList.filter.includeSubsessions": "Subsesiones",
   "session.pruning.maintenance_required": "La sesión o su almacenamiento está ocupado. Espera a que termine la operación actual y vuelve a intentar la limpieza.",
   "session.pruning.unavailable": "El complemento de limpieza no está disponible o no respondió. Vuelve a abrir CodeNomad e inténtalo de nuevo.",
   "session.pruning.conflict": "El mensaje cambió desde su selección. Recárgalo y vuelve a seleccionar el contenido.",

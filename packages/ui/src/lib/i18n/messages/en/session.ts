@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Reloads with mobile identity, touch and pixel density. Browser engine, keyboard and system bars are not simulated.",
   "browser.viewport.emulationUnavailable": "Device emulation requires a native desktop Web preview.",
-  "sessionList.filter.includeMainSessions": "Show main sessions",
-  "sessionList.filter.includeSubsessions": "Show subsessions",
+  "sessionList.filter.includeMainSessions": "Main sessions",
+  "sessionList.filter.includeSubsessions": "Subsessions",
   "session.pruning.maintenance_required": "The session or its storage is busy. Wait for the current operation to finish, then retry cleanup.",
   "session.pruning.unavailable": "The cleanup plugin is unavailable or did not respond. Reopen CodeNomad and retry.",
   "session.pruning.conflict": "The message changed since it was selected. Reload it and select the content again.",

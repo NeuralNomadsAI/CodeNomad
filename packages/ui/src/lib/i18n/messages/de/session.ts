@@ -1,8 +1,8 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Lädt mit mobiler Kennung, Touch und Pixeldichte neu. Browser-Engine, Tastatur und Systemleisten werden nicht simuliert.",
   "browser.viewport.emulationUnavailable": "Die Geräteemulation erfordert eine native Webvorschau in der Desktop-App.",
-  "sessionList.filter.includeMainSessions": "Hauptsitzungen anzeigen",
-  "sessionList.filter.includeSubsessions": "Untersitzungen anzeigen",
+  "sessionList.filter.includeMainSessions": "Hauptsitzungen",
+  "sessionList.filter.includeSubsessions": "Untersitzungen",
   "session.pruning.maintenance_required": "Die Sitzung oder ihr Speicher ist beschäftigt. Warte, bis der aktuelle Vorgang abgeschlossen ist, und versuche die Bereinigung erneut.",
   "session.pruning.unavailable": "Das Bereinigungs-Plugin ist nicht verfügbar oder hat nicht geantwortet. Öffne CodeNomad erneut und versuche es noch einmal.",
   "session.pruning.conflict": "Die Nachricht wurde seit der Auswahl geändert. Lade sie neu und wähle den Inhalt erneut aus.",
