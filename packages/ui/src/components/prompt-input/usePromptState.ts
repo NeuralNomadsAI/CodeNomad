@@ -140,12 +140,13 @@ export function usePromptState(options: PromptStateOptions): PromptState {
     const textarea = selectOptions.getTextarea()
     if (!textarea) return false
 
-    // Only require the cursor to be at the buffer start when *entering* history navigation.
     // Once we're already navigating history (historyIndex >= 0), allow ArrowUp/ArrowDown
     // regardless of cursor position (we focus the end of the entry).
     if (historyIndex() !== -1) return true
 
-    return textarea.selectionStart === 0 && textarea.selectionEnd === 0
+    // Entering history replaces the whole field outside native undo, so arrow keys
+    // only do it from an empty composer; a draft keeps ordinary caret movement.
+    return prompt().trim() === "" && textarea.selectionStart === 0 && textarea.selectionEnd === 0
   }
 
   const focusTextareaEnd = (getTextarea: GetTextarea) => {

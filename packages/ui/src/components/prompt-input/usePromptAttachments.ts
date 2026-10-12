@@ -234,7 +234,11 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       const owner = device.capture()
       const placeholder = formatPastedPlaceholder(count)
       const textarea = options.getTextarea()
-      if (textarea) {
+      // A native insertion keeps the caret and the browser's undo history; the
+      // resulting input event updates the prompt like typing.
+      const insertedNatively = textarea !== null && document.activeElement === textarea
+        && document.execCommand("insertText", false, placeholder)
+      if (!insertedNatively && textarea) {
         const start = textarea.selectionStart
         const end = textarea.selectionEnd
         const currentText = options.prompt()
@@ -247,7 +251,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
           textarea.setSelectionRange(newCursorPos, newCursorPos)
           textarea.focus()
         }, 0)
-      } else {
+      } else if (!insertedNatively) {
         options.setPrompt(options.prompt() + placeholder)
       }
 
