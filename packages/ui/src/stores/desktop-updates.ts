@@ -89,17 +89,26 @@ async function install(version: string, checked: number) {
   } catch (error) { failed(error) }
 }
 
+const FEED_READ_TIMEOUT_MS = 5000
+
+/** A stalled backend must not hold the update flow; native then derives the feed. */
 async function readFeed(): Promise<UpdateFeed | undefined> {
+  let timer: number | undefined
   try {
-    return (await getServerMeta(true)).updateFeed
+    const timeout = new Promise<undefined>((resolve) => { timer = window.setTimeout(resolve, FEED_READ_TIMEOUT_MS) })
+    return (await Promise.race([getServerMeta(true), timeout]))?.updateFeed
   } catch (error) {
     log.warn("Unable to read the update feed", error)
     return undefined
-  }
+  } finally { window.clearTimeout(timer) }
 }
 
-/** Checks the saved update feed: stable releases, or previews and releases. */
-export async function requestDesktopUpdate(): Promise<void> {
+/**
+ * Checks the saved update feed: stable releases, or previews and releases.
+ * A notification passes its release page: a release it announces may not carry
+ * an installable manifest yet, so "current" then opens that page instead.
+ */
+export async function requestDesktopUpdate(announcedRelease?: string): Promise<void> {
   if (busy) return
   busy = true
   showProgress(tGlobal("releases.desktop.checking"))
@@ -112,6 +121,8 @@ export async function requestDesktopUpdate(): Promise<void> {
     busy = false
     if (result.status === "unsupported") {
       await openExternalUrl(releasePage())
+    } else if (result.status === "current" && announcedRelease) {
+      await openExternalUrl(announcedRelease)
     } else if (result.status === "current") {
       notice = showToastNotification({ message: tGlobal("releases.desktop.current"), variant: "success" })
     } else {

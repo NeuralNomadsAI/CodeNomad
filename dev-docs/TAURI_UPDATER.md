@@ -29,7 +29,15 @@ are never offered, so a release in progress cannot break checks.
 The native menu emits `menu:action` to the focused local webview only, and the
 renderer listens on its own webview: untargeted Tauri listeners receive every
 window's events. When Preferences or a remote window is focused, or no local
-window remains, Get Updates opens the release page.
+window remains, Get Updates opens the release page. Renderer fallbacks use the
+saved feed (preview: the full releases list; stable: the latest release). The
+native fallback and About link cannot read the saved feed and derive it from
+the installed build label.
+
+A notification announces any published release, while native checks only offer
+releases whose manifest is already published. When a notification's check finds
+nothing installable, it opens that notification's release page rather than
+reporting the application as current.
 
 Supported installed formats:
 

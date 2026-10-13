@@ -23,10 +23,10 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-async function fixture(scenario: string, host = "tauri", context = "local"): Promise<Page> {
+async function fixture(scenario: string, host = "tauri", context = "local", meta: object = {}): Promise<Page> {
   const page = await browser.newPage()
   page.on("pageerror", error => console.error("updater fixture:", error.message))
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: JSON.stringify(meta) }))
   await page.addInitScript(({ scenario, host, context }) => {
     const w = window as any
     w.__name = (value: unknown) => value
@@ -131,24 +131,85 @@ test("a fresh check removes the previous install offer when no update remains", 
   } finally { await page.close() }
 })
 
+async function serveMeta(page: Page, meta: object) {
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: JSON.stringify(meta) }))
+}
+
+const notificationMeta = (feed?: string) => ({
+  updateFeed: feed,
+  support: { supported: false, latestServerVersion: "0.21.0", latestServerUrl: "https://example.com/release" },
+  update: { version: "0.21.0-dev-20261020-aaaaaaaa", url: "https://example.com/preview" },
+})
+
+const notificationAction = (page: Page, title: string) => page.locator("div")
+  .filter({ hasText: title }).filter({ has: page.getByRole("button", { name: "Get update" }) })
+  .last().getByRole("button", { name: "Get update" })
+
+const openedUrls = (page: Page) => page.evaluate(() =>
+  (window as any).calls.filter((c: any) => c.command === "plugin:opener|open_url").map((c: any) => c.args.url))
+
 test("support and preview notifications check the saved feed natively", async () => {
-  for (const feed of ["stable", "preview", undefined]) {
-    const page = await fixture("available")
+  for (const title of ["Upgrade required", "Update available"]) {
+    for (const feed of ["stable", "preview", undefined]) {
+      const page = await fixture("available")
+      try {
+        await serveMeta(page, notificationMeta(feed))
+        await page.evaluate(() => (window as any).fixture.releases())
+        await notificationAction(page, title).click()
+        await page.getByRole("button", { name: "Install and restart" }).waitFor()
+        const calls = await page.evaluate(() => (window as any).calls)
+        // An unknown feed lets the native host derive it from the installed build.
+        assert.deepEqual(calls.filter((c: any) => c.command === "check_desktop_update").map((c: any) => c.args.feed), [feed])
+        assert.equal(calls.filter((c: any) => c.command === "install_desktop_update").length, 0)
+        assert.deepEqual(await openedUrls(page), [])
+      } finally { await page.close() }
+    }
+  }
+})
+
+test("a notified release without an installable manifest opens its release page", async () => {
+  for (const [title, url] of [["Upgrade required", "https://example.com/release"], ["Update available", "https://example.com/preview"]]) {
+    const page = await fixture("current")
     try {
-      await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
-        updateFeed: feed,
-        support: { supported: false, latestServerVersion: "0.21.0", latestServerUrl: "https://example.com/release" },
-        update: { version: "0.21.0-dev-20261020-aaaaaaaa", url: "https://example.com/preview" },
-      }) }))
+      await serveMeta(page, notificationMeta("preview"))
       await page.evaluate(() => (window as any).fixture.releases())
-      await page.getByRole("button", { name: "Get update" }).first().click()
-      await page.getByRole("button", { name: "Install and restart" }).waitFor()
-      const calls = await page.evaluate(() => (window as any).calls)
-      // An unknown feed lets the native host derive it from the installed build.
-      assert.deepEqual(calls.filter((c: any) => c.command === "check_desktop_update").map((c: any) => c.args.feed), [feed])
-      assert.equal(calls.filter((c: any) => c.command === "install_desktop_update").length, 0)
-      assert.equal(calls.filter((c: any) => c.command === "plugin:opener|open_url").length, 0)
+      await notificationAction(page, title).click()
+      await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+      assert.deepEqual(await openedUrls(page), [url])
+      assert.equal(await page.getByText("CodeNomad is up to date.").count(), 0)
     } finally { await page.close() }
+  }
+})
+
+test("a stalled backend does not hold the check; the native host derives the feed", async () => {
+  const page = await fixture("available")
+  try {
+    await page.route("**/api/**", () => { /* never answers */ })
+    await page.getByRole("button", { name: "Check updates" }).click()
+    await page.getByRole("button", { name: "Install and restart" }).waitFor({ timeout: 15000 })
+    assert.deepEqual(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update").map((c: any) => c.args.feed)), [undefined])
+  } finally { await page.close() }
+})
+
+test("release pages follow the feed: previews list every release", async () => {
+  const pages = { preview: "https://github.com/NeuralNomadsAI/CodeNomad/releases", stable: "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest" }
+  for (const [feed, url] of Object.entries(pages)) {
+    const unsigned = await fixture("unsigned")
+    try {
+      await serveMeta(unsigned, { updateFeed: feed })
+      await unsigned.getByRole("button", { name: "Check updates" }).click()
+      await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+      assert.deepEqual(await openedUrls(unsigned), [url])
+    } finally { await unsigned.close() }
+
+    // A reloaded document reads the feed before offering the failure's release link.
+    const reloaded = await fixture("reloaded-failure", "tauri", "local", { updateFeed: feed })
+    try {
+      await reloaded.getByText(/The update could not be completed/).waitFor()
+      await reloaded.getByRole("button", { name: "Get update" }).click()
+      await reloaded.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+      assert.deepEqual(await openedUrls(reloaded), [url])
+    } finally { await reloaded.close() }
   }
 })
 

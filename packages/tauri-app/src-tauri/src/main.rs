@@ -71,6 +71,7 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 const ZOOM_STEP: f64 = 0.1;
 const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
+const RELEASES_LIST_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -2494,8 +2495,18 @@ fn is_loading_document(url: &url::Url) -> bool {
     url.path() == "/loading.html"
 }
 
+/// The latest-release page omits prereleases. Without access to the saved feed,
+/// native fallbacks derive it from the installed build label.
+fn releases_page(version: &str) -> &'static str {
+    match update_releases::UpdateFeed::resolve(None, version) {
+        update_releases::UpdateFeed::Preview => RELEASES_LIST_URL,
+        update_releases::UpdateFeed::Stable => RELEASES_URL,
+    }
+}
+
 fn open_releases_page(app_handle: &AppHandle) {
-    if let Err(err) = app_handle.opener().open_url(RELEASES_URL, None::<&str>) {
+    let page = releases_page(&app_handle.package_info().version.to_string());
+    if let Err(err) = app_handle.opener().open_url(page, None::<&str>) {
         eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
     }
 }
@@ -2507,7 +2518,7 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
         authors: Some(vec!["Neural Nomads AI".to_string()]),
         comments: Some("A desktop workspace for OpenCode.".to_string()),
         license: Some("MIT".to_string()),
-        website: include_update_link.then(|| RELEASES_URL.to_string()),
+        website: include_update_link.then(|| releases_page(version).to_string()),
         website_label: include_update_link.then(|| "Get updates".to_string()),
         ..Default::default()
     }
@@ -2582,6 +2593,9 @@ mod menu_tests {
         assert_eq!(metadata.version.as_deref(), Some("1.2.3"));
         assert_eq!(metadata.website.as_deref(), Some(RELEASES_URL));
         assert_eq!(metadata.website_label.as_deref(), Some("Get updates"));
+        // Preview builds link to the full list, which includes prereleases.
+        let preview = build_about_metadata("0.20.1-dev-20261013-031eb843", true);
+        assert_eq!(preview.website.as_deref(), Some("https://github.com/NeuralNomadsAI/CodeNomad/releases"));
     }
 
     #[test]

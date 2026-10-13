@@ -64,7 +64,7 @@ function ensureVisibilityEffect() {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
               // The native updater follows the saved feed, like these notifications.
-              onClick: supportsDesktopUpdateChecks() ? requestDesktopUpdate : undefined,
+              onClick: supportsDesktopUpdateChecks() ? () => requestDesktopUpdate(support.latestServerUrl) : undefined,
             }
           : undefined,
       })
@@ -148,7 +148,7 @@ function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
     duration: 12000,
     position: "bottom-right",
     action: supportsDesktopUpdateChecks()
-      ? { label: tGlobal("releases.upgradeRequired.action.getUpdate"), href: update.url, onClick: requestDesktopUpdate }
+      ? { label: tGlobal("releases.upgradeRequired.action.getUpdate"), href: update.url, onClick: () => requestDesktopUpdate(update.url) }
       : { label: tGlobal("releases.devUpdateAvailable.action"), href: update.url },
   })
 }
