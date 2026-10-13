@@ -10,6 +10,7 @@ import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { createCoreRightPanelRuntime } from "../../../src/components/instance/shell/right-panel/core-runtime"
 import { FilesPreviewView } from "../../../src/components/files-preview-view"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { Toaster } from "solid-toast"
 import { closeFilePreview, getFilePreview } from "../../../src/stores/files-preview"
 import { parseRightPanelCustomization } from "../../../src/components/instance/shell/right-panel/registry"
 import { sessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
@@ -72,6 +73,10 @@ const model = { providerID: "fixture", id: "fixture" }
 const sessionInfo = (sessionID: string) => ({ id: sessionID, title: sessionID, agent: "build", model, projectID: "fixture", location: { directory: "/CodeNomad" },
   cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } })
 const client: any = { vcs: { status: async () => ({ data: [] }) },
+  location: { get: async () => {
+    calls.push({ kind: "project" })
+    return { directory: "/CodeNomad", project: { id: "fixture", directory: "/CodeNomad", canonical: "/CodeNomad" } }
+  } },
   session: {
     active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     list: async () => ({ data: [sessionInfo(sessionId), sessionInfo("other")], cursor: {} }),
@@ -84,7 +89,18 @@ serverApi.fetchConfigOwner = async () => ({ settings: { locale: "fr" } }) as any
 serverApi.patchConfigOwner = async (_owner, patch) => patch as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.patchStateOwner = async (_owner, patch) => patch as any
-serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/CodeNomad/.codenomad/worktrees", worktrees: entries })
+// `?uninitialized` opens a plain folder; Initialize Git turns it into the repository.
+let repository = !new URLSearchParams(location.search).has("uninitialized")
+serverApi.fetchWorktrees = async () => {
+  calls.push({ kind: "worktrees" })
+  return repository ? { isGitRepo: true, defaultDirectory: "/CodeNomad/.codenomad/worktrees", worktrees: entries }
+    : { isGitRepo: false, worktrees: [{ slug: "root", directory: "/CodeNomad", kind: "root" as const }] }
+}
+serverApi.initializeWorkspaceGit = async (_id, directory) => {
+  calls.push({ kind: "git-init", path: directory })
+  repository = true
+  return { ok: true }
+}
 serverApi.fetchGitHistory = async (_id, slug) => {
   calls.push({ kind: "history", slug })
   return { branch: entries.find(entry => entry.slug === slug)!.branch, head: commits[0].id, commits: slug === "root" ? commits : commits.slice(3), hasMore: false }
@@ -153,6 +169,7 @@ function Prototype() {
     } }
   return <div style={{ height: "100vh", display: "flex", "flex-direction": "column", background: "var(--surface-base)", color: "var(--text-primary)" }}>
     <AlertDialog />
+    <Toaster position="top-right" />
     <header class="window-header" style={{ padding: "12px 18px" }}><strong>CodeNomad</strong><span class="text-xs text-muted">Prototype Files · données de démonstration</span></header>
     <div style={{ display: "flex", flex: 1, "min-height": "0" }}>
       <main style={{ display: "flex", "flex-direction": "column", flex: 1, "min-width": "0" }}>

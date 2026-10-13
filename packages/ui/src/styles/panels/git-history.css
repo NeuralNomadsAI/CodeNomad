@@ -60,6 +60,9 @@
 .git-file-status { width: 14px; flex-shrink: 0; font-family: monospace; color: var(--text-muted); font-size: var(--font-size-xs); }
 .git-file-status-A { color: var(--status-success); }
 .git-file-status-D { color: var(--status-error); }
+/* Known non-repository: Changes/Commits offer an explicit, non-blocking Initialize Git. */
+.git-init-empty { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-sm); padding: var(--space-md); font-size: var(--font-size-xs); color: var(--text-secondary); }
+.git-init-empty .git-init-button { gap: var(--space-xs); }
 .git-panel-more { display: block; width: 100%; padding: var(--space-sm); color: var(--text-secondary); font-size: var(--font-size-xs); }
 .git-panel button:disabled { opacity: 0.5; }
 .git-diff-view { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; background: var(--surface-canvas); color: var(--text-primary); }

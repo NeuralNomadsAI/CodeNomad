@@ -32,6 +32,7 @@ import {
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { initializeNativeGit } from "./git-init"
 import { WorktreeInventory } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
@@ -438,6 +439,13 @@ export class WorkspaceManager {
   async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
     await requireHostGit()
     try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
+    finally { this.invalidateWorktrees("blocking") }
+  }
+
+  /** Native `vcs.init` for the explicitly opened folder; callers hold its deletion fence. */
+  async initializeGit(id: string) {
+    await requireHostGit()
+    try { return await initializeNativeGit(await this.nativeWorktreeContext(id)) }
     finally { this.invalidateWorktrees("blocking") }
   }
 

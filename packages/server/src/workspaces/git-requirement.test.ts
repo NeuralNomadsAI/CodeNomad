@@ -122,6 +122,10 @@ test("no-Git conversations retain directory ownership, agent context and deletio
     const gitOperation = await app.inject({ method: "POST", url: `/api/workspaces/${id}/worktrees`, payload: { slug: "new-task" } })
     assert.equal(gitOperation.statusCode, 503)
     assert.equal(gitOperation.json().code, "git_required")
+    // Directory-only mode cannot initialize a repository either.
+    const init = await app.inject({ method: "POST", url: `/api/workspaces/${id}/git-init`, payload: { directory: folder } })
+    assert.equal(init.statusCode, 503, init.body)
+    assert.equal(init.json().code, "git_required")
 
     await fence.run(repo, [repo], async () => {
       const response = await app.inject({ method: "POST", url: `${base}/session/owned/prompt`, payload: {} })

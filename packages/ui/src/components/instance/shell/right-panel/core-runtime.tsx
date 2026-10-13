@@ -11,6 +11,7 @@ import { useGitChanges } from "./useGitChanges"
 import { useGitHistory } from "./useGitHistory"
 import { createCoreRightPanelModule } from "./core-plugin"
 import { useWorkspaceTree } from "./useWorkspaceTree"
+import { useGitInit } from "./useGitInit"
 import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
 import { readStoredEnum } from "../storage"
 import { writeClientLayoutValue } from "../../../../stores/client-state"
@@ -60,9 +61,12 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
     }
   })
   const active = () => options.isActive() && options.rightPanelTab() === "files"
+  // A known non-repository keeps Changes/Commits reachable for their Initialize
+  // Git empty state, without Git reads. Unknown status (including no-Git
+  // directory-only mode) retains the existing behavior.
   const gitAvailable = () => getGitRepoStatus(options.instanceId) !== false
-  createEffect(() => { if (!gitAvailable()) setMode("workspace") })
   const directory = () => worktree()?.directory ?? options.instance.folder
+  const gitInit = useGitInit({ instanceId: options.instanceId, directory, t: options.t })
   const tree = useWorkspaceTree(options.instanceId, directory, () => active() && mode() === "workspace")
   const history = useGitHistory(options.instanceId, slug, () => active() && gitAvailable() && mode() === "history")
   const git = useGitChanges({
@@ -78,7 +82,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   }
   onCleanup(() => closeFilePreview(options.instanceId))
   return createCoreRightPanelModule({
-    renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} mode={mode()} onModeChange={setMode}
+    renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} gitInit={gitInit} mode={mode()} onModeChange={setMode}
       instanceId={options.instanceId} worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
       branch={worktree()?.branch ?? null} onWorktreeChange={value => {
         setBrowsedWorktree(value)

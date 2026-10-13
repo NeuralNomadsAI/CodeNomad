@@ -548,6 +548,12 @@ export const serverApi = {
       },
     )
   },
+  initializeWorkspaceGit(id: string, directory: string): Promise<WorktreeGitMutationResponse> {
+    return request<WorktreeGitMutationResponse>(`/api/workspaces/${encodeURIComponent(id)}/git-init`, {
+      method: "POST",
+      body: JSON.stringify({ directory }),
+    })
+  },
   commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
     return request<WorktreeGitCommitResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,

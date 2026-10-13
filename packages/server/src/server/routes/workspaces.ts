@@ -1,5 +1,7 @@
 import { FastifyInstance, FastifyReply } from "fastify"
+import { realpath } from "node:fs/promises"
 import { z } from "zod"
+import { GitInitError } from "../../workspaces/git-init"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus, invalidateWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
@@ -351,6 +353,31 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       return handleWorkspaceError(error, reply)
     }
   })
+
+  // Only the explicitly opened folder can be initialized, never a parent or a
+  // linked worktree. One unretried native request under the deletion fence.
+  app.post<{ Params: { id: string } }>("/api/workspaces/:id/git-init", async (request, reply) => {
+    try {
+      const body = z.object({ directory: z.string().trim().min(1) }).parse(request.body ?? {})
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
+      const [target, root] = await Promise.all([realpath(body.directory).catch(() => undefined), realpath(workspace.path).catch(() => undefined)])
+      if (!target || target !== root) {
+        return reply.code(409).send({ error: "Only the opened folder can be initialized", code: "git_init_directory_mismatch" })
+      }
+      if (!await isGitAvailable(workspace.path)) throw new GitRequiredError()
+      const mutation = await runWorktreeMutation(deps, workspace.id, workspace.path, reply, async () => {
+        await deps.workspaceManager.initializeGit(workspace.id)
+        await invalidateWorktreeGitStatus(workspace.path)
+      })
+      if (!mutation) return
+      // Publish the repository to every window's inventory consumers.
+      await deps.workspaceManager.getWorktrees(workspace.id, "fresh").catch(error => request.log.warn({ err: error }, "Worktree refresh after Git initialization failed"))
+      return { ok: true as const }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
 }
 
 async function runWorktreeMutation<T>(
@@ -423,7 +450,7 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
-  if (error instanceof GitRequiredError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
+  if (error instanceof GitRequiredError || error instanceof GitInitError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)
     return { error: error.message }
