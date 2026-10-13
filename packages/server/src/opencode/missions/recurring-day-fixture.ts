@@ -294,12 +294,17 @@ export class RecurringDayFixture {
   }
   async flush() { for (let n = 0; n < 4; n++) await new Promise<void>(resolve => setTimeout(resolve, 1)) }
   // Bounded real-time wait for asynchronous storage/admission I/O; virtual time never moves here.
+  // Date.now is the virtual clock, so the deadline uses the monotonic real clock.
   async until(predicate: () => boolean | Promise<boolean>, message: string, timeoutMs = 5_000) {
-    const deadline = Date.now() + timeoutMs
+    const deadline = performance.now() + timeoutMs
     while (!await predicate()) {
-      assert(Date.now() < deadline, message)
+      assert(performance.now() < deadline, message)
       await this.flush()
     }
+  }
+  /** Every running Job is parked in a virtual sleep, so no background write is in flight. */
+  async quiescent(message = "background Jobs settled") {
+    await this.until(() => [...this.jobs.values()].filter(job => job.status === "running").length <= this.sleepers.size, message)
   }
   async advance(to: number) {
     assert(to >= this.now)

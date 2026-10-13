@@ -178,9 +178,9 @@ test("E. Pause cancels wakeups and future admissions; Stop is terminal", async t
   assert.equal(f.wakeups, wakes, "Pause cancels the Job rather than leaving polling behind")
   assert.equal(f.starts.length, 0)
   await f.control("play")
-  // Play admits the passage missed while paused, in background writes. Stop is a
-  // later human action at the settled revision, not a race with that admission.
-  await f.until(async () => Boolean((await f.document())?.pending?.admission), "missed passage admitted")
+  // Play wakes the schedule Job, which may admit the passage missed while paused
+  // in background writes. Stop is a later human action at the settled revision.
+  await f.quiescent()
   assert.equal((await f.control("stop")).state, "stopped")
   const count = f.starts.length
   await f.advance(DUE + 2 * DAY)
