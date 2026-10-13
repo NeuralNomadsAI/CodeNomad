@@ -91,7 +91,6 @@ pub struct AppState {
     pub webview_data_directory: std::path::PathBuf,
     pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
-    keep_alive_for_remote_control: AtomicBool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1578,52 +1577,6 @@ fn is_final_application_window<'a>(
     !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
 }
 
-async fn remote_control_enabled(app: &AppHandle) -> bool {
-    let Some(access) = app.state::<AppState>().manager.local_cli_access() else {
-        return false;
-    };
-    let Ok(mut url) = Url::parse(&access.base_url) else {
-        return false;
-    };
-    url.set_path("/api/remote-control/status");
-    url.set_query(None);
-    url.set_fragment(None);
-
-    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(2));
-    if url.scheme() == "https" {
-        let Ok(local_cert) = cert_manager::ensure_local_cert() else {
-            return false;
-        };
-        let Ok(ca_cert) = reqwest::Certificate::from_der(&local_cert.ca_cert_der) else {
-            return false;
-        };
-        builder = builder.add_root_certificate(ca_cert);
-    }
-    let Ok(client) = builder.build() else {
-        return false;
-    };
-    let Ok(response) = client
-        .get(url)
-        .header(
-            reqwest::header::COOKIE,
-            format!("{}={}", access.cookie_name, access.session_cookie),
-        )
-        .send()
-        .await
-    else {
-        return false;
-    };
-    if !response.status().is_success() {
-        return false;
-    }
-    response
-        .json::<serde_json::Value>()
-        .await
-        .ok()
-        .and_then(|value| value.get("enabled").and_then(serde_json::Value::as_bool))
-        .unwrap_or(false)
-}
-
 fn consume_approved_auxiliary_close(app: &AppHandle, label: &str) -> bool {
     app.state::<AppState>()
         .approved_auxiliary_closes
@@ -1652,10 +1605,6 @@ fn dispatch_approved_auxiliary_close(app: &AppHandle, label: &str) {
 
 fn request_final_application_window_close(app: AppHandle, label: String, local_window: bool) {
     tauri::async_runtime::spawn(async move {
-        let keep_alive = remote_control_enabled(&app).await;
-        app.state::<AppState>()
-            .keep_alive_for_remote_control
-            .store(keep_alive, Ordering::SeqCst);
         let windows = app.webview_windows();
         let still_final = is_final_application_window(
             &label,
@@ -1664,7 +1613,9 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
                 .filter(|candidate| !shutdown::local_window_close_in_flight(&app, candidate))
                 .map(String::as_str),
         );
-        if should_shutdown_after_last_window(keep_alive, still_final) {
+        // Closing the last window quits CodeNomad, Remote Control included; it
+        // resumes at the next launch.
+        if still_final {
             shutdown::request(app);
         } else if local_window {
             shutdown::request_local_window_close(app, label);
@@ -1672,13 +1623,6 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
             dispatch_approved_auxiliary_close(&app, &label);
         }
     });
-}
-
-fn should_shutdown_after_last_window(
-    keep_alive_for_remote_control: bool,
-    is_final_window: bool,
-) -> bool {
-    is_final_window && !keep_alive_for_remote_control
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1881,7 +1825,6 @@ fn main() {
             webview_data_directory,
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
-            keep_alive_for_remote_control: AtomicBool::new(false),
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
@@ -2127,14 +2070,6 @@ fn main() {
                     return;
                 }
                 api.prevent_exit();
-                if app_handle.webview_windows().is_empty()
-                    && app_handle
-                        .state::<AppState>()
-                        .keep_alive_for_remote_control
-                        .load(Ordering::SeqCst)
-                {
-                    return;
-                }
                 shutdown::request(app_handle.clone());
             }
             tauri::RunEvent::WindowEvent {
@@ -2256,16 +2191,6 @@ fn main() {
                 update_workspace_menu_state(&app_handle);
                 update_fullscreen_shortcut(&app_handle);
                 if !app_handle.windows().is_empty() {
-                    return;
-                }
-
-                if !should_shutdown_after_last_window(
-                    app_handle
-                        .state::<AppState>()
-                        .keep_alive_for_remote_control
-                        .load(Ordering::SeqCst),
-                    true,
-                ) {
                     return;
                 }
 
@@ -2589,7 +2514,7 @@ mod menu_tests {
         is_allowed_local_origin, is_final_application_window, local_close_event_action,
         require_http_url, rollback_remote_window_metadata, run_update_with_fallback,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
-        should_shutdown_after_last_window, titlebar_menu_id, LocalCloseEventAction,
+        titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
         RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
@@ -2611,13 +2536,6 @@ mod menu_tests {
             "local-a",
             ["local-a", "preferences", "remote-a"].into_iter(),
         ));
-    }
-
-    #[test]
-    fn remote_control_keeps_the_backend_alive_without_application_windows() {
-        assert!(!should_shutdown_after_last_window(true, true));
-        assert!(should_shutdown_after_last_window(false, true));
-        assert!(!should_shutdown_after_last_window(false, false));
     }
 
     #[test]

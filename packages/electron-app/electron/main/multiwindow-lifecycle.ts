@@ -23,7 +23,6 @@ interface Dependencies {
   removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
-  shouldKeepBackendAlive?(): Promise<boolean>
   rendererFlushTimeoutMs?: number
   sessionEndCleanupTimeoutMs?: number
   isWindows?: boolean
@@ -38,7 +37,6 @@ export class MultiwindowLifecycle {
   private release: Promise<void> | null = null
   private exitAllowed = false
   private relaunchRequested = false
-  private keepAliveWithoutWindows = false
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
   private readonly pendingWindowCloses = new Set<BrowserWindow>()
 
@@ -55,16 +53,13 @@ export class MultiwindowLifecycle {
       closing = true
       this.pendingWindowCloses.add(record.window)
       void (async () => {
+        // Closing the last window quits CodeNomad, Remote Control included; it
+        // resumes at the next launch.
         if (!this.hasOtherApplicationWindow(record.window, record.id)) {
-          const keepAlive = await this.dependencies.shouldKeepBackendAlive?.().catch(() => false) ?? false
-          const stillFinal = !this.hasOtherApplicationWindow(record.window, record.id)
-          if (!keepAlive && stillFinal) {
-            closing = false
-            this.pendingWindowCloses.delete(record.window)
-            this.dependencies.app.quit()
-            return
-          }
-          if (keepAlive && stillFinal) this.keepAliveWithoutWindows = true
+          closing = false
+          this.pendingWindowCloses.delete(record.window)
+          this.dependencies.app.quit()
+          return
         }
         await this.flushWindow(record)
         if (record.persisted !== false && !await this.dependencies.removeWindowState(record.id)) {
@@ -85,25 +80,11 @@ export class MultiwindowLifecycle {
   }
 
   attachSupportWindow(window: BrowserWindow): void {
-    let approved = false
-    let closing = false
     window.on("close", (event) => {
-      if (approved || event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
+      if (event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
         && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))) return
       event.preventDefault()
-      if (closing || this.shutdown) return
-      closing = true
-      void (this.dependencies.shouldKeepBackendAlive?.().catch(() => false) ?? Promise.resolve(false)).then((keepAlive) => {
-        const stillFinal = !this.hasOtherApplicationWindow(window)
-        if (!keepAlive && stillFinal) {
-          closing = false
-          this.dependencies.app.quit()
-          return
-        }
-        if (keepAlive && stillFinal) this.keepAliveWithoutWindows = true
-        approved = true
-        window.close()
-      })
+      if (!this.shutdown) this.dependencies.app.quit()
     })
     this.attachSessionEnd(window)
   }
@@ -123,7 +104,6 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("before-quit", (event) => {
       if (this.exitAllowed) return
       event.preventDefault()
-      this.keepAliveWithoutWindows = false
       const visibleWindows = this.dependencies.getAllWindows().filter((window) => !window.isDestroyed() && window.isVisible())
       for (const window of visibleWindows) window.hide()
       void this.startShutdown().then(() => this.exit(), (error) => {
@@ -133,9 +113,7 @@ export class MultiwindowLifecycle {
         console.warn("[client-state] shutdown remains pending", error)
       })
     })
-    this.dependencies.app.on("window-all-closed", () => {
-      if (!this.keepAliveWithoutWindows) this.dependencies.app.quit()
-    })
+    this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
   }
 
   requestRelaunch(): void {

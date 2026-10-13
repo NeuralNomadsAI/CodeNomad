@@ -249,7 +249,6 @@ function runPrimary(firstIntent: LaunchIntent) {
     },
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
-    shouldKeepBackendAlive: () => isRemoteControlEnabled(backendUrl, cli),
     navigationLifecycle,
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
@@ -744,50 +743,5 @@ async function exchangeBootstrapToken(baseUrl: string, token: string, cli: CliPr
   return true
 }
 
-async function isRemoteControlEnabled(baseUrl: string | null, cli: CliProcessManager): Promise<boolean> {
-  if (!baseUrl) return false
-  const cookie = (await session.defaultSession.cookies.get({ url: baseUrl, name: cli.getAuthCookieName() }))[0]
-  if (!cookie) return false
-  const target = new URL("/api/remote-control/status", baseUrl)
-  const transport = target.protocol === "https:" ? https : http
-  return new Promise<boolean>((resolve) => {
-    let settled = false
-    const finish = (enabled: boolean) => {
-      if (settled) return
-      settled = true
-      resolve(enabled)
-    }
-    const request = transport.request(target, {
-      method: "GET",
-      headers: { Cookie: `${cookie.name}=${cookie.value}` },
-      timeout: 2_000,
-    }, (response) => {
-      const chunks: Buffer[] = []
-      let bytes = 0
-      response.on("data", (chunk) => {
-        const value = Buffer.from(chunk)
-        bytes += value.byteLength
-        if (bytes > 64 * 1024) {
-          response.destroy()
-          finish(false)
-          return
-        }
-        chunks.push(value)
-      })
-      response.on("end", () => {
-        try {
-          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { enabled?: unknown }
-          finish(response.statusCode === 200 && payload.enabled === true)
-        } catch {
-          finish(false)
-        }
-      })
-      response.on("error", () => finish(false))
-    })
-    request.on("timeout", () => request.destroy())
-    request.on("error", () => finish(false))
-    request.end()
-  })
-}
 
 if (isMac) app.commandLine.appendSwitch("disable-spell-checking")

@@ -148,7 +148,7 @@ Remote Control reaches CodeNomad from anywhere without an inbound port, VPN or L
 - **Transport**: CodeNomad claims a random route on the device's shared [OpenTunnel](https://github.com/anomalyco/opentunnel) identity (the default profile, also used by `opencode pair --remote`). The relay forwards ciphertext only; the TLS certificate and its private key stay on this machine. The relay can still observe hostnames, connection timing and sizes. `CODENOMAD_REMOTE_CONTROL_API` selects a self-hosted OpenTunnel API.
 - **Authorization**: Every remote request must carry a paired device's credential, even with `--dangerously-skip-auth`; password login and the token bootstrap are not available remotely. Device credentials are stored hashed in `~/.config/codenomad/remote-control-devices.json`, expire after 30 days without use and can be revoked from Settings, which also ends that device's open streams.
 - **Surface**: Remote Control management, desktop window, SideCar, preview and automation endpoints stay host-only, and remote requests never receive loopback privileges.
-- **Lifetime**: Remote Control stops with the backend. Desktop apps keep the backend running after the last window closes only while Remote Control is enabled.
+- **Lifetime**: Remote Control stops with the backend. Closing the last desktop window quits the app and its backend, Remote Control included; an enabled Remote Control resumes at the next launch.
 
 ### Self-Signed Certificates
 
