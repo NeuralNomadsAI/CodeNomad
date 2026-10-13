@@ -47,14 +47,19 @@ refresh on filesystem invalidation, while commit contents remain immutable.
 Changes and Commits share the diff reader, which follows Settings → Advanced
 "Hide whitespace-only changes in diffs" (`hideDiffWhitespaceChanges`, enabled
 by default and stored with the other UI settings). It maps to Monaco's native
-`ignoreTrimWhitespace`: lines that differ only by indentation, trailing spaces/tabs
-or line endings compare equal, while whitespace inside a line remains a visible
+`ignoreTrimWhitespace`: lines that differ only by indentation or trailing
+spaces/tabs compare equal, while whitespace inside a line remains a visible
 change (unlike `git diff -w`). The option is display-only: switching it never
 rereads the diff, changes a request or cache key, or alters staging, commits or
-the Git `+/-` counts in the file lists. When a file's only differences are hidden
-this way, `file-viewer/diff-whitespace.ts` (which mirrors Monaco's space/tab trim
-equality) shows a notice above the reader rather than an apparently empty diff.
-Image diffs ignore the setting. Monaco itself defaults to ignoring trim whitespace;
+the Git `+/-` counts in the file lists. Image diffs ignore the setting.
+
+Monaco never draws line-ending (CRLF/LF/CR) or leading byte-order-mark
+differences, whatever the setting; on Windows the Git LF blob often differs from
+CRLF worktree bytes only this way. `file-viewer/diff-whitespace.ts` mirrors the
+model's BOM stripping, line splitting, space/tab trimming and empty-side
+whole-file change in linear time, so the reader is never silently blank: a
+setting-independent note reports line-ending/BOM-only files, and, while the
+setting is on, a notice reports files whose only drawn differences it hides. Monaco itself defaults to ignoring trim whitespace;
 the viewer always passes the option explicitly, so turning the setting off shows
 every whitespace change.
 
@@ -116,7 +121,8 @@ insertion into the composer remain available.
   draft preservation, late-read/session fencing, filesystem refresh and keyboard
   tree navigation. Its `?advanced` fixture mode renders the real Advanced settings
   section to cover the default-on whitespace setting, its whitespace-only notice,
-  live switching without rereads and the shared Commits reader;
-  `file-viewer/diff-whitespace.test.ts` and `settings/behavior-registry.test.ts`
-  cover the trim comparison and the persisted preference. The design fixture remains available through
+  live switching without rereads, the shared Commits reader and the
+  setting-independent line-ending note; `file-viewer/diff-whitespace.test.ts`
+  (CRLF/CR/BOM, empty sides, linear time on long blank runs) and
+  `settings/behavior-registry.test.ts` cover the classifier and the preference. The design fixture remains available through
   `node scripts/preview-git-history.mjs` with synthetic data only.

@@ -591,6 +591,7 @@ test("diffs hide whitespace-only changes by default and follow the Advanced sett
         "src/components/git-panel.tsx": reindented,
         "src/styles/panels/git-history.css": [".panel {\n  gap: 4px;\n}\n", ".panel {\n\tgap: 4px;   \n}\n"],
       }
+      ;(window as any).diffTexts = texts
       serverApi.fetchWorktreeGitDiff = async (_id: string, slug: string, input: any) => {
         ;(window as any).fixture.calls.push({ kind: "local-diff", slug, path: input.path })
         const [before, after] = texts[input.path]
@@ -638,6 +639,20 @@ test("diffs hide whitespace-only changes by default and follow the Advanced sett
     await setting().click()
     await page.getByRole("option", { name: "Activé", exact: true }).click()
     assert.equal(await changedLines("if (y)", 2), 2)
+
+    // Monaco never draws CRLF/LF differences, so this note ignores the setting.
+    const lineEndings = () => page.getByRole("status").filter({ hasText: "Seules les fins de ligne (ou une marque d'ordre des octets) ont changé" })
+    await page.evaluate(() => { (window as any).diffTexts["src/styles/panels/git-history.css"] = [".crlf {\n}\n", ".crlf {\r\n}\r\n"] })
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await open("src/styles/panels/git-history.css")
+    await lineEndings().waitFor()
+    assert.equal(await changedLines(".crlf", 0), 0)
+    assert.equal(await notice().count(), 0, "the whitespace notice never sends users to a setting that cannot help")
+    await setting().click()
+    await page.getByRole("option", { name: "Désactivé", exact: true }).click()
+    await page.getByRole("button", { name: "Masquer les changements d'espaces dans les diffs Désactivé", exact: true }).waitFor()
+    assert.equal(await changedLines(".crlf", 0), 0, "line endings stay undrawn with the setting off")
+    assert.equal(await lineEndings().count(), 1, "the reader is never silently blank")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

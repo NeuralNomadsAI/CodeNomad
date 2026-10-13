@@ -13,7 +13,7 @@ import type { DiffViewMode, DiffContextMode } from "./instance/shell/right-panel
 import { writeClientLayoutValue } from "../stores/client-state"
 import { readStoredEnum, RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY } from "./instance/shell/storage"
 import { preferences } from "../stores/preferences"
-import { isTrimWhitespaceOnlyChange } from "./file-viewer/diff-whitespace"
+import { classifyHiddenDiffChange } from "./file-viewer/diff-whitespace"
 
 const MonacoDiffViewer = lazy(() => import("./file-viewer/monaco-diff-viewer").then(module => ({ default: module.MonacoDiffViewer })))
 
@@ -30,10 +30,13 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
   createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, wrap() ? "on" : "off"))
   // Display-only: reads, staging and commits always use the exact contents.
   const hideWhitespace = () => preferences().hideDiffWhitespaceChanges ?? true
-  const whitespaceOnly = createMemo(() => {
+  // Explain differences Monaco never draws so the reader is not silently blank.
+  const hiddenChange = createMemo(() => {
     const value = content()
-    return hideWhitespace() && !!value && !value.image && isTrimWhitespaceOnlyChange(value.before, value.after)
+    return value && !value.image ? classifyHiddenDiffChange(value.before, value.after) : null
   })
+  const hiddenNotice = () => hiddenChange() === "invisible" ? t("instanceShell.diff.lineEndingsOnly")
+    : hiddenChange() === "whitespace" && hideWhitespace() ? t("instanceShell.diff.whitespaceOnly") : null
   let controller: AbortController | undefined
   let pending = false
 
@@ -92,7 +95,7 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void load()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
     <Show when={loading() && !content()}><div class="p-3 text-secondary">{t("instanceInfo.loading")}</div></Show>
-    <Show when={whitespaceOnly()}><div class="git-diff-notice" role="status">{t("instanceShell.diff.whitespaceOnly")}</div></Show>
+    <Show when={hiddenNotice()}>{notice => <div class="git-diff-notice" role="status">{notice()}</div>}</Show>
     <Show when={content()}>{value => <Show when={value().image} fallback={<div class="git-diff-content">
       <Suspense fallback={<div class="p-3">{t("instanceInfo.loading")}</div>}>
         <MonacoDiffViewer scopeKey={`${props.instanceId}:${props.target.slug}:${props.target.commit ?? props.target.scope}`} path={props.target.path}
