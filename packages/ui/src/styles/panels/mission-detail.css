@@ -14,6 +14,9 @@
 .mission-past-runs ol { display: grid; margin: 0; padding: 0; list-style: none; }
 .mission-past-run { width: 100%; min-height: var(--touch-target-size-compact); padding-inline: var(--space-xs); color: var(--text-primary); text-align: start; font-size: var(--font-size-xs); background: transparent; border: 0; border-radius: 0; }
 .mission-past-run:hover { background: var(--surface-hover-overlay); }
+/* A selected run is a list selection, like the task tree and picker rows. */
+.mission-past-run[aria-pressed="true"] { background-color: var(--list-item-highlight-bg); box-shadow: inset 0 0 0 1px var(--list-item-highlight-border); }
+.mission-past-run[aria-pressed="true"]:hover { background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay)); }
 
 /* Identifiers folded at the bottom of central readers. */
 .mission-technical { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-xs) var(--space-sm); margin: 0; font-size: var(--font-size-xs); }

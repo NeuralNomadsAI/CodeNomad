@@ -245,7 +245,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
     fallback={<p class="mission-control-empty-line">{t("missionsPanel.schedule.noRuns")}</p>}>
     <section class="mission-past-runs" aria-label={t("missionsPanel.pastRuns")}>
       <ol><For each={[...schedule.history].reverse()}>{item => <li>
-        <button type="button" class="mission-past-run icon-toggle" aria-pressed={reading(schedule.id, item.passageID)}
+        <button type="button" class="mission-past-run" aria-pressed={reading(schedule.id, item.passageID)}
           onClick={() => read(schedule.id, item.passageID)}>
           <bdi>{text.run(schedule, item)}</bdi>
         </button></li>}</For></ol>

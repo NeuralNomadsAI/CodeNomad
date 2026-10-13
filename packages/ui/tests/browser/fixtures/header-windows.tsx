@@ -41,7 +41,11 @@ const client: any = {
   },
   form: { list: async () => ({ data: getFormQueue(id) }) },
   permission: { reply: async (input: any) => { replies.push(input) } },
-  message: { list: async () => ({ data: [{ id: "hello", type: "user", text: "Fixture message", time: { created: 1 } }], cursor: {} }) },
+  message: { list: async () => ({ data: [{ id: "hello", type: "user", text: "Fixture message", time: { created: 1 } },
+    // Opt-in assistant card (muted message surface) for toggle-colour checks.
+    ...(new URLSearchParams(location.search).has("assistant") ? [{ id: "reply", type: "assistant", agent: "build",
+      model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "Fixture reply" }], time: { created: 2, completed: 3 } }] : []),
+  ], cursor: {} }) },
   model: { default: async () => ({ data: { providerID: "fixture", id: "fixture" } }) },
   file: { status: async () => ({ data: [] }) },
 }

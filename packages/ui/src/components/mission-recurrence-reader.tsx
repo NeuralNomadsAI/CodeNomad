@@ -29,7 +29,7 @@ export function MissionRecurrenceReader(props: {
     <Show when={props.schedule.history.length}>
       <h3>{t("missionsPanel.pastRuns")}</h3>
       <ol class="mission-recurrence-runs"><For each={[...props.schedule.history].reverse()}>{receipt => <li>
-        <button type="button" class="mission-past-run icon-toggle" data-passage-id={receipt.passageID} aria-pressed={selectedID() === receipt.passageID}
+        <button type="button" class="mission-past-run" data-passage-id={receipt.passageID} aria-pressed={selectedID() === receipt.passageID}
           onClick={() => props.onSelect(receipt.passageID)}><bdi>{text.run(props.schedule, receipt)}</bdi></button>
       </li>}</For></ol>
     </Show>

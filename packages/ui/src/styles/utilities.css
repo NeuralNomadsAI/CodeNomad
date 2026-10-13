@@ -149,18 +149,20 @@
 }
 
 /* Active toggles take a partial accent tint over whatever surface they rest on.
-   The tint leans 20% toward the accent's own contrasting ink (--text-on-accent):
-   light accents on dark palettes darken so the primary-text icon stays legible,
-   and accents as light as their surface (Parchment) still separate.
+   The ink leans 20% toward the accent's contrasting ink (--text-on-accent), so
+   accents as light as their surface (Parchment) still separate, then 10% toward
+   --surface-base, which always sits opposite the primary-text icon: the icon
+   keeps 3:1 on headers, canvases and muted message/tool cards alike.
    :where keeps the historical specificity for overrides. */
 .icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])) {
-  background-color: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 40%, transparent) !important;
+  --icon-toggle-active-ink: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 90%, var(--surface-base));
+  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 40%, transparent) !important;
   color: var(--text-primary) !important;
   opacity: 1;
 }
 
 .icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])):hover {
-  background-color: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 50%, transparent) !important;
+  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 50%, transparent) !important;
 }
 
 .panel-header {
