@@ -435,8 +435,8 @@ export const serverApi = {
   keepTemporaryWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
   },
-  discardTemporaryWorkspace(id: string): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST" })
+  discardTemporaryWorkspace(id: string, options: { onlyWithoutConversations?: boolean } = {}): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST", body: JSON.stringify(options) })
   },
   getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
     const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))

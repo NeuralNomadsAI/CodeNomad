@@ -10,13 +10,15 @@ serverApi.fetchConfigOwner = async () => ({}) as any
 serverApi.fetchStateOwner = async () => state
 serverApi.patchStateOwner = async (_owner, patch: any) => { patches.push(patch); state = { ...state, ...patch }; return state }
 let discardError: Error | undefined
+let createdName: string | undefined
 serverApi.keepTemporaryWorkspace = async (id) => { calls.push(`keep:${id}`) }
-serverApi.discardTemporaryWorkspace = async (id) => {
-  calls.push(`discard:${id}`)
+serverApi.discardTemporaryWorkspace = async (id, options) => {
+  // The tab is already closed when the server is asked.
+  calls.push(`discard:${id}${options?.onlyWithoutConversations ? ":empty" : ""}:${tabOpen(id) ? "tab" : "closed"}`)
   if (discardError) throw discardError
 }
 serverApi.createTemporaryFolder = async () => { calls.push("create"); return { path: "D:\\temp\\20261009-120000-dead" } }
-serverApi.createWorkspace = async () => { throw new Error("opencode_update_required") }
+serverApi.createWorkspace = async (payload: any) => { createdName = payload?.name; throw new Error("opencode_update_required") }
 serverApi.abandonTemporaryFolder = async (path) => { calls.push(`abandon:${path}`) }
 
 const { tGlobal } = await import("../lib/i18n")
@@ -25,9 +27,19 @@ const { alertDialogState } = await import("./alerts")
 const { appTabs, attachInstanceTab } = await import("./app-tabs")
 const { addInstance, instances, removeInstance, updateInstance } = await import("./instances")
 const { closeTemporaryInstance, openTemporaryInstance } = await import("./temporary-instances")
+const { setSessions } = await import("./session-state")
 
 const folder = "D:\\CodeNomad\\temporary-workspaces\\20261009-120000-abcd"
+// Tabs with a conversation ask before closing; empty ones close silently.
 function open(...ids: string[]) {
+  openEmpty(...ids)
+  setSessions((previous) => {
+    const next = new Map(previous)
+    for (const id of ids) next.set(id, new Map([["ses_1", { id: "ses_1" } as any]]))
+    return next
+  })
+}
+function openEmpty(...ids: string[]) {
   for (const id of ids) {
     addInstance({ id, folder, projectName: "Temporary · 12:00", port: 0, pid: 0, proxyPath: "", status: "ready", client: null, temporary: true })
     attachInstanceTab(id)
@@ -44,6 +56,11 @@ async function answer(value: string | null) {
 }
 function reset(...ids: string[]) {
   for (const id of ids) removeInstance(id, { authoritative: false })
+  setSessions((previous) => {
+    const next = new Map(previous)
+    for (const id of ids) next.delete(id)
+    return next
+  })
   calls.length = 0
   discardError = undefined
 }
@@ -81,8 +98,8 @@ test("a refused discard shows the localized reason and keeps the tab open", asyn
     const closing = closeTemporaryInstance("busy")
     await answer("discard")
     await closing
-    assert.deepEqual(calls, ["discard:busy"])
-    assert.ok(tabOpen("busy"))
+    assert.deepEqual(calls, ["discard:busy:closed"])
+    assert.ok(tabOpen("busy"), "a refusal reopens the tab")
     assert.equal(alertDialogState()?.message, tGlobal("temporaryInstance.error.running"))
   } finally { reset("busy") }
 })
@@ -93,9 +110,44 @@ test("a successful discard closes the tab", async () => {
     const closing = closeTemporaryInstance("gone")
     await answer("discard")
     await closing
-    assert.deepEqual(calls, ["discard:gone"])
+    assert.deepEqual(calls, ["discard:gone:closed"])
     assert.equal(tabOpen("gone"), false)
   } finally { reset("gone") }
+})
+
+test("a temporary tab without conversations closes and is discarded without asking", async () => {
+  openEmpty("empty")
+  try {
+    const before = alertDialogState()
+    await closeTemporaryInstance("empty")
+    assert.equal(alertDialogState(), before, "nothing is asked")
+    assert.deepEqual(calls, ["discard:empty:empty:closed"])
+    assert.equal(tabOpen("empty"), false)
+  } finally { reset("empty") }
+})
+
+test("conversations the tab had not loaded yet bring back the choice", async () => {
+  openEmpty("unloaded")
+  discardError = new Error("temporary_has_conversations")
+  try {
+    const closing = closeTemporaryInstance("unloaded")
+    await answer(null)
+    await closing
+    assert.deepEqual(calls, ["discard:unloaded:empty:closed"])
+    assert.ok(tabOpen("unloaded"), "nothing was deleted, so the tab is back")
+  } finally { reset("unloaded") }
+})
+
+test("temporary tabs opened within the same minute get distinct names", async () => {
+  openEmpty("same-minute")
+  try {
+    const name = tGlobal("temporaryInstance.name", {
+      time: new Date().toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+    })
+    updateInstance("same-minute", { projectName: name })
+    await assert.rejects(openTemporaryInstance(), /opencode_update_required/)
+    assert.equal(createdName, `${name} (2)`)
+  } finally { reset("same-minute"); createdName = undefined }
 })
 
 test("a keep announced by another window clears the mark", async () => {

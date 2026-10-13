@@ -12,6 +12,7 @@ interface RouteDeps {
 }
 
 const AbandonSchema = z.object({ path: z.string().min(1) })
+const DiscardSchema = z.object({ onlyWithoutConversations: z.boolean().optional() })
 
 export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   const registry = deps.workspaceManager.temporaryFolders
@@ -70,7 +71,7 @@ export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: Rou
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/discard", async (request, reply) => {
     if (!temporary) return unavailable(reply)
     try {
-      await temporary.discard(request.params.id)
+      await temporary.discard(request.params.id, DiscardSchema.parse(request.body ?? {}))
       return reply.code(204).send()
     } catch (error) {
       return fail(request, reply, error, "Unable to discard the temporary workspace")

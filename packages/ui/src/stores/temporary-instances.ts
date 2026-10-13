@@ -3,9 +3,10 @@ import { tGlobal } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { serverEvents } from "../lib/server-events"
 import { showAlertDialog, showChoiceDialog } from "./alerts"
-import { closeInstanceTab } from "./app-tabs"
+import { closeInstanceTab, selectInstanceTab } from "./app-tabs"
 import { createInstance, instances, updateInstance } from "./instances"
 import { addNamedRecentFolder } from "./preferences"
+import { getSessions } from "./sessions"
 
 const log = getLogger("api")
 
@@ -34,9 +35,14 @@ serverEvents.on("workspace.temporaryChanged", (event) => {
   }
 })
 
+/** Tabs opened within the same minute get "(2)", "(3)"… so they stay distinguishable. */
 function temporaryName(date: Date): string {
   const time = date.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-  return tGlobal("temporaryInstance.name", { time })
+  const base = tGlobal("temporaryInstance.name", { time })
+  const taken = new Set([...instances().values()].map((instance) => instance.projectName))
+  let name = base
+  for (let index = 2; taken.has(name); index += 1) name = `${base} (${index})`
+  return name
 }
 
 /**
@@ -83,27 +89,45 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
   return true
 }
 
-/** Deletes the temporary folder and its conversations; the server refuses while one runs. */
-async function discardTemporaryInstance(instanceId: string): Promise<boolean> {
-  try {
-    await serverApi.discardTemporaryWorkspace(instanceId)
-  } catch (error) {
-    showFailure("temporaryInstance.discard.failedTitle", error)
-    if (!isNoLongerTemporary(error)) return false
-    // Kept elsewhere: nothing was deleted; close it like an ordinary project.
-    const instance = instances().get(instanceId)
-    if (instance) clearTemporaryMark(instance.folder)
-  }
+/**
+ * Deletes the temporary folder and its conversations. The tab closes first,
+ * like an ordinary one, so its views unmount before the server stops the
+ * workspace; removing a still-visible workspace's state in the same update
+ * as its tab left the whole window unresponsive. A refusal deletes nothing
+ * and reopens the tab.
+ */
+async function discardTemporaryInstance(
+  instanceId: string,
+  options: { onlyWithoutConversations?: boolean } = {},
+): Promise<"discarded" | "hasConversations" | "refused"> {
   closeInstanceTab(instanceId)
-  return true
+  try {
+    await serverApi.discardTemporaryWorkspace(instanceId, options)
+    return "discarded"
+  } catch (error) {
+    if (isNoLongerTemporary(error)) {
+      // Kept elsewhere: nothing was deleted; it closes like an ordinary project.
+      showFailure("temporaryInstance.discard.failedTitle", error)
+      const instance = instances().get(instanceId)
+      if (instance) clearTemporaryMark(instance.folder)
+      return "discarded"
+    }
+    if (instances().has(instanceId)) selectInstanceTab(instanceId)
+    if (error instanceof Error && error.message === "temporary_has_conversations") return "hasConversations"
+    showFailure("temporaryInstance.discard.failedTitle", error)
+    return "refused"
+  }
 }
 
 /**
- * A temporary tab cannot be reopened from the recent projects, so closing or
- * stopping it asks whether to keep it as a project or discard it.
- * Cancelling leaves the tab open.
+ * A temporary tab cannot be reopened from the recent projects. Without any
+ * conversation it closes and is discarded without asking (the server checks
+ * that none exists); otherwise closing or stopping it asks whether to keep it
+ * as a project or discard it. Cancelling leaves the tab open.
  */
 export async function closeTemporaryInstance(instanceId: string): Promise<void> {
+  if (getSessions(instanceId).length === 0
+    && await discardTemporaryInstance(instanceId, { onlyWithoutConversations: true }) !== "hasConversations") return
   const choice = await showChoiceDialog(tGlobal("temporaryInstance.close.message"), [
     { value: "discard", label: tGlobal("temporaryInstance.close.discard"), tone: "danger" },
     { value: "keep", label: tGlobal("temporaryInstance.close.keep"), tone: "primary" },
