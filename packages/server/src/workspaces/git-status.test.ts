@@ -49,8 +49,10 @@ describe("worktree git status singleflight", () => {
       await write("binary.dat", Buffer.from([0, 1, 2, 3]))
       await write("staged.ts", "a {\n  b\n}\n")
       await write("both.ts", "a\nb\n")
+      await write("newline.txt", "x\n")
       git("add", ".")
       git("commit", "-m", "fixture")
+      await write("newline.txt", "x")
       await write("indent.ts", "if (x) {\n\tcall()   \n}\n")
       await write("crlf.txt", "one\r\ntwo\r\n")
       await write("real.ts", "two\n")
@@ -69,6 +71,7 @@ describe("worktree git status singleflight", () => {
       const status = byPath(await getWorktreeGitStatus({ workspaceFolder: directory, hideWhitespace: true }))
       assert.equal(status.get("indent.ts")?.unstagedWhitespaceOnly, true)
       assert.equal(status.get("crlf.txt")?.unstagedWhitespaceOnly, true, "line endings are whitespace for -w")
+      assert.equal(status.get("newline.txt")?.unstagedWhitespaceOnly, true, "-w also ignores a removed final newline")
       assert.equal(status.get("real.ts")?.unstagedWhitespaceOnly, false)
       assert.equal(status.get("binary.dat")?.unstagedWhitespaceOnly, undefined, "binary changes stay visible")
       assert.equal(status.get("untracked.txt")?.unstagedStatus, "untracked")
@@ -80,6 +83,96 @@ describe("worktree git status singleflight", () => {
       // The flagged inventory still reports Git's real counts.
       assert.equal(status.get("crlf.txt")?.unstagedAdditions, 2)
     } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it("keeps mode changes and conflict resolutions visible even when only whitespace changed", async () => {
+    const repository = async (name: string) => {
+      const directory = await mkdtemp(path.join(tmpdir(), `codenomad-git-${name}-`))
+      const git = (...args: string[]) => execFileSync("git", ["-C", directory, ...args], { stdio: "pipe" }).toString()
+      git("init")
+      git("config", "user.name", "Fixture")
+      git("config", "user.email", "fixture@example.test")
+      git("config", "core.autocrlf", "false")
+      return { directory, git, write: (file: string, contents: string) => fs.writeFile(path.join(directory, file), contents) }
+    }
+    const flagged = async (directory: string) => new Map((await getWorktreeGitStatus({ workspaceFolder: directory, hideWhitespace: true }))
+      .map(entry => [entry.path, entry]))
+    const directories: string[] = []
+    try {
+      // Worktree mode change: commit 100755, then let Git compare the real file
+      // mode (written as 0644 on every platform, including Windows).
+      const mode = await repository("mode")
+      directories.push(mode.directory)
+      await mode.write("mode.sh", "if x\n  echo\nfi\n")
+      mode.git("add", ".")
+      mode.git("update-index", "--chmod=+x", "mode.sh")
+      mode.git("commit", "-m", "executable")
+      mode.git("config", "core.fileMode", "true")
+      await mode.write("mode.sh", "if x\n\techo\nfi\n")
+      assert.match(mode.git("diff", "--numstat", "--ignore-all-space"), /^0\t0\tmode\.sh/, "Git lists a mode change as 0 0 under -w")
+      assert.equal((await flagged(mode.directory)).get("mode.sh")?.unstagedWhitespaceOnly, false, "a listed 0 0 record stays visible")
+
+      // Staged chmod (works with core.fileMode=false, e.g. on Windows): the
+      // staged row shows the mode change while the re-indent alone may hide.
+      const staged = await repository("staged-mode")
+      directories.push(staged.directory)
+      await staged.write("mode.sh", "if x\n  echo\nfi\n")
+      staged.git("add", ".")
+      staged.git("commit", "-m", "script")
+      staged.git("config", "core.fileMode", "false")
+      staged.git("update-index", "--chmod=+x", "mode.sh")
+      await staged.write("mode.sh", "if x\n\techo\nfi\n")
+      const stagedMode = (await flagged(staged.directory)).get("mode.sh")
+      assert.equal(stagedMode?.stagedStatus, "modified", "the staged chmod stays visible")
+      assert.equal(stagedMode?.unstagedWhitespaceOnly, true)
+
+      // A conflict resolved with "ours" and re-indented, but not yet added.
+      const conflict = await repository("conflict")
+      directories.push(conflict.directory)
+      await conflict.write("c.ts", "a {\n  base\n}\n")
+      conflict.git("add", ".")
+      conflict.git("commit", "-m", "base")
+      const base = conflict.git("rev-parse", "--abbrev-ref", "HEAD").trim()
+      conflict.git("checkout", "-b", "theirs")
+      await conflict.write("c.ts", "a {\n  theirs\n}\n")
+      conflict.git("commit", "-am", "theirs")
+      conflict.git("checkout", base)
+      await conflict.write("c.ts", "a {\n  ours\n}\n")
+      conflict.git("commit", "-am", "ours")
+      assert.throws(() => conflict.git("merge", "theirs"))
+      conflict.git("checkout", "--ours", "c.ts")
+      await conflict.write("c.ts", "a {\n\tours\n}\n")
+      const resolution = (await flagged(conflict.directory)).get("c.ts")
+      assert.equal(resolution?.stagedStatus, "unmerged")
+      assert.notEqual(resolution?.unstagedWhitespaceOnly, true, "an unmerged path is never hidden")
+    } finally {
+      for (const directory of directories) await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("starts whitespace detection only after the unstaged numstat resolves", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "codenomad-git-status-"))
+    const order: string[] = []
+    let releaseNumstat!: () => void
+    const numstatBlocked = new Promise<void>((resolve) => { releaseNumstat = resolve })
+    const run = async (args: string[]) => {
+      const name = args.includes("--ignore-all-space") ? "whitespace" : args.includes("--numstat") && !args.includes("--cached") ? "numstat" : "other"
+      order.push(`start:${name}`)
+      if (name === "numstat") await numstatBlocked
+      order.push(`end:${name}`)
+      return { ok: true as const, stdout: "" }
+    }
+    try {
+      const read = getWorktreeGitStatus({ workspaceFolder: directory, hideWhitespace: true }, run)
+      while (order.filter(entry => entry === "end:other").length < 4) await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(order.includes("start:whitespace"), false, "a concurrent -w read could describe older content")
+      releaseNumstat()
+      await read
+      assert.ok(order.indexOf("end:numstat") < order.indexOf("start:whitespace"))
+    } finally {
+      releaseNumstat()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it("keys concurrent reads by the whitespace option and keeps changes visible when detection fails", async () => {
@@ -98,7 +191,8 @@ describe("worktree git status singleflight", () => {
     try {
       const plain = getWorktreeGitStatus({ workspaceFolder: directory }, run)
       const hidden = getWorktreeGitStatus({ workspaceFolder: directory, hideWhitespace: true }, run)
-      while (calls.length < 11) await new Promise<void>((resolve) => setImmediate(resolve))
+      // The whitespace read waits for the blocked unstaged numstat.
+      while (calls.length < 10) await new Promise<void>((resolve) => setImmediate(resolve))
       release()
       const [plainEntries, hiddenEntries] = await Promise.all([plain, hidden])
       assert.equal(calls.length, 11, "separate flights: five plain reads, then the same five plus one whitespace read")

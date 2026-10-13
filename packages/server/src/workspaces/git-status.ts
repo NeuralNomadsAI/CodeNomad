@@ -228,23 +228,23 @@ export async function invalidateWorktreeGitStatus(workspaceFolder: string): Prom
 
 /**
  * Flags unstaged edits of tracked text files that `git diff --ignore-all-space`
- * considers empty. Git omits such files from that numstat (older versions list
- * them as `0 0`); `-w` also ignores CR, so CRLF-only edits qualify. Binary,
- * mode-only, untracked, added/deleted and staged changes are never flagged.
+ * omits entirely: Git drops a file from that numstat when its content differs
+ * only by whitespace (including CR and a missing final newline) and its mode is
+ * unchanged. Any listed record stays visible, even `0 0`: Git lists mode changes
+ * and unmerged paths that way, and older Git versions list every whitespace-only
+ * file that way, so those simply never hide (fail-open). Binary (`-`),
+ * untracked, added/deleted/renamed, unmerged and staged changes are never flagged.
  */
 function applyUnstagedWhitespaceOnly(map: Map<string, WorktreeGitStatusEntry>, ignoreAllSpaceNumstat: string) {
-  const remaining = new Map<string, number>()
-  const tokens = ignoreAllSpaceNumstat.split("\0")
-  for (const record of tokens) {
+  const listed = new Set<string>()
+  for (const record of ignoreAllSpaceNumstat.split("\0")) {
     const parts = record.split("\t")
-    if (parts.length < 3) continue
-    const normalizedPath = normalizeGitStatusPath(parts.slice(2).join("\t"))
-    // Binary files report "-": keep them visible.
-    remaining.set(normalizedPath, parts[0] === "-" || parts[1] === "-" ? Infinity : (Number.parseInt(parts[0], 10) || 0) + (Number.parseInt(parts[1], 10) || 0))
+    if (parts.length >= 3) listed.add(normalizeGitStatusPath(parts.slice(2).join("\t")))
   }
   for (const entry of map.values()) {
-    if (entry.unstagedStatus !== "modified" || entry.unstagedAdditions + entry.unstagedDeletions === 0) continue
-    entry.unstagedWhitespaceOnly = (remaining.get(entry.path) ?? 0) === 0
+    if (entry.unstagedStatus !== "modified" || entry.stagedStatus === "unmerged") continue
+    if (entry.unstagedAdditions + entry.unstagedDeletions === 0) continue
+    entry.unstagedWhitespaceOnly = !listed.has(entry.path)
   }
 }
 
@@ -254,14 +254,18 @@ async function readWorktreeGitStatus(params: {
   hideWhitespace: boolean
 }, run: RunGit): Promise<WorktreeGitStatusEntry[]> {
   const { workspaceFolder, logger, hideWhitespace } = params
+  const unstagedNumstat = run(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder)
   const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult, whitespaceResult] = await Promise.all([
     run(["diff", "--name-status", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
     run(["diff", "--name-status", "-z", "--find-renames", "--find-copies"], workspaceFolder),
     run(["ls-files", "--others", "--exclude-standard"], workspaceFolder),
     run(["diff", "--numstat", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
-    run(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder),
+    unstagedNumstat,
     // One extra bounded worker read, only when the display option asks for it.
-    hideWhitespace ? run(["diff", "--numstat", "-z", "--ignore-all-space"], workspaceFolder) : undefined,
+    // It starts after the unstaged numstat, so a write between the two reads can
+    // only make the hidden state follow the newer file content: real content
+    // read later is listed (visible), never hidden by an older whitespace read.
+    hideWhitespace ? unstagedNumstat.then(() => run(["diff", "--numstat", "-z", "--ignore-all-space"], workspaceFolder)) : undefined,
   ])
 
   for (const result of [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult]) {

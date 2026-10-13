@@ -51,19 +51,29 @@ enabled by default and stored with the other UI settings) mainly keeps the
 Changes list focused on real edits; diffs follow it as a secondary effect.
 
 - **List (main effect).** The status read sends `?hideWhitespace=1`, and only
-  then the server adds one bounded worker query to the existing parallel status
-  reads: `git diff --numstat -z --ignore-all-space` (worktree vs index), with no
-  per-file processes. An unstaged tracked `modified` text file whose ordinary
-  numstat is non-zero but whose `-w` numstat is empty (current Git omits it;
-  older versions print `0 0`) gets `unstagedWhitespaceOnly`. `-w` treats CR as
-  whitespace, so CRLF-only edits qualify; Git's `-w` also ignores whitespace
-  inside a line. Untracked, added/deleted/renamed, binary (`-`), mode-only and
-  unmerged changes are never flagged, and a failed detection read hides nothing.
-  The server singleflight key and the UI read include the option.
+  then the server adds one bounded worker query, `git diff --numstat -z
+  --ignore-all-space` (worktree vs index), with no per-file processes. It starts
+  only after the ordinary unstaged numstat resolves, so a write between the two
+  reads can only make the hidden state follow the newer content. An unstaged
+  tracked `modified` text file with a non-zero ordinary numstat gets
+  `unstagedWhitespaceOnly` only when it is **absent** from the `-w` output. Git
+  omits a file there when its content differs only by whitespace and its mode is
+  unchanged. Git's `-w` covers CR (CRLF-only edits), whitespace inside a line and
+  a removed or added final newline (`"x\n"` → `"x"`).
+- **Listed records stay visible.** Any `-w` record, including `0 0`, keeps the
+  file visible: Git lists a worktree mode change combined with a whitespace-only
+  edit, and an unmerged path (for example a conflict resolved with "ours" and
+  re-indented but not added), as `0 0`. Entries whose staged side is `unmerged`
+  are skipped regardless of record order. Older Git versions that print `0 0` for
+  every whitespace-only file therefore simply never hide anything (fail-open), as
+  does a failed detection read. Untracked, added/deleted/renamed and binary (`-`)
+  changes are never flagged. The server singleflight key and the UI read include
+  the option.
 - **Staged files stay visible.** Detection never runs for index vs HEAD: a
   commit (`git commit`, staged content only) therefore never includes a change
   the list does not show. A file staged with real content and re-indented
-  afterwards shows only its staged row.
+  afterwards shows only its staged row; a staged chmod (`git update-index
+  --chmod`) likewise stays visible in the staged section.
 - **Bulk actions.** `useGitChanges` exposes only the visible inventory, so the
   file count, section counts, row selection, range/bulk "stage selected" and
   drag-and-drop can never target a hidden file; hidden files stay unstaged.
@@ -156,9 +166,12 @@ insertion into the composer remain available.
   range "stage selected" spanning them stages only visible files; turning the
   option off lists them with their factual whitespace and line-ending notes, and
   the shared Commits reader follows it.
-- `workspaces/git-status.test.ts`: a real repository with whitespace-only,
-  CRLF-only, real, binary, untracked, staged and staged-then-reindented files,
-  plus option-keyed singleflight and fail-open detection.
+- `workspaces/git-status.test.ts`: real repositories with whitespace-only,
+  CRLF-only, final-newline-only, real, binary, untracked, staged and
+  staged-then-reindented files; a worktree mode change and an unmerged
+  "ours"-resolved re-indent (both listed `0 0`, kept visible) and a staged chmod;
+  the `-w` read starting after the unstaged numstat; option-keyed singleflight
+  and fail-open detection.
 - `useGitChanges.test.ts` / `git-changes-model.test.ts`: the option in the read,
   staged rows kept, bulk targets, live toggling and stale-option responses;
   `file-viewer/diff-whitespace.test.ts` (CRLF/CR/BOM, empty sides, linear time on
