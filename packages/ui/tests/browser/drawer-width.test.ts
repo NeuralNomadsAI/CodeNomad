@@ -102,7 +102,7 @@ test("touch tablets remember drawers per orientation; portrait opens closed", as
     assert.deepEqual(await pinned(page), { left: false, right: false, floating: 0 }, "portrait leaves the conversation uncovered")
 
     // Opening the sessions drawer in portrait is remembered for portrait only.
-    await page.locator(".session-header-drawer-toggle--left button").click()
+    await page.locator(".shell-panel-toggle--left button").click()
     await waitForPinned(page, true, false)
     await page.setViewportSize({ width: 1366, height: 1024 })
     await waitForPinned(page, true, true)
@@ -125,7 +125,7 @@ test("a drawer closed by rotation hands keyboard focus to its toggle", async () 
       await page.locator(".session-sidebar-container button").first().focus()
       await page.setViewportSize({ width: height, height: width })
       await waitForPinned(page, false, false)
-      await page.waitForFunction(() => document.activeElement?.closest(".session-header-drawer-toggle--left") !== null)
+      await page.waitForFunction(() => document.activeElement?.closest(".shell-panel-toggle--left") !== null)
     } finally { await context.close() }
   }
 })

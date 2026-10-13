@@ -8,7 +8,7 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
-import { ArrowRight, Settings2 } from "lucide-solid"
+import { Settings2 } from "lucide-solid"
 import TabScroll from "../../../tab-scroll"
 
 import type { Instance } from "../../../../types/instance"
@@ -95,6 +95,8 @@ interface RightPanelProps {
   onCloseRightDrawer: () => void
   promptInputApi: Accessor<PromptInputApi | null>
 
+  /** Target of the shell's fixed panel toggle. */
+  panelId?: string
   setContentEl: (el: HTMLElement | null) => void
 }
 
@@ -273,19 +275,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   return (
-    <div class="relative flex flex-col h-full" ref={props.setContentEl}>
+    <div id={props.panelId} class="relative flex flex-col h-full" ref={props.setContentEl}>
       <div class="panel-header right-panel-tab-bar">
         <div class="tab-container">
           <div class="panel-header-actions tab-strip-shortcuts">
-            <IconButton
-              size="small"
-              color="inherit"
-              aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
-              title={props.t("instanceShell.rightDrawer.toggle.close")}
-              onClick={props.onCloseRightDrawer}
-            >
-              <ArrowRight size={20} aria-hidden="true" />
-            </IconButton>
             <IconButton
               ref={customizationTriggerRef}
               class="icon-toggle"

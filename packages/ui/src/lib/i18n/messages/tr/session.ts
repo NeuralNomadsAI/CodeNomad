@@ -61,6 +61,8 @@ export const sessionMessages = {
   "sessionList.rename.error": "Session yeniden adlandırılamıyor",
   "sessionList.filter.placeholder": "Session ara…",
   "sessionList.filter.ariaLabel": "Session ara",
+  "sessionList.history.back": "Önceki session",
+  "sessionList.history.forward": "Sonraki session",
   "sessionList.sort.ariaLabel": "Session'ları sırala",
   "sessionList.sort.activity": "Etkinlik",
   "sessionList.sort.name": "Ad",

@@ -3,9 +3,8 @@ import type { SessionThread } from "../../../stores/session-state"
 import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { PlusSquare, Search } from "lucide-solid"
+import { ArrowLeft, ArrowRight, Info, PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
-import { ArrowLeft, Info } from "lucide-solid"
 
 import SessionList from "../../session-list"
 import KeyboardHint from "../../keyboard-hint"
@@ -28,13 +27,19 @@ interface SessionSidebarProps {
 
   onSelectSession: (sessionId: string) => void
   onNewSession: () => Promise<void> | void
-  onCloseLeftDrawer: () => void
+  history: {
+    canGoBack: Accessor<boolean>
+    canGoForward: Accessor<boolean>
+    goBack: () => void
+    goForward: () => void
+  }
 
+  panelId: string
   setContentEl: (el: HTMLElement | null) => void
 }
 
 const SessionSidebar: Component<SessionSidebarProps> = (props) => (
-    <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
+    <div id={props.panelId} class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
       <div class="panel-header session-sidebar-header border-b border-base">
         <div class="flex items-center justify-between gap-2">
           <span class="session-sidebar-title">
@@ -78,13 +83,26 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               <Info size={20} aria-hidden="true" />
             </IconButton>
             <IconButton
+              class="session-history-button"
               size="small"
               color="inherit"
-              aria-label={props.t("instanceShell.leftDrawer.toggle.close")}
-              title={props.t("instanceShell.leftDrawer.toggle.close")}
-              onClick={props.onCloseLeftDrawer}
+              aria-label={props.t("sessionList.history.back")}
+              title={props.t("sessionList.history.back")}
+              disabled={!props.history.canGoBack()}
+              onClick={props.history.goBack}
             >
               <ArrowLeft size={20} aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              class="session-history-button"
+              size="small"
+              color="inherit"
+              aria-label={props.t("sessionList.history.forward")}
+              title={props.t("sessionList.history.forward")}
+              disabled={!props.history.canGoForward()}
+              onClick={props.history.goForward}
+            >
+              <ArrowRight size={20} aria-hidden="true" />
             </IconButton>
           </div>
         </div>

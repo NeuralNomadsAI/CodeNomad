@@ -65,6 +65,8 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "सत्रहरू खोज्नुहोस्...",
   "sessionList.filter.ariaLabel": "सत्रहरू खोज्नुहोस्",
+  "sessionList.history.back": "अघिल्लो सत्र",
+  "sessionList.history.forward": "अर्को सत्र",
   "sessionList.sort.ariaLabel": "सत्रहरू क्रमबद्ध गर्नुहोस्",
   "sessionList.sort.activity": "गतिविधि",
   "sessionList.sort.name": "नाम",

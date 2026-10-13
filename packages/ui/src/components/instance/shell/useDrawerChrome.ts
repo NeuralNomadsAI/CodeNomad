@@ -1,5 +1,4 @@
 import {
-  createComponent,
   createEffect,
   createMemo,
   createSignal,
@@ -7,10 +6,8 @@ import {
   onCleanup,
   onMount,
   type Accessor,
-  type JSX,
   type Setter,
 } from "solid-js"
-import { ArrowRight, ArrowLeft } from "lucide-solid"
 
 import type { TranslateParams } from "../../../lib/i18n"
 
@@ -49,12 +46,10 @@ export interface DrawerChromeApi {
   closeLeft: () => void
   closeRight: () => void
   closeFloatingDrawersIfAny: () => boolean
-  leftAppBarButtonLabel: Accessor<string>
-  rightAppBarButtonLabel: Accessor<string>
-  leftAppBarButtonIcon: Accessor<JSX.Element>
-  rightAppBarButtonIcon: Accessor<JSX.Element>
-  handleLeftAppBarButtonClick: () => void
-  handleRightAppBarButtonClick: () => void
+  leftToggleLabel: Accessor<string>
+  rightToggleLabel: Accessor<string>
+  toggleLeft: () => void
+  toggleRight: () => void
 }
 
 export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeApi {
@@ -115,35 +110,11 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     return rightOpen() ? "floating-open" : "floating-closed"
   })
 
-  const leftAppBarButtonLabel = () => {
-    return options.t("instanceShell.leftDrawer.toggle.open")
-  }
+  const leftToggleLabel = () =>
+    options.t(leftOpen() ? "instanceShell.leftDrawer.toggle.close" : "instanceShell.leftDrawer.toggle.open")
 
-  const rightAppBarButtonLabel = () => {
-    return options.t("instanceShell.rightDrawer.toggle.open")
-  }
-
-  const leftAppBarButtonIcon = () => {
-    return createComponent(ArrowRight, { size: 20, "aria-hidden": true })
-  }
-
-  const rightAppBarButtonIcon = () => {
-    return createComponent(ArrowLeft, { size: 20, "aria-hidden": true })
-  }
-
-  const handleLeftAppBarButtonClick = () => {
-    const state = leftDrawerState()
-    if (state !== "floating-closed") return
-    setLeftOpen(true)
-    measureDrawerHost()
-  }
-
-  const handleRightAppBarButtonClick = () => {
-    const state = rightDrawerState()
-    if (state !== "floating-closed") return
-    setRightOpen(true)
-    measureDrawerHost()
-  }
+  const rightToggleLabel = () =>
+    options.t(rightOpen() ? "instanceShell.rightDrawer.toggle.close" : "instanceShell.rightDrawer.toggle.open")
 
   const closeLeft = () => {
     blurIfInside(options.leftDrawerContentEl())
@@ -155,6 +126,21 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     blurIfInside(options.rightDrawerContentEl())
     setRightOpen(false)
     focusTarget(options.rightToggleButtonEl())
+  }
+
+  // Floating drawers cover the whole shell, so opening one replaces the other.
+  const toggleLeft = () => {
+    if (leftOpen()) return closeLeft()
+    if (!rightPinned() && rightOpen()) setRightOpen(false)
+    setLeftOpen(true)
+    measureDrawerHost()
+  }
+
+  const toggleRight = () => {
+    if (rightOpen()) return closeRight()
+    if (!leftPinned() && leftOpen()) setLeftOpen(false)
+    setRightOpen(true)
+    measureDrawerHost()
   }
 
   const closeFloatingDrawersIfAny = () => {
@@ -185,8 +171,8 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
       blurIfInside(content)
       setOpen(false)
       // Closing removed the focused control (the drawer header included): hand
-      // focus to the toggle, which renders only once its drawer is closed.
-      // Effect writes are batched, so resolve the toggle on the next frame.
+      // focus to the fixed toggle. Effect writes are batched, so resolve it on
+      // the next frame.
       if (focused && focused !== document.body && (!focused.isConnected || content?.contains(focused))) {
         requestAnimationFrame(() => toggle()?.focus())
       }
@@ -227,11 +213,9 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     closeLeft,
     closeRight,
     closeFloatingDrawersIfAny,
-    leftAppBarButtonLabel,
-    rightAppBarButtonLabel,
-    leftAppBarButtonIcon,
-    rightAppBarButtonIcon,
-    handleLeftAppBarButtonClick,
-    handleRightAppBarButtonClick,
+    leftToggleLabel,
+    rightToggleLabel,
+    toggleLeft,
+    toggleRight,
   }
 }

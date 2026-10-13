@@ -75,33 +75,17 @@
 }
 
 .session-sidebar-title {
+  /* Narrow sidebars keep every header action; only the label truncates. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
   opacity: 0.6;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-tight);
   text-transform: uppercase;
-}
-
-.session-header-drawer-toggle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  z-index: 2;
-}
-
-.session-header-drawer-toggle--left {
-  inset-inline-start: 0;
-  padding-inline-end: var(--space-xs);
-  border-inline-end: 1px solid var(--border-base);
-}
-
-.session-header-drawer-toggle--right {
-  inset-inline-end: 0;
-  padding-inline-start: var(--space-xs);
-  border-inline-start: 1px solid var(--border-base);
 }
 
 .session-toolbar {
@@ -127,14 +111,6 @@
   transform: translateY(-50%);
   width: auto;
   z-index: 1;
-}
-
-.session-toolbar:has(.session-header-drawer-toggle--left) .session-toolbar-left {
-  padding-inline-start: 44px;
-}
-
-.session-toolbar:has(.session-header-drawer-toggle--right) .session-toolbar-right {
-  padding-inline-end: 44px;
 }
 
 .session-header-active-title {
@@ -177,12 +153,6 @@
 .session-toolbar:has(.session-header-active-title) .session-toolbar-left,
 .session-toolbar:has(.session-header-active-title) .session-toolbar-right {
   top: 27px;
-}
-
-.session-toolbar:has(.session-header-active-title) .session-header-drawer-toggle {
-  top: 12px;
-  bottom: auto;
-  height: 30px;
 }
 
 .session-sidebar-shortcuts {

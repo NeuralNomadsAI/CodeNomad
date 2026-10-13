@@ -5,6 +5,7 @@
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
 @import "./panels/session-toolbar-touch.css";
+@import "./panels/shell-panel-toggles.css";
 @import "./components/session-row-actions.css";
 @import "./components/session-tree.css";
 @import "./components/session-child-activity.css";

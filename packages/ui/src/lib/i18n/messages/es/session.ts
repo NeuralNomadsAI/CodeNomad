@@ -65,6 +65,8 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "Buscar sesiones…",
   "sessionList.filter.ariaLabel": "Buscar sesiones",
+  "sessionList.history.back": "Sesión anterior",
+  "sessionList.history.forward": "Sesión siguiente",
   "sessionList.sort.ariaLabel": "Ordenar sesiones",
   "sessionList.sort.activity": "Actividad",
   "sessionList.sort.name": "Nombre",

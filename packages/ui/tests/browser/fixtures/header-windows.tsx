@@ -108,6 +108,11 @@ bootStage("preferences-after")
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
     setSessionPage(id, [...fixtureSessions.keys()], false, true)
   },
+  removeSession: (sid: string) => {
+    fixtureSessions.delete(sid)
+    setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
+    setSessionPage(id, [...fixtureSessions.keys()], false, true)
+  },
   selectSession: (sid: string | null) => { if (sid === null) clearActiveParentSession(id); else { setActiveParentSession(id, sid); setActiveSession(id, sid) } },
   selectedSession: () => activeSessionId().get(id) ?? null,
   focusRequest: (sid?: string, requestId?: string) => focusInterruption(id, sid, requestId),

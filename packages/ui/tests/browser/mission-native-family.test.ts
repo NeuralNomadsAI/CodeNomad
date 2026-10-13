@@ -346,13 +346,13 @@ test("390x600 RTL touch visual investigation retains exact child/grandchild draf
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
     const openSessions = async () => {
       if (await page.locator('.session-sidebar [data-session-id="ses_B"]:visible').count()) return
-      const toggle = page.locator(".session-header-drawer-toggle--left button:visible")
+      const toggle = page.locator(".shell-panel-toggle--left button:visible")
       if (await toggle.getAttribute("aria-expanded") === "false") await toggle.tap()
     }
     await openSessions(); await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     for (const id of ["child", "grandchild"]) {
       await openSessions(); await select(page, id)
-      await page.locator('.session-sidebar-header-actions:visible button').last().tap()
+      await page.locator(".shell-panel-toggle--left button:visible").tap()
       await page.getByText(`Bounded native history ses_${id} 2`, { exact: true }).waitFor()
       const empty = await captureComposer(page, `rtl-touch-${id}-empty`, `ses_${id}`)
       assert.equal(empty.overlay, null, "production coarse-pointer CSS suppresses keyboard-only help")
@@ -408,9 +408,9 @@ test("native Chromium touch resize preserves the chosen proportion, exact draft 
   const touch = await page.context().newCDPSession(page)
   try {
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
-    await page.locator(".session-header-drawer-toggle--left button:visible").tap()
+    await page.locator(".shell-panel-toggle--left button:visible").tap()
     await expand(page, "A"); await expand(page, "actor"); await select(page, "child")
-    await page.locator('.session-sidebar-header-actions:visible button').last().tap()
+    await page.locator(".shell-panel-toggle--left button:visible").tap()
     await composer(page).fill("Touch resize draft ses_child")
     await captureComposer(page, "rtl-touch-child-before-resize", "ses_child")
     const resize = page.locator(".prompt-resize-handle:visible"), rect = await resize.boundingBox()
@@ -485,14 +485,14 @@ test("390px RTL Attention selects the exact same-active-child permission before 
   const ctx = await setup("attention-same-child-rtl", true), { page, requests } = ctx
   try {
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
-    await page.locator(".session-header-drawer-toggle--left button:visible").tap()
+    await page.locator(".shell-panel-toggle--left button:visible").tap()
     await select(page, "A"); await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     await select(page, "grandchild")
-    await page.locator('.session-sidebar-header-actions:visible button').last().tap()
+    await page.locator(".shell-panel-toggle--left button:visible").tap()
     await page.evaluate(() => window.missionNativeFamily.askPermission())
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
-    await page.locator(".session-header-drawer-toggle--right button:visible").tap()
+    await page.locator(".shell-panel-toggle--right button:visible").tap()
     await pickMission(page, "A")
     const attention = page.locator(".mission-attention-list")
     await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
