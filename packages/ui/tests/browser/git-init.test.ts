@@ -87,3 +87,22 @@ test("an unsupported runtime keeps the empty state and is reported once, without
     await page.getByText("Ce dossier n'est pas un dépôt Git.", { exact: true }).waitFor()
   } finally { await page.close() }
 })
+
+test("shared workspace refusals without a code are localized, never the server's English text", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await openUninitializedChanges(page)
+    await page.evaluate(async () => {
+      const { serverApi } = await import("/src/lib/api-client.ts" as string)
+      const { HttpResponseError } = await import("/src/lib/retryable-file-search.ts" as string)
+      serverApi.initializeWorkspaceGit = async (_id: string, directory: string) => {
+        ;(window as any).fixture.calls.push({ kind: "git-init", path: directory })
+        throw new HttpResponseError("Worktree deletion is in progress", 409, null)
+      }
+    })
+    await page.getByRole("button", { name: "Initialiser Git", exact: true }).click()
+    await page.getByText("Ce dossier est en cours de suppression.", { exact: true }).waitFor()
+    assert.equal(await page.getByText(/Worktree deletion is in progress/).count(), 0)
+    assert.equal((await calls(page, "git-init")).length, 1)
+  } finally { await page.close() }
+})

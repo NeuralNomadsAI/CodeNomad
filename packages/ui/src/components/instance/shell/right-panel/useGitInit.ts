@@ -17,6 +17,15 @@ const ERROR_KEYS: Record<string, string> = {
   git_required: "filesPanel.gitInit.gitRequired",
 }
 
+// Shared workspace refusals carry no code: never show their English server text.
+function errorKey(error: unknown) {
+  if (!(error instanceof HttpResponseError)) return undefined
+  if (error.code && ERROR_KEYS[error.code]) return ERROR_KEYS[error.code]
+  if (error.status === 403 || error.status === 404) return "filesPanel.gitInit.notOwned"
+  if (error.status === 409) return "filesPanel.gitInit.deleting"
+  return undefined
+}
+
 /** Explicit, non-blocking Git initialization of the opened folder. A request is
  * sent once; success and every failure (including uncertain ones) only re-read
  * the authoritative inventory, project and sessions, never resend. */
@@ -52,7 +61,7 @@ export function useGitInit(options: {
       await serverApi.initializeWorkspaceGit(options.instanceId, options.directory())
       if (!disposed) showToastNotification({ message: options.t("filesPanel.gitInit.success"), variant: "success" })
     } catch (error) {
-      const key = error instanceof HttpResponseError && error.code ? ERROR_KEYS[error.code] : undefined
+      const key = errorKey(error)
       if (!disposed) showToastNotification({
         message: key ? options.t(key) : options.t("filesPanel.gitInit.error", { message: error instanceof Error ? error.message : String(error) }),
         variant: "error",
