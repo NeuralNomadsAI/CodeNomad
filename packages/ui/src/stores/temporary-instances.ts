@@ -92,12 +92,12 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
 
 /**
  * Deletes the temporary folder and its conversations. A visible tab first
- * yields to its neighbour (or closes, if it is the last tab) so its
- * conversation views unmount before the server stops the workspace: removing
- * a still-visible workspace's state in the same update as its tab left the
- * whole window unresponsive. A refusal deletes nothing and restores the tab
- * in place. `quiet` is the unprompted empty-tab path: it shows no errors and
- * only succeeds when the server finds no conversation or file.
+ * yields to its neighbour (or closes, if it is the last tab), so it is hidden
+ * like an inactive tab when the server stops the workspace; the stop handler
+ * itself clears the instance only after its tab has unmounted. A refusal
+ * deletes nothing and restores the tab in place. `quiet` is the unprompted
+ * empty-tab path: it shows no errors and only succeeds when the server finds
+ * no conversation or file.
  */
 async function discardTemporaryInstance(instanceId: string, quiet = false): Promise<boolean> {
   const tabId = getInstanceAppTabId(instanceId)
