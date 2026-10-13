@@ -148,11 +148,19 @@
   text-transform: uppercase;
 }
 
-.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]),
-.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):hover {
-  background-color: var(--surface-hover) !important;
+/* Active toggles take a partial accent tint over whatever surface they rest on.
+   The tint leans 20% toward the accent's own contrasting ink (--text-on-accent):
+   light accents on dark palettes darken so the primary-text icon stays legible,
+   and accents as light as their surface (Parchment) still separate.
+   :where keeps the historical specificity for overrides. */
+.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])) {
+  background-color: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 40%, transparent) !important;
   color: var(--text-primary) !important;
   opacity: 1;
+}
+
+.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])):hover {
+  background-color: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 50%, transparent) !important;
 }
 
 .panel-header {
