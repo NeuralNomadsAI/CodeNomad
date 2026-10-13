@@ -45,6 +45,7 @@ async function fixture(scenario: string, host = "tauri", context = "local"): Pro
         if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler }
         if (command === "check_desktop_update") {
           if (scenario === "check-error") throw new Error("unavailable endpoint")
+          if (scenario === "slow-check") await new Promise<void>(resolve => { w.finishCheck = resolve })
           if (scenario === "current-after-check" && w.calls.filter((c: any) => c.command === command).length > 1) return { status: "current" }
           return scenario === "unsigned" ? { status: "unsupported" }
             : scenario === "current" ? { status: "current" } : { status: "available", version: "0.21.0" }
@@ -149,6 +150,34 @@ test("support and preview notifications check the saved feed natively", async ()
       assert.equal(calls.filter((c: any) => c.command === "plugin:opener|open_url").length, 0)
     } finally { await page.close() }
   }
+})
+
+test("an install offer retained in notification history re-checks instead of installing", async () => {
+  const page = await fixture("available")
+  try {
+    for (let check = 1; check <= 2; check++) {
+      await page.getByRole("button", { name: "Check updates" }).click()
+      await page.waitForFunction((count) => (window as any).calls.filter((c: any) => c.command === "check_desktop_update").length === count, check)
+      // The replaced offer may still be animating out.
+      await page.getByRole("button", { name: "Install and restart" }).last().waitFor()
+    }
+    await page.evaluate(() => (window as any).fixture.runHistoryAction("Install and restart"))
+    await page.waitForFunction(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update").length === 3)
+    assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_desktop_update").length), 0)
+  } finally { await page.close() }
+})
+
+test("a document that is only checking leaves another window's install failure alone", async () => {
+  const page = await fixture("slow-check")
+  try {
+    await page.getByRole("button", { name: "Check updates" }).click()
+    await page.waitForFunction(() => typeof (window as any).finishCheck === "function")
+    await page.evaluate(() => (window as any).emitFailure())
+    await page.evaluate(() => (window as any).finishCheck())
+    await page.getByRole("button", { name: "Install and restart" }).waitFor()
+    assert.equal(await page.getByText(/The update could not be completed/).count(), 0)
+    assert.equal(await page.evaluate(() => (window as any).failurePending), true)
+  } finally { await page.close() }
 })
 
 test("a failure recorded while windows reloaded is reported once after the reload", async () => {

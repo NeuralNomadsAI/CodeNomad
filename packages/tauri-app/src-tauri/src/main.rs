@@ -2480,12 +2480,18 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
 /// Delivers a menu action to the focused local window only. Untargeted JS
 /// listeners receive every event, so renderers listen on their own webview.
+/// The loading document has no menu listener, so it receives nothing.
 fn emit_menu_action(app_handle: &AppHandle, action: &str) -> bool {
     local_windows::focused_local_window(app_handle).is_some_and(|window| {
-        app_handle
-            .emit_to(EventTarget::webview(window.label()), "menu:action", action)
-            .is_ok()
+        !window.url().is_ok_and(|url| is_loading_document(&url))
+            && app_handle
+                .emit_to(EventTarget::webview(window.label()), "menu:action", action)
+                .is_ok()
     })
+}
+
+fn is_loading_document(url: &url::Url) -> bool {
+    url.path() == "/loading.html"
 }
 
 fn open_releases_page(app_handle: &AppHandle) {
@@ -2558,6 +2564,14 @@ mod menu_tests {
         assert_eq!(titlebar_menu_id("file"), Some("menu-file"));
         assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
         assert_eq!(titlebar_menu_id("preferences"), None);
+    }
+
+    #[test]
+    fn menu_actions_skip_the_loading_document_on_every_platform() {
+        for loading in ["tauri://localhost/loading.html", "https://tauri.localhost/loading.html"] {
+            assert!(super::is_loading_document(&Url::parse(loading).unwrap()));
+        }
+        assert!(!super::is_loading_document(&Url::parse("http://127.0.0.1:9898/").unwrap()));
     }
 
     #[test]

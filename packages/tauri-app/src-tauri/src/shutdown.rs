@@ -658,15 +658,19 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             // can restore the windows. A newer quit still wins recovery admission.
             let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
             emit_flush_cancellations(&app, cancellations);
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Some(Err(recovery)) = with_navigation_authority(&app, || {
-                    state.manager.start(app.clone(), crate::is_dev_mode())
-                }) {
-                    eprintln!("[tauri] backend recovery after failed update: {recovery}");
+            let recovery = app.try_state::<AppState>().and_then(|state| {
+                with_navigation_authority(&app, || state.manager.start(app.clone(), crate::is_dev_mode()))
+            });
+            match recovery {
+                // Recovery reloads every window; the new documents report it.
+                Some(Ok(())) => crate::desktop_updater::record_failure(),
+                // Without a reload, the live document that started the update reports it.
+                Some(Err(error)) => {
+                    eprintln!("[tauri] backend recovery after failed update: {error}");
+                    crate::desktop_updater::report_failure(&app);
                 }
+                None => crate::desktop_updater::report_failure(&app),
             }
-            // Recovery reloads every window; the new documents report it.
-            crate::desktop_updater::record_failure();
             return;
         }
         client_state::release(&app);

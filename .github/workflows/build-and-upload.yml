@@ -452,10 +452,11 @@ jobs:
       - name: Build macOS bundle (Tauri)
         working-directory: packages/tauri-app
         env:
-          # Only the bundler signs; dependency installs never see the private key.
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (macOS)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -547,10 +548,11 @@ jobs:
       - name: Build macOS bundle (Tauri, arm64)
         working-directory: packages/tauri-app
         env:
-          # Only the bundler signs; dependency installs never see the private key.
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (macOS arm64)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -644,10 +646,11 @@ jobs:
         shell: bash
         working-directory: packages/tauri-app
         env:
-          # Only the bundler signs; dependency installs never see the private key.
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (Windows)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -757,13 +760,14 @@ jobs:
       - name: Build Debian package and AppImage (Tauri)
         working-directory: packages/tauri-app
         env:
-          # Only the bundler signs; dependency installs never see the private key.
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
           # Run the bundling tools in extraction mode without requiring FUSE.
           # --verbose retains linuxdeploy diagnostics if packaging fails.
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: npm exec -- tauri build --bundles deb,appimage --verbose
+        run: npm exec -- tauri build --bundles deb,appimage --verbose --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package and verify Tauri AppImage
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}

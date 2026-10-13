@@ -16,7 +16,7 @@ derived from the installed build label), implemented natively in
 
 | Feed | Offered release |
 | --- | --- |
-| `stable` | Newest final release with a `latest.json`, only when its version is higher |
+| `stable` | GitHub's latest final release (`/releases/latest`, never displaced by prereleases) when it has a `latest.json` and a higher version |
 | `preview` | Newest publication of any kind (dev prerelease or release) with a `latest.json`, newer by publication than the installed release |
 
 Preview labels reuse their base version, so SemVer alone can rank a newer
@@ -65,7 +65,13 @@ launch must not release client-state persistence ownership. On an installation
 error, the application restores its owned backend without replaying installation.
 That recovery reloads every window, so the failure is recorded natively and the
 first reloaded document takes and reports it. Failures without a reload (flush
-timeout, cleanup failure) are reported by the document that started the update.
+timeout, cleanup failure, refused backend recovery) are reported by the document
+whose install was accepted; another document merely checking stays silent.
+Notification history retains install actions, so an offer from an earlier check
+starts a fresh check instead of installing.
+
+The loading document has no menu listener: Get Updates opens the release page
+while the focused local window is loading or shows a backend error.
 See `packages/tauri-app/vendor/README.md` for provenance.
 
 ## Build and publication
@@ -85,7 +91,10 @@ platform jobs:
 
 - `TAURI_UPDATER_PUBKEY` (job environment; public)
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (only the
-  `tauri build` step, never dependency installation or upload steps)
+  `tauri build` step, never dependency installation or upload steps). Prebuild
+  runs earlier without them; `src-tauri/tauri.prebuilt.conf.json` replaces the
+  `beforeBuildCommand` hook so JavaScript builds do not rerun with the key.
+  Cargo build scripts inside `tauri build` still run in that environment.
 
 PR builds receive none of these secrets. Never embed a test public key in a
 production release.

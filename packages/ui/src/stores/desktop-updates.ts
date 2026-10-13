@@ -14,6 +14,10 @@ import {
 const releasesUrl = "https://github.com/NeuralNomadsAI/CodeNomad/releases"
 const log = getLogger("actions")
 let busy = false
+/** Only the document whose install was accepted reports live failures. */
+let installing = false
+/** Toast history retains actions; an older offer re-checks instead of installing. */
+let offer = 0
 let notice: ToastHandle | undefined
 let feed: UpdateFeed | undefined
 
@@ -27,6 +31,7 @@ function showProgress(message: string) {
 
 function failed(error?: unknown) {
   busy = false
+  installing = false
   notice?.dismiss()
   if (error) log.error("Desktop update failed", error)
   notice = showToastNotification({
@@ -38,7 +43,10 @@ function failed(error?: unknown) {
 /** One document reports each native failure, including after a reload. */
 async function claimFailure() {
   try {
-    if (await takeDesktopUpdateFailure()) failed()
+    if (!await takeDesktopUpdateFailure()) return
+    // A reloaded document has not read the feed that selects the release page.
+    feed ??= await readFeed()
+    failed()
   } catch (error) { log.error("Unable to read the desktop update status", error) }
 }
 
@@ -47,8 +55,9 @@ export function observeDesktopUpdates(): () => void {
   let unlisten: (() => void) | undefined
   void listenForDesktopUpdateFailure(() => {
     // Only the document that started the update reports it here.
-    if (!busy) return
+    if (!installing) return
     busy = false
+    installing = false
     notice?.dismiss()
     notice = undefined
     void claimFailure()
@@ -61,9 +70,16 @@ export function observeDesktopUpdates(): () => void {
   return () => { disposed = true; unlisten?.() }
 }
 
-async function install(version: string) {
+async function install(version: string, checked: number) {
   if (busy) return
+  if (checked !== offer) {
+    // A retained offer from an earlier check must not consume the current one.
+    await requestDesktopUpdate()
+    return
+  }
+  offer++
   busy = true
+  installing = true
   showProgress(tGlobal("releases.desktop.downloading"))
   try {
     await installDesktopUpdate(version)
@@ -87,6 +103,7 @@ export async function requestDesktopUpdate(): Promise<void> {
   if (busy) return
   busy = true
   showProgress(tGlobal("releases.desktop.checking"))
+  const checked = ++offer
   try {
     feed = await readFeed()
     const result = await checkDesktopUpdate(feed)
@@ -103,7 +120,7 @@ export async function requestDesktopUpdate(): Promise<void> {
         variant: "info", duration: Number.POSITIVE_INFINITY,
         action: {
           label: tGlobal("releases.desktop.install"), href: releasePage(),
-          onClick: () => install(result.version),
+          onClick: () => install(result.version, checked),
         },
       })
     }

@@ -1,7 +1,8 @@
 //! Release selection for the two update feeds. It follows the server's
 //! notification rules (`packages/server/src/releases/dev-release-monitor.ts`):
-//! stable offers newer final releases; preview offers the newest publication of
-//! any kind. Only releases carrying their signed `latest.json` are installable.
+//! stable offers GitHub's latest final release when newer; preview offers the
+//! newest publication of any kind. Only releases carrying their signed
+//! `latest.json` are installable.
 use reqwest::{header::ACCEPT, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::time::Duration;
@@ -157,9 +158,16 @@ pub(crate) async fn find_candidate(
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| error.to_string())?;
-    let mut list = api_url(&["releases"]);
-    list.set_query(Some("per_page=30"));
-    let releases: Vec<GithubRelease> = get(&client, list).await?.unwrap_or_default();
+    let releases: Vec<GithubRelease> = match feed {
+        // Prereleases can push the stable release beyond any listed page.
+        UpdateFeed::Stable => get(&client, api_url(&["releases", "latest"])).await?.into_iter().collect(),
+        // The newest publication of any kind leads the newest-first list.
+        UpdateFeed::Preview => {
+            let mut list = api_url(&["releases"]);
+            list.set_query(Some("per_page=30"));
+            get(&client, list).await?.unwrap_or_default()
+        }
+    };
     let newest = newest(&releases, feed);
     let listed = releases.iter().find(|release| release.is_installed(current_version));
     // The installed release may be older than the fetched page.
@@ -267,6 +275,10 @@ mod tests {
         assert_eq!(
             candidate.manifest_url().as_str(),
             "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1-dev-20261013-031eb843/latest.json",
+        );
+        assert_eq!(
+            api_url(&["releases", "latest"]).as_str(),
+            "https://api.github.com/repos/NeuralNomadsAI/CodeNomad/releases/latest",
         );
         assert_eq!(
             api_url(&["releases", "tags", "v1.0.0+a/b"]).as_str(),
