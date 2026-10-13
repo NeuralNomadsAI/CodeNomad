@@ -129,7 +129,7 @@ test("a failed launch keeps the choice, reports the error and retries next time"
   assert.equal(recovered.status().state, "connected")
 })
 
-// Like OpenTunnel, the fake closes its connection whenever the start signal aborts.
+// Like OpenTunnel, the fake closes its connection whenever its signal aborts.
 function tunnelBoundTo(signal: AbortSignal | undefined): RemoteTunnel {
   const closed = new Promise<string | undefined>((resolve) => signal?.addEventListener("abort", () => resolve(undefined), { once: true }))
   return {
@@ -141,32 +141,18 @@ function tunnelBoundTo(signal: AbortSignal | undefined): RemoteTunnel {
   }
 }
 
-function deadlineManager(t: test.TestContext, openTunnel: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-deadline-"))
+test("a connected tunnel is not tied to any start deadline", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-lifetime-"))
+  let opened: OpenRemoteTunnelOptions | undefined
   const manager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json")),
-    router: () => null, logger, openTunnel, startTimeoutMs: 20,
+    router: () => null, logger,
+    openTunnel: async (options) => { opened = options; return tunnelBoundTo(options.signal) },
   })
   t.after(async () => { await manager.shutdown(); fs.rmSync(directory, { recursive: true, force: true }) })
-  return manager
-}
-
-test("the start deadline never closes a tunnel that already connected", async (t) => {
-  let signal: AbortSignal | undefined
-  const manager = deadlineManager(t, async (options) => {
-    signal = options.signal
-    return tunnelBoundTo(options.signal)
-  })
   await manager.start()
-  await new Promise((resolve) => setTimeout(resolve, 80))
-  assert.equal(signal?.aborted, false)
+  // OpenTunnel ignores a signal while connecting and closes the live tunnel when it aborts.
+  assert.equal(opened?.signal, undefined, "no signal can later close the connected tunnel")
+  await new Promise((resolve) => setTimeout(resolve, 20))
   assert.deepEqual({ enabled: manager.status().enabled, state: manager.status().state }, { enabled: true, state: "connected" })
-})
-
-test("a start that does not connect before its deadline is abandoned with an error", async (t) => {
-  const manager = deadlineManager(t, (options) => new Promise<RemoteTunnel>((_resolve, reject) => {
-    options.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
-  }))
-  await assert.rejects(manager.start(), /start timed out/)
-  assert.deepEqual({ enabled: manager.status().enabled, state: manager.status().state }, { enabled: false, state: "error" })
 })

@@ -29,7 +29,10 @@ export interface OpenRemoteTunnelOptions {
   api?: string
   /** Overrides `XDG_DATA_HOME` for the identity store (tests). */
   dataHome?: string
-  /** Aborting closes the tunnel at any time, also after it connected: pass a start-only deadline that is never aborted afterwards. */
+  /**
+   * Not a start deadline: OpenTunnel ignores it while connecting, then closes
+   * the live connection whenever it aborts. Pass only to end the tunnel itself.
+   */
   signal?: AbortSignal
 }
 

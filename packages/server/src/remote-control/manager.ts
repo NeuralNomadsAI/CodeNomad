@@ -12,9 +12,6 @@ import type { RemoteGateDeps } from "./gate"
 import { RemoteIngress } from "./ingress"
 import type { RemoteControlOwnerLease } from "./owner-lease"
 
-// First use provisions the device tunnel and its certificate, which can take a minute.
-const START_TIMEOUT_MS = 5 * 60_000
-
 type OpenTunnel = (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
 
 interface ManagerOptions {
@@ -27,8 +24,6 @@ interface ManagerOptions {
   openTunnel?: OpenTunnel
   /** Restricts resuming at launch to one backend per config directory. */
   lease?: RemoteControlOwnerLease
-  /** Bounds tunnel establishment only (tests). */
-  startTimeoutMs?: number
 }
 
 export class RemoteControlManager {
@@ -164,20 +159,14 @@ export class RemoteControlManager {
     const openTunnel = this.options.openTunnel ?? (async (options: OpenRemoteTunnelOptions) => (await import("./tunnel-runtime")).openRemoteTunnel(options))
     try {
       const target = await this.ingress.start()
-      // OpenTunnel closes a connection whenever its signal aborts, even after it
-      // connected. The deadline bounds the start only, never the live tunnel.
-      const deadline = new AbortController()
-      const timer = setTimeout(() => deadline.abort(new Error("Remote Control start timed out")), this.options.startTimeoutMs ?? START_TIMEOUT_MS)
-      timer.unref?.()
-      let tunnel: RemoteTunnel
-      try {
-        tunnel = await openTunnel({
-          route: this.options.registry.route(),
-          target,
-          ...(this.options.tunnelApi ? { api: this.options.tunnelApi } : {}),
-          signal: deadline.signal,
-        })
-      } finally { clearTimeout(timer) }
+      // No signal: OpenTunnel ignores it while connecting and closes the live
+      // connection whenever it aborts afterwards, so a deadline would only end
+      // a connected tunnel.
+      const tunnel = await openTunnel({
+        route: this.options.registry.route(),
+        target,
+        ...(this.options.tunnelApi ? { api: this.options.tunnelApi } : {}),
+      })
       if (generation !== this.generation) {
         await tunnel.close()
         throw new Error("Remote Control was stopped")
