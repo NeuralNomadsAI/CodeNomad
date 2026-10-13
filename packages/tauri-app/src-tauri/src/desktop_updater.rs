@@ -5,8 +5,10 @@ use std::sync::{atomic::{AtomicBool, Ordering}, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
+use crate::update_releases::UpdateFeed;
 
 static BUSY: AtomicBool = AtomicBool::new(false);
+static FAILURE_PENDING: AtomicBool = AtomicBool::new(false);
 
 struct UpdateLease;
 impl UpdateLease {
@@ -77,14 +79,14 @@ fn configured(app: &AppHandle) -> bool {
     crate::updater_support::current_platform_support()
         && app.config().plugins.0.get("updater").is_some_and(|config| {
             config.get("pubkey").and_then(|v| v.as_str()).is_some_and(|key| !key.trim().is_empty())
-                && config.get("endpoints").and_then(|v| v.as_array()).is_some_and(|urls| !urls.is_empty())
         })
 }
 
 #[tauri::command]
-pub(crate) async fn check_stable_update(
+pub(crate) async fn check_desktop_update(
     webview: tauri::Webview,
     state: tauri::State<'_, crate::AppState>,
+    feed: Option<UpdateFeed>,
 ) -> Result<CheckResult, String> {
     crate::require_preferences_or_local_app_webview(&webview, &state)?;
     let _lease = UpdateLease::acquire()?;
@@ -92,8 +94,20 @@ pub(crate) async fn check_stable_update(
     let updates = app.state::<UpdateState>();
     updates.checked.lock().map_err(|e| e.to_string())?.take();
     if !configured(app) { return Ok(CheckResult::Unsupported); }
+    let current = app.package_info().version.to_string();
+    let feed = UpdateFeed::resolve(feed, &current);
+    let Some(candidate) = crate::update_releases::find_candidate(feed, &current).await? else {
+        return Ok(CheckResult::Current);
+    };
+    // The selected release decides; its manifest must announce exactly that version.
+    let expected = candidate.version.clone();
+    let by_publication = candidate.by_publication;
     let exit_app = app.clone();
     let update = app.updater_builder()
+        .endpoints(vec![candidate.manifest_url()]).map_err(|e| e.to_string())?
+        .version_comparator(move |current, release| {
+            release.version.to_string() == expected && (by_publication || release.version > current)
+        })
         .timeout(Duration::from_secs(30))
         // Windows installers terminate the process directly. The backend and
         // renderer flush already completed before PreparedUpdate::install.
@@ -112,7 +126,7 @@ pub(crate) async fn check_stable_update(
 }
 
 #[tauri::command]
-pub(crate) async fn install_stable_update(
+pub(crate) async fn install_desktop_update(
     webview: tauri::Webview,
     state: tauri::State<'_, crate::AppState>,
     version: String,
@@ -137,8 +151,25 @@ pub(crate) async fn install_stable_update(
     ))
 }
 
+/// Failures outlive the documents that started the update: a failed installer
+/// restarts the backend, which reloads every window before it can be shown.
+pub(crate) fn record_failure() {
+    FAILURE_PENDING.store(true, Ordering::Release);
+}
+
+/// Notify live documents; the one that started the update takes the failure.
 pub(crate) fn report_failure(app: &AppHandle) {
+    record_failure();
     let _ = app.emit("desktop-update:failed", ());
+}
+
+#[tauri::command]
+pub(crate) fn take_desktop_update_failure(
+    webview: tauri::Webview,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<bool, String> {
+    crate::require_preferences_or_local_app_webview(&webview, &state)?;
+    Ok(FAILURE_PENDING.swap(false, Ordering::AcqRel))
 }
 
 #[cfg(test)]

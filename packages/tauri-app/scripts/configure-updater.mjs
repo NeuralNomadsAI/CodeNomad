@@ -7,9 +7,11 @@
 // environment, so an unsigned build ships without an updater instead of
 // shipping an updater that cannot verify anything.
 //
-// Recognised environment inputs:
+// Recognised environment input:
 //   TAURI_UPDATER_PUBKEY  base64 minisign public key; empty or unset = no updater
-//   TAURI_UPDATER_ENDPOINT  endpoint URL; defaults to the GitHub latest.json
+//
+// The application selects the release manifest for its update feed at check
+// time (src-tauri/src/update_releases.rs), so no endpoint is configured here.
 
 import { readFileSync, writeFileSync } from "node:fs"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -18,7 +20,6 @@ import { join, resolve } from "node:path"
 const scriptsDirectory = fileURLToPath(new URL(".", import.meta.url))
 // The Tauri project lives in src-tauri, not at the package root.
 export const configPath = join(scriptsDirectory, "..", "src-tauri", "tauri.conf.json")
-const DEFAULT_ENDPOINT = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest/download/latest.json"
 
 export function resolveUpdaterConfig(environment = process.env) {
   const publicKey = (environment.TAURI_UPDATER_PUBKEY ?? "").trim()
@@ -28,12 +29,8 @@ export function resolveUpdaterConfig(environment = process.env) {
   if (!decoded[0]?.startsWith("untrusted comment:") || keyBytes.length !== 42 || keyBytes.subarray(0, 2).toString() !== "Ed") {
     throw new Error("TAURI_UPDATER_PUBKEY must contain a base64-encoded minisign public key")
   }
-  const endpoint = (environment.TAURI_UPDATER_ENDPOINT ?? "").trim() || DEFAULT_ENDPOINT
-  if (new URL(endpoint).protocol !== "https:") throw new Error("Updater endpoint must use HTTPS")
-  return {
-    pubkey: publicKey,
-    endpoints: [endpoint],
-  }
+  // The unsigned manifest cannot pair a version with an older signed artifact.
+  return { pubkey: publicKey, requireSignedVersion: true }
 }
 
 export function applyUpdaterConfig(config, updater) {
@@ -65,7 +62,7 @@ export function configureUpdater(options = {}) {
   const updater = resolveUpdaterConfig(environment)
   writeFileSync(targetPath, `${JSON.stringify(applyUpdaterConfig(config, updater), null, 2)}\n`, "utf8")
   if (updater) {
-    console.log(`[updater-config] updater enabled against ${updater.endpoints[0]}`)
+    console.log("[updater-config] signed updater enabled")
   } else {
     console.log("[updater-config] no signing public key in the environment; updater disabled for this build")
   }

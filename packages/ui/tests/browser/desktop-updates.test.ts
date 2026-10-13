@@ -33,6 +33,7 @@ async function fixture(scenario: string, host = "tauri", context = "local"): Pro
     w.__CODENOMAD_RUNTIME_HOST__ = host
     w.__CODENOMAD_WINDOW_CONTEXT__ = context
     w.calls = []
+    w.failurePending = scenario === "reloaded-failure"
     const callbacks = new Map<number, Function>()
     const listeners = new Map<string, number>()
     let sequence = 0
@@ -42,20 +43,28 @@ async function fixture(scenario: string, host = "tauri", context = "local"): Pro
       invoke: async (command: string, args: any) => {
         w.calls.push({ command, args })
         if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler }
-        if (command === "check_stable_update") {
+        if (command === "check_desktop_update") {
           if (scenario === "check-error") throw new Error("unavailable endpoint")
           if (scenario === "current-after-check" && w.calls.filter((c: any) => c.command === command).length > 1) return { status: "current" }
           return scenario === "unsigned" ? { status: "unsupported" }
             : scenario === "current" ? { status: "current" } : { status: "available", version: "0.21.0" }
         }
-        if (command === "install_stable_update") {
+        if (command === "install_desktop_update") {
           if (scenario === "signature-error") throw new Error("invalid signature")
           await new Promise<void>(resolve => { w.finishDownload = resolve })
+        }
+        if (command === "take_desktop_update_failure") {
+          const pending = w.failurePending
+          w.failurePending = false
+          return pending
         }
       },
     }
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (event: string) => listeners.delete(event) }
-    w.emitFailure = () => callbacks.get(listeners.get("desktop-update:failed")!)?.({ payload: null })
+    w.emitFailure = () => {
+      w.failurePending = true
+      callbacks.get(listeners.get("desktop-update:failed")!)?.({ payload: null })
+    }
     w.open = (url: string) => { w.calls.push({ command: "web-open", args: { url } }); return {} }
   }, { scenario, host, context })
   await page.goto(url)
@@ -70,8 +79,8 @@ test("unsigned Tauri, Electron and remote windows use downloads without installi
       await page.getByRole("button", { name: "Check updates" }).click()
       await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url" || c.command === "web-open"))
       const calls = await page.evaluate(() => (window as any).calls)
-      assert.equal(calls.filter((c: any) => c.command === "install_stable_update").length, 0)
-      assert.equal(calls.filter((c: any) => c.command === "check_stable_update").length, host === "tauri" && context === "local" ? 1 : 0)
+      assert.equal(calls.filter((c: any) => c.command === "install_desktop_update").length, 0)
+      assert.equal(calls.filter((c: any) => c.command === "check_desktop_update").length, host === "tauri" && context === "local" ? 1 : 0)
     } finally { await page.close() }
   }
 })
@@ -81,7 +90,7 @@ test("installation needs an explicit action; duplicate gestures and shutdown fai
   try {
     await page.getByRole("button", { name: "Check updates" }).click()
     await page.getByText(/CodeNomad 0.21.0 is available/).waitFor()
-    assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_stable_update").length), 0)
+    assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_desktop_update").length), 0)
     await page.getByRole("button", { name: "Install and restart" }).click()
     await page.getByText("Downloading and verifying the update…").waitFor()
     await page.getByRole("button", { name: "Install and restart" }).waitFor({ state: "hidden" })
@@ -91,8 +100,8 @@ test("installation needs an explicit action; duplicate gestures and shutdown fai
     await page.evaluate(() => (window as any).emitFailure())
     await page.getByText(/The update could not be completed/).waitFor()
     const calls = await page.evaluate(() => (window as any).calls)
-    assert.deepEqual(calls.filter((c: any) => c.command === "install_stable_update").map((c: any) => c.args), [{ version: "0.21.0" }])
-    assert.equal(calls.filter((c: any) => c.command === "check_stable_update").length, 1)
+    assert.deepEqual(calls.filter((c: any) => c.command === "install_desktop_update").map((c: any) => c.args), [{ version: "0.21.0" }])
+    assert.equal(calls.filter((c: any) => c.command === "check_desktop_update").length, 1)
   } finally { await page.close() }
 })
 
@@ -104,7 +113,7 @@ test("check and signature failures stay recoverable; current versions never offe
       if (scenario === "signature-error") await page.getByRole("button", { name: "Install and restart" }).click()
       await page.getByText(scenario === "current" ? "CodeNomad is up to date." : /The update could not be completed/).waitFor()
       await page.getByRole("button", { name: "Install and restart" }).waitFor({ state: "hidden" })
-      assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_stable_update").length), scenario === "signature-error" ? 1 : 0)
+      assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_desktop_update").length), scenario === "signature-error" ? 1 : 0)
     } finally { await page.close() }
   }
 })
@@ -117,29 +126,40 @@ test("a fresh check removes the previous install offer when no update remains", 
     await page.getByRole("button", { name: "Check updates" }).click()
     await page.getByText("CodeNomad is up to date.").waitFor()
     await page.getByRole("button", { name: "Install and restart" }).waitFor({ state: "hidden" })
-    assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_stable_update").length), 0)
+    assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_desktop_update").length), 0)
   } finally { await page.close() }
 })
 
-test("support notifications check native stable updates only on an explicit stable feed", async () => {
+test("support and preview notifications check the saved feed natively", async () => {
   for (const feed of ["stable", "preview", undefined]) {
     const page = await fixture("available")
     try {
       await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
         updateFeed: feed,
         support: { supported: false, latestServerVersion: "0.21.0", latestServerUrl: "https://example.com/release" },
+        update: { version: "0.21.0-dev-20261020-aaaaaaaa", url: "https://example.com/preview" },
       }) }))
       await page.evaluate(() => (window as any).fixture.releases())
-      const action = page.getByRole("button", { name: "Get update" })
-      await action.click()
-      if (feed === "stable") {
-        await page.getByRole("button", { name: "Install and restart" }).waitFor()
-      } else {
-        await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url" && c.args.url === "https://example.com/release"))
-      }
+      await page.getByRole("button", { name: "Get update" }).first().click()
+      await page.getByRole("button", { name: "Install and restart" }).waitFor()
       const calls = await page.evaluate(() => (window as any).calls)
-      assert.equal(calls.filter((c: any) => c.command === "check_stable_update").length, feed === "stable" ? 1 : 0)
-      assert.equal(calls.filter((c: any) => c.command === "install_stable_update").length, 0)
+      // An unknown feed lets the native host derive it from the installed build.
+      assert.deepEqual(calls.filter((c: any) => c.command === "check_desktop_update").map((c: any) => c.args.feed), [feed])
+      assert.equal(calls.filter((c: any) => c.command === "install_desktop_update").length, 0)
+      assert.equal(calls.filter((c: any) => c.command === "plugin:opener|open_url").length, 0)
     } finally { await page.close() }
   }
+})
+
+test("a failure recorded while windows reloaded is reported once after the reload", async () => {
+  const page = await fixture("reloaded-failure")
+  try {
+    await page.getByText(/The update could not be completed/).waitFor()
+    await page.evaluate(() => (window as any).fixture.observe())
+    await page.waitForFunction(() => (window as any).calls.filter((c: any) => c.command === "take_desktop_update_failure").length === 2)
+    assert.equal(await page.getByText(/The update could not be completed/).count(), 1)
+    // A failure event without an update in progress in this document stays silent.
+    await page.evaluate(() => (window as any).emitFailure())
+    assert.equal(await page.evaluate(() => (window as any).failurePending), true)
+  } finally { await page.close() }
 })

@@ -7,7 +7,6 @@ import { applyUpdaterConfig, configPath, configureUpdater, resolveUpdaterConfig 
 
 // Structurally valid public-only fixture; not a signing identity.
 const PUBLIC_KEY = Buffer.from(`untrusted comment: test public key\n${Buffer.concat([Buffer.from("Ed"), Buffer.alloc(40)]).toString("base64")}\n`).toString("base64")
-const ENDPOINT = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest/download/latest.json"
 
 function baseConfig() {
   return {
@@ -29,20 +28,11 @@ test("an unsigned build ships without any updater configuration", () => {
   }
 })
 
-test("a signed build enables the updater against the release endpoint by default", () => {
+test("a signed build enables the updater and requires the signed version", () => {
   const updater = resolveUpdaterConfig({ TAURI_UPDATER_PUBKEY: PUBLIC_KEY })
   assert.equal(applyUpdaterConfig(baseConfig(), updater).bundle.createUpdaterArtifacts, true)
-  assert.equal(updater.pubkey, PUBLIC_KEY)
-  assert.deepEqual(updater.endpoints, [ENDPOINT])
-})
-
-test("the endpoint can be overridden without touching the key", () => {
-  const updater = resolveUpdaterConfig({
-    TAURI_UPDATER_PUBKEY: PUBLIC_KEY,
-    TAURI_UPDATER_ENDPOINT: "https://example.invalid/latest.json",
-  })
-  assert.deepEqual(updater.endpoints, ["https://example.invalid/latest.json"])
-  assert.equal(updater.pubkey, PUBLIC_KEY)
+  // Feed manifests are selected natively; no build-time endpoint can pin a channel.
+  assert.deepEqual(updater, { pubkey: PUBLIC_KEY, requireSignedVersion: true })
 })
 
 test("configureUpdater writes the effective configuration to disk", () => {
@@ -108,9 +98,8 @@ test("the real configuration survives a round trip through the unsigned shape", 
   }
 })
 
-test("rejects invalid keys and insecure endpoints before configuring a signed build", () => {
+test("rejects invalid keys before configuring a signed build", () => {
   assert.throws(() => resolveUpdaterConfig({ TAURI_UPDATER_PUBKEY: "placeholder" }), /minisign/)
-  assert.throws(() => resolveUpdaterConfig({ TAURI_UPDATER_PUBKEY: PUBLIC_KEY, TAURI_UPDATER_ENDPOINT: "http://example.com/latest.json" }), /HTTPS/)
   const config = { ...baseConfig(), bundle: { createUpdaterArtifacts: true } }
   assert.equal(applyUpdaterConfig(config, null).bundle.createUpdaterArtifacts, false)
 })

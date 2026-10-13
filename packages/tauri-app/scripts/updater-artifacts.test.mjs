@@ -13,10 +13,9 @@ const encodedKey = Buffer.from(`untrusted comment: fixture\n${Buffer.concat([Buf
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
 const release = { repository: "owner/project", tag: "v1.2.3" }
 
-function signature(bytes, algorithm = "ED") {
+function signature(bytes, algorithm = "ED", comment = "timestamp:12345\tfile:fixture\tversion:1.2.3") {
   const message = algorithm === "ED" ? createHash("blake2b512").update(bytes).digest() : bytes
   const signed = sign(null, message, privateKey)
-  const comment = "timestamp:12345\tfile:fixture\tversion:1.2.3"
   const packet = Buffer.concat([Buffer.from(algorithm), keyId, signed]).toString("base64")
   const global = sign(null, Buffer.concat([signed, Buffer.from(comment)]), privateKey).toString("base64")
   return Buffer.from(`untrusted comment: fixture\n${packet}\ntrusted comment: ${comment}\n${global}\n`).toString("base64")
@@ -72,6 +71,21 @@ test("stages all native artifact formats and publishes only a complete verified 
   assert.throws(() => mergeUpdater(fragments, assets.slice(1), release), /missing/)
   assert.throws(() => mergeUpdater(fragments, assets.map((a, i) => i === 0 ? { ...a, digest: "sha256:stale" } : a), release), /different/)
   assert.throws(() => mergeUpdater(fragments, assets, { ...release, tag: "another-release" }), /identity/)
+})
+
+test("signatures must record the exact release version", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "updater-version-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const bundleRoot = join(directory, "bundle")
+  mkdirSync(join(bundleRoot, "nsis"), { recursive: true })
+  const source = join(bundleRoot, "nsis", "setup.exe")
+  writeFileSync(source, "installer")
+  for (const comment of ["timestamp:12345\tfile:fixture", "timestamp:12345\tfile:fixture\tversion:1.2.30"]) {
+    writeFileSync(`${source}.sig`, signature(Buffer.from("installer"), "ED", comment))
+    assert.throws(() => stageUpdater({
+      platform: "windows-x86_64", version: "1.2.3", bundleRoot, output: join(directory, "out"), publicKey: encodedKey, ...release,
+    }), /release version/)
+  }
 })
 
 test("unsigned builds record every platform but never publish a manifest or use stale signed assets", (t) => {

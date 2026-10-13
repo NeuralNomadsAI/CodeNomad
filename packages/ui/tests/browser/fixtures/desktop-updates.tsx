@@ -6,4 +6,4 @@ import "../../../src/index.css"
 
 render(() => <><button onClick={() => void requestDesktopUpdate()}>Check updates</button><Toaster /></>, document.getElementById("root")!)
 const dispose = observeDesktopUpdates()
-;(window as any).fixture = { check: requestDesktopUpdate, releases: initReleaseNotifications, dispose }
+;(window as any).fixture = { check: requestDesktopUpdate, releases: initReleaseNotifications, observe: observeDesktopUpdates, dispose }

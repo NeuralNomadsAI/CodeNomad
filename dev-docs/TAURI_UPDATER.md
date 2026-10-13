@@ -2,12 +2,34 @@
 
 ## Installation contract
 
-The native Get Updates menu and the required-upgrade notification share
-`stores/desktop-updates.ts`. A check offers an explicit **Install and restart**
-action. The renderer supplies only the version it accepted; Rust retains the
-checked native `Update`, endpoint and verification key.
+The native Get Updates menu, the required-upgrade notification and the preview
+release notification share `stores/desktop-updates.ts`. A check offers an
+explicit **Install and restart** action. The renderer supplies only the saved
+update feed and later the version it accepted; Rust selects the release, retains
+the checked native `Update` and owns every URL and the verification key.
 Each new check or install replaces the previous update notification so stale
 install offers do not remain actionable after a failure or changed check result.
+
+Update feeds follow the server notification rules (`server.updateFeed`, else
+derived from the installed build label), implemented natively in
+`update_releases.rs` from the GitHub releases list:
+
+| Feed | Offered release |
+| --- | --- |
+| `stable` | Newest final release with a `latest.json`, only when its version is higher |
+| `preview` | Newest publication of any kind (dev prerelease or release) with a `latest.json`, newer by publication than the installed release |
+
+Preview labels reuse their base version, so SemVer alone can rank a newer
+preview below an older one; publication order decides, and builds unknown to
+GitHub fall back to version order as on the server. Only the selected release's
+manifest is fetched, and it must announce exactly the selected version. Releases
+without a manifest (still building, partially failed or older than the updater)
+are never offered, so a release in progress cannot break checks.
+
+The native menu emits `menu:action` to the focused local webview only, and the
+renderer listens on its own webview: untargeted Tauri listeners receive every
+window's events. When Preferences or a remote window is focused, or no local
+window remains, Get Updates opens the release page.
 
 Supported installed formats:
 
@@ -24,9 +46,10 @@ marker and a nonempty `APPIMAGE` path. `APPRUN` alone is insufficient. Installer
 signatures are independent of Apple code signing/notarization and Authenticode.
 
 `desktop_updater.rs` authorizes native callers against local application origins
-and serializes checks/downloads across windows. Only the two guarded application
-commands are granted to local webviews; updater/process plugin permissions are
-not granted to previews, remote windows or renderers generally.
+and serializes checks/downloads across windows. Only the three guarded application
+commands (check, install, take failure) are granted to local webviews;
+updater/process plugin permissions are not granted to previews, remote windows or
+renderers generally.
 
 The plugin verifies the complete download before shutdown admission. A prepared
 installer and restart intent enter the shutdown coordinator under one lock.
@@ -39,38 +62,45 @@ On macOS/Linux, successful installation follows the normal native restart. On
 Windows, the NSIS installer performs relaunch and the plugin exits. The vendored
 2.12.0 plugin moves its exit callback after successful `ShellExecuteW`: a refused
 launch must not release client-state persistence ownership. On an installation
-error, the application restores its owned backend and reports failure without
-replaying installation. See `packages/tauri-app/vendor/README.md` for provenance.
+error, the application restores its owned backend without replaying installation.
+That recovery reloads every window, so the failure is recorded natively and the
+first reloaded document takes and reports it. Failures without a reload (flush
+timeout, cleanup failure) are reported by the document that started the update.
+See `packages/tauri-app/vendor/README.md` for provenance.
 
 ## Build and publication
 
 `configure-updater.mjs` writes a Tauri V2 `plugins.updater` entry and
 `bundle.createUpdaterArtifacts: true` when `TAURI_UPDATER_PUBKEY` contains a
-minisign public key. It rejects malformed keys and non-HTTPS production endpoints.
-Absent keys remove updater configuration and explicitly disable artifact signing.
-The native host registers the plugin only when that configuration exists; the
-plugin rejects a missing configuration during initialization, before any check.
+minisign public key, with `requireSignedVersion`: the manifest itself is not
+signed, so the signed trusted comment must carry the announced version and an
+older signed artifact cannot be relabelled. It configures no endpoint; the
+application selects the manifest per feed. Absent keys remove updater
+configuration and explicitly disable artifact signing. The native host registers
+the plugin only when that configuration exists; the plugin rejects a missing
+configuration during initialization, before any check.
 
-The release workflow passes these repository secrets to all four platform jobs:
+Release and dev prerelease uploads use these repository secrets in all four
+platform jobs:
 
-- `TAURI_UPDATER_PUBKEY`
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- `TAURI_UPDATER_PUBKEY` (job environment; public)
+- `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (only the
+  `tauri build` step, never dependency installation or upload steps)
 
-PR builds receive none of these secrets. Production provisioning is an explicit
-administrator task; for PR #786 the test pair is generated and stored outside Git,
-while the definitive production pair is to be coordinated with Shantur before
-public release. Never embed a test public key in a production release.
+PR builds receive none of these secrets. Never embed a test public key in a
+production release.
 
 `updater-artifacts.mjs stage` finds exactly one native updater payload, verifies
-its minisign data and trusted-comment signatures, copies it to the final release
-asset name, and writes a per-platform receipt. The receipt contains public
-signature/key fingerprints and the payload digest, never private key material.
+its minisign data and trusted-comment signatures, requires the trusted comment
+to record the release version, copies it to the final release asset name, and
+writes a per-platform receipt. The receipt contains public signature/key
+fingerprints and the payload digest, never private key material.
 
 The final publication job waits for all four platform jobs, merges their receipts
 and checks the uploaded GitHub asset digests. Missing/duplicate targets, mixed
 versions or keys, partial signing, changed signatures and missing payloads fail
-publication. Only then does it generate and upload the single `latest.json`.
+publication. Only then does it generate and upload that release's `latest.json`;
+stable releases and dev prereleases each carry their own manifest.
 `tauri build` is not expected to generate that manifest. Fully unsigned builds
 produce no update manifest. Linux arm64 remains outside the existing release matrix.
 
@@ -97,7 +127,10 @@ Tauri 2.9.4 already invokes linuxdeploy in extraction mode itself.
 ## Validation
 
 - Node tests exercise configuration, the four payload formats, manifest
-  completeness, key/asset mismatch, and payload/trusted-comment tampering.
+  completeness, key/asset mismatch, payload/trusted-comment tampering and the
+  signed release version.
+- `update_releases.rs` tests feed resolution, stable/preview selection,
+  same-day previews, publication order, drafts and repository-bound URLs.
 - `desktop_updater_tests.rs` downloads a CLI-signed public-only fixture through
   the real updater plugin and rejects modified bytes without invoking installers.
   Its insecure HTTP exception exists only in the loopback mock application's config.
@@ -105,7 +138,8 @@ Tauri 2.9.4 already invokes linuxdeploy in extraction mode itself.
   admission, conflict with an existing quit and Windows logout.
 - The vendored Windows launch regression checks success-only ownership release.
 - Browser tests exercise the real update store and toast actions, explicit install,
-  duplicate gestures, failure recovery and unsigned/Electron/remote fallback.
+  duplicate gestures, failure recovery (including after a reload), feed
+  forwarding and unsigned/Electron/remote fallback.
 
 Commands (from the checkout, unless noted):
 

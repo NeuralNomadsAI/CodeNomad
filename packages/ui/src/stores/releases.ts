@@ -1,23 +1,17 @@
-import { batch, createEffect, createSignal } from "solid-js"
+import { createEffect, createSignal } from "solid-js"
 import { requestDesktopUpdate } from "./desktop-updates"
-import type { ServerMeta, SupportMeta, UpdateFeed } from "../../../server/src/api-types"
+import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
 import { tGlobal } from "../lib/i18n"
-import { isLocalWindow, isTauriHost } from "../lib/runtime-env"
+import { supportsDesktopUpdateChecks } from "../lib/native/updates"
 import { hasInstances, showFolderSelection } from "./ui"
 
 const log = getLogger("actions")
 
 const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
 const [availableUpdate, setAvailableUpdate] = createSignal<ServerMeta["update"] | null | undefined>(undefined)
-const [updateFeed, setUpdateFeed] = createSignal<UpdateFeed | undefined>(undefined)
-
-/** Only an explicit stable feed may use the native stable installer. */
-export function usesStableInstaller(feed: UpdateFeed | undefined): boolean {
-  return feed === "stable"
-}
 
 const UI_VERSION_STORAGE_KEY = "codenomad:lastSeenUiVersion"
 const DEV_RELEASE_STORAGE_KEY = "codenomad:lastSeenDevRelease"
@@ -53,8 +47,7 @@ function ensureVisibilityEffect() {
       return
     }
 
-    const feed = updateFeed()
-    const key = `${support.minServerVersion ?? "unknown"}:${support.latestServerVersion ?? "unknown"}:${feed ?? "unknown"}`
+    const key = `${support.minServerVersion ?? "unknown"}:${support.latestServerVersion ?? "unknown"}`
 
     if (!activeToast || activeToastKey !== key) {
       dismissActiveToast()
@@ -70,10 +63,8 @@ function ensureVisibilityEffect() {
           ? {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
-              // The native updater uses the stable feed; preview opens its release page.
-              onClick: usesStableInstaller(feed) && isTauriHost() && isLocalWindow()
-                ? requestDesktopUpdate
-                : undefined,
+              // The native updater follows the saved feed, like these notifications.
+              onClick: supportsDesktopUpdateChecks() ? requestDesktopUpdate : undefined,
             }
           : undefined,
       })
@@ -95,12 +86,8 @@ export function initReleaseNotifications() {
 async function refreshFromMeta() {
   try {
     const meta = await getServerMeta(true)
-    // Publish support and feed together so the support action sees its feed.
-    batch(() => {
-      setSupportInfo(meta.support ?? null)
-      setUpdateFeed(meta.updateFeed)
-      setAvailableUpdate(meta.update ?? null)
-    })
+    setSupportInfo(meta.support ?? null)
+    setAvailableUpdate(meta.update ?? null)
     maybeNotifyUiUpdated(meta)
     maybeNotifyDevReleaseAvailable(meta)
     ensureMetaRefresh(meta)
@@ -160,10 +147,9 @@ function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
     variant: "info",
     duration: 12000,
     position: "bottom-right",
-    action: {
-      label: tGlobal("releases.devUpdateAvailable.action"),
-      href: update.url,
-    },
+    action: supportsDesktopUpdateChecks()
+      ? { label: tGlobal("releases.upgradeRequired.action.getUpdate"), href: update.url, onClick: requestDesktopUpdate }
+      : { label: tGlobal("releases.devUpdateAvailable.action"), href: update.url },
   })
 }
 

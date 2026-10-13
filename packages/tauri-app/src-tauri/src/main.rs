@@ -22,6 +22,7 @@ mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
 mod shutdown;
+mod update_releases;
 mod updater_support;
 mod view_menu;
 mod desktop_updater;
@@ -50,7 +51,7 @@ use tauri::menu::{
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{PageLoadEvent, Webview};
 use tauri::{
-    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
+    AppHandle, Emitter, EventTarget, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
@@ -1943,8 +1944,9 @@ fn main() {
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
-            desktop_updater::check_stable_update,
-            desktop_updater::install_stable_update,
+            desktop_updater::check_desktop_update,
+            desktop_updater::install_desktop_update,
+            desktop_updater::take_desktop_update_failure,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
             browser_target_register,
@@ -1969,9 +1971,7 @@ fn main() {
                 | "view-right-panel"
                 | "view-timeline"
                 | "view-timeline-tools") => {
-                    if let Some(window) = local_windows::focused_local_window(app_handle) {
-                        let _ = window.emit("menu:action", action);
-                    }
+                    emit_menu_action(app_handle, action);
                 }
                 "new-window" => {
                     if let Err(error) = local_windows::create_new_window(app_handle) {
@@ -2038,9 +2038,8 @@ fn main() {
                 }
 
                 "get_updates" | "help_get_updates" => {
-                    if let Some(window) = local_windows::targeted_window(app_handle) {
-                        let _ = window.emit("menu:action", "get-updates");
-                    } else {
+                    // Preferences and remote windows have no update flow.
+                    if !emit_menu_action(app_handle, "get-updates") {
                         open_releases_page(app_handle);
                     }
                 }
@@ -2477,6 +2476,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     app.set_menu(menu)?;
     Ok(())
+}
+
+/// Delivers a menu action to the focused local window only. Untargeted JS
+/// listeners receive every event, so renderers listen on their own webview.
+fn emit_menu_action(app_handle: &AppHandle, action: &str) -> bool {
+    local_windows::focused_local_window(app_handle).is_some_and(|window| {
+        app_handle
+            .emit_to(EventTarget::webview(window.label()), "menu:action", action)
+            .is_ok()
+    })
 }
 
 fn open_releases_page(app_handle: &AppHandle) {

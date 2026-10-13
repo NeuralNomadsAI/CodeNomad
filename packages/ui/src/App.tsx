@@ -35,7 +35,8 @@ import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { observeDesktopUpdates, requestDesktopUpdate } from "./stores/desktop-updates"
-import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
+import { isLocalWindow, isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
+import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
 import { startNotificationIconBadge } from "./lib/notification-icon-badge"
@@ -747,22 +748,21 @@ const App: Component = () => {
     }
 
     if (isTauriHost()) {
-      const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
-      if (tauriBridge?.event) {
-        let unlistenMenu: (() => void) | null = null
+      // Untargeted listeners receive every window's events; the native menu
+      // addresses only the focused local window's own webview.
+      if (!isLocalWindow()) return
+      let unlistenMenu: (() => void) | null = null
+      getCurrentWebview().listen("menu:action", (event) => {
+        executeMenuAction(event.payload)
+      }).then((unlisten) => {
+        unlistenMenu = unlisten
+      }).catch((error) => {
+        log.error("Failed to listen for native menu actions", error)
+      })
 
-        tauriBridge.event.listen("menu:action", (event) => {
-          executeMenuAction(event.payload)
-        }).then((unlisten) => {
-          unlistenMenu = unlisten
-        }).catch((error) => {
-          log.error("Failed to listen for native menu actions", error)
-        })
-
-        onCleanup(() => {
-          unlistenMenu?.()
-        })
-      }
+      onCleanup(() => {
+        unlistenMenu?.()
+      })
       return
     }
 

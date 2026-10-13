@@ -301,6 +301,7 @@ impl ShutdownCoordinator {
         Some(operation())
     }
 
+    #[cfg(test)]
     fn shutdown_started(&self) -> bool {
         self.state
             .lock()
@@ -664,7 +665,8 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
                     eprintln!("[tauri] backend recovery after failed update: {recovery}");
                 }
             }
-            crate::desktop_updater::report_failure(&app);
+            // Recovery reloads every window; the new documents report it.
+            crate::desktop_updater::record_failure();
             return;
         }
         client_state::release(&app);

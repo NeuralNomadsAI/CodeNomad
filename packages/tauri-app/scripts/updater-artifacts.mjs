@@ -37,6 +37,7 @@ export function verifyArtifact(bytes, signature, publicKey) {
       || !verify(null, Buffer.concat([signed, comment]), ed25519, Buffer.from(lines[3] ?? "", "base64"))) {
     throw new Error("Updater artifact signature verification failed")
   }
+  return comment.toString("utf8")
 }
 
 export function stageUpdater({ platform, version, bundleRoot, output, publicKey, repository, tag }) {
@@ -53,7 +54,11 @@ export function stageUpdater({ platform, version, bundleRoot, output, publicKey,
     const source = join(directory, candidates[0])
     const bytes = readFileSync(source)
     const signature = readFileSync(`${source}.sig`, "utf8").trim()
-    verifyArtifact(bytes, signature, publicKey)
+    // Applications require the signed version, so a missing one cannot install.
+    const comment = verifyArtifact(bytes, signature, publicKey)
+    if (/(?:^|\t)version:([^\t]+)/.exec(comment)?.[1] !== version) {
+      throw new Error("Updater signature does not record the release version")
+    }
     const asset = `CodeNomad-Tauri-${target.name}-${version}${target.extension}`
     copyFileSync(source, join(output, asset))
     writeFileSync(join(output, `${asset}.sig`), `${signature}\n`)
