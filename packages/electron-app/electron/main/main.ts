@@ -743,5 +743,4 @@ async function exchangeBootstrapToken(baseUrl: string, token: string, cli: CliPr
   return true
 }
 
-
 if (isMac) app.commandLine.appendSwitch("disable-spell-checking")

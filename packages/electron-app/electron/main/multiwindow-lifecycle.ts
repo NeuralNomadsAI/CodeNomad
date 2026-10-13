@@ -122,9 +122,9 @@ export class MultiwindowLifecycle {
     this.dependencies.app.quit()
   }
 
-  private hasOtherApplicationWindow(window: BrowserWindow, localId?: string): boolean {
-    return (localId !== undefined && this.dependencies.getLocalWindows().some((candidate) => candidate.id !== localId
-      && !candidate.window.isDestroyed() && !this.pendingWindowCloses.has(candidate.window)))
+  private hasOtherApplicationWindow(window: BrowserWindow, localId: string): boolean {
+    return this.dependencies.getLocalWindows().some((candidate) => candidate.id !== localId
+      && !candidate.window.isDestroyed() && !this.pendingWindowCloses.has(candidate.window))
       || this.dependencies.getAllWindows().some((candidate) => candidate !== window
         && !candidate.isDestroyed() && !this.pendingWindowCloses.has(candidate)
         && !this.dependencies.isSupportWindow?.(candidate))
