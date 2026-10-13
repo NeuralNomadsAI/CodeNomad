@@ -65,8 +65,10 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "חפש סשנים…",
   "sessionList.filter.ariaLabel": "חפש סשנים",
-  "sessionList.history.back": "הסשן הקודם",
-  "sessionList.history.forward": "הסשן הבא",
+  "sessionList.history.back": "אחורה",
+  "sessionList.history.backTitle": "חזרה לשיחה הקודמת",
+  "sessionList.history.forward": "קדימה",
+  "sessionList.history.forwardTitle": "מעבר לשיחה הבאה",
   "sessionList.sort.ariaLabel": "מיון סשנים",
   "sessionList.sort.activity": "פעילות",
   "sessionList.sort.name": "שם",

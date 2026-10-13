@@ -7,6 +7,9 @@
   --shell-panel-toggle-inset: var(--space-xs);
   --shell-panel-toggle-reserve: calc(var(--shell-panel-toggle-inset) + var(--shell-panel-toggle-size) + var(--space-sm));
   position: relative;
+  /* Contain the toggles' z-index: above in-frame floating drawers, below
+   * body-portaled dialogs, scrims and utility windows. */
+  isolation: isolate;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
@@ -17,9 +20,10 @@
   --icon-size: 16px;
   --touch-target-size: var(--touch-target-size-compact);
   position: absolute;
-  top: 27px;
+  /* One fixed centre: every header's action row shares this line. */
+  top: var(--panel-header-action-center);
   transform: translateY(-50%);
-  /* Above floating drawers (z-index 60), below application dialogs. */
+  /* Above floating drawers (z-index 60) within the frame's stacking context. */
   z-index: 70;
 }
 

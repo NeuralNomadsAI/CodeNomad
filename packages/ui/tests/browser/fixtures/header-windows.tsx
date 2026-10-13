@@ -2,6 +2,7 @@ import { render } from "solid-js/web"
 import { createSignal } from "solid-js"
 import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
+import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
 import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -23,6 +24,9 @@ import "../../../src/index.css"
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
 bootStage("imports-complete")
 if (new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
+// The app registers navigation shortcuts before any shell mounts; native
+// desktop hosts then render their hint row in the session list header.
+if (new URLSearchParams(location.search).has("shortcutHints")) registerNavigationShortcuts()
 const id = "header-windows", sessionId = "session"
 let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },

@@ -12,7 +12,8 @@ interface ShellPanelToggleProps {
 }
 
 /** One fixed toggle per panel, at the shell's outer header corner. It stays in
- * place whether its panel is docked, floating or closed; headers reserve room. */
+ * place whether its panel is docked, floating or closed; headers reserve room.
+ * The label is fixed; `aria-expanded` alone announces the panel state. */
 const ShellPanelToggle: Component<ShellPanelToggleProps> = (props) => (
   <span class={`panel-header-actions shell-panel-toggle shell-panel-toggle--${props.side}`}>
     <IconButton

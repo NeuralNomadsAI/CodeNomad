@@ -65,9 +65,12 @@
   flex: 0 0 var(--panel-header-height);
   height: var(--panel-header-height);
   min-height: var(--panel-header-height);
-  gap: 6px;
-  justify-content: center;
-  padding: var(--space-sm) var(--space-md);
+  padding: 0 var(--space-md);
+}
+
+/* One action row centred on the shared header action line. */
+.session-sidebar-header-row {
+  height: calc(2 * var(--panel-header-action-center));
 }
 
 .session-sidebar-header-actions {
@@ -96,7 +99,7 @@
 
 .session-toolbar-left {
   position: absolute;
-  top: 50%;
+  top: var(--panel-header-action-center);
   inset-inline-start: 0;
   padding-inline-start: var(--space-sm);
   transform: translateY(-50%);
@@ -105,7 +108,7 @@
 
 .session-toolbar-right {
   position: absolute;
-  top: 50%;
+  top: var(--panel-header-action-center);
   inset-inline-end: 0;
   padding-inline-end: var(--space-sm);
   transform: translateY(-50%);
@@ -136,7 +139,8 @@
   align-items: center;
   transform: translateX(-50%);
   min-width: 0;
-  padding-bottom: 2px;
+  /* Centre the status indicators on the shared header action line. */
+  padding-bottom: calc(var(--panel-header-height) - 2 * var(--panel-header-action-center));
 }
 
 .session-header-center:has(.session-header-active-title) {
@@ -150,13 +154,17 @@
   transform: translateY(7px);
 }
 
-.session-toolbar:has(.session-header-active-title) .session-toolbar-left,
-.session-toolbar:has(.session-header-active-title) .session-toolbar-right {
-  top: 27px;
+/* Bottom footer of the session list panel; collapses when hints are hidden. */
+.session-sidebar-shortcuts {
+  @apply flex flex-col;
+  flex-shrink: 0;
+  background-color: var(--surface-secondary);
 }
 
-.session-sidebar-shortcuts {
-  @apply flex flex-col gap-1;
+.session-sidebar-shortcuts-row {
+  @apply flex items-center gap-1;
+  padding: var(--space-xs) var(--space-md);
+  border-top: 1px solid var(--border-base);
 }
 
 .session-sidebar-selector-prefix {

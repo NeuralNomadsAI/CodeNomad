@@ -46,8 +46,6 @@ export interface DrawerChromeApi {
   closeLeft: () => void
   closeRight: () => void
   closeFloatingDrawersIfAny: () => boolean
-  leftToggleLabel: Accessor<string>
-  rightToggleLabel: Accessor<string>
   toggleLeft: () => void
   toggleRight: () => void
 }
@@ -109,12 +107,6 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     if (rightPinned()) return "pinned"
     return rightOpen() ? "floating-open" : "floating-closed"
   })
-
-  const leftToggleLabel = () =>
-    options.t(leftOpen() ? "instanceShell.leftDrawer.toggle.close" : "instanceShell.leftDrawer.toggle.open")
-
-  const rightToggleLabel = () =>
-    options.t(rightOpen() ? "instanceShell.rightDrawer.toggle.close" : "instanceShell.rightDrawer.toggle.open")
 
   const closeLeft = () => {
     blurIfInside(options.leftDrawerContentEl())
@@ -213,8 +205,6 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     closeLeft,
     closeRight,
     closeFloatingDrawersIfAny,
-    leftToggleLabel,
-    rightToggleLabel,
     toggleLeft,
     toggleRight,
   }

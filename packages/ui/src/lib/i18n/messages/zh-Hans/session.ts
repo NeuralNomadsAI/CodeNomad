@@ -65,8 +65,10 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "搜索会话…",
   "sessionList.filter.ariaLabel": "搜索会话",
-  "sessionList.history.back": "上一个会话",
-  "sessionList.history.forward": "下一个会话",
+  "sessionList.history.back": "后退",
+  "sessionList.history.backTitle": "返回上一个对话",
+  "sessionList.history.forward": "前进",
+  "sessionList.history.forwardTitle": "前往下一个对话",
   "sessionList.sort.ariaLabel": "会话排序",
   "sessionList.sort.activity": "活动时间",
   "sessionList.sort.name": "名称",

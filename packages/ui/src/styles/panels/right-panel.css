@@ -30,7 +30,9 @@
 /* Shortcuts on the left side - match left drawer icon colors */
 .tab-strip-shortcuts {
   @apply flex items-center gap-1 flex-shrink-0;
-  align-self: center;
+  /* Centre on the shared header action line, level with the panel toggles. */
+  align-self: flex-start;
+  height: calc(2 * var(--panel-header-action-center));
   color: var(--text-muted);
 }
 

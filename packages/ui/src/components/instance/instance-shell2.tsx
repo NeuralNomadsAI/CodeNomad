@@ -224,8 +224,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     closeLeft: closeLeftDrawer,
     closeRight: closeRightDrawer,
     closeFloatingDrawersIfAny,
-    leftToggleLabel,
-    rightToggleLabel,
     toggleLeft,
     toggleRight,
   } = drawerChrome
@@ -1306,14 +1304,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           {/* Outside the drawer host: modal sibling isolation never hides the toggles. */}
           <div class="session-shell-frame">
             <Show when={!mobileFullscreen()}>
-              <ShellPanelToggle side="left" expanded={leftOpen()} label={leftToggleLabel()} controls={leftPanelId()}
+              <ShellPanelToggle side="left" expanded={leftOpen()} label={t("window.menu.leftPanel")} controls={leftPanelId()}
                 onToggle={toggleLeft} ref={setLeftToggleButtonEl} />
-            </Show>
-            {sessionLayout}
-            <Show when={!mobileFullscreen()}>
-              <ShellPanelToggle side="right" expanded={rightOpen()} label={rightToggleLabel()} controls={rightPanelId()}
+              <ShellPanelToggle side="right" expanded={rightOpen()} label={t("window.menu.rightPanel")} controls={rightPanelId()}
                 onToggle={toggleRight} ref={setRightToggleButtonEl} />
             </Show>
+            {sessionLayout}
           </div>
         </Show>
       </div>

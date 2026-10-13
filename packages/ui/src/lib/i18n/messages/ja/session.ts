@@ -65,8 +65,10 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "セッションを検索…",
   "sessionList.filter.ariaLabel": "セッションを検索",
-  "sessionList.history.back": "前のセッション",
-  "sessionList.history.forward": "次のセッション",
+  "sessionList.history.back": "戻る",
+  "sessionList.history.backTitle": "前の会話に戻る",
+  "sessionList.history.forward": "進む",
+  "sessionList.history.forwardTitle": "次の会話に進む",
   "sessionList.sort.ariaLabel": "セッションを並べ替え",
   "sessionList.sort.activity": "アクティビティ",
   "sessionList.sort.name": "名前",

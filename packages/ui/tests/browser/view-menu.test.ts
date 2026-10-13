@@ -42,14 +42,19 @@ for (const host of ["electron", "tauri"]) test(`${host}: native view state follo
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture && (window as any).viewSnapshot?.state.leftPanel.checked))
     // Close with the existing button, reopen through the menu's actual handler.
-    await page.getByRole("button", { name: "Close left drawer", exact: true }).click()
+    // The fixed toggles share the menu's panel labels; aria-expanded carries the state.
+    const leftToggle = page.getByRole("button", { name: "Left panel", exact: true })
+    const rightToggle = page.getByRole("button", { name: "Right panel", exact: true })
+    await leftToggle.click()
     await page.waitForFunction(() => !(window as any).viewSnapshot.state.leftPanel.checked)
+    assert.equal(await leftToggle.getAttribute("aria-expanded"), "false")
     await page.evaluate(() => (window as any).fixture.viewAction("view-left-panel"))
-    await page.getByRole("button", { name: "Close left drawer", exact: true }).waitFor()
+    await page.locator('.shell-panel-toggle--left button[aria-expanded="true"]').waitFor()
     await page.waitForFunction(() => (window as any).viewSnapshot.state.leftPanel.checked)
     await page.evaluate(() => (window as any).fixture.viewAction("view-right-panel"))
     await page.waitForFunction(() => !(window as any).viewSnapshot.state.rightPanel.checked)
-    await page.getByRole("button", { name: "Open right drawer", exact: true }).click()
+    assert.equal(await rightToggle.getAttribute("aria-expanded"), "false")
+    await rightToggle.click()
     await page.waitForFunction(() => (window as any).viewSnapshot.state.rightPanel.checked)
 
     await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true, showTimelineTools: true }))
