@@ -22,6 +22,8 @@ const imagesFixture = new URLSearchParams(location.search).has("images")
 const imageBytes = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6xUAAAAASUVORK5CYII="
 const SessionView = new URLSearchParams(location.search).has("session")
   ? (await import("../../../src/components/session/session-view")).default : undefined
+const AdvancedSettings = new URLSearchParams(location.search).has("advanced")
+  ? (await import("../../../src/components/settings/advanced-settings-section")).AdvancedSettingsSection : undefined
 const [selectedSession, setSelectedSession] = createSignal(sessionId)
 const calls: Array<{ kind: string; slug?: string; path?: string; message?: string }> = []
 const savedFiles = new Map<string, string>()
@@ -156,6 +158,7 @@ function Prototype() {
     <header class="window-header" style={{ padding: "12px 18px" }}><strong>CodeNomad</strong><span class="text-xs text-muted">Prototype Files · données de démonstration</span></header>
     <div style={{ display: "flex", flex: 1, "min-height": "0" }}>
       <main style={{ display: "flex", "flex-direction": "column", flex: 1, "min-width": "0" }}>
+        {AdvancedSettings ? <div class="advanced-settings-fixture" style={{ "max-height": "280px", overflow: "auto", padding: "12px", "border-bottom": "1px solid var(--border-base)" }}><AdvancedSettings /></div> : null}
         <Show when={!SessionView} fallback={SessionView ? <SessionView sessionId={selectedSession()} activeSessions={sessions().get(id)!} instanceId={id} instanceFolder="/CodeNomad" escapeInDebounce={false} isActive={active()} /> : undefined}>
         <Show when={getFilePreview(id)} fallback={<div style={{ flex: 1, padding: "32px", overflow: "auto" }}>
           <div class="text-xs text-muted">CONVERSATION</div>

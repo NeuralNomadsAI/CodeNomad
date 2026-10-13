@@ -15,6 +15,8 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
+  /** Display-only: compare lines without leading/trailing whitespace. */
+  ignoreTrimWhitespace?: boolean
   onRequestInsertContext?: (selection: { startLine: number; endLine: number }) => void
   insertContextLabel?: string
 }
@@ -208,6 +210,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         renderWhitespace: "selection",
         fontSize: 13,
         wordWrap: props.wordWrap === "on" ? "on" : "off",
+        ignoreTrimWhitespace: props.ignoreTrimWhitespace === true,
         glyphMargin: false,
         folding: false,
         // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
@@ -336,6 +339,8 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         contextMode === "collapsed"
           ? { enabled: true }
           : { enabled: false },
+      // Monaco defaults to true; whitespace changes stay visible unless hidden explicitly.
+      ignoreTrimWhitespace: props.ignoreTrimWhitespace === true,
       wordWrap,
     })
 

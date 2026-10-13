@@ -44,6 +44,20 @@ preview replaces the file reader; opening a file returns the browser to chat mod
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
 
+Changes and Commits share the diff reader, which follows Settings → Advanced
+"Hide whitespace-only changes in diffs" (`hideDiffWhitespaceChanges`, enabled
+by default and stored with the other UI settings). It maps to Monaco's native
+`ignoreTrimWhitespace`: lines that differ only by indentation, trailing spaces/tabs
+or line endings compare equal, while whitespace inside a line remains a visible
+change (unlike `git diff -w`). The option is display-only: switching it never
+rereads the diff, changes a request or cache key, or alters staging, commits or
+the Git `+/-` counts in the file lists. When a file's only differences are hidden
+this way, `file-viewer/diff-whitespace.ts` (which mirrors Monaco's space/tab trim
+equality) shows a notice above the reader rather than an apparently empty diff.
+Image diffs ignore the setting. Monaco itself defaults to ignoring trim whitespace;
+the viewer always passes the option explicitly, so turning the setting off shows
+every whitespace change.
+
 Git image previews retain base64 bytes for the actual compared revisions:
 HEAD/index for staged changes, index/worktree for unstaged changes, and the
 parent/commit blobs for history. `git-image-preview.ts` uses bounded worker reads
@@ -100,5 +114,9 @@ insertion into the composer remain available.
   and snapshot pagination across a new HEAD.
 - `tests/browser/git-history.test.ts`: the real panel/readers and SessionView,
   draft preservation, late-read/session fencing, filesystem refresh and keyboard
-  tree navigation. The design fixture remains available through
+  tree navigation. Its `?advanced` fixture mode renders the real Advanced settings
+  section to cover the default-on whitespace setting, its whitespace-only notice,
+  live switching without rereads and the shared Commits reader;
+  `file-viewer/diff-whitespace.test.ts` and `settings/behavior-registry.test.ts`
+  cover the trim comparison and the persisted preference. The design fixture remains available through
   `node scripts/preview-git-history.mjs` with synthetic data only.

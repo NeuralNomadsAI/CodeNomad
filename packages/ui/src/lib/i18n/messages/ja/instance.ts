@@ -265,6 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "ユニファイド表示に切り替え",
   "instanceShell.diff.enableWordWrap": "折り返しを有効化",
   "instanceShell.diff.disableWordWrap": "折り返しを無効化",
+  "instanceShell.diff.whitespaceOnly": "このファイルでは空白のみが変更されています。違いを表示するには、詳細設定の「差分で空白のみの変更を非表示」をオフにしてください。",
   "instanceShell.worktree.create": "+ worktree を作成",
   "instanceShell.worktree.unavailable": "利用不可",
   "instanceShell.worktree.create.fromCurrentBranch": "現在のブランチから新規作成",

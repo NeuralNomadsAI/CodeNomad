@@ -561,6 +561,87 @@ test("history and local changes open the central diff and preserve the conversat
   } finally { await page.close() }
 })
 
+test("diffs hide whitespace-only changes by default and follow the Advanced setting", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  // Count modified lines Monaco marks once the visible model is the expected file.
+  const changedLines = (marker: string, expected?: number) => page.waitForFunction(({ marker, expected }) => {
+    const editor = (window as any).monaco?.editor.getDiffEditors().at(-1)
+    const changes = editor?.getModel()?.modified.getValue().includes(marker) ? editor.getLineChanges() : null
+    if (!changes) return 0
+    const lines = changes.reduce((sum: number, change: any) => sum + Math.max(0, change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1), 0)
+    return expected === undefined || lines === expected ? lines + 1 : 0
+  }, { marker, expected }).then(async handle => (await handle.jsonValue() as number) - 1)
+  const localReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length)
+  // The select trigger's accessible name is the setting title followed by its value.
+  const setting = () => page.getByRole("button", { name: /^Masquer les changements d'espaces dans les diffs/ })
+  const notice = () => page.getByRole("status").filter({ hasText: "Seuls des espaces ont changé dans ce fichier." })
+  const open = (path: string) => page.getByRole("button", { name: `Aperçu du fichier · ${path}`, exact: true }).click()
+  try {
+    await page.goto(`${url}?advanced=1`)
+    // The fixture installs its own API stubs after its top-level imports settle.
+    await page.waitForFunction(() => (window as any).fixture)
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const reindented: [string, string] = ["function a() {\n  if (x) {\n    call(1)\n  }\n  done()\n}\n",
+        "function a() {\n  if (y) {\n    if (x) {\n      call(1)\n    }\n  }\n  done()\n}\n"]
+      const texts: Record<string, [string, string]> = {
+        "src/components/git-panel.tsx": reindented,
+        "src/styles/panels/git-history.css": [".panel {\n  gap: 4px;\n}\n", ".panel {\n\tgap: 4px;   \n}\n"],
+      }
+      serverApi.fetchWorktreeGitDiff = async (_id: string, slug: string, input: any) => {
+        ;(window as any).fixture.calls.push({ kind: "local-diff", slug, path: input.path })
+        const [before, after] = texts[input.path]
+        return { path: input.path, scope: input.scope, before, after, isBinary: false }
+      }
+      serverApi.fetchGitCommitDiff = async (_id: string, _slug: string, _commit: string, path: string) =>
+        ({ path, before: reindented[0], after: reindented[1], isBinary: false })
+      const patch = serverApi.patchConfigOwner
+      ;(window as any).configPatches = []
+      serverApi.patchConfigOwner = async (owner: string, value: unknown) => {
+        ;(window as any).configPatches.push(JSON.stringify({ owner, value }))
+        return patch(owner, value)
+      }
+    })
+    await page.getByRole("button", { name: "Masquer les changements d'espaces dans les diffs Activé", exact: true }).waitFor()
+
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await open("src/components/git-panel.tsx")
+    assert.equal(await changedLines("if (y)", 2), 2, "by default only the wrapping condition and its brace remain")
+    assert.equal(await notice().count(), 0)
+    if (process.env.CODENOMAD_GIT_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/diff-whitespace-reindent-default.png` })
+    await open("src/styles/panels/git-history.css")
+    await notice().waitFor()
+    assert.equal(await changedLines("\tgap", 0), 0, "a re-indented file shows the whitespace-only message")
+    if (process.env.CODENOMAD_GIT_CAPTURE) {
+      await page.locator(".advanced-settings-fixture .settings-toggle-row").filter({ has: setting() }).screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/advanced-diff-whitespace-row.png` })
+      await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/diff-whitespace-default.png` })
+    }
+    const reads = await localReads()
+
+    await setting().click()
+    await page.getByRole("option", { name: "Désactivé", exact: true }).click()
+    await notice().waitFor({ state: "detached" })
+    assert.equal(await changedLines("\tgap", 1), 1, "turning the setting off shows the whitespace change")
+    assert.equal(await localReads(), reads, "the setting is display-only and never rereads the diff")
+    assert.ok((await page.evaluate(() => (window as any).configPatches as string[])).some(entry => entry.includes('"hideDiffWhitespaceChanges":false')),
+      "the choice is persisted with the other UI settings")
+    await open("src/components/git-panel.tsx")
+    assert.ok(await changedLines("if (y)") > 2, "re-indented lines are visible changes with the setting off")
+
+    await page.getByRole("button", { name: "Commits", exact: true }).first().click()
+    await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
+    await open("src/components/git-panel.tsx")
+    assert.ok(await changedLines("if (y)") > 2, "history diffs share the same reader and setting")
+    await setting().click()
+    await page.getByRole("option", { name: "Activé", exact: true }).click()
+    assert.equal(await changedLines("if (y)", 2), 2)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a slow commit cannot replace the history after browsing another worktree", async () => {
   const page = await browser.newPage()
   try {

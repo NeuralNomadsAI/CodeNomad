@@ -265,6 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "Переключиться на единый вид",
   "instanceShell.diff.enableWordWrap": "Включить перенос строк",
   "instanceShell.diff.disableWordWrap": "Отключить перенос строк",
+  "instanceShell.diff.whitespaceOnly": "В этом файле изменились только пробелы. Отключите «Скрывать в диффах изменения только пробелов» в расширенных настройках, чтобы увидеть различия.",
   "instanceShell.worktree.create": "+ Создать worktree",
   "instanceShell.worktree.unavailable": "Недоступно",
   "instanceShell.worktree.create.fromCurrentBranch": "Новый из текущей ветки",

@@ -119,6 +119,8 @@ export interface UiSettings {
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
+  /** Files panel diff readers compare lines without leading/trailing whitespace. */
+  hideDiffWhitespaceChanges: boolean
   toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
@@ -227,6 +229,7 @@ const defaultUiSettings: UiSettings = {
   followUpBehavior: "steer",
   showPromptVoiceInput: true,
   diffViewMode: "split",
+  hideDiffWhitespaceChanges: true,
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
@@ -333,6 +336,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    hideDiffWhitespaceChanges: sanitized.hideDiffWhitespaceChanges ?? defaultUiSettings.hideDiffWhitespaceChanges,
     toolCallExpansionDefaults,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: normalizeVisibilityPreference(

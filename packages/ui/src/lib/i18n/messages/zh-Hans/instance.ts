@@ -265,6 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "切换到统一视图",
   "instanceShell.diff.enableWordWrap": "启用自动换行",
   "instanceShell.diff.disableWordWrap": "禁用自动换行",
+  "instanceShell.diff.whitespaceOnly": "此文件仅更改了空白。在高级设置中关闭“在差异中隐藏仅空白的更改”即可查看差异。",
   "instanceShell.worktree.create": "+ 创建 worktree",
   "instanceShell.worktree.unavailable": "不可用",
   "instanceShell.worktree.create.fromCurrentBranch": "从当前分支新建",

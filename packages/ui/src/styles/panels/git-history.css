@@ -68,6 +68,7 @@
 .git-diff-heading > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-diff-heading > span { color: var(--text-muted); font-size: var(--font-size-xs); }
 .git-diff-content { flex: 1; min-height: 0; overflow: hidden; }
+.git-diff-notice { flex: none; padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border-base); color: var(--text-secondary); font-size: var(--font-size-sm); }
 .git-image-diff { flex: 1; min-height: 0; overflow: auto; display: grid; gap: var(--space-md); padding: var(--space-md); align-content: start; }
 .git-image-diff[data-view="split"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .git-image-version { min-width: 0; margin: 0; }

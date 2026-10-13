@@ -265,6 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "Switch to unified view",
   "instanceShell.diff.enableWordWrap": "Enable word wrap",
   "instanceShell.diff.disableWordWrap": "Disable word wrap",
+  "instanceShell.diff.whitespaceOnly": "Only whitespace changed in this file. Turn off “Hide whitespace-only changes in diffs” in Advanced settings to see the differences.",
   "instanceShell.worktree.create": "+ Create worktree",
   "instanceShell.worktree.unavailable": "Unavailable",
   "instanceShell.worktree.create.fromCurrentBranch": "New from current branch",
