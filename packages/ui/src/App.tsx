@@ -661,7 +661,7 @@ const App: Component = () => {
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
     if (tab.kind === "instance" && tab.instance.temporary) {
-      // Asks to keep or discard; the tab closes itself only after either succeeds.
+      // Asks to keep or discard unless untouched; a refused discard restores the tab.
       await closeTemporaryInstance(tab.instance.id)
       return
     }

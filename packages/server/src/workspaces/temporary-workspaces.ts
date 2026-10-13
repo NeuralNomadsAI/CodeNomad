@@ -217,9 +217,9 @@ export class TemporaryWorkspaces {
    * Removes a temporary workspace's conversations, closes the workspace and
    * deletes its folder. Running conversations and other open tabs of the
    * folder block the discard; nothing is removed in that case. With
-   * `onlyWithoutConversations`, any conversation blocks it too.
+   * `onlyIfEmpty`, any conversation or file blocks it too.
    */
-  async discard(workspaceId: string, options: { onlyWithoutConversations?: boolean } = {}): Promise<void> {
+  async discard(workspaceId: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
     const manager = this.options.workspaceManager
     const workspace = this.requireTemporary(workspaceId)
     if (manager.list().some((other) => other.id !== workspaceId && this.options.registry.sameFolder(other.path, workspace.path))) {
@@ -229,8 +229,13 @@ export class TemporaryWorkspaces {
     await this.options.deletionFence.run(workspace.path, [workspace.path, serviceDirectory], async () => {
       const client = await manager.getSharedServiceClient()
       const sessions = await listSessions(client, serviceDirectory)
-      if (options.onlyWithoutConversations && sessions.length) {
-        throw new TemporaryWorkspaceError("temporary_has_conversations", "This temporary instance has conversations", 409)
+      if (options.onlyIfEmpty) {
+        if (sessions.length) {
+          throw new TemporaryWorkspaceError("temporary_has_conversations", "This temporary instance has conversations", 409)
+        }
+        if ((await readdir(workspace.path)).length) {
+          throw new TemporaryWorkspaceError("temporary_not_empty", "This temporary folder is not empty", 409)
+        }
       }
       const active = await client.session.active()
       if (sessions.some((session) => Object.prototype.hasOwnProperty.call(active, session.id))) {

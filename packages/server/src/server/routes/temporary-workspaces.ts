@@ -12,7 +12,7 @@ interface RouteDeps {
 }
 
 const AbandonSchema = z.object({ path: z.string().min(1) })
-const DiscardSchema = z.object({ onlyWithoutConversations: z.boolean().optional() })
+const DiscardSchema = z.object({ onlyIfEmpty: z.boolean().optional() })
 
 export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   const registry = deps.workspaceManager.temporaryFolders

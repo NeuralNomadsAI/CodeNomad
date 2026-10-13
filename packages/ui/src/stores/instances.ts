@@ -246,6 +246,8 @@ const [disconnectedInstance, setDisconnectedInstance] = createSignal<Disconnecte
 const MAX_LOG_ENTRIES = 1000
 
 const pendingRehydrations = new Map<string, Promise<void>>()
+// Stop events whose instance cleanup waits for the tab to unmount.
+const pendingWorkspaceStops = new Map<string, symbol>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
@@ -591,6 +593,8 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
 }
 
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+  // A workspace (re)created after a stop event keeps its instance.
+  pendingWorkspaceStops.delete(descriptor.id)
   const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
@@ -1304,12 +1308,22 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       clearPermissionAutoAcceptForInstance(event.workspace.id)
       clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
-    case "workspace.stopped":
+    case "workspace.stopped": {
       requestInstanceTabClose(event.workspaceId)
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
-      releaseInstanceResources(event.workspaceId)
-      removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
+      // Clear the instance after this event batch has unmounted its tab: clearing
+      // a visible shell's state in the same update remounted views inside the
+      // dying subtree and broke the whole window. Skip a re-created workspace.
+      const stop = Symbol(event.workspaceId)
+      pendingWorkspaceStops.set(event.workspaceId, stop)
+      queueMicrotask(() => {
+        if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
+        pendingWorkspaceStops.delete(event.workspaceId)
+        releaseInstanceResources(event.workspaceId)
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
+      })
       break
+    }
     case "workspace.log":
       handleWorkspaceLog(event.entry)
       break
