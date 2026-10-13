@@ -561,7 +561,7 @@ test("history and local changes open the central diff and preserve the conversat
   } finally { await page.close() }
 })
 
-test("diffs hide whitespace-only changes by default and follow the Advanced setting", async () => {
+test("whitespace-only changes leave the Changes list by default and follow the Advanced setting", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -573,11 +573,20 @@ test("diffs hide whitespace-only changes by default and follow the Advanced sett
     const lines = changes.reduce((sum: number, change: any) => sum + Math.max(0, change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1), 0)
     return expected === undefined || lines === expected ? lines + 1 : 0
   }, { marker, expected }).then(async handle => (await handle.jsonValue() as number) - 1)
-  const localReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length)
   // The select trigger's accessible name is the setting title followed by its value.
-  const setting = () => page.getByRole("button", { name: /^Masquer les changements d'espaces dans les diffs/ })
-  const notice = () => page.getByRole("status").filter({ hasText: "Seuls des espaces ont changé dans ce fichier." })
+  const setting = () => page.getByRole("button", { name: /^Masquer les changements d'espaces (Activé|Désactivé)$/ })
+  const choose = async (value: "Activé" | "Désactivé") => {
+    await setting().click()
+    await page.getByRole("option", { name: value, exact: true }).click()
+    await page.getByRole("button", { name: `Masquer les changements d'espaces ${value}`, exact: true }).waitFor()
+  }
+  const notice = () => page.getByRole("status").filter({ hasText: "Seuls des espaces ont changé dans ce fichier (indentation ou espaces en fin de ligne)." })
+  const lineEndings = () => page.getByRole("status").filter({ hasText: "Seules les fins de ligne (ou une marque d'ordre des octets) ont changé" })
   const open = (path: string) => page.getByRole("button", { name: `Aperçu du fichier · ${path}`, exact: true }).click()
+  // Commits keeps its own mounted file rows; only the Changes sections count.
+  const row = (path: string) => page.locator(`.git-change-section .git-panel-file-main[title="${path}"]`)
+  const visibleRows = () => page.locator(".git-change-section .git-panel-file-main").evaluateAll(rows => rows.map(row => row.getAttribute("title")))
+  const statusReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "status").map((call: any) => call.message))
   try {
     await page.goto(`${url}?advanced=1`)
     // The fixture installs its own API stubs after its top-level imports settle.
@@ -589,9 +598,22 @@ test("diffs hide whitespace-only changes by default and follow the Advanced sett
         "function a() {\n  if (y) {\n    if (x) {\n      call(1)\n    }\n  }\n  done()\n}\n"]
       const texts: Record<string, [string, string]> = {
         "src/components/git-panel.tsx": reindented,
+        "src/a-real.ts": ["export const a = 1\n", "export const a = 2\n"],
+        "src/crlf.txt": [".crlf {\n}\n", ".crlf {\r\n}\r\n"],
         "src/styles/panels/git-history.css": [".panel {\n  gap: 4px;\n}\n", ".panel {\n\tgap: 4px;   \n}\n"],
+        "src/z-real.ts": ["export const z = 1\n", "export const z = 2\n"],
       }
       ;(window as any).diffTexts = texts
+      // Like the server, only reads requested with the option carry Git's -w flags.
+      serverApi.fetchWorktreeGitStatus = async (_id: string, slug: string, _signal?: AbortSignal, options?: { hideWhitespace?: boolean }) => {
+        ;(window as any).fixture.calls.push({ kind: "status", slug, message: options?.hideWhitespace ? "hide" : "show" })
+        // Anonymous callbacks only: tsx would wrap a named page function in an undefined `__name`.
+        const flag = options?.hideWhitespace ? { unstagedWhitespaceOnly: true } : {}
+        return ([["src/components/git-panel.tsx", { stagedStatus: "modified", stagedAdditions: 4, stagedDeletions: 2, unstagedStatus: null }],
+          ["src/a-real.ts", {}], ["src/crlf.txt", flag], ["src/styles/panels/git-history.css", flag], ["src/z-real.ts", {}]] as const)
+          .map(([path, extra]) => ({ path, originalPath: null, stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0,
+            unstagedStatus: "modified", unstagedAdditions: 2, unstagedDeletions: 2, ...extra }))
+      }
       serverApi.fetchWorktreeGitDiff = async (_id: string, slug: string, input: any) => {
         ;(window as any).fixture.calls.push({ kind: "local-diff", slug, path: input.path })
         const [before, after] = texts[input.path]
@@ -606,53 +628,65 @@ test("diffs hide whitespace-only changes by default and follow the Advanced sett
         return patch(owner, value)
       }
     })
-    await page.getByRole("button", { name: "Masquer les changements d'espaces dans les diffs Activé", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Masquer les changements d'espaces Activé", exact: true }).waitFor()
 
     await page.getByRole("button", { name: /Changements/ }).click()
-    await open("src/components/git-panel.tsx")
-    assert.equal(await changedLines("if (y)", 2), 2, "by default only the wrapping condition and its brace remain")
-    assert.equal(await notice().count(), 0)
-    if (process.env.CODENOMAD_GIT_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/diff-whitespace-reindent-default.png` })
-    await open("src/styles/panels/git-history.css")
-    await notice().waitFor()
-    assert.equal(await changedLines("\tgap", 0), 0, "a re-indented file shows the whitespace-only message")
+    await row("src/z-real.ts").waitFor()
+    assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/z-real.ts"],
+      "by default whitespace-only and CRLF-only files leave the list")
+    assert.equal(await page.locator(".git-panel-count").textContent(), "3 fichiers modifiés")
+    assert.deepEqual(await statusReads(), ["hide"])
     if (process.env.CODENOMAD_GIT_CAPTURE) {
+      await page.locator("aside").screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/changes-list-whitespace-default.png` })
       await page.locator(".advanced-settings-fixture .settings-toggle-row").filter({ has: setting() }).screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/advanced-diff-whitespace-row.png` })
-      await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/diff-whitespace-default.png` })
     }
-    const reads = await localReads()
 
-    await setting().click()
-    await page.getByRole("option", { name: "Désactivé", exact: true }).click()
-    await notice().waitFor({ state: "detached" })
-    assert.equal(await changedLines("\tgap", 1), 1, "turning the setting off shows the whitespace change")
-    assert.equal(await localReads(), reads, "the setting is display-only and never rereads the diff")
+    // A range selection spanning the hidden rows stages only the visible files.
+    await row("src/a-real.ts").click()
+    await row("src/z-real.ts").click({ modifiers: ["Shift"] })
+    await page.locator(".git-panel-more").filter({ hasText: "Indexer les 2 fichiers sélectionnés" }).click()
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "stage"))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "stage").map((call: any) => call.path)),
+      ["src/a-real.ts,src/z-real.ts"], "bulk staging never includes hidden files")
+
+    await open("src/components/git-panel.tsx")
+    assert.equal(await changedLines("if (y)", 2), 2, "diffs still ignore indentation by default")
+    assert.equal(await notice().count(), 0)
+
+    await choose("Désactivé")
+    await row("src/crlf.txt").waitFor()
+    assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/crlf.txt", "src/styles/panels/git-history.css", "src/z-real.ts"],
+      "turning the option off shows every change")
+    assert.equal(await page.locator(".git-panel-count").textContent(), "5 fichiers modifiés")
+    assert.equal((await statusReads()).at(-1), "show")
     assert.ok((await page.evaluate(() => (window as any).configPatches as string[])).some(entry => entry.includes('"hideDiffWhitespaceChanges":false')),
       "the choice is persisted with the other UI settings")
-    await open("src/components/git-panel.tsx")
-    assert.ok(await changedLines("if (y)") > 2, "re-indented lines are visible changes with the setting off")
+    assert.ok(await changedLines("if (y)") > 2, "re-indented lines are visible changes with the option off")
+
+    await open("src/styles/panels/git-history.css")
+    await notice().waitFor()
+    assert.equal(await changedLines("\tgap", 1), 1, "the whitespace change is drawn, with a factual notice")
+    await open("src/crlf.txt")
+    await lineEndings().waitFor()
+    assert.equal(await changedLines(".crlf", 0), 0, "Monaco never draws line endings; the note explains the empty reader")
+    assert.equal(await notice().count(), 0, "line endings use their own note, not the whitespace notice")
+    // Monaco 0.52 never draws same-length trailing-whitespace swaps, even with the option off.
+    await page.evaluate(() => { (window as any).diffTexts["src/styles/panels/git-history.css"] = ["foo\t\n", "foo \n"] })
+    await open("src/styles/panels/git-history.css")
+    await notice().waitFor()
+    assert.equal(await changedLines("foo", 0), 0)
 
     await page.getByRole("button", { name: "Commits", exact: true }).first().click()
     await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
     await open("src/components/git-panel.tsx")
     assert.ok(await changedLines("if (y)") > 2, "history diffs share the same reader and setting")
-    await setting().click()
-    await page.getByRole("option", { name: "Activé", exact: true }).click()
+    await choose("Activé")
     assert.equal(await changedLines("if (y)", 2), 2)
 
-    // Monaco never draws CRLF/LF differences, so this note ignores the setting.
-    const lineEndings = () => page.getByRole("status").filter({ hasText: "Seules les fins de ligne (ou une marque d'ordre des octets) ont changé" })
-    await page.evaluate(() => { (window as any).diffTexts["src/styles/panels/git-history.css"] = [".crlf {\n}\n", ".crlf {\r\n}\r\n"] })
     await page.getByRole("button", { name: /Changements/ }).click()
-    await open("src/styles/panels/git-history.css")
-    await lineEndings().waitFor()
-    assert.equal(await changedLines(".crlf", 0), 0)
-    assert.equal(await notice().count(), 0, "the whitespace notice never sends users to a setting that cannot help")
-    await setting().click()
-    await page.getByRole("option", { name: "Désactivé", exact: true }).click()
-    await page.getByRole("button", { name: "Masquer les changements d'espaces dans les diffs Désactivé", exact: true }).waitFor()
-    assert.equal(await changedLines(".crlf", 0), 0, "line endings stay undrawn with the setting off")
-    assert.equal(await lineEndings().count(), 1, "the reader is never silently blank")
+    await row("src/crlf.txt").waitFor({ state: "detached" })
+    assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/z-real.ts"], "turning the option back on hides them again")
+    assert.equal((await statusReads()).at(-1), "hide")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

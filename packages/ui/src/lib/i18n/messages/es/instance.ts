@@ -265,7 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "Cambiar a vista unificada",
   "instanceShell.diff.enableWordWrap": "Activar ajuste de línea",
   "instanceShell.diff.disableWordWrap": "Desactivar ajuste de línea",
-  "instanceShell.diff.whitespaceOnly": "En este archivo solo cambiaron espacios en blanco. Desactiva «Ocultar cambios solo de espacios en los diffs» en la configuración avanzada para ver las diferencias.",
+  "instanceShell.diff.whitespaceOnly": "En este archivo solo cambiaron espacios en blanco (sangría o espacios al final de línea).",
   "instanceShell.diff.lineEndingsOnly": "En este archivo solo cambiaron los finales de línea (o una marca de orden de bytes); su texto es idéntico.",
   "instanceShell.worktree.create": "+ Crear worktree",
   "instanceShell.worktree.unavailable": "No disponible",

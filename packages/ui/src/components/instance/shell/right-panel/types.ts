@@ -20,6 +20,8 @@ export interface GitChangeEntry {
   stagedDeletions?: number
   unstagedAdditions?: number
   unstagedDeletions?: number
+  /** Git reports the worktree side as whitespace/line-ending only (requested reads only). */
+  unstagedWhitespaceOnly?: boolean
 }
 
 export type GitChangeSection = "staged" | "unstaged"

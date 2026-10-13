@@ -7,7 +7,8 @@ import { instances } from "../../../../stores/instances"
 import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
 import { showToastNotification } from "../../../../lib/notifications"
-import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
+import { adaptSdkGitStatusEntries, buildGitChangeListItems, hideWhitespaceOnlyChanges } from "./git-changes-model"
+import { preferences } from "../../../../stores/preferences"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { closeFilePreview, getFilePreview, openFilePreview } from "../../../../stores/files-preview"
@@ -25,7 +26,11 @@ type UseGitChangesOptions = {
 }
 
 export function useGitChanges(options: UseGitChangesOptions) {
-  const [gitStatusEntries, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
+  const [gitStatusInventory, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
+  const hideWhitespace = createMemo(() => preferences().hideDiffWhitespaceChanges ?? true)
+  // Every list, count and bulk action reads the visible inventory, so hidden
+  // whitespace-only files can never be selected, dragged or staged in bulk.
+  const gitStatusEntries = createMemo(() => hideWhitespaceOnlyChanges(gitStatusInventory(), hideWhitespace()))
   const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
   const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
   const [gitSelectedItemId, setGitSelectedItemId] = createSignal<string | null>(null)
@@ -230,6 +235,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (disposed || !gitActive()) return false
     if (!force && gitStatusEntries() !== null) return true
     const slug = options.worktreeSlug()
+    const hide = hideWhitespace()
     const client = getRootClient(options.instanceId)
     const requestVersion = ++gitStatusRequestVersion
     statusController?.abort()
@@ -247,12 +253,14 @@ export function useGitChanges(options: UseGitChangesOptions) {
         finally { clearTimeout(timeout) }
       }, "visible").catch(() => null)
       const detailList = await backgroundReads.run(controller.signal, () =>
-        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal),
+        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal, { hideWhitespace: hide }),
         "visible",
       )
-      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
+      // A read made under the other whitespace option is stale; its refresh follows.
+      const stale = () => requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug() || hide !== hideWhitespace()
+      if (stale()) return false
       const sdkList = await sdkStatusPromise
-      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
+      if (stale()) return false
       setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
       return true
     } catch (error) {
@@ -495,6 +503,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
     // Changes mode was inactive) or a previous load error revalidates.
     if (gitStatusEntries() === null || gitStatusError() !== null) void passiveRefreshGitStatus()
   }))
+
+  // The whitespace option is part of the status read: revalidate while visible,
+  // otherwise drop the cached rows so the next activation reads them again.
+  createEffect(on(hideWhitespace, () => {
+    if (gitActive()) void passiveRefreshGitStatus()
+    else setGitStatusEntries(null)
+  }, { defer: true }))
 
   const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
   createEffect(() => {

@@ -11,6 +11,8 @@ const fixture = {
   requests: [] as Array<{ action: string; paths: string[] }>,
   mutationGate: null as Promise<void> | null,
   statusGate: null as Promise<void> | null,
+  statusOptions: [] as Array<{ hideWhitespace?: boolean } | undefined>,
+  preferences: () => ({}) as { hideDiffWhitespaceChanges?: boolean },
 }
 ;(globalThis as any).__filesGitFixture = fixture
 const hooks = registerHooks({
@@ -21,6 +23,7 @@ const hooks = registerHooks({
       "../../../../stores/instances": "export const instances = () => new Map()",
       "../../../../stores/worktrees": "export const getWorktrees = () => [{ slug: 'root', directory: '/repo' }]",
       "../../../../lib/notifications": "export const showToastNotification = () => {}",
+      "../../../../stores/preferences": "export const preferences = () => globalThis.__filesGitFixture.preferences()",
       "../../../../lib/api-client": `
         const f = globalThis.__filesGitFixture;
         async function mutate(action, paths) {
@@ -34,7 +37,12 @@ const hooks = registerHooks({
           });
         }
         export const serverApi = {
-          async fetchWorktreeGitStatus() { await f.statusGate; return f.entries; },
+          async fetchWorktreeGitStatus(_id, _slug, _signal, options) {
+            f.statusOptions.push(options);
+            await f.statusGate;
+            // Like the server, only requested reads carry whitespace flags.
+            return options?.hideWhitespace ? f.entries : f.entries.map(({ unstagedWhitespaceOnly, ...entry }) => entry);
+          },
           stageWorktreeGitPaths: (_id, _slug, { paths }) => mutate('stage', paths),
           unstageWorktreeGitPaths: (_id, _slug, { paths }) => mutate('unstage', paths),
           commitWorktreeGitChanges: () => mutate('commit', []),
@@ -49,7 +57,9 @@ const hooks = registerHooks({
   },
 })
 after(() => { hooks.deregister(); delete (globalThis as any).__filesGitFixture })
-const { createRoot, createEffect } = await import("solid-js")
+const { createRoot, createEffect, createSignal } = await import("solid-js")
+const [hideWhitespace, setHideWhitespace] = createSignal<boolean | undefined>(undefined)
+fixture.preferences = () => ({ hideDiffWhitespaceChanges: hideWhitespace() })
 const { useGitChanges } = await import("./useGitChanges")
 const { buildGitChangeListItems } = await import("./git-changes-model")
 const { getFilePreview, openFilePreview, closeFilePreview } = await import("../../../../stores/files-preview")
@@ -76,6 +86,7 @@ async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")]) {
   fixture.requests = []
   fixture.mutationGate = null
   fixture.statusGate = null
+  fixture.statusOptions = []
   let dispose!: () => void
   const git = createRoot(cleanup => {
     dispose = cleanup
@@ -271,6 +282,51 @@ test("an eye-opened diff reconciles independently of the selected row, including
     assert.equal(getFilePreview("test"), null)
     assert.equal(h.git.gitSelectedItemId(), "unstaged:c.ts")
   } finally { h.close() }
+})
+
+test("whitespace-only worktree changes stay out of the list, counts and bulk staging until the option is off", async () => {
+  const whitespace = (path: string, staged = false): WorktreeGitStatusEntry => ({
+    ...entry(path), stagedStatus: staged ? "modified" : null, unstagedWhitespaceOnly: true,
+  })
+  setHideWhitespace(undefined)
+  // b.ts sorts between the two real changes, so a range selection spans it.
+  const h = await setup([entry("a.ts"), whitespace("b.ts"), entry("c.ts"), whitespace("s.ts", true)])
+  try {
+    const ids = () => buildGitChangeListItems(h.git.gitStatusEntries()).map(item => item.id)
+    assert.deepEqual(fixture.statusOptions, [{ hideWhitespace: true }], "the option defaults on and is part of the read")
+    assert.deepEqual(ids(), ["staged:s.ts", "unstaged:a.ts", "unstaged:c.ts"],
+      "staged rows stay visible so nothing is committed unseen")
+    assert.equal(h.git.gitStatusEntries()?.length, 3, "the file count excludes hidden files")
+    h.click("unstaged:a.ts")
+    h.click("unstaged:c.ts", { shiftKey: true })
+    h.git.stageGitFile(h.item("unstaged:c.ts"))
+    await until(() => fixture.requests.length === 1)
+    assert.deepEqual(fixture.requests[0].paths, ["a.ts", "c.ts"], "a range selection never stages hidden files")
+
+    setHideWhitespace(false)
+    await until(() => fixture.statusOptions.length === 3)
+    assert.deepEqual(fixture.statusOptions.at(-1), { hideWhitespace: false })
+    await until(() => ids().includes("unstaged:b.ts") && ids().includes("unstaged:s.ts"))
+    setHideWhitespace(true)
+    await until(() => !ids().includes("unstaged:b.ts"))
+    assert.deepEqual(fixture.statusOptions.at(-1), { hideWhitespace: true })
+  } finally { h.close(); setHideWhitespace(undefined) }
+})
+
+test("a status read made under the other whitespace option never replaces the list", async () => {
+  setHideWhitespace(true)
+  const h = await setup([entry("a.ts"), { ...entry("b.ts"), unstagedWhitespaceOnly: true }])
+  try {
+    const gate = deferred()
+    fixture.statusGate = gate.promise
+    const pending = h.git.refreshGitStatus()
+    setHideWhitespace(false)
+    gate.resolve()
+    await pending
+    fixture.statusGate = null
+    await until(() => !h.git.gitStatusLoading() && h.git.gitStatusEntries()?.length === 2)
+    assert.deepEqual(fixture.statusOptions.at(-1), { hideWhitespace: false })
+  } finally { h.close(); setHideWhitespace(undefined) }
 })
 
 test("passive refresh and commits reconcile an eye-opened file without selecting it", async () => {

@@ -504,9 +504,9 @@ export const serverApi = {
       },
     )
   },
-  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal): Promise<WorktreeGitStatusResponse> {
+  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal, options?: { hideWhitespace?: boolean }): Promise<WorktreeGitStatusResponse> {
     return request<WorktreeGitStatusResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status${options?.hideWhitespace ? "?hideWhitespace=1" : ""}`,
       { signal },
     )
   },

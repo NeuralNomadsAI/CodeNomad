@@ -265,7 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "Unified view मा जानुहोस्",
   "instanceShell.diff.enableWordWrap": "Word wrap सक्षम गर्नुहोस्",
   "instanceShell.diff.disableWordWrap": "Word wrap अक्षम गर्नुहोस्",
-  "instanceShell.diff.whitespaceOnly": "यो फाइलमा खाली ठाउँ मात्र परिवर्तन भएको छ। भिन्नताहरू हेर्न उन्नत सेटिङहरूमा “डिफहरूमा खाली ठाउँ मात्रका परिवर्तनहरू लुकाउनुहोस्” बन्द गर्नुहोस्।",
+  "instanceShell.diff.whitespaceOnly": "यो फाइलमा खाली ठाउँ मात्र परिवर्तन भएको छ (इन्डेन्टेसन वा लाइनको अन्त्यमा रहेका खाली ठाउँहरू)।",
   "instanceShell.diff.lineEndingsOnly": "यो फाइलमा लाइनका अन्त्यहरू (वा बाइट-अर्डर चिन्ह) मात्र परिवर्तन भएका छन्; यसको पाठ उस्तै छ।",
   "instanceShell.worktree.create": "+ Worktree सिर्जना गर्नुहोस्",
   "instanceShell.worktree.unavailable": "उपलब्ध छैन",

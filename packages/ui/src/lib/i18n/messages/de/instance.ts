@@ -265,7 +265,7 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "Zur einheitlichen Ansicht wechseln",
   "instanceShell.diff.enableWordWrap": "Zeilenumbruch aktivieren",
   "instanceShell.diff.disableWordWrap": "Zeilenumbruch deaktivieren",
-  "instanceShell.diff.whitespaceOnly": "In dieser Datei hat sich nur Leerraum geändert. Deaktivieren Sie „Reine Leerraumänderungen in Diffs ausblenden“ in den erweiterten Einstellungen, um die Unterschiede zu sehen.",
+  "instanceShell.diff.whitespaceOnly": "In dieser Datei hat sich nur Leerraum geändert (Einrückung oder Leerzeichen am Zeilenende).",
   "instanceShell.diff.lineEndingsOnly": "In dieser Datei haben sich nur die Zeilenenden (oder eine Byte-Order-Markierung) geändert; der Text ist identisch.",
   "instanceShell.worktree.create": "+ Worktree erstellen",
   "instanceShell.worktree.unavailable": "Nicht verfügbar",

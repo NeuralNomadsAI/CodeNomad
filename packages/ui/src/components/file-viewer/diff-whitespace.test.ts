@@ -9,6 +9,12 @@ test("re-indentation and trailing blanks are hidden whitespace changes", () => {
   assert.equal(classifyHiddenDiffChange("﻿a\n", "a \n"), "whitespace", "Monaco strips one leading byte-order mark")
 })
 
+test("same-length trailing-whitespace swaps Monaco never draws still get the whitespace notice", () => {
+  assert.equal(classifyHiddenDiffChange("foo\t\n", "foo \n"), "whitespace")
+  assert.equal(classifyHiddenDiffChange("foo  \n", "foo\t\t\n"), "whitespace")
+  assert.equal(classifyHiddenDiffChange("a\n\t\n", "a\n \n"), "whitespace", "a whitespace-only line")
+})
+
 test("line endings and byte-order marks alone are invisible in both modes", () => {
   assert.equal(classifyHiddenDiffChange("a\nb\n", "a\r\nb\r\n"), "invisible")
   assert.equal(classifyHiddenDiffChange("a\nb", "a\rb"), "invisible", "a lone CR is a line terminator")

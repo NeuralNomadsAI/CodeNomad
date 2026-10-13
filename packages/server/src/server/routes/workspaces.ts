@@ -260,12 +260,13 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string; slug: string }
+    Querystring: { hideWhitespace?: string }
   }>("/api/workspaces/:id/worktrees/:slug/git-status", async (request, reply) => {
     try {
       const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
       if (!directory) return
 
-      return await getWorktreeGitStatus({ workspaceFolder: directory, logger: request.log })
+      return await getWorktreeGitStatus({ workspaceFolder: directory, logger: request.log, hideWhitespace: request.query?.hideWhitespace === "1" })
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }

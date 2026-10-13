@@ -197,20 +197,27 @@ function applyNumstatOutput(
   }
 }
 
+// Reads with and without whitespace detection return different inventories.
+const gitStatusRequestKey = (workspaceFolder: string, hideWhitespace: boolean) => `${hideWhitespace ? "w" : "-"}:${workspaceFolder}`
+
 export async function getWorktreeGitStatus(params: {
   workspaceFolder: string
   logger?: LogLike
+  hideWhitespace?: boolean
 }, run: RunGit = runGit): Promise<WorktreeGitStatusEntry[]> {
   const workspaceFolder = await realpath(params.workspaceFolder)
+  const hideWhitespace = params.hideWhitespace === true
+  const key = gitStatusRequestKey(workspaceFolder, hideWhitespace)
   const generation = gitStatusGenerations.get(workspaceFolder) ?? 0
-  const pending = gitStatusRequests.get(workspaceFolder)
+  const pending = gitStatusRequests.get(key)
   if (pending?.generation === generation) return pending.request
 
-  const request = readWorktreeGitStatus({ ...params, workspaceFolder }, run).finally(() => {
-    if (gitStatusRequests.get(workspaceFolder)?.request === request) gitStatusRequests.delete(workspaceFolder)
-    if (!gitStatusRequests.has(workspaceFolder)) gitStatusGenerations.delete(workspaceFolder)
+  const request = readWorktreeGitStatus({ ...params, workspaceFolder, hideWhitespace }, run).finally(() => {
+    if (gitStatusRequests.get(key)?.request === request) gitStatusRequests.delete(key)
+    if (!gitStatusRequests.has(gitStatusRequestKey(workspaceFolder, true))
+      && !gitStatusRequests.has(gitStatusRequestKey(workspaceFolder, false))) gitStatusGenerations.delete(workspaceFolder)
   })
-  gitStatusRequests.set(workspaceFolder, { generation, request })
+  gitStatusRequests.set(key, { generation, request })
   return request
 }
 
@@ -219,17 +226,42 @@ export async function invalidateWorktreeGitStatus(workspaceFolder: string): Prom
   gitStatusGenerations.set(canonicalDirectory, (gitStatusGenerations.get(canonicalDirectory) ?? 0) + 1)
 }
 
+/**
+ * Flags unstaged edits of tracked text files that `git diff --ignore-all-space`
+ * considers empty. Git omits such files from that numstat (older versions list
+ * them as `0 0`); `-w` also ignores CR, so CRLF-only edits qualify. Binary,
+ * mode-only, untracked, added/deleted and staged changes are never flagged.
+ */
+function applyUnstagedWhitespaceOnly(map: Map<string, WorktreeGitStatusEntry>, ignoreAllSpaceNumstat: string) {
+  const remaining = new Map<string, number>()
+  const tokens = ignoreAllSpaceNumstat.split("\0")
+  for (const record of tokens) {
+    const parts = record.split("\t")
+    if (parts.length < 3) continue
+    const normalizedPath = normalizeGitStatusPath(parts.slice(2).join("\t"))
+    // Binary files report "-": keep them visible.
+    remaining.set(normalizedPath, parts[0] === "-" || parts[1] === "-" ? Infinity : (Number.parseInt(parts[0], 10) || 0) + (Number.parseInt(parts[1], 10) || 0))
+  }
+  for (const entry of map.values()) {
+    if (entry.unstagedStatus !== "modified" || entry.unstagedAdditions + entry.unstagedDeletions === 0) continue
+    entry.unstagedWhitespaceOnly = (remaining.get(entry.path) ?? 0) === 0
+  }
+}
+
 async function readWorktreeGitStatus(params: {
   workspaceFolder: string
   logger?: LogLike
+  hideWhitespace: boolean
 }, run: RunGit): Promise<WorktreeGitStatusEntry[]> {
-  const { workspaceFolder, logger } = params
-  const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult] = await Promise.all([
+  const { workspaceFolder, logger, hideWhitespace } = params
+  const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult, whitespaceResult] = await Promise.all([
     run(["diff", "--name-status", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
     run(["diff", "--name-status", "-z", "--find-renames", "--find-copies"], workspaceFolder),
     run(["ls-files", "--others", "--exclude-standard"], workspaceFolder),
     run(["diff", "--numstat", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
     run(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder),
+    // One extra bounded worker read, only when the display option asks for it.
+    hideWhitespace ? run(["diff", "--numstat", "-z", "--ignore-all-space"], workspaceFolder) : undefined,
   ])
 
   for (const result of [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult]) {
@@ -251,6 +283,9 @@ async function readWorktreeGitStatus(params: {
   applyUntrackedOutput(entries, untrackedOutput)
   applyNumstatOutput(entries, stagedNumstatOutput, "staged")
   applyNumstatOutput(entries, unstagedNumstatOutput, "unstaged")
+  if (whitespaceResult?.ok) applyUnstagedWhitespaceOnly(entries, whitespaceResult.stdout)
+  // Detection is a display aid: on failure every change stays visible.
+  else if (whitespaceResult) logger?.warn?.({ workspaceFolder, err: whitespaceResult.error }, "Failed to detect whitespace-only git changes")
   await applyUntrackedFileStats(entries, workspaceFolder)
 
   return Array.from(entries.values()).sort((a, b) => a.path.localeCompare(b.path))

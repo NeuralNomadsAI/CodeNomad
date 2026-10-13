@@ -258,6 +258,12 @@ export interface WorktreeGitStatusEntry {
   unstagedStatus: GitChangeKind | null
   unstagedAdditions: number
   unstagedDeletions: number
+  /**
+   * Present only when requested with `hideWhitespace`: the worktree change of a
+   * tracked text file is empty under `git diff --ignore-all-space` (indentation,
+   * inner spacing or line endings). Staged changes are never flagged.
+   */
+  unstagedWhitespaceOnly?: boolean
 }
 
 export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]

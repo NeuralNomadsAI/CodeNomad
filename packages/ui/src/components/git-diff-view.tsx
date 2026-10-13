@@ -35,8 +35,10 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     const value = content()
     return value && !value.image ? classifyHiddenDiffChange(value.before, value.after) : null
   })
+  // Factual in both setting states: Monaco 0.52 never draws same-length
+  // trailing-whitespace swaps, so advising to turn the setting off could mislead.
   const hiddenNotice = () => hiddenChange() === "invisible" ? t("instanceShell.diff.lineEndingsOnly")
-    : hiddenChange() === "whitespace" && hideWhitespace() ? t("instanceShell.diff.whitespaceOnly") : null
+    : hiddenChange() === "whitespace" ? t("instanceShell.diff.whitespaceOnly") : null
   let controller: AbortController | undefined
   let pending = false
 
