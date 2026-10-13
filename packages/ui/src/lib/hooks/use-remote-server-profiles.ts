@@ -30,8 +30,11 @@ export function useRemoteServerProfiles() {
     const name = input.name.trim()
     const baseUrl = pairing?.baseUrl ?? input.baseUrl.trim()
     if (!name || !baseUrl) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+    // Remote Control certificates are publicly trusted. Skipping verification would later route Tauri through the
+    // TLS proxy, whose incognito window store does not keep the paired device cookie.
+    const skipTlsVerify = pairing ? false : input.skipTlsVerify
 
-    const probe = await serverApi.probeRemoteServer({ baseUrl, skipTlsVerify: input.skipTlsVerify })
+    const probe = await serverApi.probeRemoteServer({ baseUrl, skipTlsVerify })
     if (!probe.ok) throw new Error(probe.error || t("folderSelection.servers.dialog.errorConnect"))
 
     const profile = await saveRemoteServerProfile({
@@ -39,13 +42,12 @@ export function useRemoteServerProfiles() {
       id: input.id ?? (pairing ? remoteServers().find((server) => server.baseUrl === probe.normalizedUrl)?.id : undefined),
       name,
       baseUrl: probe.normalizedUrl,
-      skipTlsVerify: input.skipTlsVerify,
+      skipTlsVerify,
     })
 
     if (openWindow) {
-      // Remote Control certificates are publicly trusted: the pairing window never needs the TLS proxy.
       const proxySession =
-        !pairing && isTauriHost() && profile.skipTlsVerify && profile.baseUrl.startsWith("https://")
+        isTauriHost() && profile.skipTlsVerify && profile.baseUrl.startsWith("https://")
           ? await serverApi.createRemoteProxySession({ baseUrl: profile.baseUrl, skipTlsVerify: true })
           : undefined
 

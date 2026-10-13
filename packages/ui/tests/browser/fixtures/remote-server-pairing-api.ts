@@ -18,6 +18,6 @@ serverApi.patchStateOwner = (async (owner: string, patch: unknown) => {
   return uiBucket
 }) as typeof serverApi.patchStateOwner
 serverApi.probeRemoteServer = async ({ baseUrl, skipTlsVerify }) => {
-  fixture.probes.push(baseUrl)
+  fixture.probes.push(`${baseUrl} skipTls=${Boolean(skipTlsVerify)}`)
   return { ok: true, reachable: true, normalizedUrl: baseUrl.replace(/\/$/, ""), skipTlsVerify: Boolean(skipTlsVerify), requiresAuth: true, authenticated: false }
 }

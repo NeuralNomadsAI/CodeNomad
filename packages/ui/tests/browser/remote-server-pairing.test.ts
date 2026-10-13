@@ -43,16 +43,19 @@ test("a pasted pairing link saves only the server and pairs in the window it ope
   try {
     await page.goto(url)
     await page.getByText("A server address, or a Remote Control pairing link created on that computer.", { exact: true }).waitFor()
+    // Skipping TLS checks would later route Tauri through the incognito proxy store and lose the pairing.
+    await page.getByLabel("Skip TLS verification for self-signed certificates.").check()
     // Save, not Connect: the single-use code would otherwise be lost.
     await submit(page, LINK, "Save")
     await page.waitForFunction(() => (window as unknown as { opened: unknown[] }).opened.length === 1)
     const [payload] = await opened(page)
     assert.equal(payload.baseUrl, TUNNEL)
     assert.equal(payload.entryUrl, LINK)
-    assert.deepEqual(await page.evaluate(() => (window as unknown as { probes: string[] }).probes), [TUNNEL])
-    const state = await page.evaluate(() => (window as unknown as { uiState: () => string }).uiState())
-    assert.equal(state.includes("single-use-code"), false)
-    assert.equal(state.includes(TUNNEL), true)
+    assert.equal((payload as { skipTlsVerify?: boolean }).skipTlsVerify, false)
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { probes: string[] }).probes), [`${TUNNEL} skipTls=false`])
+    const state = JSON.parse(await page.evaluate(() => (window as unknown as { uiState: () => string }).uiState()))
+    assert.equal(JSON.stringify(state).includes("single-use-code"), false)
+    assert.deepEqual(state.remoteServers.map((server: { baseUrl: string; skipTlsVerify: boolean }) => [server.baseUrl, server.skipTlsVerify]), [[TUNNEL, false]])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
