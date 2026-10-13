@@ -7,11 +7,21 @@ import { fileURLToPath } from "node:url"
 import { createRequire } from "node:module"
 import { build } from "esbuild"
 import { _electron, type ElectronApplication } from "playwright"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 
 test("real Electron View menu rebuilds native labels on initial sync, locale and window changes", { timeout: 45000 }, async () => {
   const sandbox = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || tmpdir(), "codenomad-view-menu-"))
   let app: ElectronApplication | undefined
-  try {
+  await runWithDiagnosticCleanup({
+    // Electron's exit resolves before Windows releases its profile's LevelDB
+    // handles; retry removing only this owned sandbox, as peer native tests do.
+    cleanup: async () => {
+      try { await app?.close() } finally { await rm(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+    },
+    diagnose: async () => {},
+    onObservationError: () => {},
+    onCleanupError: error => console.error("view-menu sandbox cleanup failed after the primary failure", error),
+    run: async () => {
     const module = join(sandbox, "menu.cjs")
     await build({ entryPoints: ["menu", "menu-target"].map(name => fileURLToPath(new URL(`../../../electron-app/electron/main/${name}.ts`, import.meta.url))),
       outdir: sandbox, outExtension: { ".js": ".cjs" }, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
@@ -51,8 +61,6 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.workspaceEnabled()), [false, false, false], "a focused non-local window must not target the background local window")
     await app.evaluate(() => { const f = (globalThis as any).menuFixture; f.focus(0); f.clear(0) })
     assert.ok((await read()).every((item: any) => !item.enabled && !item.checked))
-  } finally {
-    await app?.close()
-    await rm(sandbox, { recursive: true, force: true })
-  }
+    },
+  })
 })

@@ -88,24 +88,10 @@
   border-radius: 0;
 }
 
-@container prompt-composer (max-width: 360px) {
-  .prompt-input-footer {
-    flex-wrap: wrap;
-  }
-
-  .prompt-input-footer-context {
-    flex-basis: 100%;
-    border-bottom: 1px solid var(--border-divider);
-  }
-
-  .prompt-input-footer-actions {
-    width: 100%;
-    justify-content: flex-end;
-    border-inline-start: 0;
-  }
-}
-
 @media (pointer: coarse) {
+  .prompt-input-footer {
+    --touch-target-size: var(--touch-target-size-compact);
+  }
   .prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger {
     flex-basis: var(--touch-target-size);
   }

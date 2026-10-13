@@ -8,7 +8,6 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
-import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
 import { Settings2 } from "lucide-solid"
 import TabScroll from "../../../tab-scroll"
 
@@ -30,9 +29,15 @@ import {
   type RightPanelTabModule,
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
-import { loadRightPanelPluginManifests, type RightPanelPluginLoadError } from "./plugin-manifest"
-import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
+import { createMissionsRightPanelModule } from "./missions-plugin"
+import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
+import { useI18n } from "../../../../lib/i18n"
+import { useTheme } from "../../../../lib/theme"
+import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
+import { ExtensionManager } from "../../../panel-extensions/extension-manager"
+import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
+import type { RightPanelModule } from "./registry"
 
 function RightPanelTabFallback() {
   return <div class="flex-1 min-h-0" />
@@ -82,6 +87,7 @@ interface RightPanelProps {
 
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
+  onRestoreConversation?: () => void
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
@@ -89,19 +95,32 @@ interface RightPanelProps {
   onCloseRightDrawer: () => void
   promptInputApi: Accessor<PromptInputApi | null>
 
+  /** Target of the shell's fixed panel toggle. */
+  panelId?: string
   setContentEl: (el: HTMLElement | null) => void
 }
 
 const RightPanel: Component<RightPanelProps> = (props) => {
-  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
+  const { locale } = useI18n()
+  const theme = useTheme()
+  const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
+  const savedTab = readStoredRightPanelTab("files")
+  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  const [extensionsExpanded, setExtensionsExpanded] = createSignal(false)
+  createEffect(() => { props.instanceId; props.isActive(); setRightPanelCustomizationOpen(false) })
+  createEffect(() => { rightPanelCustomizationOpen(); setExtensionsExpanded(false) })
   let customizationTriggerRef: HTMLButtonElement | undefined
   let customizationPopoverRef: HTMLDivElement | undefined
-  const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
-    parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
-  )
+  let savedCustomization = parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY))
+  if (!readClientLayoutValue(FILES_PANEL_MIGRATION_KEY)) {
+    savedCustomization = mergeFilesPanelCustomization(savedCustomization)
+    writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(savedCustomization))
+    writeClientLayoutValue(FILES_PANEL_MIGRATION_KEY, "1")
+  }
+  const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(savedCustomization)
   const tabGroupId = `right-panel-${createUniqueId()}`
   const tabId = (id: string) => `${tabGroupId}-tab-${id}`
   const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
@@ -112,7 +131,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     if (!rightPanelCustomizationOpen()) return
-    queueMicrotask(() => customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus())
+    const fitPopover = () => {
+      const popover = customizationPopoverRef
+      if (popover) popover.style.maxHeight = `${Math.max(0, window.innerHeight - popover.getBoundingClientRect().top - 8)}px`
+    }
+    queueMicrotask(() => { fitPopover(); customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus() })
+    window.addEventListener("resize", fitPopover)
     const closeOutside = (event: PointerEvent) => {
       const target = event.target as Node
       if (!customizationTriggerRef?.contains(target) && !customizationPopoverRef?.contains(target)) {
@@ -130,6 +154,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     onCleanup(() => {
       document.removeEventListener("pointerdown", closeOutside)
       document.removeEventListener("keydown", closeOnEscape)
+      window.removeEventListener("resize", fitPopover)
     })
   })
 
@@ -164,22 +189,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     moveTab(String(draggable.id), String(droppable.id))
   }
 
-  const openRightPanelTab = (tabId: string) => {
-    updateRightPanelCustomization((current) => ({
-      ...current,
-      hiddenTabIds: current.hiddenTabIds.filter((id) => id !== tabId),
-    }))
-    setRightPanelTab(tabId)
-  }
-
   const handleTabKeyDown = (event: KeyboardEvent, currentTabId: string) => {
     const tabs = visibleRightPanelTabs()
     const index = tabs.findIndex((tab) => tab.id === currentTabId)
     if (index === -1) return
 
     let target: RightPanelTabModule | undefined
-    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
-    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
+    const direction = event.currentTarget instanceof HTMLElement && getComputedStyle(event.currentTarget).direction === "rtl" ? -1 : 1
+    if (event.key === "ArrowLeft") target = tabs[(index - direction + tabs.length) % tabs.length]
+    if (event.key === "ArrowRight") target = tabs[(index + direction + tabs.length) % tabs.length]
     if (event.key === "Home") target = tabs[0]
     if (event.key === "End") target = tabs[tabs.length - 1]
     if (!target) return
@@ -189,46 +207,51 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
   }
 
-  const rightPanelPluginRuntime = loadRightPanelPluginManifests(
-    [
-      createCoreRightPanelRuntime({
-        isActive: props.isActive,
-        t: props.t,
-        instanceId: props.instanceId,
-        get instance() { return props.instance },
-        activeSessionId: props.activeSessionId,
-        activeSession: props.activeSession,
-        isPhoneLayout: props.isPhoneLayout,
-        rightDrawerWidth: props.rightDrawerWidth,
-        rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
-        promptInputApi: props.promptInputApi,
-        rightPanelTab,
-        expandedItems: rightPanelExpandedItems,
-        onExpandedItemsChange: handleAccordionChange,
-        customization: rightPanelCustomization,
-        onCustomizationChange: updateRightPanelCustomization,
-        extraStatusSections: () => extraStatusSections(),
-      }),
-      ...RIGHT_PANEL_PLUGIN_MANIFESTS,
-    ],
-    {
-      instanceId: props.instanceId,
-      t: props.t,
-      activeSessionId: props.activeSessionId,
-      isTabActive: (tabId) => rightPanelTab() === tabId,
-      openTab: openRightPanelTab,
-      reportAttention: () => undefined,
+  const coreModule = createCoreRightPanelRuntime({
+    isActive: props.isActive,
+    t: props.t,
+    instanceId: props.instanceId,
+    get instance() { return props.instance },
+    activeSessionId: props.activeSessionId,
+    activeSession: props.activeSession,
+    isPhoneLayout: props.isPhoneLayout,
+    rightDrawerWidth: props.rightDrawerWidth,
+    rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
+    promptInputApi: props.promptInputApi,
+    rightPanelTab,
+    expandedItems: rightPanelExpandedItems,
+    onExpandedItemsChange: handleAccordionChange,
+    customization: rightPanelCustomization,
+    onCustomizationChange: updateRightPanelCustomization,
+    extraStatusSections: () => extraStatusSections(),
+  })
+  const missionsModule = createMissionsRightPanelModule({
+    instanceId: props.instanceId,
+    t: props.t,
+    activeSessionId: props.activeSessionId,
+    isActive: () => props.isActive() && rightPanelTab() === "missions",
+    revealConversation: restoreChat => {
+      if (restoreChat) props.onRestoreConversation?.()
+      if (props.isPhoneLayout()) props.onCloseRightDrawer()
     },
-  )
+  })
 
-  const rightPanelModules = createMemo(() => rightPanelPluginRuntime.modules)
-  const rightPanelPluginErrors = createMemo(() => rightPanelPluginRuntime.errors)
+  const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
+  const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
+    const id = `extension:${entry.manifest.id}`
+    return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
+      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
+        context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
+    }] }
+  }))
+  const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs(),
+      allRightPanelTabs().filter(tab => extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
-      rightPanelCustomization().hiddenTabIds,
+      // Addons have one profile-wide activation, not a second per-window visibility gate.
+      rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
     ),
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
@@ -252,19 +275,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   return (
-    <div class="relative flex flex-col h-full" ref={props.setContentEl}>
+    <div id={props.panelId} class="relative flex flex-col h-full" ref={props.setContentEl}>
       <div class="panel-header right-panel-tab-bar">
         <div class="tab-container">
           <div class="panel-header-actions tab-strip-shortcuts">
-            <IconButton
-              size="small"
-              color="inherit"
-              aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
-              title={props.t("instanceShell.rightDrawer.toggle.close")}
-              onClick={props.onCloseRightDrawer}
-            >
-              <ArrowForwardIcon fontSize="small" />
-            </IconButton>
             <IconButton
               ref={customizationTriggerRef}
               class="icon-toggle"
@@ -290,7 +304,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                             active={rightPanelTab() === tab.id}
                             tabId={tabId(tab.id)}
                             panelId={tabPanelId(tab.id)}
-                            label={props.t(tab.labelKey)}
+                            label={tab.label ?? props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
                             tabIndex={rightPanelTab() === tab.id ? 0 : -1}
                             onSelect={() => setRightPanelTab(tab.id)}
@@ -311,8 +325,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           <div class="right-panel-customization-grid">
             <For each={orderedRightPanelTabs()}>
               {(tab) => {
-                const label = () => props.t(tab.labelKey)
-                const visible = () => tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id)
+                const label = () => tab.label ?? props.t(tab.labelKey)
+                const extension = () => extensionForTab(tab.id)
+                const visible = () => extension()?.enabled ?? (tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id))
                 return (
                   <>
                     <div class="right-panel-customization-row">
@@ -320,13 +335,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         <input
                           type="checkbox"
                           checked={visible()}
-                          disabled={tab.alwaysVisible}
-                          onChange={(event) =>
+                          disabled={tab.alwaysVisible || (Boolean(extension()) && (!extensions.verified() || extensions.activating() || !props.isActive()))}
+                          onChange={(event) => {
+                            const entry = extension()
+                            if (entry) {
+                              const enabled = event.currentTarget.checked
+                              event.currentTarget.checked = entry.enabled
+                              void extensions.activate(entry, enabled)
+                              return
+                            }
                             updateRightPanelCustomization((current) => ({
                               ...current,
                               hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
                             }))
-                          }
+                          }}
                         />
                         <span>{label()}</span>
                       </label>
@@ -367,20 +389,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               }}
             </For>
 
-            <Show when={rightPanelPluginErrors().length > 0}>
-              <For each={rightPanelPluginErrors()}>
-                {(error: RightPanelPluginLoadError) => (
-                  <div class="right-panel-customization-row">
-                    <span class="right-panel-customization-label">
-                      {props.t("instanceShell.rightPanel.customize.moduleUnavailable", {
-                        module: error.displayNameKey ? props.t(error.displayNameKey) : error.pluginId,
-                      })}
-                    </span>
-                  </div>
-                )}
-              </For>
-            </Show>
           </div>
+          <Show when={extensions.failed()}><p role="alert">{props.t("panelExtensions.error")}</p></Show>
           <button
             type="button"
             class="right-panel-customization-button mt-2 w-full"
@@ -388,6 +398,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           >
             {props.t("instanceShell.rightPanel.customize.reset")}
           </button>
+          <hr class="panel-extension-divider" />
+          <details class="panel-extension-disclosure" onToggle={event => setExtensionsExpanded(event.currentTarget.open)}>
+            <summary>{props.t("panelExtensions.section")}</summary>
+            <Show when={extensionsExpanded()}><ExtensionManager controller={extensions} /></Show>
+          </details>
         </div>
       </Show>
 

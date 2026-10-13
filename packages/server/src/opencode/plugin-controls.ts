@@ -27,6 +27,7 @@ import {
   readPluginControlDocument,
   replacePluginControlDocument,
   type PluginConfigEntry,
+  type PluginControlDocument,
   type PluginControlDocumentFileSystem,
   PluginControlDocumentError,
 } from "./plugin-control-document"
@@ -96,6 +97,46 @@ export class PluginControls {
   async read(workspaceId: string, location: PluginControlLocation): Promise<PluginControlsSnapshot> {
     const context = await this.readContext(workspaceId, location)
     return buildSnapshot(context)
+  }
+
+  // Shared scope acquisition for native settings that have no native write API.
+  // Callers receive only the already-authorized documents; path/WSL selection,
+  // deletion admission, connection fencing and atomic conflict checks stay here.
+  async readConfigDocuments(workspaceId: string, location: PluginControlLocation) {
+    const context = await this.readContext(workspaceId, location)
+    const documents = await Promise.all(context.targets.map(async target => ({
+      scope: target.scope, path: target.path,
+      document: await readPluginControlDocument(target.ioPath, context.fileSystem),
+    })))
+    assertCurrentConnection(context.connection)
+    return { location: context.location, entries: context.entries, documents }
+  }
+
+  editConfigDocument(
+    workspaceId: string,
+    location: PluginControlLocation,
+    scope: PluginControlScope,
+    edit: (document: PluginControlDocument) => string,
+  ): Promise<void> {
+    const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
+    const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
+    return this.serializeMutation(key, async () => {
+      const context = await this.readContext(workspaceId, location)
+      const target = context.targets.find(target => target.scope === scope)
+      if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
+      const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
+      if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
+      const release = this.options.worktreeDeletionFence.enter([identity])
+      if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
+      try {
+        const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
+        const updated = edit(document)
+        await replacePluginControlDocument(document, updated, {
+          beforeCommit: () => assertCurrentConnection(context.connection),
+        }, context.fileSystem)
+      } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
+      finally { release() }
+    })
   }
 
   mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {

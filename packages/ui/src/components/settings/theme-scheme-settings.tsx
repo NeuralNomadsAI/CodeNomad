@@ -333,6 +333,20 @@ export const ThemeSchemeSettings: Component = () => {
               if (!option) return
               void queuePaletteSelection(option)
             }}
+            onKeyDown={(event) => {
+              // Customizable selects open their list on arrows; keep stepping through
+              // palettes with a live preview while the list is closed, as native selects do.
+              if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || event.altKey) return
+              // Same detection as native-select.css enables customizable selects with.
+              if (!CSS.supports("(appearance: base-select) and (overflow-clip-margin: content-box)")) return
+              const select = event.currentTarget
+              if (select.matches(":open")) return
+              const next = select.selectedIndex + (event.key === "ArrowDown" ? 1 : -1)
+              event.preventDefault()
+              if (next < 0 || next >= select.options.length) return
+              select.selectedIndex = next
+              select.dispatchEvent(new Event("change", { bubbles: true }))
+            }}
           >
             <For each={filteredOptions()}>{(option) => <option value={option.key} selected={(pendingOption()?.key ?? editingKey()) === option.key}>{option.name}</option>}</For>
           </select>

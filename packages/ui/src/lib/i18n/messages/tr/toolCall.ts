@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "Arama sonucu bulunamadı.",
+  "toolCall.websearch.provider": "Web arama sağlayıcısı",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "İç içe araç çağrıları",
+  "toolCall.execute.more": "{count} ek çağrı gizlendi.",
+  "toolCall.execute.truncated": "Yerel çıktı kısaltıldı. Tam çıktı:",
   "toolCall.pending.waitingToRun": "Çalıştırılmayı bekliyor...",
   "toolCall.error.label": "Hata:",
   "toolCall.header.copyTitle": "Araç çağrısı başlığını kopyala",
@@ -48,6 +54,7 @@ export const toolCallMessages = {
   "toolCall.renderer.action.searchingContent": "İçerik aranıyor...",
   "toolCall.renderer.action.listingDirectory": "Dizin listeleniyor...",
   "toolCall.renderer.bash.title.timeout": "Zaman aşımı: {timeout}",
+  "toolCall.output.truncated": "[Çıktı görüntüleme için kısaltıldı; tam çıktıya erişmek için kopyalayın]",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
   "toolCall.renderer.todo.empty": "Planlanmış öğe yok",

@@ -127,9 +127,7 @@ An absent/hidden native anchor returns `anchor_missing`, separately from ownersh
 or revert conflicts. Automatic restoration recovers once through the latest visible
 page and replaces its saved anchor/cursor only on success. Explicit navigation still
 reports the missing destination. Active-view initial reads cancel on hiding;
-the lightweight structural index loads independently of transcript hydration. See
-`SESSION_HISTORY_STRESS_REVIEW.md` for measured desktop switching costs and the
-remaining streaming/memory work.
+the lightweight structural index loads independently of transcript hydration.
 
 Outline scans retain accepted pages and their sequence-horizon cursor when a view
 is hidden or unmounted. Up to 16 structural snapshots (200,000 entries across the

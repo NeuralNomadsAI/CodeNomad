@@ -67,8 +67,8 @@ function resolvePathMentions(prompt: string, attachments: Attachment[] = []): st
 
   let result = prompt
 
-  result = result.replace(/@(\.\/)/g, "___ROOT___")
-  result = result.replace(/@(\.)(?!\.)/g, "___ROOT_NOSLASH___")
+  result = result.replace(/@(\.\/)/g, "./")
+  result = result.replace(/@(\.)(?!\.)/g, "./")
 
   const allPaths = new Set<string>()
   for (const path of fileAttachments) {
@@ -84,9 +84,6 @@ function resolvePathMentions(prompt: string, attachments: Attachment[] = []): st
     result = result.replace(`@${withoutPrefix}`, withPrefix)
     result = result.replace(`@${withoutPrefix}/`, `${withPrefix}/`)
   }
-
-  result = result.replace("___ROOT___", "./")
-  result = result.replace("___ROOT_NOSLASH___", "./")
 
   return result
 }

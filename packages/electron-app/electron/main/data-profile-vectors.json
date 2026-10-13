@@ -1,0 +1,93 @@
+{
+  "comment": "Shared Electron/Tauri data-profile vectors. Scope names were frozen from the pre-profile channel formula (<key>-sha256(key\\0configIdentity)[0..16]); both hosts must keep producing them. Keep this file in sync with dev-docs/DESKTOP_DATA_PROFILES.md.",
+  "profileNames": [
+    { "input": "dev", "key": "dev", "display": "dev" },
+    { "input": "  Dev-V2 ", "key": "dev-v2", "display": "dev-v2" },
+    { "input": "default", "key": "stable", "display": "default" },
+    { "input": "DEFAULT", "key": "stable", "display": "default" },
+    { "input": "stable", "key": "stable", "display": "default" },
+    { "input": "Team.A_b-1", "key": "team.a_b-1", "display": "team.a_b-1" },
+    { "input": "beta-channel", "key": "beta-channel", "display": "beta-channel" },
+    { "input": "a234567890123456789012345678901234567890123456789012345678901234", "key": "a234567890123456789012345678901234567890123456789012345678901234", "display": "a234567890123456789012345678901234567890123456789012345678901234" }
+  ],
+  "invalidProfileNames": [
+    "-dev",
+    ".dev",
+    "_dev",
+    "a b",
+    "a/b",
+    "a\\b",
+    "dev:1",
+    "d\u00e9v",
+    "dev\u0130",
+    "\u0441\u0442\u0430\u0431",
+    "a2345678901234567890123456789012345678901234567890123456789012345"
+  ],
+  "legacyChannels": [
+    { "input": "stable", "key": "stable" },
+    { "input": " Stable ", "key": "stable" },
+    { "input": "dev", "key": "dev" },
+    { "input": "DEV-V2", "key": "dev-v2" },
+    { "input": "Beta Channel", "key": "beta-channel" },
+    { "input": "default", "key": "default" },
+    { "input": "team.a_b-1", "key": "team.a_b-1" }
+  ],
+  "scopes": [
+    { "key": "stable", "configIdentity": "/home/dev/.config/codenomad/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": false, "scopeName": "stable-0f53993f4e61d30b" },
+    { "key": "dev", "configIdentity": "/home/dev/.config/codenomad/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "dev-6698b32b9d7b4a38" },
+    { "key": "dev-v2", "configIdentity": "/home/dev/.config/codenomad/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "dev-v2-2862e56702324021" },
+    { "key": "beta-channel", "configIdentity": "/home/dev/.config/codenomad/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "beta-channel-6060b32182dc3338" },
+    { "key": "default", "configIdentity": "/home/dev/.config/codenomad/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "default-6359bce597b57e51" },
+    { "key": "team.a_b-1", "configIdentity": "/home/dev/.config/codenomad/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "team.a_b-1-4858c530d4bfce90" },
+    { "key": "stable", "configIdentity": "c:\\users\\dev\\.config\\codenomad\\config.yaml", "defaultIdentity": "c:\\users\\dev\\.config\\codenomad\\config.yaml", "scoped": false, "scopeName": "stable-250d05d210f4e100" },
+    { "key": "dev", "configIdentity": "c:\\users\\dev\\.config\\codenomad\\config.yaml", "defaultIdentity": "c:\\users\\dev\\.config\\codenomad\\config.yaml", "scoped": true, "scopeName": "dev-adceedb0dd29790c" },
+    { "key": "dev-v2", "configIdentity": "c:\\users\\dev\\.config\\codenomad\\config.yaml", "defaultIdentity": "c:\\users\\dev\\.config\\codenomad\\config.yaml", "scoped": true, "scopeName": "dev-v2-734500a3d4921b2f" },
+    { "key": "stable", "configIdentity": "/work/other/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "stable-218200c29d8465d1" },
+    { "key": "dev", "configIdentity": "/work/other/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "dev-dea0a3555696fcc8" },
+    { "key": "dev-v2", "configIdentity": "/work/other/config.yaml", "defaultIdentity": "/home/dev/.config/codenomad/config.yaml", "scoped": true, "scopeName": "dev-v2-800f3b0c70893ec5" }
+  ],
+  "stateFixtures": [
+    { "name": "partitioned window with a workspace tab", "restorable": true, "content": { "version": 3, "activeWindowId": "11111111-2222-4333-8444-555555555555", "windowOrder": ["11111111-2222-4333-8444-555555555555"], "windows": { "11111111-2222-4333-8444-555555555555": { "restoreEnabled": true, "snapshot": { "version": 2, "revision": 1, "savedAt": 1, "layout": {}, "sessionPartition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] }, "partitionProtocolVersion": 1, "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] } } } },
+    { "name": "partitioned window with only the session partition", "restorable": false, "content": { "version": 3, "activeWindowId": "11111111-2222-4333-8444-555555555555", "windowOrder": ["11111111-2222-4333-8444-555555555555"], "windows": { "11111111-2222-4333-8444-555555555555": { "restoreEnabled": true, "snapshot": { "version": 2, "revision": 1, "savedAt": 1, "layout": {}, "sessionPartition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] }, "partitionProtocolVersion": 1, "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] } } } },
+    { "name": "restore disabled", "restorable": false, "content": { "version": 3, "activeWindowId": "11111111-2222-4333-8444-555555555555", "windowOrder": ["11111111-2222-4333-8444-555555555555"], "windows": { "11111111-2222-4333-8444-555555555555": { "restoreEnabled": false, "snapshot": { "version": 2, "revision": 1, "savedAt": 1, "layout": {}, "sessionPartition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] }, "partitionProtocolVersion": 1, "partitionKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] } } } },
+    { "name": "no windows", "restorable": false, "content": { "version": 3, "activeWindowId": "11111111-2222-4333-8444-555555555555", "windowOrder": [], "windows": {} } },
+    { "name": "legacy monolithic snapshot with tabs", "restorable": true, "content": { "version": 1, "snapshot": { "session": { "tabs": [{ "kind": "workspace", "folder": "/work" }], "activeTabIndex": 0 } } } },
+    { "name": "legacy monolithic snapshot with only a sidecar tab", "restorable": false, "content": { "version": 1, "snapshot": { "session": { "tabs": [{ "kind": "sidecar", "sidecarId": "notes" }], "activeTabIndex": 0 } } } },
+    { "name": "legacy monolithic snapshot without a session", "restorable": false, "content": { "version": 1, "snapshot": { "session": null } } },
+    { "name": "future envelope", "restorable": false, "content": { "version": 99, "windows": {} } },
+    { "name": "corrupt", "restorable": false, "raw": "{\"version\": 3," }
+  ],
+  "choiceKeys": [
+    { "comment": "Windows: Electron folds the config identity with Unicode lowercase, Tauri with ASCII lowercase. Scope hashes keep that historical divergence; the choices key folds Unicode case on both so the remembered choice is shared.", "identities": ["c:\\users\\\u00e9mile\\.config\\codenomad\\config.yaml", "c:\\users\\\u00c9mile\\.config\\codenomad\\config.yaml"], "windows": true, "key": "6065f53296be20e8c1eb550104f76243ad1645cb34237f28e5d5b20f2e1aa5f0" },
+    { "comment": "Other platforms keep case-sensitive identities: differently cased paths stay distinct.", "identities": ["/home/émile/.config/codenomad/config.yaml", "/home/Émile/.config/codenomad/config.yaml"], "windows": false, "key": null }
+  ],
+  "explicitProfiles": [
+    { "profile": "dev", "channel": "dev-v2", "packaged": true, "key": "dev", "source": "profile" },
+    { "profile": "default", "channel": "dev", "packaged": true, "key": "stable", "source": "profile" },
+    { "channel": "dev-v2", "packaged": true, "key": "dev-v2", "source": "legacy-channel" },
+    { "channel": "stable", "packaged": false, "key": "stable", "source": "legacy-channel" },
+    { "profile": "  ", "channel": "dev", "packaged": true, "key": "dev", "source": "legacy-channel" },
+    { "packaged": false, "key": "dev", "source": "unpackaged" },
+    { "packaged": true, "key": null, "source": null },
+    { "profile": "", "channel": " ", "packaged": true, "key": null, "source": null }
+  ],
+  "choicesCapacity": [
+    { "name": "a full file still replaces this config's stale entry", "otherEntries": 255, "current": "dev", "reason": "none", "stored": "default" },
+    { "name": "a full file without this config's entry cannot remember", "otherEntries": 256, "current": null, "reason": "unremembered", "stored": null },
+    { "name": "room for one more entry", "otherEntries": 255, "current": null, "reason": "none", "stored": "default" }
+  ],
+  "rememberedProfileStates": [
+    { "lstat": "dir", "stat": "dir", "state": "present" },
+    { "lstat": "ENOENT", "stat": null, "state": "missing" },
+    { "lstat": "ENOTDIR", "stat": null, "state": "missing" },
+    { "lstat": "EACCES", "stat": null, "state": "present" },
+    { "lstat": "file", "stat": "file", "state": "missing" },
+    { "lstat": "dir", "stat": "ENOENT", "state": "missing" },
+    { "lstat": "dir", "stat": "EACCES", "state": "present" },
+    { "lstat": "link", "stat": "dir", "state": "present" },
+    { "lstat": "link", "stat": "ENOENT", "state": "unavailable" },
+    { "lstat": "link", "stat": "ENOTDIR", "state": "unavailable" },
+    { "lstat": "link", "stat": "file", "state": "unavailable" },
+    { "lstat": "link", "stat": "EACCES", "state": "present" }
+  ]
+}

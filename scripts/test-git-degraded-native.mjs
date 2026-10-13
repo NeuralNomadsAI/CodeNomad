@@ -11,7 +11,7 @@ import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
@@ -21,6 +21,7 @@ const root = await mkdtemp(path.join(parent, "codenomad-git-degraded-"))
 const project = path.join(root, "project"), emptyPath = path.join(root, "empty-path")
 await mkdir(project)
 await mkdir(emptyPath)
+clearFixtureGitEnvironment()
 execFileSync("git", ["init", project], { stdio: "ignore" })
 const original = { ...process.env }
 const env = Object.fromEntries(Object.entries(original).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_)/i.test(key) && key.toLowerCase() !== "path"))
@@ -83,7 +84,7 @@ try {
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
   const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
   const logger = pino({ level: "silent" })
-  manager = new WorkspaceManager({ rootDir: root, settings: { getOwner: () => ({ environmentVariables: {} }) },
+  manager = new WorkspaceManager({ rootDir: root, settings: { getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) },
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "isolated" }) }, eventBus: new EventBus(), logger,
     hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }),
   })

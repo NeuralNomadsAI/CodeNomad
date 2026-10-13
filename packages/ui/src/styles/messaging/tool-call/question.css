@@ -1,0 +1,92 @@
+.interruption-receipt.question-receipt {
+  margin: 0;
+  padding: var(--space-md);
+  white-space: normal;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.question-receipt-item + .question-receipt-item {
+  margin-block-start: var(--space-md);
+  padding-block-start: var(--space-md);
+  border-block-start: 1px solid var(--border-base);
+}
+
+.question-receipt .question-receipt-item dt {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.question-receipt-prompt {
+  display: block;
+  font-weight: var(--font-weight-semibold);
+  white-space: pre-wrap;
+}
+
+.question-receipt .question-receipt-item dd {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-primary);
+}
+
+.question-receipt-caption {
+  display: block;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  margin-block-end: var(--space-2xs);
+}
+
+.question-receipt ul {
+  display: grid;
+  gap: var(--space-sm);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.question-receipt .question-receipt-answers {
+  border-inline-start: 2px solid var(--accent-primary);
+  padding-inline-start: var(--space-sm);
+}
+
+.question-receipt-label {
+  font-weight: var(--font-weight-medium);
+  white-space: pre-wrap;
+}
+
+.question-receipt-description {
+  margin: var(--space-2xs) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+}
+
+.question-receipt-empty {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.question-receipt-choices {
+  margin-block-start: var(--space-sm);
+  font-size: var(--font-size-xs);
+}
+
+.question-receipt-choices summary {
+  width: fit-content;
+  padding-block: var(--space-2xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.question-receipt-choices summary:hover {
+  color: var(--text-primary);
+}
+
+.question-receipt-choices summary:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.question-receipt-choices[open] summary {
+  margin-block-end: var(--space-xs);
+}

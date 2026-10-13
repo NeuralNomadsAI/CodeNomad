@@ -78,7 +78,10 @@ export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps):
       if (!settled) invalidate?.()
       controller.abort()
     })
-    void Promise.resolve(deps.waitForHydration(instanceId))
+    // The readiness gate reads app-wide state (the instances map). Tracking it
+    // would restart this read, and requeue it, whenever another restored
+    // workspace is created or updated during startup.
+    void Promise.resolve(untrack(() => deps.waitForHydration(instanceId)))
       .then(() => {
         // Re-check after the async gate: the user may have switched away or to
         // a different session while metadata was hydrating.

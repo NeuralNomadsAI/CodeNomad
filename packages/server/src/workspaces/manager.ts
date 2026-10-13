@@ -32,11 +32,13 @@ import {
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { initializeNativeGit } from "./git-init"
 import { WorktreeInventory } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
+import type { TemporaryFolderRegistry } from "./temporary-workspaces"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -45,6 +47,7 @@ type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
   acquire?: () => Promise<import("./opencode-service").ServiceConnection>
+  existingConnection?: () => import("./opencode-service").ServiceConnection | undefined
   fetch?: () => Promise<typeof fetch>
   endpoint: (options?: OpenCodeSharedServiceOptions) => Promise<Endpoint>
   client: (options?: OpenCodeSharedServiceOptions) => Promise<OpenCodeClient>
@@ -73,6 +76,8 @@ export function binaryPathsEqual(left: string, right: string, platform = process
 interface WorkspaceManagerOptions {
   startServiceCommand?: import("./opencode-cli-service").OpenCodeCliServiceDependencies["execFile"]
   rootDir: string
+  /** Folders opened as temporary workspaces until kept or discarded. */
+  temporaryFolders?: TemporaryFolderRegistry
   settings: SettingsService
   binaryResolver: BinaryResolver
   eventBus: EventBus
@@ -83,6 +88,8 @@ interface WorkspaceManagerOptions {
     connection: import("./opencode-service").ServiceConnection,
     deadlineAt?: number,
   ) => Promise<boolean>
+  /** Bounded wait for bundled plugins to register for this backend (never rejects). */
+  desktopPluginsReady?: () => Promise<void>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -225,8 +232,24 @@ export class WorkspaceManager {
     }
   }
 
+  get temporaryFolders(): TemporaryFolderRegistry | undefined {
+    return this.options.temporaryFolders
+  }
+
+  /** A kept temporary folder becomes an ordinary project in every open record. */
+  clearTemporary(folder: string): void {
+    for (const record of this.workspaces.values()) {
+      if (record.path === folder) delete record.temporary
+    }
+  }
+
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  /** Await before a bundled-plugin RPC: plugins register only after observing this backend's lease. */
+  desktopPluginsReady(): Promise<void> {
+    return this.options.desktopPluginsReady?.() ?? Promise.resolve()
   }
 
   async reserveWorktreeDeletion(directory: string): Promise<() => void> {
@@ -253,24 +276,31 @@ export class WorkspaceManager {
     return this.sharedService.acquire?.()
   }
 
+  getExistingSharedServiceConnection(id: string): import("./opencode-service").ServiceConnection | undefined {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    return this.sharedService.existingConnection?.()
+  }
+
   invalidateSharedServiceConnection(): void {
     this.sharedService.invalidate?.()
   }
 
-  async ownsDirectory(id: string, directory: string): Promise<boolean> {
+  async ownsDirectory(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
     if (directory === record.path || directory === record.location?.directory) return true
-    if (await this.ownsHostDirectory(record, directory)) return true
+    if (await this.ownsHostDirectory(record, directory, purpose)) return true
     if (!record.wslDistro) return false
     const hostDirectory = await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
-    return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
+    return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory, purpose))
   }
 
-  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): Promise<boolean> {
+  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request"): Promise<boolean> {
+    signal?.throwIfAborted()
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
-    const directory = await this.getServiceDirectoryForPath(id, location.directory)
+    const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose)
+    signal?.throwIfAborted()
     if (!directory) return false
     if (location.workspaceID === undefined) return true
     // The directory fence alone cannot authorize a legacy native workspace.
@@ -279,15 +309,15 @@ export class WorkspaceManager {
     try {
       const requested = readLocationRef({ ...location, directory })
       const resolved = readLocationRef(client
-        ? await client.location.get({ location: { directory } }, locationRequestOptions(requested))
-        : await this.sharedService.validateLocation(requested, undefined, record[WORKSPACE_STATE].serviceOptions))
+        ? await client.location.get({ location: { directory } }, { ...locationRequestOptions(requested), signal })
+        : await this.sharedService.validateLocation(requested, { signal }, record[WORKSPACE_STATE].serviceOptions))
       return sameLocation(requested, resolved)
     } catch {
       return false
     }
   }
 
-  async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
+  async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
     // Directory authorization does not need the checkout's Git mutation identity.
@@ -298,16 +328,16 @@ export class WorkspaceManager {
       ])
       if (target && target === root) return target
     }
-    const owned = await this.resolveOwnedWorktree(record, directory)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
     if (!owned) return undefined
     if (!record.wslDistro) return owned.directory
     return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
-  async getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined> {
+  async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
-    const owned = await this.resolveOwnedWorktree(record, directory)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
     if (!owned) return undefined
     return canonicalWorktreeIdentity(owned.worktreeDirectory)
   }
@@ -340,12 +370,19 @@ export class WorkspaceManager {
     return await this.resolveWslHostDirectory(servicePath, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
-  private async nativeWorktreeContext(id: string) {
+  private async nativeWorktreeContext(id: string, purpose: "request" | "event" = "request") {
     const record = this.workspaces.get(id)
     const location = this.getServiceLocation(id)
     if (!record || !location) throw new Error("Workspace has no native location")
+    // An adapter without connection lifecycle (no acquire/observation) only wraps an
+    // already-connected client, so its client cannot start or provision OpenCode.
+    const lifecycle = Boolean(this.sharedService.acquire || this.sharedService.existingConnection)
+    const client = purpose === "event" && lifecycle
+      ? this.getExistingSharedServiceConnection(id)?.client
+      : await this.getSharedServiceClient()
+    if (!client) throw new Error("OpenCode has no existing connection")
     return {
-      client: await this.getSharedServiceClient(), location, workspacePath: record.path,
+      client, location, workspacePath: record.path,
       toHost: async (directory: string) => record.wslDistro
         ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
         : directory,
@@ -356,6 +393,8 @@ export class WorkspaceManager {
     load: (id) => this.nativeWorktreeContext(id).then(listNativeWorktrees),
     changed: (id) => {
       invalidateWorktreeCache(id)
+      invalidateWorktreeCache(`event:${id}`)
+      this.eventWorktreeInventory.invalidate(id)
       this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
     },
     failed: (id, error) => this.options.logger.warn({ workspaceId: id, err: error }, "Failed to refresh worktree inventory"),
@@ -366,8 +405,28 @@ export class WorkspaceManager {
     return this.worktreeInventory.read(id, mode)
   }
 
+  // Registered-only reads cannot acquire a connection or join discovery scans. They retain all native,
+  // physical Git, mutation and disposal checks used by the ordinary catalogue.
+  private readonly eventWorktreeInventory = new WorktreeInventory({
+    load: (id) => this.nativeWorktreeContext(id, "event").then(context => listNativeWorktrees(context, { refresh: false })),
+    changed: (id) => {
+      invalidateWorktreeCache(`event:${id}`)
+      this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
+    },
+    failed: (id, error) => this.options.logger.debug({ id, err: error }, "Event worktree inventory refresh failed"),
+    now: () => this.now(),
+  })
+
+  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event") {
+    const mode = refresh ? "fresh" : "validated"
+    return (await (purpose === "event"
+      ? this.eventWorktreeInventory.read(id, mode)
+      : this.getWorktrees(id, mode))).worktrees
+  }
+
   invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
     this.worktreeInventory.invalidate(undefined, mode)
+    this.eventWorktreeInventory.invalidate(undefined, mode)
     invalidateWorktreeCache()
   }
 
@@ -383,22 +442,29 @@ export class WorkspaceManager {
     finally { this.invalidateWorktrees("blocking") }
   }
 
-  private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
+  /** Native `vcs.init` for the explicitly opened folder; callers hold its deletion fence. */
+  async initializeGit(id: string) {
+    await requireHostGit()
+    try { return await initializeNativeGit(await this.nativeWorktreeContext(id)) }
+    finally { this.invalidateWorktrees("blocking") }
+  }
+
+  private async ownsHostDirectory(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
     const [target, root] = await Promise.all([
       realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
     ])
     if (target && target === root) return true
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return false
     return (await resolveOwnedWorktreePath({
-      workspaceId: record.id,
+      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory,
-      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
+      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
       logger: this.options.logger,
     })) !== null
   }
 
-  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string) {
+  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request") {
     const hostDirectory = record.wslDistro
       ? isWindowsHostPath(directory)
         ? directory
@@ -424,10 +490,10 @@ export class WorkspaceManager {
     }
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
     return resolveOwnedWorktreePath({
-      workspaceId: record.id,
+      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory: hostDirectory,
-      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
+      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
       logger: this.options.logger,
     })
   }
@@ -492,6 +558,12 @@ export class WorkspaceManager {
     }
   }
 
+  async previewFile(workspaceId: string, relativePath: string, directory?: string): Promise<WorkspaceFileResponse> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
+    const result = await browser.readFileContent(relativePath, { encoding: "base64" })
+    return { workspaceId, relativePath, contents: result.contents, encoding: "base64" }
+  }
+
   async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: directory })
@@ -512,8 +584,7 @@ export class WorkspaceManager {
   }
 
   async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
-    this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: directory })
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     await browser.writeFile(relativePath, contents)
   }
 
@@ -588,6 +659,7 @@ export class WorkspaceManager {
       binaryVersion: binary.version,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(this.options.temporaryFolders?.has(workspacePath) ? { temporary: true } : {}),
     } as WorkspaceRecord
     Object.defineProperties(record, {
       wslDistro: { value: undefined, writable: true },
@@ -1069,7 +1141,7 @@ export class WorkspaceManager {
   async getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>> {
     const record = this.workspaces.get(id)
     if (!record || record.status !== "ready") throw new Error("Workspace is not ready")
-    const configured = this.options.settings.getOwner("config", "server").environmentVariables
+    const configured = await this.options.settings.readEnvironmentForAdmission(signal)
     return sessionEnvironment(configured, { distro: record.wslDistro, platform: this.options.platform, signal })
   }
 
@@ -1143,7 +1215,9 @@ export class WorkspaceManager {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
     this.worktreeInventory.forget(id)
+    this.eventWorktreeInventory.forget(id)
     invalidateWorktreeCache(id)
+    invalidateWorktreeCache(`event:${id}`)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, reason)
   }

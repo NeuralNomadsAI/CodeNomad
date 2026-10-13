@@ -7,12 +7,24 @@
   --surface-muted: #f8fafc;
   --surface-shade-light: color-mix(in oklab, var(--surface-secondary) 75%, var(--surface-base));
   --surface-shade-strong: color-mix(in oklab, var(--surface-secondary) 25%, var(--surface-base));
-  --surface-code: #f1f5f9;
+  --surface-code: var(--surface-inset);
   --surface-hover: #e0e0e0;
   --surface-chrome: var(--surface-shade-light);
   --surface-subtle: color-mix(in oklab, var(--surface-secondary) 36%, var(--surface-base));
   --surface-control: color-mix(in oklab, var(--surface-secondary) 72%, var(--surface-base));
   --surface-interactive-hover: color-mix(in oklab, var(--text-primary) 4%, var(--surface-secondary));
+  /* Surface roles: choose by what an element is, not by a colour that looks close.
+     The base colour is reserved for what the user types into. */
+  --surface-field: var(--surface-base);
+  /* Reading canvas: transcript, editors, diffs and main panel bodies. */
+  --surface-canvas: var(--surface-shade-strong);
+  /* Floating windows, dialogs, popovers, tooltips and every menu or list picker. */
+  --surface-overlay: var(--surface-shade-strong);
+  /* Output and status blocks: code, shells, logs, diagnostics, status cards. */
+  --surface-inset: var(--surface-shade-strong);
+  /* Menu items share one hover/selection treatment across native and Kobalte menus. */
+  --menu-item-hover-bg: var(--selection-neutral-bg);
+  --menu-item-selected-bg: var(--selection-highlight-bg);
   --surface-hover-overlay: color-mix(in oklab, var(--text-primary) 4%, transparent);
   --selection-neutral-bg: color-mix(in oklab, var(--text-primary) 7%, transparent);
   --selection-neutral-strong-bg: color-mix(in oklab, var(--text-primary) 10%, transparent);
@@ -118,7 +130,8 @@
   --log-level-debug: var(--text-muted);
   --log-level-default: var(--text-primary);
   --focus-ring-color: var(--accent-primary);
-  --focus-ring-offset: var(--surface-base);
+  /* The gap matches the surfaces focusable controls usually rest on. */
+  --focus-ring-offset: var(--surface-canvas);
   --control-ghost-bg: color-mix(in oklab, var(--text-primary) 6%, transparent);
   --status-success-ring: color-mix(in oklab, var(--status-success) 45%, transparent);
   --border-critical: var(--status-error);
@@ -161,10 +174,14 @@
   --space-xl: 24px;
   --chrome-height: 36px;
   --panel-header-height: 60px;
+  /* Shared centre of every panel header's action row (session list, conversation,
+   * right panel) and of the fixed panel toggles; leaves room for the title row. */
+  --panel-header-action-center: 27px;
   --control-height-sm: 24px;
   --control-height: 28px;
   --selector-height: 36px;
   --touch-target-size: 40px;
+  --touch-target-size-compact: 32px;
   --scrollbar-size: 8px;
   --icon-button-size: 26px;
   --icon-size: 14px;
@@ -216,7 +233,6 @@
     --surface-primary: var(--surface-base);
     --surface-secondary: #2a2a2a;
     --surface-muted: #212529;
-    --surface-code: #1a1a1a;
     --surface-hover: #3a3a3a;
     --markdown-table-row-odd: #0f1114;
     --markdown-table-row-even: #181c22;
@@ -316,7 +332,6 @@
   --surface-primary: var(--surface-base);
   --surface-secondary: #2a2a2a;
   --surface-muted: #212529;
-  --surface-code: #1a1a1a;
   --surface-hover: #3a3a3a;
   --markdown-table-row-odd: #0f1114;
   --markdown-table-row-even: #181c22;

@@ -505,8 +505,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-macos-window-fixture"
+version = "0.1.0"
+dependencies = [
+ "tao",
+]
+
+[[package]]
+name = "codenomad-panel-extension-fixture"
+version = "0.0.0"
+dependencies = [
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "codenomad-tauri"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -517,6 +532,7 @@ dependencies = [
  "parking_lot",
  "regex",
  "reqwest 0.12.28",
+ "rfd",
  "rustls",
  "serde",
  "serde_json",
@@ -537,6 +553,7 @@ dependencies = [
  "webkit2gtk",
  "webview2-com",
  "which",
+ "windows-core 0.61.2",
  "windows-sys 0.59.0",
 ]
 

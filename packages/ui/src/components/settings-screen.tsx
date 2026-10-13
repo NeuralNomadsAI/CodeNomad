@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { LocationRef } from "@opencode/client"
-import { Settings, Bell, ChevronDown, FileCog, Globe, Info, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -22,8 +22,10 @@ import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
 import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
+import { RemoteControlSettingsSection } from "./settings/remote-control-settings-section"
 import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
+import { MissionsSettingsSection } from "./settings/missions-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
@@ -56,14 +58,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
       { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
+      { id: "missions", icon: Flag, label: t("settings.nav.missions") },
       { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
       { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
       { id: "advanced", icon: Settings, label: t("settings.nav.advanced") },
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
-    if (props.standalone || canOpenRemoteWindows()) {
-      items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
-    }
+    items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     return items
   })
 
@@ -78,16 +79,21 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "speech":
         return <SpeechSettingsSection />
       case "remote":
-        return props.standalone || canOpenRemoteWindows() ? (
+        return (
           <div class="settings-section-stack">
+            <RemoteControlSettingsSection />
             <RemoteAccessSettingsSection />
-            <SavedRemoteServersCard />
+            <Show when={canOpenRemoteWindows()}>
+              <SavedRemoteServersCard />
+            </Show>
           </div>
-        ) : <GeneralSettingsSection showStartupState />
+        )
       case "opencode":
         return <OpenCodeSettingsSection />
       case "providers":
         return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+      case "missions":
+        return <MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":
@@ -98,7 +104,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection showStartupState={!props.standalone} />
+        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} />
     }
   }
 

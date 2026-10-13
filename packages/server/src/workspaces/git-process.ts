@@ -1,15 +1,17 @@
 import { Worker } from "node:worker_threads"
 
-interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background" }
+interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background"; encoding?: "utf8" | "base64" }
 interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
 interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
 // Even asynchronous execFile spends synchronous time creating a Windows process.
 // Keep that work off the HTTP/SSE thread. The worker is self-contained so the same
-// entry works in compiled desktop resources and TypeScript test runners.
-function workerMain() {
-  const { parentPort } = require("node:worker_threads") as typeof import("node:worker_threads")
-  const { execFile } = require("node:child_process") as typeof import("node:child_process")
+// entry works in compiled desktop resources and TypeScript test runners. The loader
+// is a bound parameter: bundlers rewrite free `require` (esbuild: `__require`), which
+// does not exist in the eval worker and silently made every bundled Git call fail.
+function workerMain(load: NodeJS.Require) {
+  const { parentPort } = load("node:worker_threads") as typeof import("node:worker_threads")
+  const { execFile } = load("node:child_process") as typeof import("node:child_process")
   const queue: GitRequest[] = []
   const foreground: GitRequest[] = []
   let running = 0
@@ -18,10 +20,10 @@ function workerMain() {
       const request = (foreground.shift() ?? queue.shift())!
       running += 1
       execFile("git", ["-C", request.directory, ...request.args], {
-        encoding: "utf8", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
+        encoding: "buffer", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
         env: request.env, timeout: request.timeout,
       }, (error, stdout, stderr) => {
-        parentPort!.postMessage({ id: request.id, stdout, stderr,
+        parentPort!.postMessage({ id: request.id, stdout: stdout.toString(request.encoding ?? "utf8"), stderr: stderr.toString("utf8"),
           ...(error ? { error: { message: error.message, code: error.code } } : {}),
         } satisfies GitResponse)
         running -= 1
@@ -42,7 +44,7 @@ const pending = new Map<number, { resolve: (stdout: string) => void; reject: (er
 
 function getWorker(): Worker {
   if (worker) return worker
-  const created = new Worker(`(${workerMain.toString()})()`, { eval: true, execArgv: [] })
+  const created = new Worker(`(${workerMain.toString()})(require)`, { eval: true, execArgv: [] })
   worker = created
   const failed = (error: Error) => {
     if (worker !== created) return

@@ -6,6 +6,9 @@ import { updatePreferences, type UiSettings } from "../../../src/stores/preferen
 // specific preference keep the "ui" config bucket in memory instead.
 export async function applyUiSettings(settings: Partial<UiSettings>): Promise<void> {
   let bucket: { settings?: Record<string, unknown> } = {}
+  const fetchConfigOwner = serverApi.fetchConfigOwner
+  serverApi.fetchConfigOwner = async <T extends Record<string, unknown>>(owner: string): Promise<T> =>
+    owner === "ui" ? bucket as T : fetchConfigOwner<T>(owner)
   serverApi.patchConfigOwner = async <T extends Record<string, unknown>>(_owner: string, patch: unknown): Promise<T> => {
     const next = (patch ?? {}) as { settings?: Record<string, unknown> }
     bucket = { settings: { ...bucket.settings, ...next.settings } }

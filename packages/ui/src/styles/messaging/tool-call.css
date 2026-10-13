@@ -2,6 +2,8 @@
 @import "./tool-call/todo.css";
 @import "./tool-call/task.css";
 @import "./tool-call/skill.css";
+@import "./tool-call/execute.css";
+@import "./tool-call/websearch.css";
 
 .tool-call-message {
   @apply flex flex-col gap-0 p-0 w-full;
@@ -692,7 +694,7 @@
 }
 
 .tool-call-permission-button {
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   border: 1px solid var(--status-warning);
   color: var(--text-secondary);
   padding: 0.4rem 1.05rem;
@@ -995,12 +997,12 @@
   gap: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
   border-top: 1px solid var(--tool-call-border-color);
-  background-color: var(--surface-base);
+  background-color: var(--surface-inset);
 }
 
 .tool-call-diagnostics-wrapper {
   border-top: 1px solid var(--tool-call-border-color);
-  background-color: var(--surface-base);
+  background-color: var(--surface-inset);
   margin-top: var(--space-md);
 }
 
@@ -1057,7 +1059,7 @@
   flex-direction: column;
   gap: var(--space-xs);
   padding: var(--space-sm) var(--space-md) var(--space-sm) var(--space-md);
-  background-color: var(--surface-base);
+  background-color: var(--surface-inset);
 }
 
 .tool-call-diagnostics-body {

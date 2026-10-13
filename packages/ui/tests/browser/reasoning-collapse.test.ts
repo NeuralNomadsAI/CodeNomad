@@ -62,3 +62,25 @@ for (const count of [1, 2]) test(`${count} reasoning step(s) respect collapse, e
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("message-content popup has no close button and dismisses outside or with Escape", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 850 }, locale: "en-US" })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const trigger = page.getByRole("button", { name: "Message content", exact: true })
+    const filters = page.locator(".transcript-filters")
+    await trigger.click()
+    await filters.waitFor()
+    assert.equal(await filters.locator(".window-header button").count(), 0)
+    await page.getByText("The visible response stays readable.", { exact: true }).click()
+    await filters.waitFor({ state: "hidden" })
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+    await trigger.click()
+    await filters.waitFor()
+    await page.keyboard.press("Escape")
+    await filters.waitFor({ state: "hidden" })
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+  } finally { await page.close() }
+})

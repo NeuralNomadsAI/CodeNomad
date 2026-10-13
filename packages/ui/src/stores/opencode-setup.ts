@@ -18,7 +18,25 @@ let generation = 0
 let notifiedGeneration = -1
 let pending: { promise: Promise<void>; again: boolean; announce: boolean } | undefined
 const [resume, setResume] = createSignal<(() => Promise<unknown>)>()
-export const canContinueOpenCodeSetup = () => Boolean(resume())
+const [resumeRestore, setResumeRestore] = createSignal<(() => Promise<void>)>()
+export const canContinueOpenCodeSetup = () => Boolean(resume() || resumeRestore())
+
+/** Startup restoration is separate from the user's latest explicit folder-open retry. */
+export function registerOpenCodeRestoreRecovery(retry: () => Promise<void>): () => void {
+  setResumeRestore(() => retry)
+  return () => { if (resumeRestore() === retry) setResumeRestore(undefined) }
+}
+
+function takeWorkspaceResume() {
+  const retry = resume(), restore = resumeRestore()
+  setResume(undefined)
+  setResumeRestore(undefined)
+  if (!retry && !restore) return undefined
+  return async () => {
+    // The explicit open goes first: restoration must respect its newer selection.
+    try { await retry?.() } finally { await restore?.() }
+  }
+}
 
 export function isOpenCodeConnected(status = openCodeSetupStatus()): boolean {
   return !openCodeSetupCheckError() && (status?.serviceState === "ready" || status?.serviceState === "restart_available")
@@ -28,11 +46,12 @@ export async function continueOpenCodeSetup() {
   if (!isOpenCodeConnected() || openCodeSetupBusy() || openCodeSetupChecking()) return
   const epoch = generation
   const retry = resume()
+  const restore = resumeRestore()
   await refreshOpenCodeSetup()
-  if (epoch !== generation || openCodeSetupBusy() || !isOpenCodeConnected() || resume() !== retry) return
-  setResume(undefined)
+  if (epoch !== generation || openCodeSetupBusy() || !isOpenCodeConnected() || resume() !== retry || resumeRestore() !== restore) return
+  const proceed = takeWorkspaceResume()
   setOpenCodeSetupOpen(false)
-  await retry?.()
+  await proceed?.()
 }
 
 export function needsOpenCodeSetup(status = openCodeSetupStatus()): boolean {
@@ -129,8 +148,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
     if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {
       // Info-panel maintenance must not resume a workspace-open request left in
       // a dismissed recovery dialog. Preserve it for explicit recovery instead.
-      const retry = options.resumeWorkspace === false ? undefined : resume()
-      if (options.resumeWorkspace !== false) setResume(undefined)
+      const retry = options.resumeWorkspace === false ? undefined : takeWorkspaceResume()
       if (action === "reload") setOpenCodeSetupFeedback("reloaded")
       if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.

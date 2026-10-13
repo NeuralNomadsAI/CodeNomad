@@ -10,7 +10,13 @@ import { loadingScreenMessages } from "./loadingScreen"
 import { logMessages } from "./logs"
 import { markdownMessages } from "./markdown"
 import { messagingMessages } from "./messaging"
+import { missionMessages } from "./missions"
+import { missionRecoveryMessages } from "./mission-recovery"
+import { missionsPanelMessages } from "./missions-panel"
+import { missionCreateMessages } from "./missions-create"
+import { permissionReceiptMessages } from "./permission-receipts"
 import { remoteAccessMessages } from "./remoteAccess"
+import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
 import { timeMessages } from "./time"
@@ -28,7 +34,13 @@ export const trMessages = mergeMessageParts(
   logMessages,
   markdownMessages,
   messagingMessages,
+  missionMessages,
+  missionRecoveryMessages,
+  missionsPanelMessages,
+  missionCreateMessages,
+  permissionReceiptMessages,
   remoteAccessMessages,
+  remoteControlMessages,
   sessionMessages,
   settingsMessages,
   timeMessages,

@@ -1,4 +1,8 @@
 // Guards for isolated fixture-owned children and native acceptance pagination.
+export function clearFixtureGitEnvironment(environment = process.env) {
+  for (const key of Object.keys(environment)) if (/^GIT_/i.test(key)) delete environment[key]
+}
+
 async function completesWithin(promise, timeoutMs) {
   let timer
   try {

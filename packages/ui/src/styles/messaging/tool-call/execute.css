@@ -1,0 +1,6 @@
+.tool-call-execute { display: grid; gap: 0.5rem; min-width: 0; }
+.execute-calls { list-style: none; margin: 0; padding: 0; }
+.execute-calls summary { display: flex; gap: 0.75rem; cursor: pointer; padding: 0.35rem 0; }
+.execute-call-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.execute-call-status { color: var(--text-secondary); flex-shrink: 0; }
+.execute-call-status[data-status="error"] { color: var(--status-error); }

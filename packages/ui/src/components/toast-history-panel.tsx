@@ -198,7 +198,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
 
   return (
     <div
-      class="toast-history-panel window-shell flex flex-col overflow-hidden border border-base bg-surface-base"
+      class="toast-history-panel window-shell flex flex-col overflow-hidden border border-base bg-surface-overlay"
       role="dialog"
       aria-label={t("toastHistory.title")}
       onKeyDown={(event) => {

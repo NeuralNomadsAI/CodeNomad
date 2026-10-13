@@ -1,6 +1,6 @@
-import { createEffect, createSignal } from "solid-js"
+import { batch, createEffect, createSignal } from "solid-js"
 import { requestDesktopUpdate } from "./desktop-updates"
-import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
+import type { ServerMeta, SupportMeta, UpdateFeed } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
@@ -12,6 +12,12 @@ const log = getLogger("actions")
 
 const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
 const [availableUpdate, setAvailableUpdate] = createSignal<ServerMeta["update"] | null | undefined>(undefined)
+const [updateFeed, setUpdateFeed] = createSignal<UpdateFeed | undefined>(undefined)
+
+/** Only an explicit stable feed may use the native stable installer. */
+export function usesStableInstaller(feed: UpdateFeed | undefined): boolean {
+  return feed === "stable"
+}
 
 const UI_VERSION_STORAGE_KEY = "codenomad:lastSeenUiVersion"
 const DEV_RELEASE_STORAGE_KEY = "codenomad:lastSeenDevRelease"
@@ -47,7 +53,8 @@ function ensureVisibilityEffect() {
       return
     }
 
-    const key = `${support.minServerVersion ?? "unknown"}:${support.latestServerVersion ?? "unknown"}`
+    const feed = updateFeed()
+    const key = `${support.minServerVersion ?? "unknown"}:${support.latestServerVersion ?? "unknown"}:${feed ?? "unknown"}`
 
     if (!activeToast || activeToastKey !== key) {
       dismissActiveToast()
@@ -63,7 +70,10 @@ function ensureVisibilityEffect() {
           ? {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
-              onClick: isTauriHost() && isLocalWindow() ? requestDesktopUpdate : undefined,
+              // The native updater uses the stable feed; preview opens its release page.
+              onClick: usesStableInstaller(feed) && isTauriHost() && isLocalWindow()
+                ? requestDesktopUpdate
+                : undefined,
             }
           : undefined,
       })
@@ -85,8 +95,12 @@ export function initReleaseNotifications() {
 async function refreshFromMeta() {
   try {
     const meta = await getServerMeta(true)
-    setSupportInfo(meta.support ?? null)
-    setAvailableUpdate(meta.update ?? null)
+    // Publish support and feed together so the support action sees its feed.
+    batch(() => {
+      setSupportInfo(meta.support ?? null)
+      setUpdateFeed(meta.updateFeed)
+      setAvailableUpdate(meta.update ?? null)
+    })
     maybeNotifyUiUpdated(meta)
     maybeNotifyDevReleaseAvailable(meta)
     ensureMetaRefresh(meta)
@@ -156,11 +170,8 @@ function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
 function ensureMetaRefresh(meta: ServerMeta) {
   if (metaRefreshInterval) return
 
-  const version = meta.serverVersion?.trim() ?? ""
-  const looksLikeDev = version.includes("-dev.") || version.includes("-dev-")
-  const hasDevUpdateChannel = Boolean(meta.update)
-
-  if (!looksLikeDev && !hasDevUpdateChannel) {
+  // Keep refreshing even on the stable feed so a later switch to preview is noticed.
+  if (!meta.updateFeed && !meta.update) {
     return
   }
 

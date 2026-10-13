@@ -205,17 +205,17 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     </Show>
   )
 
-  const renderProviderUsage = () => {
-    const session = props.activeSession()
-    if (!session) {
-      return <div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>
-    }
-    return (
-      <div class="border border-base bg-surface-secondary px-3 py-2">
-        <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
-      </div>
-    )
-  }
+  const renderProviderUsage = () => (
+    <Show when={props.activeSession()} fallback={<div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>}>
+      {(session) => (
+        <div class="border border-base bg-surface-secondary px-3 py-2">
+          <ProviderUsagePanel instanceId={props.instanceId} sessionId={session().id} directory={session().location.directory}
+            providerId={session().model.providerId} modelId={session().model.modelId}
+            active={props.isActive() && props.expandedItems().includes("provider-usage")} />
+        </div>
+      )}
+    </Show>
+  )
 
   const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
     const sections = createCoreStatusSectionManifest({

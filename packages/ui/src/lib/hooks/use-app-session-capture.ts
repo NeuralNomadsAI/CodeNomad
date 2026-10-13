@@ -21,7 +21,7 @@ import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-t
 import { showFolderSelection } from "../../stores/ui"
 import { instances } from "../../stores/instances"
 import {
-  activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance,
+  activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
   getSessionDraftPromptsForInstance, getSessions,
   hasAuthoritativeSessionSelection,
@@ -34,6 +34,7 @@ import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-au
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
 import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
+import { captureSessionCatalog } from "../../stores/session-catalog-persistence"
 import {
   hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
 } from "../../stores/app-session-workspace-hydration"
@@ -79,7 +80,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     const parentId = activeParentSessionId().get(id)
     const sessionId = activeSessionId().get(id)
     const expansionAuthority = getAuthoritativeSessionExpansionIdsForInstance(id)
-    const expanded = [...(expandedSessions().get(id) ?? [])]
+    const expanded = getPersistentExpandedSessionIds(id)
     const prioritySessionIds = [sessionId, "__no_session_draft__"].filter((value): value is string => Boolean(value))
     const result: RestorableWorkspaceTabState = {
       kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0,
@@ -88,6 +89,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
       ),
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
       outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
+      sessionCatalog: captureSessionCatalog(getSessions(id)),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
         ...expanded.filter((sessionId) => !expansionAuthority.has(sessionId)),

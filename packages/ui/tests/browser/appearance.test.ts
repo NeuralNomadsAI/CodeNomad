@@ -119,9 +119,10 @@ test("Classic and soft palettes preserve local subtle hover on messages, session
     await page.waitForTimeout(220)
     const surfaces = await page.evaluate(() => {
       const css = getComputedStyle(document.documentElement)
-      return Object.fromEntries(["--surface-base", "--surface-secondary", "--surface-code", "--message-assistant-bg", "--message-tool-bg"].map(k => [k, css.getPropertyValue(k)]))
+      return Object.fromEntries(["--surface-base", "--surface-secondary", "--surface-inset", "--surface-code", "--message-assistant-bg", "--message-tool-bg"].map(k => [k, css.getPropertyValue(k)]))
     })
-    assert.equal(surfaces["--surface-code"], id === "light" ? "#F1F5F9" : surfaces["--surface-base"], id)
+    // Output blocks follow the inset role; Classic Light keeps its V1 code surface.
+    assert.equal(surfaces["--surface-code"], id === "light" ? "#F1F5F9" : surfaces["--surface-inset"], id)
     assert.equal(surfaces["--message-tool-bg"], surfaces["--message-assistant-bg"], id)
     assert.notEqual(surfaces["--message-tool-bg"], surfaces["--surface-secondary"], id)
     assert.equal(await page.locator(".settings-screen-content").evaluate(e => getComputedStyle(e).backgroundColor), await page.locator(".session-sidebar").evaluate(e => getComputedStyle(e).backgroundColor), id)

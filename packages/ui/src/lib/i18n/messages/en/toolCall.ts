@@ -1,4 +1,10 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "No search results found.",
+  "toolCall.websearch.provider": "Web search provider",
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "Nested tool calls",
+  "toolCall.execute.more": "{count} additional calls omitted.",
+  "toolCall.execute.truncated": "Native output truncated. Full output:",
   "toolCall.pending.waitingToRun": "Waiting to run...",
   "toolCall.error.label": "Error:",
 

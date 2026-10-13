@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { shouldShowProviderUsageWindow } from "./provider-usage-panel"
+import { shouldShowProviderUsageWindow } from "./provider-usage-state"
 
 test("supplemental provider credit balances are opt-in", () => {
   assert.equal(shouldShowProviderUsageWindow("credits_balance", false), false)

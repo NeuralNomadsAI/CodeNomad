@@ -7,7 +7,7 @@ import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, setFavoritesOnlyPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
-import { ProviderManagerModal } from "./provider-auth/provider-manager-modal"
+import { openSettings } from "../stores/settings-screen"
 import { isModelVisible, resolvePickerValue } from "../lib/model-visibility"
 const log = getLogger("session")
 
@@ -65,7 +65,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const [isOpen, setIsOpen] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
   const [openComboboxValue, setOpenComboboxValue] = createSignal<FlatModel | undefined>()
-  const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
   let searchInputRef!: HTMLInputElement
   let suppressNextClose = false
 
@@ -433,7 +432,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   event.preventDefault()
                   event.stopPropagation()
                   closePicker()
-                  setProvidersModalOpen(true)
+                  void openSettings("providers")
                 }}
               >
                 <PlugZap class="w-4 h-4" />
@@ -443,7 +442,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
           </Combobox.Content>
         </Combobox.Portal>
       </Combobox>
-      <ProviderManagerModal instanceId={props.instanceId} open={providersModalOpen()} onOpenChange={setProvidersModalOpen} />
     </div>
   )
 }

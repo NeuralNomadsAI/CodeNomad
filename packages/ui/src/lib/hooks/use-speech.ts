@@ -5,6 +5,7 @@ import { useI18n } from "../i18n"
 import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../speech-playback-support"
+import { createObjectUrlFromBase64, streamToMediaSource } from "../audio-utils"
 
 type SpeechPlaybackState = "idle" | "loading" | "playing"
 
@@ -263,7 +264,7 @@ export function useSpeech(options: UseSpeechOptions) {
           mediaSource: nextMediaSource,
           stream,
           mimeType,
-          audioElement: nextAudio,
+          appendErrorMessage: () => "Failed to append audio stream chunk.",
           onPlayable: async () => {
             if (currentRequest !== requestVersion) return
             if (state() !== "playing") {
@@ -322,95 +323,4 @@ function attachPlaybackLifecycle(ownerId: string, audio: HTMLAudioElement) {
 
   audio.addEventListener("ended", finish, { once: true })
   audio.addEventListener("error", finish, { once: true })
-}
-
-async function streamToMediaSource(options: {
-  mediaSource: MediaSource
-  stream: ReadableStream<Uint8Array>
-  mimeType: string
-  audioElement: HTMLAudioElement
-  onPlayable: () => Promise<void>
-  onComplete: () => void
-  onError: (error: unknown) => void
-}) {
-  try {
-    const sourceBuffer = options.mediaSource.addSourceBuffer(options.mimeType)
-    const reader = options.stream.getReader()
-    let startedPlayback = false
-    let queue: Uint8Array[] = []
-    let processing = false
-
-    const flushQueue = async () => {
-      if (processing || sourceBuffer.updating || queue.length === 0) return
-      processing = true
-      const chunk = queue.shift()!
-      await appendChunk(sourceBuffer, chunk)
-      if (!startedPlayback) {
-        startedPlayback = true
-        await options.onPlayable()
-      }
-      processing = false
-      await flushQueue()
-    }
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value && value.byteLength > 0) {
-        queue.push(value)
-        await flushQueue()
-      }
-    }
-
-    while (queue.length > 0 || sourceBuffer.updating) {
-      if (queue.length > 0) {
-        await flushQueue()
-      } else {
-        await waitForUpdateEnd(sourceBuffer)
-      }
-    }
-
-    if (options.mediaSource.readyState === "open") {
-      options.mediaSource.endOfStream()
-    }
-    options.onComplete()
-  } catch (error) {
-    options.onError(error)
-  }
-}
-
-function appendChunk(sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const handleUpdateEnd = () => {
-      cleanup()
-      resolve()
-    }
-    const handleError = () => {
-      cleanup()
-      reject(new Error("Failed to append audio stream chunk."))
-    }
-    const cleanup = () => {
-      sourceBuffer.removeEventListener("updateend", handleUpdateEnd)
-      sourceBuffer.removeEventListener("error", handleError)
-    }
-
-    sourceBuffer.addEventListener("updateend", handleUpdateEnd, { once: true })
-    sourceBuffer.addEventListener("error", handleError, { once: true })
-    sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer)
-  })
-}
-
-function waitForUpdateEnd(sourceBuffer: SourceBuffer): Promise<void> {
-  return new Promise((resolve) => {
-    sourceBuffer.addEventListener("updateend", () => resolve(), { once: true })
-  })
-}
-
-function createObjectUrlFromBase64(audioBase64: string, mimeType: string): string {
-  const binary = atob(audioBase64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/mpeg" }))
 }

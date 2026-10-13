@@ -8,7 +8,7 @@ import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "../../opencode/session-pruning/history-contract"
 
 export interface HistoryRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees" | "desktopPluginsReady">
   worktreeDeletionFence: WorktreeDeletionFence
 }
 const cursorSchema = z.object({ directory: z.string().max(4096), page: z.string().max(4096).optional(), binding: z.string().length(64) }).strict()
@@ -23,6 +23,8 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     const root = manager.getServiceLocation(request.params.id)
     if (!root) return reply.code(404).send({ error: "Workspace not found" })
     const client = await manager.getSharedServiceClient()
+    // Await plugin registration before reading and authorizing the session.
+    await manager.desktopPluginsReady()
     const session = input.sessionID ? await client.session.get({ sessionID: input.sessionID }) : undefined
     if (session && !await manager.ownsLocation(request.params.id, session.location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
     // Only native/validated local worktrees supply query locations. A cursor
@@ -54,9 +56,15 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       // just its lexical ancestor or native project ID. Never expose provenance
       // or counts/excerpts from an independent nested clone to the browser.
       const owned = [] as typeof output.sessions
+      // Ownership is location-scoped. Reuse it only within this request, never
+      // across inventory changes or independent clones sharing a project ID.
+      const locationKey = (value: { directory: string; workspaceID?: string }) => JSON.stringify([value.directory, value.workspaceID])
+      const ownership = new Map<string, boolean>()
       for (const candidate of output.sessions) {
         if (input.sessionID && candidate.sessionID !== input.sessionID) throw new Error("Invalid history owner")
-        if (await manager.ownsLocation(request.params.id, readLocationRef(candidate), client)) owned.push(candidate)
+        const key = locationKey(candidate)
+        if (!ownership.has(key)) ownership.set(key, await manager.ownsLocation(request.params.id, readLocationRef(candidate), client))
+        if (ownership.get(key)) owned.push(candidate)
       }
       const ownedIDs = new Set(owned.map(candidate => candidate.sessionID))
       const next = output.cursor ? { directory, page: output.cursor, binding }
@@ -75,6 +83,8 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (!parsed.success) return reply.code(400).send({ error: "Invalid pruning batch" })
     const input = parsed.data
     const client = await deps.workspaceManager.getSharedServiceClient()
+    // Before authorization: ownership checks and fence entry must stay adjacent.
+    await deps.workspaceManager.desktopPluginsReady()
     const session = await client.session.get({ sessionID: input.sessionID })
     if (!await deps.workspaceManager.ownsLocation(request.params.id, session.location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
     const identity = await deps.workspaceManager.getWorktreeIdentityForPath(request.params.id, session.location.directory)

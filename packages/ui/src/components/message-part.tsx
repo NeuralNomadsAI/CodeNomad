@@ -176,6 +176,9 @@ export default function MessagePart(props: MessagePartProps) {
 
   return (
     <Switch>
+      <Match when={partType() === "skill"}>
+        <span class="badge-shape attachment-chip max-w-full whitespace-normal break-all" title={t("promptInput.skills.title")}>{String(props.part.name ?? "")}</span>
+      </Match>
       <Match when={partType() === "text"}>
         <Show when={!shouldHideTextPart() && (partHasRenderableText(props.part) || isPrimaryUserTextPart())}>
           <div

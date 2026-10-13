@@ -120,3 +120,26 @@ test("a fresh check removes the previous install offer when no update remains", 
     assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_stable_update").length), 0)
   } finally { await page.close() }
 })
+
+test("support notifications check native stable updates only on an explicit stable feed", async () => {
+  for (const feed of ["stable", "preview", undefined]) {
+    const page = await fixture("available")
+    try {
+      await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+        updateFeed: feed,
+        support: { supported: false, latestServerVersion: "0.21.0", latestServerUrl: "https://example.com/release" },
+      }) }))
+      await page.evaluate(() => (window as any).fixture.releases())
+      const action = page.getByRole("button", { name: "Get update" })
+      await action.click()
+      if (feed === "stable") {
+        await page.getByRole("button", { name: "Install and restart" }).waitFor()
+      } else {
+        await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url" && c.args.url === "https://example.com/release"))
+      }
+      const calls = await page.evaluate(() => (window as any).calls)
+      assert.equal(calls.filter((c: any) => c.command === "check_stable_update").length, feed === "stable" ? 1 : 0)
+      assert.equal(calls.filter((c: any) => c.command === "install_stable_update").length, 0)
+    } finally { await page.close() }
+  }
+})

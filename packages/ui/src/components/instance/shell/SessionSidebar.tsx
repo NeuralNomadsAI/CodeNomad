@@ -3,10 +3,8 @@ import type { SessionThread } from "../../../stores/session-state"
 import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { PlusSquare, Search } from "lucide-solid"
+import { ArrowLeft, ArrowRight, Info, PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
-import ArrowBackIcon from "@suid/icons-material/ArrowBack"
-import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 
 import SessionList from "../../session-list"
 import KeyboardHint from "../../keyboard-hint"
@@ -29,15 +27,21 @@ interface SessionSidebarProps {
 
   onSelectSession: (sessionId: string) => void
   onNewSession: () => Promise<void> | void
-  onCloseLeftDrawer: () => void
+  history: {
+    canGoBack: Accessor<boolean>
+    canGoForward: Accessor<boolean>
+    goBack: () => void
+    goForward: () => void
+  }
 
+  panelId: string
   setContentEl: (el: HTMLElement | null) => void
 }
 
 const SessionSidebar: Component<SessionSidebarProps> = (props) => (
-    <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
+    <div id={props.panelId} class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
       <div class="panel-header session-sidebar-header border-b border-base">
-        <div class="flex items-center justify-between gap-2">
+        <div class="session-sidebar-header-row flex items-center justify-between gap-2">
           <span class="session-sidebar-title">
             {props.t("instanceShell.leftPanel.sessionsTitle")}
           </span>
@@ -76,23 +80,31 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               aria-pressed={props.activeSessionId() === "info"}
               onClick={() => props.onSelectSession("info")}
             >
-              <InfoOutlinedIcon fontSize="small" />
+              <Info size={20} aria-hidden="true" />
             </IconButton>
             <IconButton
+              class="session-history-button"
               size="small"
               color="inherit"
-              aria-label={props.t("instanceShell.leftDrawer.toggle.close")}
-              title={props.t("instanceShell.leftDrawer.toggle.close")}
-              onClick={props.onCloseLeftDrawer}
+              aria-label={props.t("sessionList.history.back")}
+              title={props.t("sessionList.history.backTitle")}
+              disabled={!props.history.canGoBack()}
+              onClick={props.history.goBack}
             >
-              <ArrowBackIcon fontSize="small" />
+              <ArrowLeft size={20} aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              class="session-history-button"
+              size="small"
+              color="inherit"
+              aria-label={props.t("sessionList.history.forward")}
+              title={props.t("sessionList.history.forwardTitle")}
+              disabled={!props.history.canGoForward()}
+              onClick={props.history.goForward}
+            >
+              <ArrowRight size={20} aria-hidden="true" />
             </IconButton>
           </div>
-        </div>
-        <div class="session-sidebar-shortcuts">
-          <Show when={props.keyboardShortcuts().length}>
-            <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} />
-          </Show>
         </div>
       </div>
 
@@ -116,6 +128,15 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
         </Show>
 
       </div>
+
+      {/* Native desktop shortcut hints sit below the list, which scrolls above
+          them, so the header keeps a single action row level with the
+          conversation header and the fixed panel toggles. */}
+      <Show when={props.keyboardShortcuts().length}>
+        <div class="session-sidebar-shortcuts">
+          <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} class="session-sidebar-shortcuts-row" />
+        </div>
+      </Show>
     </div>
   )
 

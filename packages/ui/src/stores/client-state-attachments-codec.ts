@@ -4,6 +4,7 @@ export type RestorableAttachmentSource =
   | { type: "file"; path: string; mime: string; data?: string }
   | { type: "text"; value: string }
   | { type: "agent"; name: string }
+  | { type: "skill"; id: string; name: string }
   | { type: "symbol"; path: string; name: string; kind: number; range: { start: Position; end: Position } }
 
 interface Position {
@@ -84,6 +85,11 @@ function normalizeSource(
     const name = takeString(value.name, MAX_DISPLAY)
     return name === undefined ? undefined : { type: "agent", name }
   }
+  if (value.type === "skill") {
+    const id = takeString(value.id, MAX_ID)
+    const name = takeString(value.name, MAX_DISPLAY)
+    return id === undefined || name === undefined ? undefined : { type: "skill", id, name }
+  }
 
   const path = takeString(value.path, MAX_PATH)
   if (value.type === "file") {
@@ -104,7 +110,7 @@ function normalizeSource(
 
 function normalizeAttachment(value: unknown): RestorableAttachment | undefined {
   if (!isRecord(value)) return
-  if (!["file", "text", "symbol", "agent"].includes(String(value.type))) return
+  if (!["file", "text", "symbol", "agent", "skill"].includes(String(value.type))) return
 
   const id = takeString(value.id, MAX_ID)
   const display = takeString(value.display, MAX_DISPLAY)

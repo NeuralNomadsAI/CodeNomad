@@ -325,6 +325,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         updatePreferences?.({ showProviderUsageCreditBalance: next })
       },
     },
+    {
+      kind: "toggle",
+      id: "behavior.hideDiffWhitespaceChanges",
+      titleKey: "advancedSettings.hideDiffWhitespace.title",
+      subtitleKey: "advancedSettings.hideDiffWhitespace.subtitle",
+      get: (p) => p.hideDiffWhitespaceChanges ?? true,
+      set: (next) => updatePreferences?.({ hideDiffWhitespaceChanges: next }),
+    },
     ...(isLocalTauriHost() && actions.useTauriNativeEventTransport && actions.setUseTauriNativeEventTransport
       ? [
           {

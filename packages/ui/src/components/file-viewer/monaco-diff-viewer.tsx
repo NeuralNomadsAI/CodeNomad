@@ -3,7 +3,7 @@ import { loadMonaco } from "../../lib/monaco/setup"
 import { getOrCreateTextModel } from "../../lib/monaco/model-cache"
 import { inferMonacoLanguageId } from "../../lib/monaco/language"
 import { ensureMonacoLanguageLoaded } from "../../lib/monaco/setup"
-import { useTheme } from "../../lib/theme"
+import { useMonacoTheme } from "../../lib/monaco/theme"
 import { parsePatchToBeforeAfter } from "../../lib/diff-utils"
 
 interface MonacoDiffViewerProps {
@@ -15,6 +15,8 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
+  /** Display-only: compare lines without leading/trailing whitespace. */
+  ignoreTrimWhitespace?: boolean
   onRequestInsertContext?: (selection: { startLine: number; endLine: number }) => void
   insertContextLabel?: string
 }
@@ -67,13 +69,13 @@ function getSplitGutterSizing(options: { before: string; after: string }) {
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
-  const { isDark } = useTheme()
   let host: HTMLDivElement | undefined
 
   let diffEditor: any = null
   let monaco: any = null
   let splitLayoutFrame: number | null = null
   const [ready, setReady] = createSignal(false)
+  useMonacoTheme(() => ready() ? monaco : null)
   const [hoveredLine, setHoveredLine] = createSignal<number | null>(null)
   const [selectedRange, setSelectedRange] = createSignal<{ startLine: number; endLine: number } | null>(null)
   const [widgetHovered, setWidgetHovered] = createSignal(false)
@@ -194,9 +196,11 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
       if (cancelled) return
       if (!host || !monaco) return
 
-      monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
       diffEditor = monaco.editor.createDiffEditor(host, {
         readOnly: true,
+        // Read-only previews need selection, not cross-model symbol requests.
+        // Monaco 0.52 leaks their cancellation on rapid model replacement.
+        occurrencesHighlight: "off",
         automaticLayout: true,
         renderSideBySide: true,
         renderSideBySideInlineBreakpoint: 0,
@@ -206,6 +210,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         renderWhitespace: "selection",
         fontSize: 13,
         wordWrap: props.wordWrap === "on" ? "on" : "off",
+        ignoreTrimWhitespace: props.ignoreTrimWhitespace === true,
         glyphMargin: false,
         folding: false,
         // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
@@ -233,11 +238,6 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
       setReady(false)
       disposeEditor()
     })
-  })
-
-  createEffect(() => {
-    if (!ready() || !monaco || !diffEditor) return
-    monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
   })
 
   createEffect(() => {
@@ -339,6 +339,8 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         contextMode === "collapsed"
           ? { enabled: true }
           : { enabled: false },
+      // Monaco defaults to true; whitespace changes stay visible unless hidden explicitly.
+      ignoreTrimWhitespace: props.ignoreTrimWhitespace === true,
       wordWrap,
     })
 

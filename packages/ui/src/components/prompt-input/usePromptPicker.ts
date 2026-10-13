@@ -1,13 +1,14 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
 import type { CommandInfo } from "@opencode/client"
 import type { Agent } from "../../types/session"
-import { createAgentAttachment, createFileAttachment, createTextAttachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment, createSkillAttachment, createTextAttachment } from "../../types/attachment"
 import { addAttachment, getAttachments } from "../../stores/attachments"
 import type { PickerMode } from "./types"
 import type { PickerSelectAction } from "../unified-picker"
 
 type PickerItem =
   | { type: "agent"; agent: Agent }
+  | { type: "skill"; skill: { id: string; name: string } }
   | { type: "file"; file: { path: string; relativePath?: string; isGitFile: boolean; isDirectory?: boolean } }
   | { type: "command"; command: CommandInfo }
 
@@ -42,6 +43,22 @@ type PromptPickerController = {
   handlePickerClose: () => void
 }
 
+// An "@" after these characters is mid-word (e-mail, "packages/@scope/x"); after
+// anything else, including CJK text and brackets, it starts a mention.
+const MID_WORD_BEFORE_AT = /[A-Za-z0-9_./\\:+~-]/
+
+/** The mention being typed at the end of `textBeforeCursor`, or -1. */
+function findMentionStart(textBeforeCursor: string) {
+  // The nearest word-start "@" in the current token, so "@packages/@scope/x"
+  // keeps searching from its first "@".
+  for (let index = textBeforeCursor.length - 1; index >= 0; index--) {
+    const char = textBeforeCursor[index]
+    if (/\s/.test(char)) return -1
+    if (char === "@" && (index === 0 || !MID_WORD_BEFORE_AT.test(textBeforeCursor[index - 1]))) return index
+  }
+  return -1
+}
+
 export function usePromptPicker(options: PromptPickerOptions): PromptPickerController {
   const [showPicker, setShowPicker] = createSignal(false)
   const [pickerMode, setPickerMode] = createSignal<PickerMode>("mention")
@@ -71,13 +88,13 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
     }
 
     const textBeforeCursor = value.substring(0, cursorPos)
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@")
+    const mentionStart = findMentionStart(textBeforeCursor)
 
     const previousAtPosition = atPosition()
 
-    if (lastAtIndex === -1) {
+    if (!textBeforeCursor.includes("@")) {
       setIgnoredAtPositions(new Set<number>())
-    } else if (previousAtPosition !== null && lastAtIndex !== previousAtPosition) {
+    } else if (previousAtPosition !== null && mentionStart !== previousAtPosition) {
       setIgnoredAtPositions((prev) => {
         const next = new Set(prev)
         next.delete(previousAtPosition)
@@ -85,19 +102,14 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
       })
     }
 
-    if (lastAtIndex !== -1) {
-      const textAfterAt = value.substring(lastAtIndex + 1, cursorPos)
-      const hasSpace = textAfterAt.includes(" ") || textAfterAt.includes("\n")
-
-      if (!hasSpace && cursorPos === lastAtIndex + textAfterAt.length + 1) {
-        if (!ignoredAtPositions().has(lastAtIndex)) {
-          setPickerMode("mention")
-          setAtPosition(lastAtIndex)
-          setSearchQuery(textAfterAt)
-          setShowPicker(true)
-        }
-        return
+    if (mentionStart !== -1) {
+      if (!ignoredAtPositions().has(mentionStart)) {
+        setPickerMode("mention")
+        setAtPosition(mentionStart)
+        setSearchQuery(textBeforeCursor.substring(mentionStart + 1))
+        setShowPicker(true)
       }
+      return
     }
 
     setShowPicker(false)
@@ -158,6 +170,34 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
           if (nextTextarea) {
             const newCursorPos = pos + attachmentText.length + 1
             nextTextarea.setSelectionRange(newCursorPos, newCursorPos)
+          }
+        }, 0)
+      }
+    } else if (item.type === "skill") {
+      // Skills attach as removable badges; no "@text" stays in the prompt.
+      const existingAttachments = getAttachments(options.instanceId(), options.sessionId())
+      const alreadyAttached = existingAttachments.some(
+        (att) => att.source.type === "skill" && att.source.id === item.skill.id,
+      )
+
+      if (!alreadyAttached) {
+        const attachment = createSkillAttachment(item.skill.id, item.skill.name)
+        addAttachment(options.instanceId(), options.sessionId(), attachment)
+      }
+
+      const currentPrompt = options.prompt()
+      const pos = atPosition()
+      const cursorPos = textarea?.selectionStart || 0
+
+      if (pos !== null) {
+        const before = currentPrompt.substring(0, pos)
+        const after = currentPrompt.substring(cursorPos)
+        options.setPrompt(before + after)
+
+        setTimeout(() => {
+          const nextTextarea = options.getTextarea()
+          if (nextTextarea) {
+            nextTextarea.setSelectionRange(pos, pos)
           }
         }, 0)
       }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Route } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
@@ -22,13 +22,18 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+// Receipt reads need a valid empty page; a failed read inserts an error block
+// below each row, shifting rows away from a hovered pointer.
+const fulfillApi = (route: Route) => route.fulfill({ contentType: "application/json",
+  body: route.request().url().includes("/permission-receipts") ? JSON.stringify({ receipts: [] }) : "{}" })
+
 for (const [id, count, beforeID] of [["msg_01", 1, "msg_02"], ["msg_02", 2, "msg_03"], ["msg_04", 4, undefined]] as const) {
   test(`fork after ${id} includes the selection and opens an empty composer`, async () => {
     const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     try {
-      await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+      await page.route("**/api/**", fulfillApi)
       await page.goto(url)
       await page.waitForFunction(() => Boolean((window as any).fixture))
       await page.locator("textarea:visible").first().fill("Keep this draft in the source")
@@ -54,7 +59,7 @@ for (const [id, count, beforeID] of [["msg_01", 1, "msg_02"], ["msg_02", 2, "msg
 test("an unfinished assistant response does not offer Fork", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
-    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.route("**/api/**", fulfillApi)
     await page.goto(`${url}?streaming`)
     const row = page.locator('[data-view="message-item"][data-message-id="msg_04"]')
     await row.waitFor()
@@ -65,7 +70,7 @@ test("an unfinished assistant response does not offer Fork", async () => {
 test("assistant Fork remains available in the narrow overflow menu", async () => {
   const page = await browser.newPage({ viewport: { width: 360, height: 800 }, locale: "en-US" })
   try {
-    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.route("**/api/**", fulfillApi)
     await page.goto(url)
     await page.evaluate(() => { document.getElementById("root")!.style.width = "200px" })
     const row = page.locator('[data-view="message-item"][data-message-id="msg_02"]')

@@ -8,9 +8,20 @@ export interface Attachment {
   source: AttachmentSource
 }
 
-export type AttachmentType = "file" | "text" | "symbol" | "agent"
+export type AttachmentType = "file" | "text" | "symbol" | "agent" | "skill"
 
-export type AttachmentSource = FileSource | TextSource | SymbolSource | AgentSource
+export type AttachmentSource = FileSource | TextSource | SymbolSource | AgentSource | SkillSource
+
+export interface SkillSource {
+  type: "skill"
+  id: string
+  name: string
+}
+
+export function createSkillAttachment(id: string, name: string): Attachment {
+  return { id: generateUUID(), type: "skill", display: name, url: "", filename: name,
+    mediaType: "text/plain", source: { type: "skill", id, name } }
+}
 
 export interface FileSource {
   type: "file"

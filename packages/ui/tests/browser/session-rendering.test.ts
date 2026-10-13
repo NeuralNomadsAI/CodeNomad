@@ -4,11 +4,16 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { createFixtureCache } from "./fixture-cache"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 let server: ViteDevServer, browser: Browser, baseUrl: string
+let fixtureCache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
 before(async () => {
+  fixtureCache = await createFixtureCache()
   server = await createServer({
+    cacheDir: fixtureCache.cacheDir,
     configFile: false, root, logLevel: "error", plugins: [solid(), {
       name: "browser-fixture",
       configureServer(server) {
@@ -29,12 +34,20 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await fixtureCache?.dispose() })
 
 async function open(name: string, run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US" })
   const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
+  const boundaryDiagnostics: Array<Record<string, unknown>> = []
+  page.on("pageerror", error => {
+    errors.push(error.message)
+    if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) boundaryDiagnostics.push({ kind: "pageerror", message: error.message, stack: error.stack })
+  })
+  if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) {
+    page.on("console", message => boundaryDiagnostics.push({ kind: "console", type: message.type(), text: message.text() }))
+    page.on("requestfailed", request => boundaryDiagnostics.push({ kind: "requestfailed", url: request.url(), error: request.failure()?.errorText }))
+  }
   await page.addInitScript(`(() => {
     window.fixtureScrollEvents = [];
     for (const type of ['wheel', 'scroll', 'pointerdown']) document.addEventListener(type, event => {
@@ -45,19 +58,29 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
       if (window.fixtureScrollEvents.length > 80) window.fixtureScrollEvents.shift();
     }, { capture: true, passive: true });
   })()`)
-  await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
-  try {
-    await page.goto(`${baseUrl}/fixture?${name}`)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await run(page)
-    assert.deepEqual(errors, [])
-  } catch (error) {
-    console.error("Browser fixture failure", name, await page.evaluate(() => ({
-      state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
-      streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
-    })))
-    throw error
-  } finally { await page.close() }
+  await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ receipts: [] }) })
+    }
+    return route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" })
+  })
+  await runWithDiagnosticCleanup({
+    run: async () => {
+      await page.goto(`${baseUrl}/fixture?${name}`)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await run(page)
+      assert.deepEqual(errors, [])
+    },
+    diagnose: async () => {
+      console.error("Browser fixture failure", name, await page.evaluate(() => ({
+        state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
+        streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
+      })), { boundaryDiagnostics })
+    },
+    cleanup: () => page.close(),
+    onObservationError: error => console.error("Browser fixture diagnostic capture failed", name, error, { boundaryDiagnostics }),
+    onCleanupError: error => console.error("Browser fixture cleanup failed", name, error, { boundaryDiagnostics }),
+  })
 }
 
 test("user HTML remains literal through live delivery and history while assistant HTML still renders", async () => {
@@ -80,7 +103,7 @@ test("user HTML remains literal through live delivery and history while assistan
 })
 
 test("user HTML mode preserves Markdown, pasted disclosures and code source and fences legacy caches", async () => {
-  await open("user-html", async page => {
+  await open(process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE ? "user-html&trace=1" : "user-html", async page => {
     await page.locator("#root").evaluate(root => { root.style.display = "block"; root.style.height = "auto" })
     await page.locator("#user strong").waitFor()
     await page.locator("#assistant .sample-html").waitFor()
@@ -98,6 +121,10 @@ test("user HTML mode preserves Markdown, pasted disclosures and code source and 
     await page.locator("#pasted summary").click()
     await page.waitForFunction(() => document.querySelector("#pasted .markdown-body")?.textContent?.includes('<div class="sample-html">'))
     assert.equal(await page.locator("#pasted .sample-html").count(), 0)
+    // HTML language completion re-renders every highlighting-enabled Markdown,
+    // including #cache. Finish that real render before observing its synthetic
+    // legacy-cache marker; otherwise the marker can disappear between polls.
+    await page.locator("#user pre.shiki").waitFor()
     assert.equal(await page.locator("#cache .cached-html").count(), 0)
     assert.equal(await page.locator("#cache .markdown-body").textContent(), html)
     await page.evaluate(() => (window as any).fixture.literal(false))
@@ -112,6 +139,28 @@ test("user HTML mode preserves Markdown, pasted disclosures and code source and 
     await page.locator('.message-timeline-segment[data-message-id="assistant-preview"]').hover()
     await page.getByRole("tooltip").locator(".sample-html").waitFor()
     if (process.env.CODENOMAD_HTML_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_HTML_CAPTURE, fullPage: true })
+  })
+})
+
+test("language completion refreshes legacy cached HTML without losing literal-mode fencing", async () => {
+  await open("user-html", async page => {
+    await page.locator("#root").evaluate(root => { root.style.display = "block"; root.style.height = "auto" })
+    await page.locator("#user pre.shiki").waitFor()
+    await page.evaluate(() => (window as any).fixture.literal(false))
+    await page.locator("#cache .cached-html").waitFor()
+    // Load a different real Shiki grammar through the production Markdown
+    // module, rather than simulating a callback or changing DOM ourselves.
+    await page.evaluate(`(async () => {
+      const markdown = await import('/src/lib/markdown.ts');
+      await markdown.renderMarkdown('~~~typescript\\nconst fixtureLanguageRace = true\\n~~~');
+    })()`)
+    await page.locator("#cache .sample-html").waitFor()
+    assert.equal(await page.locator("#cache .cached-html").count(), 0)
+    assert.equal(await page.locator("#cache .sample-html span").textContent(), "who")
+    await page.evaluate(() => (window as any).fixture.literal(true))
+    await page.waitForFunction(() => !document.querySelector("#cache .sample-html, #cache .cached-html"))
+    const html = await page.evaluate(() => (window as any).fixture.html)
+    assert.equal(await page.locator("#cache .markdown-body").textContent(), html)
   })
 })
 

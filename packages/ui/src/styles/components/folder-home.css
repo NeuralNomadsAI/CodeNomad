@@ -68,7 +68,7 @@
   padding: 0.125rem 0.5rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   color: var(--text-secondary);
   font-size: 0.625rem;
   font-weight: 500;

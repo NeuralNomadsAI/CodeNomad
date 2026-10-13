@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
-const MIN_WINDOW_WIDTH: i32 = 800;
+pub const MIN_WINDOW_WIDTH: i32 = 390;
 const MIN_WINDOW_HEIGHT: i32 = 600;
 const MIN_ZOOM_LEVEL: f64 = 0.25;
 pub(super) const MAX_ZOOM_LEVEL: f64 = 5.0;
@@ -272,6 +272,10 @@ fn register_native_zoom_handler(
             zoom_levels.insert(window_id.clone(), normalized);
             drop(zoom_levels);
 
+            if let Some(window) = callback_app.get_window(&window_label) {
+                crate::window_constraints::apply(&window, normalized);
+            }
+
             if capture_window_in_memory(&callback_app, &window_label, &window_id, persisted) {
                 schedule_flush(&callback_app);
             }
@@ -292,6 +296,8 @@ pub fn setup_local_window(
     window_id: &str,
     persisted: bool,
 ) -> Result<(), String> {
+    #[cfg(windows)]
+    crate::windows_browser_accelerators::bind(window.as_ref());
     let client_state = app.state::<ClientState>();
     if !persisted {
         client_state.register_ephemeral_window(window_id.to_string());
@@ -306,6 +312,7 @@ pub fn setup_local_window(
     #[cfg(windows)]
     register_native_zoom_handler(window, app, window_id.to_string(), persisted);
     if !client_state.is_primary() || !persisted {
+        crate::window_constraints::register(&window.as_ref().window(), initial_zoom);
         let _ = window.show();
         return Ok(());
     }
@@ -316,7 +323,10 @@ pub fn setup_local_window(
             state.preferences_window.clone()
         } else {
             let record = state.record(window_id)?;
-            record.restore_enabled.then(|| record.window.clone()).flatten()
+            record
+                .restore_enabled
+                .then(|| record.window.clone())
+                .flatten()
         }
     };
     if let Some(mut saved_window) = saved_window {
@@ -338,15 +348,26 @@ pub fn setup_local_window(
         let minimum = if window_id == crate::preferences_window::LABEL {
             (760, 560)
         } else {
-            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+            crate::window_constraints::zoomed_minimum(saved_window.zoom_factor)
         };
-        if let Some(bounds) = clamp_window_bounds_for_restore(&saved_window.bounds, &displays, minimum) {
+        if let Some(bounds) =
+            clamp_window_bounds_for_restore(&saved_window.bounds, &displays, minimum)
+        {
+            // The builder's unzoomed minimum must not block a smaller saved
+            // zoom. Place on the restored monitor before sizing/recomputing its
+            // work-area cap; the deferred constraint worker runs after setup.
+            if window_id != crate::preferences_window::LABEL
+                && matches!(window.is_maximized(), Ok(false))
+                && matches!(window.is_fullscreen(), Ok(false))
+            {
+                let _ = window.set_min_size(None::<tauri::LogicalSize<f64>>);
+            }
+            let _ =
+                window.set_position(PhysicalPosition::new(bounds.physical.x, bounds.physical.y));
             let _ = window.set_size(PhysicalSize::new(
                 bounds.physical.width as u32,
                 bounds.physical.height as u32,
             ));
-            let _ =
-                window.set_position(PhysicalPosition::new(bounds.physical.x, bounds.physical.y));
             saved_window.bounds = bounds.logical;
         } else if let Ok(position) = window.outer_position() {
             if let Ok(size) = window.inner_size() {
@@ -385,6 +406,13 @@ pub fn setup_local_window(
         }
     }
 
+    // Start constraint tracking only after restore placement, zoom and window
+    // state have settled. Early COM callbacks update the zoom map but cannot
+    // resize the default monitor or replace the seeded normal geometry.
+    crate::window_constraints::register(
+        &window.as_ref().window(),
+        local_window_zoom(app, window.label()),
+    );
     if capture_window_in_memory(app, window.label(), window_id, persisted) {
         schedule_flush(app);
     }
@@ -416,6 +444,7 @@ pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64
     if webview.set_zoom(normalized).is_err() {
         return;
     }
+    crate::window_constraints::apply(&webview.window(), normalized);
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
     };

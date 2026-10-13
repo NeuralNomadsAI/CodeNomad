@@ -5,6 +5,8 @@ mod browser_controller;
 mod cert_manager;
 mod cli_manager;
 mod client_state;
+mod data_profile;
+mod data_profile_cleanup;
 mod developer_mode;
 mod identity;
 mod launch;
@@ -14,13 +16,21 @@ mod local_windows;
 mod managed_node;
 mod native_request;
 mod native_service_start;
+mod notification_badge;
+mod notification_badge_lifetime;
 mod preferences_window;
+mod profile_selection_dialog;
+mod profile_transition;
 mod shutdown;
 mod updater_support;
 mod view_menu;
 mod desktop_updater;
 #[cfg(test)]
 mod desktop_updater_tests;
+mod window_constraints;
+mod window_zoom;
+#[cfg(windows)]
+mod windows_browser_accelerators;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -73,6 +83,7 @@ pub struct AppState {
     remote_profiles: Mutex<HashMap<String, RemoteProfileIdentity>>,
     remote_window_operations: RemoteWindowOperationLocks,
     remote_proxy_cleanup_claims: Mutex<HashSet<String>>,
+    approved_auxiliary_closes: Mutex<HashSet<String>>,
     pub remote_tls_handlers: Mutex<HashMap<String, u64>>,
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
@@ -496,16 +507,17 @@ fn browser_target_update(
 }
 
 #[tauri::command]
-fn browser_target_action(
+async fn browser_target_action(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetAction,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     require_local_app_webview(&webview, &state)?;
-    state
-        .browser_controller
-        .action(&app, webview.label(), payload)
+    let controller = state.browser_controller.clone();
+    let owner = webview.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || controller.action(&app, &owner, payload))
+        .await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -981,6 +993,7 @@ fn open_remote_window_locked(
         .webview_data_directory
         .join("remote")
         .join(profile_hash);
+    let badge_binding = notification_badge::prepare_window(&app, &label);
     let builder = WebviewWindowBuilder::new(
         &app,
         label.clone(),
@@ -989,14 +1002,21 @@ fn open_remote_window_locked(
     .data_directory(data_directory)
     .incognito(requested_profile.proxy_session_id().is_some())
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
+    .on_page_load(move |window, payload| {
+        if payload.event() == PageLoadEvent::Started {
+            notification_badge::page_started(window.as_ref(), badge_binding);
+        }
+    })
     .title(title)
     .inner_size(1400.0, 900.0)
-    .min_inner_size(800.0, 600.0);
+    .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
+    let builder = window_zoom::configure(builder);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(profile_identifier(&profile_key));
     let window = match builder.build() {
         Ok(window) => window,
         Err(error) => {
+            notification_badge::remove_window(&app, &label, badge_binding);
             cleanup_failed_remote_window(
                 &app,
                 None,
@@ -1009,6 +1029,12 @@ fn open_remote_window_locked(
         }
     };
 
+    #[cfg(windows)]
+    windows_browser_accelerators::bind(window.as_ref());
+    notification_badge::bind_webview(window.as_ref(), badge_binding);
+    window_constraints::register(&window.as_ref().window(), 1.0);
+    #[cfg(windows)]
+    window_constraints::register_remote_zoom(&window, &app);
     #[cfg(windows)]
     if let Err(error) = shutdown::schedule_windows_session_end_handler(&window) {
         cleanup_failed_remote_window(
@@ -1418,6 +1444,7 @@ fn set_target_zoom(app: &AppHandle, webview: &tauri::Webview, zoom: f64) {
     }
     let zoom = zoom.clamp(0.25, 5.0);
     if webview.set_zoom(zoom).is_ok() {
+        window_constraints::apply(&webview.window(), zoom);
         if let Ok(mut levels) = app.state::<AppState>().remote_zoom_levels.lock() {
             levels.insert(webview.label().to_string(), zoom);
         }
@@ -1551,6 +1578,116 @@ fn is_final_application_window<'a>(
     !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
 }
 
+fn consume_approved_auxiliary_close(app: &AppHandle, label: &str) -> bool {
+    app.state::<AppState>()
+        .approved_auxiliary_closes
+        .lock()
+        .ok()
+        .is_some_and(|mut labels| labels.remove(label))
+}
+
+fn dispatch_approved_auxiliary_close(app: &AppHandle, label: &str) {
+    let approved = app
+        .state::<AppState>()
+        .approved_auxiliary_closes
+        .lock()
+        .ok()
+        .is_some_and(|mut labels| labels.insert(label.to_string()));
+    if !approved {
+        return;
+    }
+    let dispatched = app
+        .get_webview_window(label)
+        .is_some_and(|window| window.close().is_ok());
+    if !dispatched {
+        let _ = consume_approved_auxiliary_close(app, label);
+    }
+}
+
+fn request_final_application_window_close(app: AppHandle, label: String, local_window: bool) {
+    tauri::async_runtime::spawn(async move {
+        let windows = app.webview_windows();
+        let still_final = is_final_application_window(
+            &label,
+            windows
+                .keys()
+                .filter(|candidate| !shutdown::local_window_close_in_flight(&app, candidate))
+                .map(String::as_str),
+        );
+        // Closing the last window quits CodeNomad, Remote Control included; it
+        // resumes at the next launch.
+        if still_final {
+            shutdown::request(app);
+        } else if local_window {
+            shutdown::request_local_window_close(app, label);
+        } else {
+            dispatch_approved_auxiliary_close(&app, &label);
+        }
+    });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LocalCloseEventAction {
+    Allow,
+    Prevent,
+    Continue,
+}
+
+fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalCloseEventAction {
+    match consumed {
+        Some(true) => LocalCloseEventAction::Allow,
+        Some(false) => LocalCloseEventAction::Prevent,
+        None if in_flight => LocalCloseEventAction::Prevent,
+        None => LocalCloseEventAction::Continue,
+    }
+}
+
+/// Resolves the data profile before the identifier, singleton or WebView storage exists. An
+/// invalid explicit profile fails visibly; a needed question is asked here, synchronously, so no
+/// profile is opened or written before the answer is recorded.
+fn resolve_launch_profile_or_exit(
+    cli_config: Option<&str>,
+    cwd: &std::path::Path,
+    home: &std::path::Path,
+) -> String {
+    let fail = |message: String| -> ! {
+        eprintln!("[startup] {message}");
+        profile_selection_dialog::show_startup_error(&message);
+        std::process::exit(1);
+    };
+    let resolved = identity::resolve_launch_profile(
+        std::env::var(data_profile::PROFILE_ENVIRONMENT).ok().as_deref(),
+        std::env::var(data_profile::LEGACY_CHANNEL_ENVIRONMENT).ok().as_deref(),
+        cli_config,
+        !is_dev_mode(),
+        cwd,
+        home,
+    );
+    match resolved {
+        Ok(identity::LaunchProfile::Ready(profile)) => profile,
+        Ok(identity::LaunchProfile::Ask {
+            candidates,
+            lock,
+            context,
+        }) => {
+            let heartbeat = lock.start_heartbeat();
+            let chosen = profile_selection_dialog::ask(&candidates);
+            drop(heartbeat);
+            let Some(profile) = chosen else {
+                lock.release();
+                std::process::exit(0);
+            };
+            if !lock.commit(&context, &profile) {
+                // The answer still applies to this launch; the question returns next time.
+                eprintln!("[startup] the profile choice could not be remembered");
+            }
+            lock.release();
+            profile
+        }
+        Err(message) => fail(message),
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1561,16 +1698,24 @@ fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
-    let scope = identity::resolve_scope(
-        std::env::var("CODENOMAD_UPDATE_CHANNEL").ok().as_deref(),
-        std::env::var("CLI_CONFIG").ok().as_deref(),
-        env!("CARGO_PKG_VERSION"),
-        !is_dev_mode(),
-        &cwd,
-        &home,
-        &local_data,
-    );
+    let cli_config = std::env::var("CLI_CONFIG").ok();
+    let backend_config = identity::resolve_selected_config(cli_config.as_deref(), &cwd, &home);
+    // Native listening/certificate readers and every backend spawn must select
+    // this same ORIGINAL source, resolved before any startup cwd can change.
+    // Process-wide set_var happens while the process is still single-threaded: before the profile
+    // question may start heartbeat or dialog-toolkit threads. Only the Windows-only WebView2
+    // variables below follow it, where environment access is OS-synchronized.
+    if let Some(config) = backend_config.as_deref() {
+        std::env::set_var("CLI_CONFIG", config);
+    } else {
+        std::env::remove_var("CLI_CONFIG");
+    }
     configure_developer_environment();
+    let profile = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
+    let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
+    // The backend reports the active profile; it is applied only to the backend Command (see
+    // cli_manager), never through the process environment.
+    data_profile::set_backend_profile(&profile);
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");
     let executable = std::env::current_exe()
@@ -1615,6 +1760,9 @@ fn main() {
     context.config_mut().identifier = scope.identifier.clone();
     let setup_scope = scope.clone();
     let setup_queue = Arc::clone(&launch_queue);
+    // This root outlives app.run; managed state/native handlers hold only Weak.
+    let notification_badge_host = Arc::new(Mutex::new(None::<Arc<AppHandle>>));
+    let setup_notification_badge_host = Arc::clone(&notification_badge_host);
 
     desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
@@ -1637,9 +1785,29 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(notification_badge::NotificationBadge::default())
+        .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
+        .manage(data_profile_cleanup::CleanupContext::new(
+            data_profile_cleanup::ProfileRoots {
+                electron_base: identity::electron_user_data_base(&home),
+                webview_root: local_data.join(format!("{}-v2", identity::STABLE_IDENTIFIER)),
+                tauri_data_parent: dirs::data_dir().unwrap_or_else(|| home.clone()),
+                home_client_state: client_state::home_client_state_directory()
+                    .unwrap_or_else(|| home.join(".codenomad").join("client-state")),
+            },
+            data_profile_cleanup::CurrentProfile {
+                key: scope.profile.clone(),
+                config_identity: scope.config_identity.clone(),
+                default_identity: identity::normalize_config_identity(None, &cwd, &home),
+            },
+        ))
         .manage(AppState {
-            manager: CliProcessManager::new(),
+            manager: CliProcessManager::with_profile(
+                setup_scope.profile.clone(),
+                setup_scope.config_identity.clone(),
+                backend_config.clone(),
+            ),
             developer_mode,
             browser_controller: browser_controller::BrowserController::new(
                 setup_scope.webview_data_directory.join("browser"),
@@ -1650,6 +1818,7 @@ fn main() {
             remote_profiles: Mutex::new(HashMap::new()),
             remote_window_operations: RemoteWindowOperationLocks::default(),
             remote_proxy_cleanup_claims: Mutex::new(HashSet::new()),
+            approved_auxiliary_closes: Mutex::new(HashSet::new()),
             remote_tls_handlers: Mutex::new(HashMap::new()),
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
@@ -1703,6 +1872,12 @@ fn main() {
             }
         })
         .setup(move |app| {
+            let badge_host = Arc::new(app.handle().clone());
+            app.state::<notification_badge::NotificationBadge>()
+                .set_host(&badge_host);
+            *setup_notification_badge_host
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
             set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
             eprintln!(
@@ -1741,13 +1916,16 @@ fn main() {
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
+            notification_badge::notification_badge_set,
             needs_local_certificate_install,
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
             preferences_window::preferences_get_request,
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
+            preferences_window::preferences_opener_startup_state,
             window_control,
+            window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
             open_remote_window,
             client_state::client_state_claim_access,
@@ -1759,6 +1937,9 @@ fn main() {
             client_state::client_state_clear,
             client_state::client_state_renderer_flushed,
             client_state::client_state_navigation_flushed,
+            client_state::client_state_startup_command_result,
+            data_profile_cleanup::data_profiles_list_others,
+            data_profile_cleanup::data_profiles_delete_others,
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
@@ -1955,21 +2136,25 @@ fn main() {
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
                 if local_window {
-                    match shutdown::consume_local_window_close(&app_handle, &label) {
-                        Some(true) => return,
-                        Some(false) => {
+                    let consumed = shutdown::consume_local_window_close(&app_handle, &label);
+                    let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
+                    match local_close_event_action(consumed, in_flight) {
+                        LocalCloseEventAction::Allow => return,
+                        LocalCloseEventAction::Prevent => {
                             api.prevent_close();
                             return;
                         }
-                        None => {}
+                        LocalCloseEventAction::Continue => {}
                     }
+                } else if consume_approved_auxiliary_close(&app_handle, &label) {
+                    return;
                 }
                 let windows = app_handle.windows();
                 let final_window =
                     is_final_application_window(&label, windows.keys().map(String::as_str));
                 if final_window {
                     api.prevent_close();
-                    shutdown::request(app_handle.clone());
+                    request_final_application_window_close(app_handle.clone(), label, local_window);
                     return;
                 }
                 if local_window {
@@ -1982,6 +2167,8 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                shutdown::local_window_destroyed(&app_handle, &label);
+                let _ = consume_approved_auxiliary_close(&app_handle, &label);
                 app_handle
                     .state::<AppState>()
                     .browser_controller
@@ -2027,6 +2214,7 @@ fn main() {
             }
             _ => {}
         });
+    drop(notification_badge_host);
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<()> {
@@ -2314,9 +2502,10 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
-        is_allowed_local_origin, is_final_application_window, require_http_url,
-        rollback_remote_window_metadata, should_allow_registered_origin,
-        should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
+        is_allowed_local_origin, is_final_application_window, local_close_event_action,
+        require_http_url, rollback_remote_window_metadata,
+        should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
+        titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
         RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
@@ -2337,6 +2526,22 @@ mod menu_tests {
             "local-a",
             ["local-a", "preferences", "remote-a"].into_iter(),
         ));
+    }
+
+    #[test]
+    fn approved_local_close_wins_over_its_in_flight_marker() {
+        assert_eq!(
+            local_close_event_action(Some(true), true),
+            LocalCloseEventAction::Allow
+        );
+        assert_eq!(
+            local_close_event_action(None, true),
+            LocalCloseEventAction::Prevent
+        );
+        assert_eq!(
+            local_close_event_action(None, false),
+            LocalCloseEventAction::Continue
+        );
     }
 
     #[test]
@@ -2378,13 +2583,15 @@ mod menu_tests {
             capability["remote"]["urls"],
             json!(["http://*:*", "https://*:*"])
         );
-        assert_eq!(capability["windows"], json!(["remote-*"]));
+        assert_eq!(capability["webviews"], json!(["remote-*"]));
+        assert!(capability["windows"].is_null());
         assert_eq!(
             capability["permissions"],
             json!([
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
-                "notification:allow-notify"
+                "notification:allow-notify",
+                "allow-notification-badge-set"
             ])
         );
 

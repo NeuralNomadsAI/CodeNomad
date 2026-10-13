@@ -64,13 +64,13 @@
   padding: 0.35rem 0.65rem;
   border: 0;
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-control);
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
 .theme-scheme-appearance-option[data-selected="true"] {
-  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-base));
+  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-control));
   color: var(--text-primary);
 }
 

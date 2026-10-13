@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 
-export async function testNativeEventRelay({ client, location }) {
+export async function testNativeEventRelay({ client, location, service }) {
   const { EventBus } = await tsImport("../packages/server/src/events/bus.ts", import.meta.url)
   const { InstanceEventBridge } = await tsImport("../packages/server/src/workspaces/instance-events.ts", import.meta.url)
   const controller = new AbortController()
@@ -18,8 +18,8 @@ export async function testNativeEventRelay({ client, location }) {
     list: () => records,
     ownsDirectory: owns,
     ownsLocation: (id, ref) => owns(id, ref.directory),
-    getSharedServiceClient: async () => client,
-    subscribeToSharedService: signal => client.event.subscribe({ signal }),
+    getSharedServiceClient: () => service ? service.client() : Promise.resolve(client),
+    subscribeToSharedService: signal => service ? service.subscribe({ signal }) : client.event.subscribe({ signal }),
     invalidateWorktrees() {},
   }
   bus.on("instance.eventStatus", event => { if (event.status === "connected") connected = true })
@@ -43,6 +43,26 @@ export async function testNativeEventRelay({ client, location }) {
   try {
     bus.publish({ type: "workspace.started", workspace: records[0] })
     await until(() => connected && nativeConnected)
+    if (service) {
+      for (const mode of ["abort", "return", "throw"]) {
+        const local = new AbortController()
+        const wrapped = (await service.subscribe({ signal: local.signal }))[Symbol.asyncIterator]()
+        try {
+          assert.equal((await wrapped.next()).value.type, "server.connected")
+          if (mode === "abort") {
+            const next = wrapped.next()
+            local.abort()
+            assert.equal((await next).done, true)
+          } else if (mode === "throw") {
+            const failure = new Error("isolated subscriber failure")
+            await assert.rejects(wrapped.throw(failure), error => error === failure)
+          } else await wrapped.return()
+          await client.server.info()
+          assert.equal((await service.acquire()).client, client, `${mode} must retain the shared native client`)
+        } finally { local.abort(); await wrapped.return() }
+      }
+      console.log("PASS: native service subscriber abort/return/throw retain the healthy shared connection")
+    }
     const session = await client.session.create({ location: { directory: location.directory } })
     sessions.push(session.id)
     const titles = Array.from({ length: 8 }, (_, index) => `relay-fixture-${index}`)
@@ -56,6 +76,13 @@ export async function testNativeEventRelay({ client, location }) {
     await until(() => renames(routed.filter(x => x.instanceId === "slow").map(x => x.event)).length === titles.length)
     assert.deepEqual(renames(routed.filter(x => x.instanceId === "slow").map(x => x.event)), titles)
     console.log("PASS: native relay isolates slow recipients, preserves session ordering and does not block another shared SDK subscriber")
+    if (service) {
+      bridge.shutdown()
+      await client.session.update({ sessionID: session.id, title: "after-relay-shutdown" })
+      await until(() => renames(native).includes("after-relay-shutdown"))
+      assert.equal((await service.acquire()).client, client)
+      console.log("PASS: relay shutdown leaves another native subscriber and shared client requests usable")
+    }
   } finally {
     release(false)
     bridge.shutdown()

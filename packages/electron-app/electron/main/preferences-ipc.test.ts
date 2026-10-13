@@ -27,10 +27,14 @@ function harness() {
   setupPreferencesIPC(
     { handle: (channel, handler) => handlers.set(channel, handler) },
     {
-      resolveLocal: (sender) => sender === localContents ? { window: localWindow } : undefined,
+      resolveLocal: (sender) => sender === localContents ? { id: "window-a", window: localWindow } : undefined,
       resolvePreferences: (sender) => sender === preferencesContents ? preferencesWindow : undefined,
       getAllowedOrigins: () => ["http://localhost:3000"],
-      openPreferences: async (request, toggle) => { calls.push(`open:${request.section}:${request.instanceId ?? ""}:${Boolean(toggle)}`) },
+      openPreferences: async (request, toggle, _resume, openerId) => { calls.push(`open:${request.section}:${request.instanceId ?? ""}:${Boolean(toggle)}:${openerId}`) },
+      openerStartupState: async (window, command, epoch) => {
+        calls.push(`startup:${window === preferencesWindow}:${command}:${epoch}`)
+        return { epoch: 1, state: null, applied: false }
+      },
       getRequest: () => ({ section: "speech" }),
       markReady: () => { calls.push("ready") },
       acceptRequest: (_window, request) => { calls.push(`accept:${request.section}`) },
@@ -45,7 +49,7 @@ function harness() {
 test("Preferences IPC separates local open authority and controls registered app windows", async () => {
   const h = harness()
   assert.deepEqual([...h.handlers.keys()], [
-    "preferences:open", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
+    "preferences:open", "preferences:openerStartupState", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
   ])
 
   assert.deepEqual(await h.handlers.get("preferences:open")!(h.event(h.localContents), "speech", { instanceId: "workspace-1" }, true), { ok: true })
@@ -61,7 +65,20 @@ test("Preferences IPC separates local open authority and controls registered app
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: false })
   assert.deepEqual(await h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
-  assert.deepEqual(h.calls, ["open:speech:workspace-1:true", "ready", "accept:providers", "transition:3:false", "minimize", "local:minimize", "maximize", "unmaximize", "approve", "close"])
+  assert.deepEqual(h.calls, ["open:speech:workspace-1:true:window-a", "ready", "accept:providers", "transition:3:false", "minimize", "local:minimize", "maximize", "unmaximize", "approve", "close"])
+})
+
+test("opener startup state is only reachable from Preferences with fixed commands", async () => {
+  const h = harness()
+  const handler = h.handlers.get("preferences:openerStartupState")!
+  assert.deepEqual(await handler(h.event(h.preferencesContents), "disable-restore", 4), { epoch: 1, state: null, applied: false })
+  assert.throws(() => handler(h.event(h.localContents), "read"), /limited to the Preferences window/)
+  assert.throws(() => handler(h.event({}), "read"), /limited to the Preferences window/)
+  assert.throws(() => handler(h.event(h.preferencesContents), "save"), /Invalid startup state command/)
+  assert.throws(() => handler(h.event(h.preferencesContents), "clear", "window-b"), /Invalid startup state opener epoch/)
+  h.frame.url = "https://outside.example/preferences"
+  assert.throws(() => handler(h.event(h.preferencesContents), "read"), /allowed renderer origin/)
+  assert.deepEqual(h.calls, ["startup:true:disable-restore:4"])
 })
 
 test("Preferences IPC rejects unregistered, subframe, and cross-origin senders", () => {

@@ -10,6 +10,8 @@ export interface DiagnosticLabels {
   reportTitle: string
   generated: string
   serverVersion: string
+  serverOs: string
+  serverArch: string
   uiVersion: string
   uiSource: string
   runtime: string
@@ -27,6 +29,15 @@ export interface DiagnosticLabels {
 }
 
 export type DiagnosticListeningMode = ServerMeta["listeningMode"] | "specific"
+
+export function getServerOperatingSystem(meta: ServerMeta | null): string {
+  switch (meta?.system?.platform) {
+    case "win32": return "Windows"
+    case "darwin": return "macOS"
+    case "linux": return "Linux"
+    default: return meta?.system?.platform || "—"
+  }
+}
 
 export function getDiagnosticListeningMode(meta: ServerMeta): DiagnosticListeningMode {
   if (isWildcardBindHost(meta.host)) return "all"
@@ -65,6 +76,8 @@ export function buildDiagnosticReport(
     "============================",
     `${labels.generated}: ${generatedAt.toISOString()}`,
     `${labels.serverVersion}: ${meta?.serverVersion ?? "—"}`,
+    `${labels.serverOs}: ${getServerOperatingSystem(meta)}`,
+    `${labels.serverArch}: ${meta?.system?.arch ?? "—"}`,
     `${labels.uiVersion}: ${meta?.ui?.version ?? "—"}`,
     `${labels.uiSource}: ${meta?.ui?.source ?? "—"}`,
     `${labels.runtime}: ${runtime.host}`,

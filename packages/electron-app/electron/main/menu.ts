@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron"
 import { NEW_WINDOW_ACCELERATOR } from "./menu-target"
+import { setWindowZoomLevel } from "./window-state"
 import { setViewMenuState, updateViewMenu, viewMenuItems } from "./view-menu"
 
 interface ApplicationMenuActions {
@@ -104,9 +105,9 @@ function buildApplicationMenu() {
       { label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R", click: withTarget((window) => actions?.forceReload(window)) },
       { label: "Toggle Developer Tools", accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I", click: withTarget((window) => window.webContents.toggleDevTools()) },
       { type: "separator" },
-      { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: withTarget((window) => window.webContents.setZoomLevel(0)) },
-      { label: "Zoom In", accelerator: "CmdOrCtrl+Plus", click: withTarget((window) => window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5)) },
-      { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: withTarget((window) => window.webContents.setZoomLevel(window.webContents.getZoomLevel() - 0.5)) },
+      { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: withTarget((window) => setWindowZoomLevel(window, 0)) },
+      { label: "Zoom In", accelerator: "CmdOrCtrl+Plus", click: withTarget((window) => setWindowZoomLevel(window, window.webContents.getZoomLevel() + 0.5)) },
+      { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: withTarget((window) => setWindowZoomLevel(window, window.webContents.getZoomLevel() - 0.5)) },
       { type: "separator" },
       { label: "Toggle Full Screen", accelerator: isMac ? "Ctrl+Command+F" : "F11", click: withTarget((window) => window.setFullScreen(!window.isFullScreen())) },
     ] },

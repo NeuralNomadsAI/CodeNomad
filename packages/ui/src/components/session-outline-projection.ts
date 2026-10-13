@@ -34,8 +34,23 @@ function projectSessionOutline(entries: readonly OutlineEntry[], resident: reado
 // disappears on every token, even thousands of messages away from that token.
 export function createSessionOutlineProjection() {
   let previous = new Map<string, TimelineSegment>()
-  return (...args: Parameters<typeof projectSessionOutline>): TimelineSegment[] => {
-    const segments = projectSessionOutline(...args).map(segment => {
+  let previousEntries: readonly OutlineEntry[] | undefined
+  let previousResident: readonly TimelineSegment[] = []
+  let previousLabels: string[] = []
+  let previousSegments: TimelineSegment[] = []
+  return (entries: readonly OutlineEntry[], resident: readonly TimelineSegment[], t: Parameters<typeof projectSessionOutline>[2]): TimelineSegment[] => {
+    // Outline snapshots and resident markers are immutable publications. The
+    // resident array is rebuilt per token, but its marker identities only change
+    // when their structural signature changes. Avoid rescanning all history for
+    // identical markers, and retain locale tracking even on this fast path.
+    const labelKeys = ["messageTimeline.segment.user.label", "messageTimeline.segment.assistant.label",
+      "messageTimeline.segment.compaction.label", "messageTimeline.tool.fallbackLabel"]
+    const labels = labelKeys.map(key => t(key))
+    if (entries === previousEntries && resident.length === previousResident.length
+      && resident.every((segment, index) => segment === previousResident[index])
+      && labels.every((label, index) => label === previousLabels[index])) return previousSegments
+    const translated = new Map(labelKeys.map((key, index) => [key, labels[index]]))
+    const segments = projectSessionOutline(entries, resident, key => translated.get(key) ?? t(key)).map(segment => {
       const cached = previous.get(segment.id)
       return cached && cached.type === segment.type && cached.label === segment.label
         && cached.tooltip === segment.tooltip && cached.totalChars === segment.totalChars
@@ -45,6 +60,12 @@ export function createSessionOutlineProjection() {
         ? cached : segment
     })
     previous = new Map(segments.map(segment => [segment.id, segment]))
-    return segments
+    previousEntries = entries
+    previousResident = [...resident]
+    previousLabels = labels
+    if (segments.length !== previousSegments.length || segments.some((segment, index) => segment !== previousSegments[index])) {
+      previousSegments = segments
+    }
+    return previousSegments
   }
 }

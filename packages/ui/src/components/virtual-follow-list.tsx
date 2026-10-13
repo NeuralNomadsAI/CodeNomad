@@ -13,6 +13,8 @@ const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
+const ELEMENT_ALIGNMENT_FRAMES = 30
+const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
 const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
@@ -34,6 +36,8 @@ export interface VirtualFollowListApi {
     opts?: { block?: ScrollLogicalPosition },
   ) => void
   notifyContentRendered: () => void
+  /** Leaves follow mode and holds `target` at `viewportOffset` px below the viewport top, clamped into view. */
+  alignElement: (target: HTMLElement, viewportOffset: number) => void
   setAutoScroll: (enabled: boolean) => void
   getAutoScroll: () => boolean
   getScrollElement: () => HTMLDivElement | undefined
@@ -110,6 +114,8 @@ export interface VirtualFollowListProps<T> {
 export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
   const [shellElement, setShellElement] = createSignal<HTMLDivElement | undefined>()
+  const [beforeItemsElement, setBeforeItemsElement] = createSignal<HTMLDivElement>()
+  const [beforeItemsHeight, setBeforeItemsHeight] = createSignal(0)
   const [virtuaHandle, setVirtuaHandle] = createSignal<VirtualizerHandle | undefined>()
   const [followMode, setFollowMode] = createSignal<FollowMode>({ type: props.initialAutoScroll?.() ?? true ? "following" : "escaped" })
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
@@ -143,6 +149,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastResetKey: string | number | undefined = props.resetKey?.()
   let pendingInitialScroll = true
   let pendingContentRenderedFrame: number | null = null
+  let elementAlignmentFrame: number | undefined
   let pendingExplicitBottomPinFrame: number | null = null
   let pendingViewportResizeFrame: number | null = null
   let pendingViewportHeightDelta = 0
@@ -176,6 +183,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function cancelActiveScrollRestore() {
     readerSettlement.cancel()
+    cancelElementAlignment()
     const onCancelled = cancelRestore
     if (!onCancelled) return
     invalidateScrollRestore()
@@ -263,8 +271,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function getDomMetrics(element: HTMLDivElement, handle = virtuaHandle(), offset = handle?.scrollOffset ?? element.scrollTop): ScrollControllerMetrics {
     return {
       offset,
-      scrollHeight: handle?.scrollSize ?? element.scrollHeight,
-      clientHeight: handle?.viewportSize ?? element.clientHeight,
+      // Virtua's scrollSize excludes content preceding its own item root.
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
       sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
   }
@@ -289,7 +298,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element) return
     const handle = virtuaHandle()
-    const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+    const maxOffset = Math.max(element.scrollHeight - element.clientHeight, 0)
     const nextOffset = Math.min(Math.max(offset, 0), maxOffset)
     markProgrammaticScroll()
     if (handle) {
@@ -307,7 +316,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const items = virtualItems()
     if (!element || items.length === 0) return
     const offset = handle?.scrollOffset ?? element.scrollTop
-    const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+    const maxOffset = Math.max(element.scrollHeight - element.clientHeight, 0)
     if (shouldAdvanceBottomPin(offset, maxOffset)) {
       markProgrammaticScroll()
       element.scrollTo({ top: maxOffset, behavior: immediate ? "instant" : "smooth" })
@@ -319,7 +328,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element || !autoScroll() || externalSuspendAutoPinToBottom() || scrollController.snapshot().restoring) return
     const handle = virtuaHandle()
-    const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+    const maxOffset = Math.max(element.scrollHeight - element.clientHeight, 0)
     const offset = handle?.scrollOffset ?? element.scrollTop
     if (shouldAdvanceBottomPin(offset, maxOffset)) {
       // Virtua's imperative scroll reasserts its target on later measurements
@@ -334,15 +343,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function performScrollToTop(immediate = true) {
-    const handle = virtuaHandle()
+    const element = scrollElement()
     if (immediate) {
       scrollToOffset(0, false)
       return
     }
-    if (!handle) return
+    if (!element) return
     markProgrammaticScroll()
-    pendingVirtuaScroll = true
-    handle.scrollToIndex(0, { align: "start", smooth: true })
+    element.scrollTo({ top: 0, behavior: "smooth" })
   }
 
   function performScrollToKey(key: string, opts: { block: ScrollLogicalPosition; smooth: boolean }) {
@@ -569,8 +577,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element) return undefined
     const handle = virtuaHandle()
     const scrollTop = handle?.scrollOffset ?? element.scrollTop
-    const scrollHeight = handle?.scrollSize ?? element.scrollHeight
-    const clientHeight = handle?.viewportSize ?? element.clientHeight
+    const scrollHeight = element.scrollHeight
+    const clientHeight = element.clientHeight
     const maxScrollTop = Math.max(scrollHeight - clientHeight, 0)
     const atBottom = isAtBottom(getDomMetrics(element, handle, scrollTop))
     const snapshot: VirtualFollowScrollSnapshot = {
@@ -608,6 +616,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
     readerSettlement.cancel()
+    cancelElementAlignment()
     const element = scrollElement()
     if (!element) {
       opts?.fallback?.()
@@ -743,7 +752,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element) return
     const handle = virtuaHandle()
-    const maxScrollTop = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+    const maxScrollTop = Math.max(element.scrollHeight - element.clientHeight, 0)
     const nextTop = snapshot.atBottom
       ? maxScrollTop
       : typeof snapshot.scrollRatio === "number" && snapshot.maxScrollTop !== maxScrollTop
@@ -922,6 +931,37 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     dispatchFollowEvent({ type: "jump-key", key, block: opts?.block ?? "start", smooth: false })
   }
 
+  function cancelElementAlignment() {
+    if (elementAlignmentFrame !== undefined) cancelAnimationFrame(elementAlignmentFrame)
+    elementAlignmentFrame = undefined
+  }
+
+  function alignElement(target: HTMLElement, viewportOffset: number) {
+    const element = scrollElement()
+    if (!element || !element.contains(target)) return
+    cancelActiveScrollRestore()
+    if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
+    dispatchFollowEvent({ type: "set-follow", enabled: false })
+    // A keyboard activation can happen off-screen (or mid-layout); always land in view.
+    const offset = Math.min(Math.max(viewportOffset, 0), Math.max(0, element.clientHeight - ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX))
+    // The virtualizer's resize jump compensation and late layout (fonts, lazy cards) can
+    // move the target after the first correction, so re-measure the target itself over a
+    // short window. Any gesture or navigation cancels it via cancelActiveScrollRestore.
+    let remaining = ELEMENT_ALIGNMENT_FRAMES
+    const align = () => {
+      elementAlignmentFrame = undefined
+      if (!target.isConnected || autoScroll()) return
+      const delta = target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset
+      if (Math.abs(delta) >= 1) {
+        markProgrammaticScroll()
+        element.scrollTop += delta
+        scrollController.recordProgrammaticOffset(element.scrollTop, isActuallyAtBottom())
+      }
+      if (--remaining > 0) elementAlignmentFrame = requestAnimationFrame(align)
+    }
+    align()
+  }
+
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
     scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true),
@@ -937,6 +977,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (pendingContentRenderedFrame !== null) return
       pendingContentRenderedFrame = requestAnimationFrame(() => flushContentRendered())
     },
+    alignElement,
     setAutoScroll: (enabled) => dispatchFollowEvent({ type: "set-follow", enabled }),
     getAutoScroll: () => autoScroll(),
     getScrollElement: () => scrollElement(),
@@ -947,6 +988,47 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(() => props.registerApi?.(api))
   createEffect(() => props.registerState?.(state))
+
+  createEffect(() => {
+    const element = beforeItemsElement()
+    const stream = scrollElement()
+    if (!element || !stream) return
+    let height = element.getBoundingClientRect().height
+    let stableOffset = stream.scrollTop
+    setBeforeItemsHeight(height)
+    const captureOffset = () => {
+      // A shrinking prefix can clamp scrollTop before ResizeObserver runs.
+      // Retain the pre-layout offset until that resize has been accounted for.
+      if (element.getBoundingClientRect().height === height) stableOffset = stream.scrollTop
+    }
+    const measure = () => {
+      const nextHeight = element.getBoundingClientRect().height
+      const delta = nextHeight - height
+      const offset = delta < 0 && stream.scrollTop >= stream.scrollHeight - stream.clientHeight
+        ? stableOffset : stream.scrollTop
+      const retainReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
+        && !hasActiveExplicitBottomPin()
+      if (retainReader) readerSettlement.cancel()
+      setBeforeItemsHeight(nextHeight)
+      if (retainReader && !nativeScrollbarDragging && offset >= height) {
+        // One synchronous layout correction, not a deferred pin that can
+        // reassert over the next wheel/thumb gesture. Header readers stay put.
+        markProgrammaticScroll()
+        stream.scrollTop = Math.max(0, offset + delta)
+        scrollController.recordProgrammaticOffset(stream.scrollTop, false)
+      }
+      height = nextHeight
+      stableOffset = stream.scrollTop
+      if (isActive() && !nativeScrollbarDragging) api.notifyContentRendered()
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    stream.addEventListener("scroll", captureOffset, { passive: true })
+    onCleanup(() => {
+      observer.disconnect()
+      stream.removeEventListener("scroll", captureOffset)
+    })
+  })
 
   createEffect(on(explicitBottomPinIntent, (intent) => {
     if (!intent) {
@@ -1053,6 +1135,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     readerSettlement.cancel()
+    cancelElementAlignment()
     lastResetKey = nextKey
     invalidateScrollRestore()
     lastHandledExplicitBottomPinToken = null
@@ -1075,6 +1158,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(isActive, (active) => {
     if (!active) {
       readerSettlement.cancel()
+      cancelElementAlignment()
       if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
       pendingExplicitBottomPinFrame = null
       clearExplicitBottomPin()
@@ -1132,6 +1216,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   onCleanup(() => {
     invalidateScrollRestore()
     readerSettlement.cancel()
+    cancelElementAlignment()
     clearExplicitBottomPin()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
@@ -1158,7 +1243,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onMouseUp={props.onMouseUp}
         onClick={props.onClick}
       >
-        {props.renderBeforeItems?.()}
+        <div class="virtual-follow-list-before" ref={setBeforeItemsElement}>{props.renderBeforeItems?.()}</div>
         {/* Client-only: keep bounded measurement probes, not an SSR range that
             stays pinned until a real scroll event (short threads cannot scroll). */}
         <Show keyed when={measurementAuthority()}>
@@ -1167,6 +1252,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
               cache={authority.cache}
               ref={setVirtuaHandle}
               scrollRef={scrollElement()}
+              startMargin={beforeItemsHeight()}
               data={virtualItems()}
               shift={shiftVirtualItems()}
               bufferSize={props.overscanPx ?? 400}

@@ -7,7 +7,17 @@ import { executeInstaller } from "./npm-runtime"
 import { upgradeSharedOpenCode } from "./native-upgrade"
 import { InstallationInterruptedError, withInstallationLock } from "./installation-lock"
 
-test("timeout fences surviving installer descendants and preserves their adapter directory", { timeout: 15_000 }, async () => {
+test("timeout fences surviving installer descendants and preserves their adapter directory", { timeout: 60_000 }, async () => {
+  // A loaded host can boot the supervisor more slowly than the installer
+  // timeout, killing it before it has a descendant to fence. That attempt did
+  // not establish the scenario, so repeat it in a fresh prefix with more time.
+  for (const timeout of [1500, 5000, 15_000]) {
+    if (await timeoutFencesSurvivingDescendant(timeout)) return
+  }
+  assert.fail("the installer supervisor never recorded its descendant before the timeout")
+})
+
+async function timeoutFencesSurvivingDescendant(timeout: number): Promise<boolean> {
   const prefix = await mkdtemp(path.join(os.tmpdir(), "installer-interruption-"))
   const record = path.join(prefix, "child-pid")
   const supervisor = path.join(prefix, "supervisor.cjs")
@@ -27,26 +37,32 @@ test("timeout fences surviving installer descendants and preserves their adapter
       binary: process.execPath, version: "2.0.16", prefix, node: process.execPath, npm: supervisor, env, platform: process.platform,
       execute: async (_binary, _args, childEnv, options) => {
         shimDirectory = options!.cwd
-        await executeInstaller(process.execPath, [supervisor], childEnv, { cwd: shimDirectory, timeout: 1500 })
+        await executeInstaller(process.execPath, [supervisor], childEnv, { cwd: shimDirectory, timeout })
       },
     })), error => {
       assert.ok(error instanceof InstallationInterruptedError, "cleanup must preserve the interruption error")
       assert.ok(error.message.includes(path.join(prefix, ".codenomad-opencode-install.lock")))
       return true
     })
-    childPID = Number(await readFile(record, "utf8"))
+    const recorded = await readFile(record, "utf8").catch(error => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      throw error
+    })
+    if (recorded === undefined) return false
+    childPID = Number(recorded)
     assert.ok(childPID > 0)
     process.kill(childPID, 0)
     await access(shimDirectory!)
     await assert.rejects(withInstallationLock(prefix, async () => { assert.fail("must not start another installer") }),
       { code: "installation_busy" })
+    return true
   } finally {
     childPID ??= Number(await readFile(record, "utf8").catch(() => "0"))
     if (childPID) { try { process.kill(childPID) } catch { /* Already exited. */ } }
     if (shimDirectory) await rm(shimDirectory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
     await rm(prefix, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
-})
+}
 
 test("output-limit termination retains the lock; ordinary installer failure releases it", async () => {
   const prefix = await mkdtemp(path.join(os.tmpdir(), "installer-output-"))

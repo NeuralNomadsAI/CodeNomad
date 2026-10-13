@@ -67,6 +67,10 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
           const { tGlobal } = await import("./i18n")
           throw new Error(tGlobal("envEditor.applyFailed"))
         }
+        if (body?.error === "PROVIDER_ACCOUNT_SELECTION_FAILED") {
+          const { tGlobal } = await import("./i18n")
+          throw new Error(tGlobal("settings.accounts.error"))
+        }
       }
       return response
     }

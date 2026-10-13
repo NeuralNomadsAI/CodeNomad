@@ -31,7 +31,7 @@ function metadataRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-function explicitToolReference(form: FormInfo) {
+export function explicitToolReference(form: FormInfo) {
   const metadata = metadataRecord(form.metadata)
   const tool = metadataRecord(metadata?.tool) ?? metadataRecord(metadata?.source)
   const messageId = tool?.messageID ?? tool?.messageId ?? metadata?.messageID ?? metadata?.messageId
@@ -82,12 +82,4 @@ export function resolveFormToolTarget(form: FormInfo, store: MessageStoreReader)
     }
   }
   return null
-}
-
-export function shouldRenderFormInFallback(
-  form: FormInfo,
-  activeSessionId: string | null | undefined,
-  store: MessageStoreReader,
-): boolean {
-  return form.sessionID !== activeSessionId || !resolveFormToolTarget(form, store)
 }

@@ -1,6 +1,7 @@
 import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode/client"
 import { isSessionBusyError } from "@opencode/client"
 import type { Attachment } from "../types/attachment"
+import { promptSkills } from "../lib/prompt-skills"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
@@ -171,7 +172,8 @@ async function sendMessage(
   sessionId: string,
   prompt: string,
   attachments: Attachment[] = [],
-  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload } = {},
+  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload;
+    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -188,6 +190,7 @@ async function sendMessage(
   const textPartId = createId("prt")
 
   const preparedPrompt = preparePromptDisplayText(prompt, attachments)
+  const skills = promptSkills(attachments, preparedPrompt.promptToSend, options.restoredPayload)
   const restoredDisplayText = options.restoredPayload?.metadata?.displayText
   if (typeof restoredDisplayText === "string" && options.restoredPayload?.text.startsWith(restoredDisplayText)) {
     preparedPrompt.promptToSend += options.restoredPayload.text.slice(restoredDisplayText.length)
@@ -235,6 +238,8 @@ async function sendMessage(
           filename: att.filename,
           synthetic: true,
         })
+      } else if (source.type === "skill") {
+        optimisticParts.push({ id: createId("prt"), type: "skill", skillId: source.id, name: source.name })
       } else if (source.type === "agent") {
         const mention = getAgentMention(preparedPrompt.promptToSend, source.name)
           ?? remapMention(options.restoredPayload?.agents?.find((agent) => agent.name === source.name)?.mention)
@@ -301,12 +306,7 @@ async function sendMessage(
     text: preparedPrompt.promptToSend,
     ...(files.length > 0 ? { files } : {}),
     ...(agents.length > 0 ? { agents } : {}),
-    ...(options.restoredPayload?.skills ? {
-      skills: options.restoredPayload.skills.flatMap((skill) => {
-        const mention = remapMention(skill.mention)
-        return skill.mention && !mention ? [] : [{ id: skill.id, ...(mention ? { mention } : {}) }]
-      }),
-    } : {}),
+    ...(skills.length ? { skills } : {}),
     ...(options.restoredPayload ? { metadata: { ...options.restoredPayload.metadata, displayText: prompt } } : {}),
     ...(options.delivery ? { delivery: options.delivery } : {}),
     ...(options.delivery === "queue" ? { resume: false } : {}),
@@ -324,16 +324,18 @@ async function sendMessage(
     await admitSessionAction(instanceId, sessionId, async () => {
       const currentInstance = instances().get(instanceId)
       const currentSession = sessions().get(instanceId)?.get(sessionId)
+      if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
       if (!currentInstance?.client) throw new Error("Instance not ready")
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
       await syncSessionInstructions(client, instanceId, sessionId)
-      if (options.delivery !== "queue") {
+      if (options.delivery !== "queue" && !options.preserveNativeProfile) {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
           await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) })
         }
       }
+      if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
       const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
       confirmedId = result?.id || messageId
       if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })

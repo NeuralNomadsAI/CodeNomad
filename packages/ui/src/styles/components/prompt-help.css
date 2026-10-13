@@ -1,0 +1,39 @@
+/* Compact empty fields reserve a single help strip inside their existing height.
+ * Keep all shortcuts reachable by native horizontal keyboard/pointer scrolling;
+ * never change the viewport-derived field limits to accommodate wrapped help. */
+@media (pointer: fine) {
+  /* Honor the shared keyboard-hints visibility policy before reserving space. */
+  :where(html:not([data-runtime-host="web"]):not([data-runtime-platform="mobile"]):not([data-keyboard-hints="hide"]))
+  .prompt-input-wrapper[data-compact-auto="true"] .prompt-input-field[data-prompt-help="true"] .prompt-input {
+    padding-top: var(--space-2xs);
+    padding-bottom: var(--control-height-sm);
+  }
+
+  .prompt-input-wrapper[data-compact-auto="true"] .prompt-input-overlay {
+    bottom: 0;
+    height: var(--control-height-sm);
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-tight);
+    pointer-events: auto;
+    scrollbar-width: none;
+  }
+
+  .prompt-input-wrapper[data-compact-auto="true"] .prompt-overlay-text {
+    flex: 0 0 auto;
+  }
+
+  .prompt-input-wrapper[data-compact-auto="true"] .prompt-input-overlay .kbd {
+    padding-block: 0;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  .prompt-input-wrapper[data-compact-auto="true"] .prompt-input-overlay:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-primary);
+  }
+}

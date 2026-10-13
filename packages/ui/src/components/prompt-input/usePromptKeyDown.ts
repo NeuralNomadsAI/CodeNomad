@@ -240,10 +240,17 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
     }
 
     if (e.key === "Enter") {
+      // A picker listener may already have selected an item and closed itself
+      // before this delegated handler runs. Never submit the consumed key.
+      if (e.defaultPrevented) return
       const isModified = e.metaKey || e.ctrlKey
 
-      // If the picker is open, Enter should select from it.
-      if (!isModified && options.isPickerOpen()) {
+      // The picker owns Enter even when loading, empty or not yet mounted.
+      // Unmodified Enter (including Shift) bubbles to its selection handler;
+      // submit/queue modifiers are swallowed rather than sending the draft.
+      if (options.isPickerOpen()) {
+        e.preventDefault()
+        if (isModified) e.stopPropagation()
         return
       }
 
@@ -263,10 +270,6 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
         }
 
         if (e.shiftKey) {
-          // If the picker is open, avoid selecting an item on Enter.
-          if (options.isPickerOpen()) {
-            e.stopPropagation()
-          }
           return
         }
 
@@ -278,9 +281,6 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
       // Default: Cmd/Ctrl+Enter submits.
       if (isModified) {
         e.preventDefault()
-        if (options.isPickerOpen()) {
-          options.closePicker()
-        }
         options.onSend(e.shiftKey)
         return
       }

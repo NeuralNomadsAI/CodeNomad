@@ -4,6 +4,7 @@ import { after, afterEach, before, describe, it } from "node:test"
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
+import { createSkillAttachment } from "../types/attachment"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import {
   abortSession,
@@ -863,6 +864,32 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("coordinator steering preserves the native profile while still syncing instructions", async () => {
+    const calls: string[] = []
+    seed({ session: {
+      instructions: { entry: { put: async () => { calls.push("instruction") }, remove: async () => {} } },
+      switchAgent: async () => { calls.push("agent") },
+      switchModel: async () => { calls.push("model") },
+      prompt: async (input: any) => { calls.push(input.delivery); return { id: input.id } },
+    } })
+    await sendMessage(instanceId, sessionId, "Human instruction", [], { delivery: "steer", preserveNativeProfile: true })
+    assert.ok(calls.includes("instruction"))
+    assert.equal(calls[calls.length - 1], "steer")
+    assert.ok(!calls.includes("agent") && !calls.includes("model"))
+  })
+
+  it("rechecks a guarded view after awaited instruction setup before native prompt admission", async () => {
+    let current = true, prompts = 0
+    seed({ session: {
+      instructions: { entry: { put: async () => { current = false }, remove: async () => {} } },
+      prompt: async () => { prompts++ },
+    } })
+    await assert.rejects(sendMessage(instanceId, sessionId, "Stale instruction", [], {
+      delivery: "steer", preserveNativeProfile: true, admissionCurrent: () => current,
+    }), /Session action view changed/)
+    assert.equal(prompts, 0)
+  })
+
   it("admits compaction after an in-flight prompt", async () => {
     const admissions: string[] = []
     let releasePrompt!: () => void
@@ -1012,7 +1039,7 @@ describe("native prompt serialization", () => {
       filename: "reviewer",
       mediaType: "text/plain",
       source: { type: "agent", name: "reviewer" },
-    }], {
+    }, createSkillAttachment("skill", "Skill")], {
       restoredPayload: {
         text: "original @reviewer @skill\n\nhidden note",
         metadata: { displayText: "original @reviewer @skill", source: "queued" },

@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Component, Show, createEffect, createSignal } from "solid-js"
+import { Component, For, Show, createEffect, createSignal } from "solid-js"
 import { alertDialogState, dismissAlertDialog } from "../stores/alerts"
 import type { AlertVariant, AlertDialogState } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
@@ -28,6 +28,13 @@ const variantAccent: Record<AlertVariant, { badgeBg: string; badgeBorder: string
 
 function dismiss(confirmed: boolean, payload?: AlertDialogState | null, promptValue?: string) {
   const current = payload ?? alertDialogState()
+
+  if (current?.type === "choice") {
+    // Only an explicit choice button resolves a value; every dismissal cancels.
+    current.resolveChoice?.(confirmed ? promptValue ?? null : null)
+    dismissAlertDialog()
+    return
+  }
 
   if (current?.type === "confirm") {
     if (confirmed) {
@@ -118,7 +125,18 @@ const AlertDialog: Component = () => {
           >
             <Dialog.Portal>
               <Dialog.Overlay class="modal-overlay z-[60]" />
-              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
+              <Dialog.Content
+                class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl"
+                tabIndex={-1}
+                onOpenAutoFocus={(event) => {
+                  // Confirms keep Kobalte's default focus on Cancel, so Enter never
+                  // confirms a destructive action. Choice dialogs focus their last,
+                  // non-destructive choice instead.
+                  if (payload.type !== "choice" || !primaryButtonRef) return
+                  event.preventDefault()
+                  primaryButtonRef.focus()
+                }}
+              >
                    <div class="flex items-start gap-3">
                      <div
                        class="flex h-12 w-12 shrink-0 items-center justify-center border text-base font-semibold"
@@ -167,6 +185,29 @@ const AlertDialog: Component = () => {
                       </div>
                     </Show>
 
+                   <Show when={payload.type === "choice"}>
+                     <div class="mt-6 flex flex-wrap justify-end gap-3">
+                       <button type="button" class="button-secondary" onClick={() => dismiss(false, payload)}>
+                         {cancelLabel}
+                       </button>
+                       <For each={payload.choices ?? []}>
+                         {(choice, index) => (
+                           <button
+                             type="button"
+                             class={choice.tone === "danger" ? "button-danger" : choice.tone === "primary" ? "button-primary" : "button-secondary"}
+                             ref={(el) => {
+                               if (index() === (payload.choices?.length ?? 0) - 1) primaryButtonRef = el
+                             }}
+                             onClick={() => dismiss(true, payload, choice.value)}
+                           >
+                             {choice.label}
+                           </button>
+                         )}
+                       </For>
+                     </div>
+                   </Show>
+
+                   <Show when={payload.type !== "choice"}>
                    <div class="mt-6 flex justify-end gap-3">
                      {(isConfirm || isPrompt) && (
                        <button
@@ -188,6 +229,7 @@ const AlertDialog: Component = () => {
                        {confirmLabel}
                      </button>
                     </div>
+                   </Show>
                   </Dialog.Content>
                 </Dialog.Portal>
               </Dialog>

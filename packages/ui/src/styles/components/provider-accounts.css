@@ -1,0 +1,64 @@
+.provider-accounts {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 320px) auto;
+  gap: var(--space-sm);
+  align-items: center;
+}
+.provider-accounts p {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  margin-block: var(--space-sm);
+}
+.provider-account { display: contents; }
+.provider-account-control { display: contents; }
+.provider-account-control > .settings-toggle-title {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-normal);
+}
+.provider-account-control .selector-trigger { width: 100%; min-width: 0; }
+.provider-account-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.provider-account-auto {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+.provider-account-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); width: 100%; grid-column: 1 / -1; }
+.provider-account input { min-width: 0; flex: 1 1 10rem; }
+.provider-accounts .selector-button { width: auto; }
+.providers-accounts-list .providers-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding-block: var(--space-lg);
+  column-gap: var(--space-md);
+  row-gap: 0;
+  border-block-end: 1px solid var(--border-base);
+  container: provider-account / inline-size;
+}
+.providers-accounts-list .providers-card:last-child { border-block-end: 0; }
+.providers-accounts-list .providers-card-title { font-weight: var(--font-weight-semibold); }
+.providers-accounts-list .provider-accounts {
+  grid-column: 1 / -1;
+  margin-block-start: var(--space-md);
+  padding-block-start: var(--space-md);
+  border-block-start: 1px solid color-mix(in oklab, var(--border-base) 40%, transparent);
+}
+.providers-accounts-list .provider-model-card-actions { flex-wrap: wrap; }
+.providers-connect-bar:has(> button:only-child) { display: flex; justify-content: end; }
+@container provider-account (max-width: 520px) {
+  .provider-accounts { grid-template-columns: minmax(0, 1fr) auto; }
+  .provider-account-control > .settings-toggle-title { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+  .provider-accounts { grid-template-columns: minmax(0, 1fr) auto; }
+  .provider-account-control > .settings-toggle-title { grid-column: 1 / -1; }
+}

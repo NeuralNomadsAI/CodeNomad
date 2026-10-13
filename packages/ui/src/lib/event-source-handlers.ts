@@ -20,11 +20,19 @@ export function attachEventSourceHandlers(source: EventSource, options: EventSou
   let disconnected = false
 
   source.onmessage = (event) => {
+    let payload: WorkspaceEventPayload
     try {
-      const payload = JSON.parse(event.data) as WorkspaceEventPayload
-      options.onEvent(payload)
+      payload = JSON.parse(event.data) as WorkspaceEventPayload
     } catch (error) {
       options.logger.error("Failed to parse event", error)
+      return
+    }
+    try {
+      options.onEvent(payload)
+    } catch (error) {
+      // Deferred reactive flush errors occur after individual subscribers have
+      // returned. They are application failures, not malformed transport data.
+      options.logger.error("Failed to dispatch event", error)
     }
   }
 

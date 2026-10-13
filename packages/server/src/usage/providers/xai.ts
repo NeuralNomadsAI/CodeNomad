@@ -196,8 +196,8 @@ const xai: UsageProvider = {
   id: "xai",
   name: "xAI",
   aliases: ["xai", "grok"],
-  async fetchQuota() {
-    const entry = getOAuthEntry(this.aliases)
+  async fetchQuota(auth) {
+    const entry = getOAuthEntry(auth, this.aliases)
     if (!entry) return notConfigured(this.id, this.name)
     try {
       if (oauthTokenNeedsRefresh(entry)) throw new Error("xAI session expired. Reconnect it in OpenCode.")

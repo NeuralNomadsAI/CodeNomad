@@ -4,6 +4,24 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
+
+#[cfg(test)]
+#[test]
+fn resolved_original_config_drives_certificate_reader_for_tilde_json_yaml_and_directory() {
+    let _guard = crate::cli_manager::tests::ENV_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let home = temporary.path();
+    let old = env::var("CLI_CONFIG").ok();
+    for raw in ["~/Émilie/custom.json", "~\\Émilie/custom.yaml", "~"] {
+        let selected = crate::identity::resolve_selected_config(Some(raw), home, home).unwrap();
+        env::set_var("CLI_CONFIG", &selected);
+        let expected = if raw == "~" { home.to_path_buf() } else { home.join("Émilie") };
+        assert_eq!(resolve_server_config_base_dir().unwrap(), expected);
+        assert_eq!(server_tls_dir().unwrap(), expected.join("tls"));
+    }
+    if let Some(value) = old { env::set_var("CLI_CONFIG", value); }
+    else { env::remove_var("CLI_CONFIG"); }
+}
 const TLS_DIR_NAME: &str = "tls";
 const CA_CERT_FILE: &str = "ca-cert.pem";
 const SERVER_CERT_FILE: &str = "server-cert.pem";

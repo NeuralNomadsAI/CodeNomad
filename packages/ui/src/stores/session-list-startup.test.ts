@@ -1,10 +1,13 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
+import { OpenCode } from "@opencode/client"
+import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
 import { addInstance, removeInstance } from "./instances"
+import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, refreshSessionRuntimeStatus } from "./session-api"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data"
-import { beginSessionGenerationAdmission, getSessionListIds, loading, sessions, setSessions, setSessionStatus } from "./session-state"
+import { beginSessionGenerationAdmission, getSessionListIds, getSessionListError, loading, sessions, setSessions, setSessionStatus } from "./session-state"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -194,4 +197,65 @@ it("does not revive an aborted startup read after the stream connects", async ()
     assert.equal(sessions().get(id)?.has("obsolete") ?? false, false)
     assert.equal(loading().fetchingSessions.get(id) ?? false, false)
   } finally { f.cleanup() }
+})
+
+it("loads valid families beside an orphan and keeps unrelated parent-read failures visible", async () => {
+  const id = "orphan-parent-list"
+  const originalWorktrees = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  const root = page("root").data[0]
+  const child = { ...page("child").data[0], parentID: "root" }
+  const orphan = { ...page("orphan").data[0], parentID: "missing" }
+  const parentReads: string[] = []
+  const methods: string[] = []
+  let failure: "generic" | "missing" | "forbidden" = "generic"
+  const native = OpenCode.make({ baseUrl: "http://fixture/workspaces/instance", fetch: async (input, init) => {
+    const request = new Request(input, init)
+    methods.push(request.method)
+    parentReads.push(new URL(request.url).pathname)
+    return Response.json(failure === "missing"
+      ? { _tag: "SessionNotFoundError", sessionID: "missing", message: "Session not found" }
+      : { error: failure === "generic" ? "Session not found" : "Session does not belong to workspace" },
+    { status: failure === "forbidden" ? 403 : 404 })
+  } })
+  const client: any = { session: {
+    active: async () => ({}), get: native.session.get,
+    list: async (input: any) => ({ data: input.project ? [root, child, orphan] : [root], cursor: {} }),
+  } }
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+  addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  setInstanceMetadata(id, { project: { id: "project", canonical: "/repo" } as any })
+  try {
+    // The pre-fix proxy body loses native error identity and blocks hydration.
+    await assert.rejects(fetchSessions(id, { reset: true, strictStatus: true }))
+    assert.ok(getSessionListError(id))
+    parentReads.length = 0
+    methods.length = 0
+    failure = "missing"
+    // Repeat to cover both initial hydration and reconciliation of a warm list.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await fetchSessions(id, { reset: true, strictStatus: true })
+      assert.equal(getSessionListError(id), undefined)
+      assert.deepEqual(getSessionListIds(id), ["root"])
+      assert.equal(loading().fetchingSessions.get(id), false)
+      assert.equal(sessions().get(id)?.get("child")?.parentId, "root")
+      // Existing reconciliation may discard the disconnected local projection
+      // on refresh. It must never rewrite the native record to invent a root.
+      const projectedOrphan = sessions().get(id)?.get("orphan")
+      if (projectedOrphan) assert.equal(projectedOrphan.parentId, "missing")
+      assert.equal(orphan.parentID, "missing")
+    }
+    assert.deepEqual(parentReads, ["/workspaces/instance/api/session/missing", "/workspaces/instance/api/session/missing"])
+    assert.deepEqual(methods, ["GET", "GET"], "orphan recovery must not modify or delete native sessions")
+    failure = "forbidden"
+    await assert.rejects(fetchSessions(id, { reset: true, strictStatus: true }))
+    assert.ok(getSessionListError(id), "authorization failures must not be swallowed as missing parents")
+    assert.equal(loading().fetchingSessions.get(id), false)
+  } finally {
+    serverApi.fetchWorktrees = originalWorktrees
+    destroyOpenCodeData(id)
+    setSessions(previous => { const next = new Map(previous); next.delete(id); return next })
+    removeInstance(id, { authoritative: false })
+    sdkManager.destroyClientsForInstance(id)
+  }
 })

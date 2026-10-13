@@ -5,6 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import { apiKeyProviders } from "./api-key"
+import { readOpenCodeAuth } from "../shared"
 
 const originalAuthFile = process.env.OPENCODE_AUTH_FILE
 const createdAuthDirs: string[] = []
@@ -69,7 +70,7 @@ test("parses credit-based limits into usage windows", async () => {
         ],
       },
     },
-    () => zai.fetchQuota(),
+    () => zai.fetchQuota(readOpenCodeAuth()),
   )
 
   assert.equal(result.ok, true)
@@ -87,7 +88,7 @@ test("derives usedPercent when the credit payload omits percentage", async () =>
     {
       data: { limits: [{ type: "CREDIT_LIMIT", unit: 6, number: 1, usage: 2000, currentValue: 158, remaining: 1842, nextResetTime: CREDIT_RESET_AT }] },
     },
-    () => zai.fetchQuota(),
+    () => zai.fetchQuota(readOpenCodeAuth()),
   )
 
   const window = result.usage!.windows["weekly"]
@@ -108,7 +109,7 @@ test("coerces string quota fields and skips unusable or unknown entries without 
         ],
       },
     },
-    () => zai.fetchQuota(),
+    () => zai.fetchQuota(readOpenCodeAuth()),
   )
 
   assert.equal(result.ok, true)
@@ -127,7 +128,7 @@ test("keeps legacy token and time windows intact for the bigmodel endpoint", asy
         ],
       },
     },
-    () => zhipu.fetchQuota(),
+    () => zhipu.fetchQuota(readOpenCodeAuth()),
   )
 
   assert.equal(requestUrl, "https://open.bigmodel.cn/api/monitor/usage/quota/limit")

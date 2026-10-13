@@ -84,8 +84,14 @@ export interface NormalizedSessionMessage {
   info: MessageInfo
 }
 
-function structuredError(error: { type: string; message: string; status?: number }): NonNullable<MessageInfo["error"]> {
-  return { ...error, name: error.type === "aborted" ? "MessageAbortedError" : error.type, data: { message: error.message } }
+// A failed run's own explanation (e.g. exhausted restarts, typed "aborted") must not
+// collapse into the generic interrupted-step label, so idle errors keep their native name.
+function structuredError(error: { type: string; message: string; status?: number }, nativeName = false): NonNullable<MessageInfo["error"]> {
+  return { ...error, name: error.type === "aborted" && !nativeName ? "MessageAbortedError" : error.type, data: { message: error.message } }
+}
+
+function failedIdleError(source: SessionMessageInfo) {
+  return source.type === "idle" && source.outcome === "failed" ? source.error : undefined
 }
 
 function normalizeStatus(source: SessionMessageInfo): Message["status"] {
@@ -133,6 +139,8 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         }
       : {}),
     ...(source.type === "compaction" && source.status === "failed" ? { error: structuredError(source.error) } : {}),
+    // A run can fail before or between model steps; only the idle record carries that cause.
+    ...(failedIdleError(source) ? { error: structuredError(failedIdleError(source)!, true) } : {}),
     ...(source.type === "user" ? { text: source.text } : {}),
   }
 
@@ -166,14 +174,18 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         state: normalizedState,
       } as unknown as ClientPart
     })
-    if (parts.length === 0 && source.error) {
-      parts = [normalizeMessagePart({
+    // A failed step that streamed only reasoning or tool calls still needs a
+    // content row to carry its error (the run's duplicate idle failure is hidden).
+    if (source.error && !parts.some((part) => part.type === "text")) {
+      parts = [...parts, normalizeMessagePart({
         id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id,
       }) as ClientPart]
     }
   } else if (source.type === "user") {
     parts = [
       normalizeMessagePart({ id: `${source.id}-text`, type: "text", text: source.text, sessionID: sessionId, messageID: source.id }),
+      ...(source.skills ?? []).map((skill, index) => ({ id: `${source.id}-skill-${index}`, type: "skill" as const,
+        skillId: skill.id, name: skill.name, sessionID: sessionId, messageID: source.id })),
       ...(source.files ?? []).map((file, index) => ({
         id: `${source.id}-file-${index}`,
         type: "file" as const,
@@ -190,8 +202,11 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       sessionID: sessionId, messageID: source.id }]
   } else if (source.type === "idle") {
     // Native execution control record, not assistant-authored transcript text.
-    // Keep its ID/time for cursor/anchor authority without rendering "idle".
-    parts = []
+    // Keep its ID/time for cursor/anchor authority without rendering "idle";
+    // a failed run's cause renders through the shared message error row.
+    parts = failedIdleError(source)
+      ? [normalizeMessagePart({ id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id }) as ClientPart]
+      : []
   } else if (source.type === "compaction") {
     parts = [{
       id: source.id,

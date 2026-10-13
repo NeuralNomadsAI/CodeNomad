@@ -2,11 +2,15 @@ import type { Logger } from "../logger"
 import type { EventBus } from "../events/bus"
 import type { ConfigLocation } from "../config/location"
 import { z } from "zod"
-import { YamlDocStore, type SettingsDoc } from "./yaml-doc-store"
+import { YamlDocStore, SettingsReadError, type SettingsDoc } from "./yaml-doc-store"
 import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
+import { readAdmissionEnvironment } from "./admission-environment"
+import { canonicalScope } from "../host-lifetime/protocol"
+import { createHash } from "node:crypto"
+import path from "node:path"
 
 export type DocKind = "config" | "state"
 
@@ -39,6 +43,10 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
     next.logLevel = parsedLogLevel.data
   } else if (next.logLevel !== undefined) {
     next.logLevel = "DEBUG"
+  }
+  // Unknown feeds (including legacy channel names) fall back to the derived default.
+  if (next.updateFeed !== undefined && next.updateFeed !== "stable" && next.updateFeed !== "preview") {
+    delete next.updateFeed
   }
   if (next.opencodeBinary === "opencode") {
     next.opencodeBinary = "opencode2"
@@ -83,6 +91,24 @@ export class SettingsService {
     )
   }
 
+  /** Selected desktop profile; same identity used at Mission Play. */
+  getProfileScope() {
+    const channel = process.env.CODENOMAD_UPDATE_CHANNEL?.trim().toLowerCase()
+      || (process.env.CODENOMAD_DEV === "1" ? "dev" : "stable")
+    const scope = canonicalScope(channel, this.location.configYamlPath, process.cwd(), process.cwd())
+    const expected = process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY
+    if (expected !== undefined && scope.configIdentity !== expected) {
+      // Tauri's established Windows identity folds ASCII only. Preserve its
+      // signed/profile key; do not relocate existing Unicode desktop state.
+      const ascii = process.platform === "win32" ? path.resolve(this.location.configYamlPath)
+        .replaceAll("/", "\\").replace(/[A-Z]/g, letter => letter.toLowerCase()) : scope.configIdentity
+      if (expected !== ascii) throw new Error("CodeNomad profile configuration differs from its desktop identity")
+      return { channel, configIdentity: expected,
+        key: createHash("sha256").update(`${channel}\0${expected}`).digest("hex") }
+    }
+    return scope
+  }
+
   getDoc(kind: DocKind): SettingsDoc {
     if (kind !== "config") {
       return this.stateStore.get()
@@ -94,6 +120,15 @@ export class SettingsService {
       this.configStore.replace(normalized)
     }
     return normalized
+  }
+
+  readEnvironmentForAdmission(signal?: AbortSignal): Promise<Record<string, string>> {
+    return readAdmissionEnvironment(this.location, signal)
+  }
+
+  /** Private authority input; never expose the selected profile path in browser requests. */
+  configYamlPathForAuthority(): string {
+    return this.location.configYamlPath
   }
 
   mergePatchDoc(kind: DocKind, patch: unknown): SettingsDoc {
@@ -116,6 +151,13 @@ export class SettingsService {
     return owner === "server"
       ? normalizeServerConfigOwner(this.getDoc("config").server as SettingsDoc)
       : this.getDoc("config")[owner] as SettingsDoc
+  }
+
+  /** Fresh read-only authority, without unrelated normalization or error fallbacks. */
+  getRawConfigOwner(owner: string): SettingsDoc {
+    const value = this.configStore.getAuthoritativeOwner(owner)
+    if (owner === "ui" && value.settings !== undefined && !isPlainObject(value.settings)) throw new SettingsReadError()
+    return value
   }
 
   mergePatchOwner(kind: DocKind, owner: string, patch: unknown): SettingsDoc {

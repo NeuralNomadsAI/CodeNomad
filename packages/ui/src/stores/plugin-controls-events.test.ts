@@ -13,9 +13,22 @@ test("renderer SSE reconnect invalidates every cached worktree without reading h
     sources.push(source)
     return source
   })
+  // This fixture models a web renderer, not the intentionally passive Node
+  // import. No native bridge or network globals are needed by the mock above.
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window")
+  t.after(() => {
+    sources.forEach((source) => source.close())
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor)
+    else Reflect.deleteProperty(globalThis, "window")
+    assert.deepEqual(Object.getOwnPropertyDescriptor(globalThis, "window"), windowDescriptor)
+  })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {} })
   const { serverEvents } = await import("../lib/server-events")
   await import("./plugin-controls-events")
   await tick()
+  assert.equal(sources.length, 1, "the renderer auto-connects through the mocked browser transport")
+  assert.equal(sources[0].closed, false)
+  assert.equal(typeof sources[0].onopen, "function")
   sources[0].onopen!()
   let nativeStatuses = 0
   t.after(serverEvents.on("instance.eventStatus", () => { nativeStatuses++ }))

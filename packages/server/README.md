@@ -110,12 +110,13 @@ If you want the latest bleeding-edge builds (published as GitHub pre-releases), 
 npx @neuralnomads/codenomad-dev --password <your-password> --launch
 ```
 
-These environment variables control how CodeNomad checks for dev updates:
+Choose which releases are offered in **Settings → Info → Updates → Update feed** (`server.updateFeed` in the CodeNomad config): **Stable releases** or **Previews and stable releases**. Until you choose, builds labelled `-dev-*` (including legacy `-dev-v2-*`) start on the preview feed and other builds on the stable feed. The feed only selects offered releases: changing it never switches windows, drafts, desktop data or the backend, and preview updates open their release page rather than running the stable WinGet installer.
 
 | Env Variable | Description |
 |-------------|-------------|
-| `CODENOMAD_UPDATE_CHANNEL` | Update channel (use `dev` to enable dev build update checks) |
-| `CODENOMAD_GITHUB_REPO` | GitHub repo used for dev release checks (default `NeuralNomadsAI/CodeNomad`) |
+| `CODENOMAD_GITHUB_REPO` | GitHub repo used for preview release checks (default `NeuralNomadsAI/CodeNomad`) |
+
+`CODENOMAD_UPDATE_CHANNEL` no longer affects update checks. Desktop hosts accept it only as a deprecated alias of `CODENOMAD_PROFILE` (see `dev-docs/DESKTOP_DATA_PROFILES.md`). A desktop host sets `CODENOMAD_DESKTOP_PROFILE` on the backend it launches for a non-default data profile; the server only displays it in Settings → Info.
 
 ### HTTP vs HTTPS
 
@@ -140,6 +141,15 @@ codenomad --https=true --http=true
 - When remote access is disabled (bind host is loopback, e.g. `--host 127.0.0.1`):
   - Both HTTP and HTTPS listen on `127.0.0.1`.
 
+### Remote Control
+
+Remote Control reaches CodeNomad from anywhere without an inbound port, VPN or LAN binding. Turn it on in **Settings → Remote Access**, then scan the one-time pairing link (valid for five minutes) on the other device. It is independent of `--host` direct access; neither falls back to the other.
+
+- **Transport**: CodeNomad claims a random route on the device's shared [OpenTunnel](https://github.com/anomalyco/opentunnel) identity (the default profile, also used by `opencode pair --remote`). The relay forwards ciphertext only; the TLS certificate and its private key stay on this machine. The relay can still observe hostnames, connection timing and sizes. `CODENOMAD_REMOTE_CONTROL_API` selects a self-hosted OpenTunnel API.
+- **Authorization**: Every remote request must carry a paired device's credential, even with `--dangerously-skip-auth`; password login and the token bootstrap are not available remotely. Device credentials are stored hashed in `~/.config/codenomad/remote-control-devices.json`, expire after 30 days without use and can be revoked from Settings, which also ends that device's open streams.
+- **Surface**: Remote Control management, desktop window, SideCar, preview and automation endpoints stay host-only, and remote requests never receive loopback privileges.
+- **Lifetime**: Remote Control stops with the backend. Closing the last desktop window quits the app and its backend, Remote Control included; an enabled Remote Control resumes at the next launch.
+
 ### Self-Signed Certificates
 
 If `--https=true` and you do not provide `--tls-key/--tls-cert`, CodeNomad generates a local certificate automatically under your config directory:
@@ -152,6 +162,15 @@ Certificates are valid for about 30 days and rotate automatically on startup whe
 ```sh
 codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
 ```
+
+Generated CA and server certificates use positive, nonzero serial numbers. On startup,
+CodeNomad replaces an older generated server certificate with a negative or zero
+serial while keeping its valid CA, so existing reverse-proxy trust remains usable.
+If the generated CA itself has an invalid serial, has expired or must be replaced,
+CodeNomad reissues the server certificate too and logs a warning: import the new
+`ca-cert.pem` into clients/reverse proxies that trusted the old CA. Restart CodeNomad
+after installing a version containing this fix to repair existing generated credentials.
+Explicitly supplied certificates are not rewritten; their renewal remains your responsibility.
 
 > **Browser warning:** Self-signed certificates trigger a "Your connection is not private" warning in browsers on first visit. This is expected and safe for local development (127.0.0.1 / localhost):
 > 
@@ -222,6 +241,7 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 - **Mutable server state**: `~/.config/codenomad/state.yaml`
 - **Legacy migration input**: `~/.config/codenomad/config.json` is migrated to the YAML files above.
 - **CodeNomad instance data**: `~/.config/codenomad/instances/`
+- **Remote Control route and paired devices**: `~/.config/codenomad/remote-control-devices.json` (credential hashes only)
 - **OpenCode V2 sessions, messages, and service registration**: OpenCode's platform-default global locations.
 - **Desktop restore state**: `~/.codenomad/client-state/v2/`
 
@@ -237,10 +257,12 @@ The stream is volatile and has no replay guarantee. After reconnecting, clients 
 
 ### Provider Plan Usage
 
-The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads existing OpenCode and Codex CLI credential files but never modifies them or returns provider secrets through its API. Expired externally owned OAuth sessions must be refreshed by OpenCode or Codex CLI; CodeNomad does not exchange their refresh tokens, so refresh-token rotation cannot be lost.
+The Status panel automatically displays quota information for the provider used by the active session. CodeNomad reads the credential each integration currently selects through OpenCode's native credential API; only daemons without that API (before 2.0.20) fall back to the legacy `auth.json`. Claude usage follows the login the session uses: `anthropic` sessions use OpenCode's Anthropic OAuth login, while the `claude-code` provider registered by opencode-claude uses the Claude Code login on the OpenCode daemon's host (including WSL distros), resolved with that host's environment and CodeNomad profile variables in Claude Code's own order: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login (macOS Keychain for a local daemon, otherwise `.credentials.json` under `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR` or `~/.claude`). CodeNomad never modifies these credentials or returns provider secrets through its API. Expired externally owned OAuth sessions must be refreshed by their owner (OpenCode, Claude Code or Codex CLI); CodeNomad does not exchange their refresh tokens, so refresh-token rotation cannot be lost.
 
 Some optional usage integrations require credentials that OpenCode does not expose. They can be enabled without UI configuration through these environment variables:
 
 - Cursor access token: `CURSOR_ACCESS_TOKEN` or `CURSOR_TOKEN`
 - Ollama Cloud: `OLLAMA_CLOUD_COOKIE`
 - OpenCode Go: `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`
+- ZenMux platform API key (distinct from its inference key): `ZENMUX_PLATFORM_API_KEY`
+- exe.dev usage token: `EXE_DEV_USAGE_TOKEN`

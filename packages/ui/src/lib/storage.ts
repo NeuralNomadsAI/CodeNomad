@@ -2,10 +2,18 @@ import type { InstanceData, WorkspaceEventPayload } from "../../../server/src/ap
 import { serverApi } from "./api-client"
 import { serverEvents } from "./server-events"
 import { getLogger } from "./logger"
+import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 
 const log = getLogger("actions")
 
 export type OwnerBucket = Record<string, any>
+
+/** The write was acknowledged, but no ordered owner snapshot could be obtained. */
+export class ConfigOwnerReconciliationPendingError extends Error {
+  readonly code = "owner-reconciliation-pending"
+  readonly mutationCommitted = true
+  constructor(readonly owner: string) { super("Saved configuration owner requires explicit reconciliation") }
+}
 
 const DEFAULT_INSTANCE_DATA: InstanceData = {
   messageHistory: [],
@@ -33,6 +41,8 @@ export class ServerStorage {
   private configOwnerCache = new Map<string, OwnerBucket>()
   private stateOwnerCache = new Map<string, OwnerBucket>()
   private configOwnerLoadPromises = new Map<string, Promise<OwnerBucket>>()
+  private configOwnerEpochs = new Map<string, number>()
+  private configInvalidationEpoch = 0
   private stateOwnerLoadPromises = new Map<string, Promise<OwnerBucket>>()
   private configOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
   private stateOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
@@ -63,12 +73,7 @@ export class ServerStorage {
     if (cached) return cached
 
     if (!this.configOwnerLoadPromises.has(owner)) {
-      const promise = serverApi
-        .fetchConfigOwner<OwnerBucket>(owner)
-        .then((value) => {
-          this.setOwnerCache("config", owner, value)
-          return value
-        })
+      const promise = this.readConfigOwner(owner)
         .finally(() => {
           this.configOwnerLoadPromises.delete(owner)
         })
@@ -79,10 +84,63 @@ export class ServerStorage {
   }
 
   patchConfigOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
-    return this.trackWrite(serverApi.patchConfigOwner<OwnerBucket>(owner, patch).then((updated) => {
-      this.setOwnerCache("config", owner, updated)
-      return updated
-    }))
+    const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
+    return this.trackWrite(serverApi.patchConfigOwner<OwnerBucket>(owner, patch)
+      .then(updated => this.acceptConfigWrite(owner, epoch, invalidation, updated)))
+  }
+
+  async revalidateUiConfigOwner(): Promise<OwnerBucket> {
+    return this.readStableConfigOwner("ui")
+  }
+
+  private async readConfigOwner(owner: string): Promise<OwnerBucket> {
+    const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
+    const value = await serverApi.fetchConfigOwner<OwnerBucket>(owner)
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid configuration owner response")
+    // A completed older GET cannot supersede a newer native event or write.
+    if (epoch !== (this.configOwnerEpochs.get(owner) ?? 0) || invalidation !== this.configInvalidationEpoch) {
+      const current = this.configOwnerCache.get(owner)
+      if (!current) throw new Error("Configuration changed during read; reload")
+      return current
+    }
+    this.setOwnerCache("config", owner, value)
+    return value
+  }
+
+  patchMissionPreferences(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<OwnerBucket> {
+    const epoch = this.configOwnerEpochs.get("ui") ?? 0, invalidation = this.configInvalidationEpoch
+    return this.trackWrite(serverApi.patchMissionPreferences<OwnerBucket>(patch, expected)
+      .then(updated => this.acceptConfigWrite("ui", epoch, invalidation, updated)))
+  }
+
+  private acceptConfigWrite(owner: string, epoch: number, invalidation: number, updated: OwnerBucket): OwnerBucket | Promise<OwnerBucket> {
+    // An intervening event may precede OR follow this write. Neither the ACK nor
+    // that cache has a certified order. Read native owner authority, never replay.
+    if (epoch !== (this.configOwnerEpochs.get(owner) ?? 0) || invalidation !== this.configInvalidationEpoch) {
+      return this.reconcileConfigWrite(owner)
+    }
+    this.setOwnerCache("config", owner, updated)
+    return updated
+  }
+
+  private async reconcileConfigWrite(owner: string): Promise<OwnerBucket> {
+    try { return await this.readStableConfigOwner(owner) }
+    catch { throw new ConfigOwnerReconciliationPendingError(owner) }
+  }
+
+  private async readStableConfigOwner(owner: string): Promise<OwnerBucket> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
+      try {
+        const value = await serverApi.fetchConfigOwner<OwnerBucket>(owner, AbortSignal.timeout(10_000))
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue
+        // This strict read must not substitute a potentially older display cache.
+        if (epoch !== (this.configOwnerEpochs.get(owner) ?? 0) || invalidation !== this.configInvalidationEpoch) continue
+        this.setOwnerCache("config", owner, value)
+        return value
+      } catch { /* A bounded read-only retry is not mutation replay. */ }
+    }
+    throw new Error("Configuration owner could not be read authoritatively; explicit reload required")
   }
 
   async loadStateOwner(owner: string): Promise<OwnerBucket> {
@@ -213,6 +271,7 @@ export class ServerStorage {
     if (owner === "*") {
       // Full-doc updates are not tracked owner-by-owner; invalidate caches.
       if (kind === "config") {
+        this.configInvalidationEpoch++
         this.configOwnerCache.clear()
       } else {
         this.stateOwnerCache.clear()
@@ -221,6 +280,7 @@ export class ServerStorage {
     }
 
     const cache = kind === "config" ? this.configOwnerCache : this.stateOwnerCache
+    if (kind === "config") this.configOwnerEpochs.set(owner, (this.configOwnerEpochs.get(owner) ?? 0) + 1)
     const listeners = kind === "config" ? this.configOwnerListeners : this.stateOwnerListeners
 
     const previous = cache.get(owner)

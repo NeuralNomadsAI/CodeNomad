@@ -8,7 +8,7 @@
   @apply shadow-2xl flex flex-col;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   color: var(--text-primary);
   max-width: min(100%, calc(100vw - 32px));
   overflow-wrap: anywhere;
@@ -19,6 +19,9 @@
 .modal-search-container {
   @apply p-3 border-b;
   border-color: var(--border-base);
+  /* The whole search row is the field users type into. */
+  --window-drag-handle-bg: var(--surface-field);
+  background-color: var(--surface-field);
 }
 
 .modal-search-input {

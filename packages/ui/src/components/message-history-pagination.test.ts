@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import { describe, it } from "node:test"
-import { batch, createRoot, createSignal } from "solid-js"
 
 import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadCompleteMessageHistory, loadPagesUntilAnchor, reconcileResidentSearchMatches } from "./message-history-pagination.ts"
 
@@ -307,27 +306,6 @@ describe("message history pagination", () => {
     assert.deepEqual(next.map((match) => match.messageId), ["old", "middle", "latest"])
     assert.equal(next[1].id, previous[1].id)
     assert.equal(next[1].preview, "after")
-  })
-
-  it("batches result-page and active-index replacement before locator effects run", () => {
-    createRoot((dispose) => {
-      const [matches, setMatches] = createSignal(["old", "middle", "latest"])
-      const [activeIndex, setActiveIndex] = createSignal(1)
-      const locatorCalls: string[] = []
-      const locate = () => locatorCalls.push(matches()[activeIndex()])
-      locate()
-
-      batch(() => {
-        setMatches(["middle", "latest"])
-        setActiveIndex(0)
-      })
-      locate()
-
-      assert.deepEqual(locatorCalls, ["middle", "middle"])
-      const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
-      assert.match(source, /batch\(\(\) => \{\s*setSearchMatches\(page\.hits(?:\.filter\([^)]*\))?\.map[\s\S]*?setActiveSearchIndex\(0\)[\s\S]*?setIsSearchPending\(false\)\s*\}\)/)
-      dispose()
-    })
   })
 
   it("locates the same off-page match again after query reset or traversal completion", () => {

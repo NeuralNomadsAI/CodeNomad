@@ -3,6 +3,18 @@ fn main() {
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
     let manifest_path = std::path::Path::new(&manifest_dir);
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // Cargo examples do not inherit the application executable's resource
+        // manifest. The isolated native fixture also needs common-controls v6
+        // (named subclass exports) and the production per-monitor DPI context.
+        let fixture_manifest = manifest_path.join("examples/window_constraints_windows.manifest");
+        println!("cargo:rerun-if-changed={}", fixture_manifest.display());
+        println!("cargo:rustc-link-arg-examples=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg-examples=/MANIFESTINPUT:{}",
+            fixture_manifest.display()
+        );
+    }
     let bundled_resources = std::path::Path::new(&out_dir)
         .ancestors()
         .nth(3)
@@ -40,13 +52,16 @@ fn main() {
             "cli_restart",
             "wake_lock_start",
             "wake_lock_stop",
+            "notification_badge_set",
             "needs_local_certificate_install",
             "open_preferences_window",
             "preferences_window_ready",
             "preferences_get_request",
             "preferences_accept_request",
             "preferences_resolve_transition",
+            "preferences_opener_startup_state",
             "window_control",
+            "owned_webview_zoom",
             "popup_titlebar_menu",
             "open_remote_window",
             "client_state_claim_access",
@@ -58,6 +73,9 @@ fn main() {
             "client_state_clear",
             "client_state_renderer_flushed",
             "client_state_navigation_flushed",
+            "client_state_startup_command_result",
+            "data_profiles_list_others",
+            "data_profiles_delete_others",
             "desktop_launch_ready",
             "desktop_launch_next_folder",
             "desktop_launch_acknowledge_folder",

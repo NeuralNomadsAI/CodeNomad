@@ -386,6 +386,11 @@ export class AutoAcceptManager {
       })
       .catch((error) => {
         this.deps.logger.error({ instanceId, permissionId, err: error, attempt: attempts + 1 }, "Yolo auto-accept reply failed")
+        if (error?.retryable === false) {
+          this.removePendingFromAllInstances(permissionId)
+          this.replyAttempts.set(key, AutoAcceptManager.MAX_REPLY_ATTEMPTS)
+          return
+        }
         if (attempts + 1 >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) {
           this.removePendingFromAllInstances(permissionId)
         }

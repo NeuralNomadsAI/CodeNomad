@@ -25,9 +25,10 @@ export interface PromptInputProps {
 
   // Used to scope global "type-to-focus" behavior.
   isActive?: boolean
+  // Expanded shell-owned requests temporarily take priority over saved composer height.
+  interruptionExpanded?: boolean
 
   // Phone/tablet layouts should keep the expanded prompt more compact.
-  compactLayout?: boolean
   onSend: (prompt: string, attachments: Attachment[], delivery: PromptDelivery, restoredPayload?: SessionInboxUserPayload) => Promise<void>
   onCommand?: (commandName: string, args: string) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
