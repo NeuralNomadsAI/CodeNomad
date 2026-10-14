@@ -31,14 +31,15 @@ const baseMeta = {
 
 const issueTemplate = readFile(fileURLToPath(new URL("../../../../.github/ISSUE_TEMPLATE/bug_report.yml", import.meta.url)), "utf8")
 
-async function setup(page: Page, host: "web" | "tauri" | "electron", template?: { status: number; body: string }) {
+async function setup(page: Page, host: "web" | "tauri" | "electron", template?: { status: number; body: string }, osHints?: Record<string, string>) {
   // The published issue form is a fixture too; tests never reach GitHub.
   await page.route("https://raw.githubusercontent.com/**", async route => route.fulfill(template ?? { status: 200, body: await issueTemplate }))
   await page.addInitScript({ content: `{
     window.open = (url) => { (window.openedUrls ??= []).push(url); return null }
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: ${JSON.stringify(host)}, __CODENOMAD_WINDOW_CONTEXT__: "remote" })
     Object.defineProperty(navigator, "platform", { value: "Win32" })
-    Object.defineProperty(navigator, "userAgentData", { value: { platform: "Windows" } })
+    Object.defineProperty(navigator, "userAgentData", { value: { platform: "Windows",
+      ...(${JSON.stringify(osHints ?? null)} ? { getHighEntropyValues: async () => (${JSON.stringify(osHints ?? null)}) } : {}) } })
     Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => { window.copiedReport = text } } })
   }` })
 }
@@ -214,6 +215,21 @@ test("Report a bug opens the form at once while the published form cannot be rea
     assert.deepEqual(opened, ["bug_report.yml", "bug_report.yml"])
     assert.equal(held.length, 1, "the pending read is shared, not restarted per click")
   } finally { for (const abort of held) await abort().catch(() => {}); await page.close() }
+})
+
+test("client hints name the Windows release and architecture in Info and the bug report", async () => {
+  const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
+  await setup(page, "tauri", undefined, { platformVersion: "19.0.0", architecture: "x86", bitness: "64" })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? baseMeta : {}) }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => [...document.querySelectorAll(".settings-info-value")].some(e => e.textContent === "Windows 11 x64"))
+    await page.getByRole("button", { name: "Report a bug", exact: true }).click()
+    await page.waitForFunction(() => (window as any).openedUrls?.length === 1)
+    const opened = new URL(await page.evaluate(() => (window as any).openedUrls[0] as string))
+    assert.equal(opened.searchParams.get("os-version"), "Windows 11 x64")
+  } finally { await page.close() }
 })
 
 test("older or unreachable servers never borrow the client platform", async () => {

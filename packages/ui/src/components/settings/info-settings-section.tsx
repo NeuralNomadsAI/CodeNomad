@@ -12,64 +12,8 @@ import type { UpdateFeed } from "../../../../server/src/api-types"
 import { openExternalUrl } from "../../lib/external-url"
 import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
 import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
+import { describeClientOs, readClientOsHints, type ClientNavigator } from "./client-os"
 import { buildBugReportEnvironment, buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
-
-interface UserAgentData {
-  platform?: string
-  getHighEntropyValues?: (hints: string[]) => Promise<Record<string, string>>
-}
-
-function getUserAgentData(): UserAgentData | undefined {
-  return (navigator as any).userAgentData
-}
-
-function detectOs(): string {
-  if (typeof navigator === "undefined") return "Unknown"
-
-  const uaData = getUserAgentData()
-  if (uaData?.platform) {
-    const arch = extractArchFromUA(navigator.userAgent)
-    return arch ? `${uaData.platform} ${arch}` : uaData.platform
-  }
-
-  const ua = navigator.userAgent
-  const p = navigator.platform
-  if (!p) return "Unknown"
-
-  const maybeArch = extractArchFromUA(ua)
-  if (maybeArch && !p.includes(maybeArch)) {
-    return `${p} ${maybeArch}`
-  }
-  return p
-}
-
-function extractArchFromUA(ua: string): string | null {
-  const match = ua.match(/Linux\s+(x86_64|aarch64|armv[0-9]+[a-z]*|i[3-6]86)/i)
-    ?? ua.match(/Win64;\s*(x64|arm64)/i)
-    ?? ua.match(/Mac\s*OS\s*X[^)]*?_(x86_64|arm64)/i)
-  return match ? match[1] : null
-}
-
-async function resolveArchitecture(): Promise<string | null> {
-  try {
-    const uaData = getUserAgentData()
-    if (!uaData?.getHighEntropyValues) return null
-    const values = await uaData.getHighEntropyValues(["architecture", "bitness"])
-    const parts: string[] = []
-    if (values.architecture && !values.architecture.startsWith("x86")) {
-      parts.push(values.architecture)
-    }
-    if (values.bitness && values.bitness !== "64") {
-      parts.push(`${values.bitness}-bit`)
-    }
-    if (!parts.length && values.architecture) {
-      parts.push(values.architecture)
-    }
-    return parts.length > 0 ? parts.join(" ") : null
-  } catch {
-    return null
-  }
-}
 
 function downloadTextFile(filename: string, text: string) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
@@ -112,13 +56,7 @@ export const InfoSettingsSection: Component = () => {
     }
   })
   const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
-  const [osArch, setOsArch] = createSignal<string | null>(null)
-
-  createEffect(() => {
-    resolveArchitecture().then((arch) => {
-      if (arch) setOsArch(arch)
-    })
-  })
+  const [osHints] = createResource(() => readClientOsHints())
 
   const updateInfo = createMemo(() => {
     const m = meta()
@@ -218,11 +156,7 @@ export const InfoSettingsSection: Component = () => {
     await handleRefresh()
   }
 
-  const osDisplay = createMemo(() => {
-    const base = detectOs()
-    const arch = osArch()
-    return arch ? `${base} (${arch})` : base
-  })
+  const osDisplay = createMemo(() => describeClientOs(navigator as ClientNavigator, osHints() ?? null))
 
   const handleCopy = async () => {
     const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels())
