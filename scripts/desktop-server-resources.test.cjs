@@ -17,6 +17,25 @@ test("maps every supported desktop target to npm OS and CPU", () => {
   assert.throws(() => resolveNpmTarget("freebsd-x64"), /Unsupported desktop packaging target/)
 })
 
+test("glibc desktop resources omit musl-only msgpackr binaries and retain the native loader", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-glibc-resources-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const serverRoot = path.join(root, "source")
+  for (const name of ["public", "dist", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
+  fs.writeFileSync(path.join(serverRoot, "package.json"), "{}")
+  for (const cpu of ["x64", "arm64"]) {
+    const relative = path.join("node_modules", "@msgpackr-extract", `msgpackr-extract-linux-${cpu}`)
+    fs.mkdirSync(path.join(serverRoot, relative), { recursive: true })
+    for (const name of ["node.napi.glibc.node", "node.abi115.musl.node", "node.napi.musl.node", "index.js", "package.json"]) {
+      fs.writeFileSync(path.join(serverRoot, relative, name), name)
+    }
+    const serverDest = path.join(root, cpu)
+    copyPackagedServerResources({ serverRoot, serverDest, target: `linux-${cpu}` })
+    assert.deepEqual(fs.readdirSync(path.join(serverDest, relative)).sort(), ["index.js", "node.napi.glibc.node", "package.json"])
+    assert(fs.existsSync(path.join(serverRoot, relative, "node.napi.musl.node")), "source installation is untouched")
+  }
+})
+
 test("integrity-pins the full server production closure in the root lock", () => {
   const root = path.resolve(__dirname, "..")
   const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"))

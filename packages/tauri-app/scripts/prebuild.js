@@ -173,6 +173,7 @@ async function main() {
     copyPackagedServerResources({
       serverRoot: staged.stagedServerRoot,
       serverDest,
+      target: staged.target,
       log: (message) => console.log(`[prebuild] ${message}`),
     })
   } finally {

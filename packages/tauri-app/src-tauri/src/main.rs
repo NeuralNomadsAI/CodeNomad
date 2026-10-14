@@ -22,12 +22,16 @@ mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
 mod shutdown;
+mod update_releases;
+mod updater_support;
 mod view_menu;
+mod desktop_updater;
+#[cfg(test)]
+mod desktop_updater_tests;
 mod window_constraints;
 mod window_zoom;
 #[cfg(windows)]
 mod windows_browser_accelerators;
-mod windows_update;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -36,8 +40,6 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-#[cfg(any(windows, test))]
-use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -49,7 +51,7 @@ use tauri::menu::{
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{PageLoadEvent, Webview};
 use tauri::{
-    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
+    AppHandle, Emitter, EventTarget, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
@@ -69,6 +71,7 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 const ZOOM_STEP: f64 = 0.1;
 const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
+const RELEASES_LIST_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -1763,10 +1766,11 @@ fn main() {
     let notification_badge_host = Arc::new(Mutex::new(None::<Arc<AppHandle>>));
     let setup_notification_badge_host = Arc::clone(&notification_badge_host);
 
-    tauri::Builder::default()
+    desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1878,12 +1882,17 @@ fn main() {
                 .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
             set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
+            eprintln!(
+                "[tauri-startup] in-place updates supported on this installation: {}",
+                updater_support::current_platform_support()
+            );
             let client_state = client_state::ClientState::initialize(
                 &app.handle(),
                 setup_scope.client_state_directory.as_deref(),
             );
             app.manage(client_state);
             app.manage(shutdown::ShutdownCoordinator::default());
+            app.manage(desktop_updater::UpdateState::default());
             build_menu(&app.handle())?;
             local_windows::restore_windows(&app.handle())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
@@ -1936,7 +1945,9 @@ fn main() {
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
-            windows_update::install_stable_update,
+            desktop_updater::check_desktop_update,
+            desktop_updater::install_desktop_update,
+            desktop_updater::take_desktop_update_failure,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
             browser_target_register,
@@ -1961,9 +1972,7 @@ fn main() {
                 | "view-right-panel"
                 | "view-timeline"
                 | "view-timeline-tools") => {
-                    if let Some(window) = local_windows::focused_local_window(app_handle) {
-                        let _ = window.emit("menu:action", action);
-                    }
+                    emit_menu_action(app_handle, action);
                 }
                 "new-window" => {
                     if let Err(error) = local_windows::create_new_window(app_handle) {
@@ -2030,17 +2039,10 @@ fn main() {
                 }
 
                 "get_updates" | "help_get_updates" => {
-                    #[cfg(windows)]
-                    {
-                        let app_handle = app_handle.clone();
-                        tauri::async_runtime::spawn(run_update_with_fallback(
-                            windows_update::install_stable_update_impl(),
-                            move || open_releases_page(&app_handle),
-                        ));
+                    // Preferences and remote windows have no update flow.
+                    if !emit_menu_action(app_handle, "get-updates") {
+                        open_releases_page(app_handle);
                     }
-
-                    #[cfg(not(windows))]
-                    open_releases_page(app_handle);
                 }
                 // App menu (macOS)
                 "hide" => {
@@ -2469,19 +2471,36 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-#[cfg(any(windows, test))]
-async fn run_update_with_fallback(
-    update: impl Future<Output = Result<(), String>>,
-    fallback: impl FnOnce(),
-) {
-    if let Err(err) = update.await {
-        eprintln!("[tauri] WinGet update failed, opening the releases page: {err}");
-        fallback();
+/// Delivers a menu action to the focused local window only. Untargeted JS
+/// listeners receive every event, so renderers listen on their own webview.
+/// Loading, sign-in and pairing documents have no menu listener, so they receive nothing.
+fn emit_menu_action(app_handle: &AppHandle, action: &str) -> bool {
+    local_windows::focused_local_window(app_handle).is_some_and(|window| {
+        !window.url().is_ok_and(|url| is_listenerless_document(&url))
+            && app_handle
+                .emit_to(EventTarget::webview(window.label()), "menu:action", action)
+                .is_ok()
+    })
+}
+
+/// Native loading page and the server's non-application pages; the server
+/// serves the application for every other path.
+fn is_listenerless_document(url: &url::Url) -> bool {
+    matches!(url.path(), "/loading.html" | "/login" | "/remote-pair") || url.path().starts_with("/auth/")
+}
+
+/// The latest-release page omits prereleases. Without access to the saved feed,
+/// native fallbacks derive it from the installed build label.
+fn releases_page(version: &str) -> &'static str {
+    match update_releases::UpdateFeed::resolve(None, version) {
+        update_releases::UpdateFeed::Preview => RELEASES_LIST_URL,
+        update_releases::UpdateFeed::Stable => RELEASES_URL,
     }
 }
 
 fn open_releases_page(app_handle: &AppHandle) {
-    if let Err(err) = app_handle.opener().open_url(RELEASES_URL, None::<&str>) {
+    let page = releases_page(&app_handle.package_info().version.to_string());
+    if let Err(err) = app_handle.opener().open_url(page, None::<&str>) {
         eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
     }
 }
@@ -2493,7 +2512,7 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
         authors: Some(vec!["Neural Nomads AI".to_string()]),
         comments: Some("A desktop workspace for OpenCode.".to_string()),
         license: Some("MIT".to_string()),
-        website: include_update_link.then(|| RELEASES_URL.to_string()),
+        website: include_update_link.then(|| releases_page(version).to_string()),
         website_label: include_update_link.then(|| "Get updates".to_string()),
         ..Default::default()
     }
@@ -2504,14 +2523,13 @@ mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
         is_allowed_local_origin, is_final_application_window, local_close_event_action,
-        require_http_url, rollback_remote_window_metadata, run_update_with_fallback,
+        require_http_url, rollback_remote_window_metadata,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
         titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
         RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use url::Url;
 
     #[test]
@@ -2554,15 +2572,19 @@ mod menu_tests {
     }
 
     #[test]
-    fn failed_update_uses_release_fallback() {
-        let fallback_called = AtomicBool::new(false);
-
-        tauri::async_runtime::block_on(run_update_with_fallback(
-            async { Err("update failed".to_string()) },
-            || fallback_called.store(true, Ordering::Relaxed),
-        ));
-
-        assert!(fallback_called.load(Ordering::Relaxed));
+    fn menu_actions_skip_documents_without_the_application() {
+        for page in [
+            "tauri://localhost/loading.html",
+            "https://tauri.localhost/loading.html",
+            "http://127.0.0.1:9898/login",
+            "http://127.0.0.1:9898/remote-pair",
+            "http://127.0.0.1:9898/auth/token",
+        ] {
+            assert!(super::is_listenerless_document(&Url::parse(page).unwrap()), "{page}");
+        }
+        for page in ["http://127.0.0.1:9898/", "http://127.0.0.1:9898/?folder=x", "http://127.0.0.1:9898/login-help"] {
+            assert!(!super::is_listenerless_document(&Url::parse(page).unwrap()), "{page}");
+        }
     }
 
     #[test]
@@ -2573,6 +2595,9 @@ mod menu_tests {
         assert_eq!(metadata.version.as_deref(), Some("1.2.3"));
         assert_eq!(metadata.website.as_deref(), Some(RELEASES_URL));
         assert_eq!(metadata.website_label.as_deref(), Some("Get updates"));
+        // Preview builds link to the full list, which includes prereleases.
+        let preview = build_about_metadata("0.20.1-dev-20261013-031eb843", true);
+        assert_eq!(preview.website.as_deref(), Some("https://github.com/NeuralNomadsAI/CodeNomad/releases"));
     }
 
     #[test]
