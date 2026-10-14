@@ -56,6 +56,17 @@ fn remote_focus_never_falls_through_to_background_local() {
 }
 
 #[test]
+fn updates_requested_from_preferences_or_remote_run_in_the_last_local_window() {
+    let local = format!("local-{}", id(1));
+    let other = format!("local-{}", id(2));
+    for focused in ["preferences", "remote-profile"] {
+        assert_eq!(select_update_label(Some(focused), Some(&local)), Some(local.clone()));
+    }
+    assert_eq!(select_update_label(Some(&other), Some(&local)), Some(other));
+    assert_eq!(select_update_label(Some("preferences"), None), None);
+}
+
+#[test]
 fn browser_children_are_not_top_level_focus_targets() {
     let local = format!("local-{}", id(1));
     assert!(is_primary_webview_label(&local, &local));

@@ -712,6 +712,7 @@ export const settingsMessages = {
   "settings.info.updates.subtitle": "CodeNomad को नयाँ रिलिजहरू जाँच गर्नुहोस्।",
   "settings.info.updates.latest": "भर्खरको संस्करण",
   "settings.info.updates.download": "अपडेट डाउनलोड गर्नुहोस्",
+  "settings.info.updates.install": "अपडेट स्थापना गर्नुहोस्",
   "settings.info.updates.refresh": "रिफ्रेस",
   "settings.info.updates.feed": "अपडेट फिड",
   "settings.info.updates.feed.stable": "स्थिर रिलिजहरू",

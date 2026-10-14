@@ -23,10 +23,13 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-async function fixture(scenario: string, host = "tauri", context = "local", meta: object = {}): Promise<Page> {
-  const page = await browser.newPage()
+async function fixture(scenario: string, host = "tauri", context = "local", meta: object = {}, query = ""): Promise<Page> {
+  // The Preferences card follows the browser locale.
+  const page = await browser.newPage({ locale: "en-US" })
   page.on("pageerror", error => console.error("updater fixture:", error.message))
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: JSON.stringify(meta) }))
+  // The Preferences card also loads configuration, which must not receive the metadata.
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(query && new URL(route.request().url()).pathname !== "/api/meta" ? {} : meta) }))
   await page.addInitScript(({ scenario, host, context }) => {
     const w = window as any
     w.__name = (value: unknown) => value
@@ -78,7 +81,7 @@ async function fixture(scenario: string, host = "tauri", context = "local", meta
     }
     w.open = (url: string) => { w.calls.push({ command: "web-open", args: { url } }); return {} }
   }, { scenario, host, context })
-  await page.goto(url)
+  await page.goto(url + query)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   return page
 }
@@ -194,6 +197,37 @@ test("a notified release that cannot be installed in place opens its own release
       assert.equal(await page.getByText("CodeNomad is up to date.").count(), 0)
     } finally { await page.close() }
   }
+})
+
+test("the Preferences update button installs in place, or opens the release it shows", async () => {
+  const meta = {
+    localUrl: "http://127.0.0.1:9899", host: "127.0.0.1", listeningMode: "local", localPort: 9899, workspaceRoot: "/fixture",
+    addresses: [], serverVersion: "0.20.0", ui: { version: "0.20.0", source: "bundled" }, updateFeed: "preview",
+    update: { version: "0.21.0-dev-20261020-aaaaaaaa", url: "https://example.com/preview" },
+  }
+  const available = await fixture("available", "tauri", "local", meta, "?settings")
+  try {
+    await available.getByRole("button", { name: "Install update" }).click()
+    await available.getByText(/CodeNomad 0.21.0 is available/).waitFor()
+    const checks = await available.evaluate(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update"))
+    assert.deepEqual(checks.map((c: any) => c.args.feed), ["preview"])
+    assert.deepEqual(await openedUrls(available), [])
+  } finally { await available.close() }
+
+  const unsigned = await fixture("unsigned", "tauri", "local", meta, "?settings")
+  try {
+    await unsigned.getByRole("button", { name: "Install update" }).click()
+    await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+    assert.deepEqual(await openedUrls(unsigned), ["https://example.com/preview"])
+  } finally { await unsigned.close() }
+
+  // Without the native updater the card keeps its download link.
+  const electron = await fixture("available", "electron", "local", meta, "?settings")
+  try {
+    await electron.getByRole("link", { name: "Download update" }).waitFor()
+    assert.equal(await electron.getByRole("link", { name: "Download update" }).getAttribute("href"), "https://example.com/preview")
+    assert.equal(await electron.getByRole("button", { name: "Install update" }).count(), 0)
+  } finally { await electron.close() }
 })
 
 test("another window's update in progress is not reported as a failure", async () => {

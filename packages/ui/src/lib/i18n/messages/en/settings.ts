@@ -715,6 +715,7 @@ export const settingsMessages = {
   "settings.info.updates.subtitle": "Check for new releases of CodeNomad.",
   "settings.info.updates.latest": "Latest version",
   "settings.info.updates.download": "Download update",
+  "settings.info.updates.install": "Install update",
   "settings.info.updates.refresh": "Refresh",
   "settings.info.updates.feed": "Update feed",
   "settings.info.updates.feed.stable": "Stable releases",

@@ -2039,8 +2039,16 @@ fn main() {
                 }
 
                 "get_updates" | "help_get_updates" => {
-                    // Preferences and remote windows have no update flow.
-                    if !emit_menu_action(app_handle, "get-updates") {
+                    // Preferences and remote windows have no update flow: the most
+                    // recently used application window runs it and comes forward.
+                    let delivered = local_windows::update_flow_window(app_handle).is_some_and(|window| {
+                        let delivered = emit_menu_action_to(app_handle, &window, "get-updates");
+                        if delivered && !window.window().is_focused().unwrap_or(false) {
+                            local_windows::focus(app_handle, window.label());
+                        }
+                        delivered
+                    });
+                    if !delivered {
                         open_releases_page(app_handle);
                     }
                 }
@@ -2475,12 +2483,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 /// listeners receive every event, so renderers listen on their own webview.
 /// Loading, sign-in and pairing documents have no menu listener, so they receive nothing.
 fn emit_menu_action(app_handle: &AppHandle, action: &str) -> bool {
-    local_windows::focused_local_window(app_handle).is_some_and(|window| {
-        !window.url().is_ok_and(|url| is_listenerless_document(&url))
-            && app_handle
-                .emit_to(EventTarget::webview(window.label()), "menu:action", action)
-                .is_ok()
-    })
+    local_windows::focused_local_window(app_handle)
+        .is_some_and(|window| emit_menu_action_to(app_handle, &window, action))
+}
+
+fn emit_menu_action_to(app_handle: &AppHandle, window: &tauri::Webview, action: &str) -> bool {
+    !window.url().is_ok_and(|url| is_listenerless_document(&url))
+        && app_handle
+            .emit_to(EventTarget::webview(window.label()), "menu:action", action)
+            .is_ok()
 }
 
 /// Native loading page and the server's non-application pages; the server
