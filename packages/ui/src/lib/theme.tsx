@@ -148,6 +148,9 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         borderRadius: 0,
       },
       components: {
+        // No Material ripple: MUI icon buttons behave like the app's plain buttons
+        // (hover and focus cues only, no expanding wave on press).
+        MuiButtonBase: { defaultProps: { disableRipple: true } },
         MuiIconButton: {
           styleOverrides: {
             root: {
