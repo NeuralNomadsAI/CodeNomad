@@ -787,6 +787,18 @@ test("central diff inserts local lines and revision-qualified history into the r
     await modifiedLine.click()
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
+    // Git status reconciliation reopens a fresh, identical target to reload the
+    // file; the reader must keep its editor, selection and insert action.
+    const editor = (await page.locator(".git-diff-view .monaco-diff-editor").elementHandle())!
+    const diffReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length)
+    const readsBefore = await diffReads()
+    await page.evaluate(async () => {
+      const storePath = "/src/stores/files-preview.ts"
+      const { getFilePreview, openFilePreview } = await import(storePath)
+      openFilePreview("git-prototype", { ...getFilePreview("git-prototype") })
+    })
+    await page.waitForFunction(count => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length > count, readsBefore)
+    assert.equal(await editor.evaluate(element => element.isConnected), true, "a refreshed identical target reloads in place")
     const insert = page.getByRole("button", { name: "Ajouter au prompt", exact: true })
     await insert.click()
     assert.match(await composer.inputValue(), /Conserver ce brouillon/)

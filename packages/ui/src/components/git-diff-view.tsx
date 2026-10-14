@@ -68,7 +68,19 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     }
   }
   function cancel() { controller?.abort(); controller = undefined; pending = false; setLoading(false) }
-  createEffect(on(() => props.target, () => { cancel(); setContent(null); setError(null); void load() }))
+  // Git status reconciliation reopens a fresh target object for the same file
+  // to reload it. Reload that file in place: clearing would remount the editor
+  // and drop the reader's selection, scroll position and insert action.
+  const fileIdentity = (target: FilePreviewTarget) => JSON.stringify([target.slug, target.directory,
+    target.serviceDirectory ?? null, target.path, target.originalPath ?? null, target.scope ?? null, target.commit ?? null])
+  let shownFile: string | undefined
+  createEffect(on(() => props.target, target => {
+    const file = fileIdentity(target)
+    cancel()
+    if (file !== shownFile) { setContent(null); setError(null) }
+    shownFile = file
+    void load()
+  }))
   createEffect(on(() => props.active, active => { if (!active) cancel(); else void load() }, { defer: true }))
   const refresh = createDebouncedRefresh(() => void load())
   createEffect(on(() => filesystemInvalidationVersion(props.instanceId), () => {
