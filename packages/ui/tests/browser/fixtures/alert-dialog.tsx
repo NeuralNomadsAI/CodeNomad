@@ -3,7 +3,7 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import AlertDialog from "../../../src/components/alert-dialog"
-import { showConfirmDialog } from "../../../src/stores/alerts"
+import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../../src/stores/alerts"
 import { initializeClientState } from "../../../src/stores/client-state"
 import "../../../src/index.css"
 
@@ -20,5 +20,12 @@ void (async () => {
       void showConfirmDialog("Delete this session?", { title: "Delete session", variant: "warning", confirmLabel: "Delete", cancelLabel: "Keep" })
         .then(result => { w.confirmResult = result })
     },
+    prompt: () => {
+      const w = window as any
+      w.confirmResult = undefined
+      void showPromptDialog("Name this session", { title: "Rename session", confirmLabel: "Rename", cancelLabel: "Keep" })
+        .then(result => { w.confirmResult = result })
+    },
+    alert: () => showAlertDialog("The session was saved.", { title: "Saved", confirmLabel: "OK" }),
   }
 })()
