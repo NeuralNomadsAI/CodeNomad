@@ -263,6 +263,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (!(target instanceof Node)) return
       // The fixed toggles sit above floating drawers and handle their own clicks.
       if (leftToggleButtonEl()?.contains(target) || rightToggleButtonEl()?.contains(target)) return
+      // Menus, selectors and dialogs portal outside the drawer's DOM. Let their
+      // own dismissal/selection finish instead of unmounting them on pointerdown.
+      if (target instanceof Element && target.closest('[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]')) return
 
       const leftContent = leftDrawerContentEl()
       const rightContent = rightDrawerContentEl()

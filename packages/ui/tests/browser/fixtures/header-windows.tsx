@@ -7,6 +7,7 @@ import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import AlertDialog from "../../../src/components/alert-dialog"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -33,12 +34,14 @@ const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fi
   time: { created: 1, updated: 1 }, agent: "build", status: "idle", model: { providerId: "fixture", modelId: "fixture" } }
 const fixtureSessions = new Map([[sessionId, session]])
 const replies: any[] = []
+const deletedSessions: string[] = []
 let eventTime = 100
 const emit = (type: string, data: unknown) => (sseManager as any).handleEvent(id, {
   id: `fixture-event-${++eventTime}`, type, created: eventTime, location: { directory: "/repo" }, data,
 })
 const client: any = {
   session: { list: async () => ({ data: [...fixtureSessions.values()], cursor: {} }), active: async () => ({}),
+    remove: async ({ sessionID }: any) => { deletedSessions.push(sessionID); fixtureSessions.delete(sessionID) },
     get: async ({ sessionID }: any) => fixtureSessions.get(sessionID), inbox: { list: async () => ({ data: [] }) }, interrupt: async () => { interrupts++ },
     form: { reply: async (input: any) => { replies.push(input); emit("form.replied", { sessionID: input.sessionID, id: input.formID, answer: input.answer }) } },
   },
@@ -94,6 +97,7 @@ function Fixture() {
   return (
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
+    <AlertDialog />
     <InstanceShell instance={instances().get(id)!} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
@@ -109,7 +113,7 @@ bootStage("preferences-before")
 await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
-  runtimeEnv, replies, setImmersive, setActive,
+  runtimeEnv, replies, deletedSessions, setImmersive, setActive,
   readLayout: readClientLayoutValue,
   addSession: (sid: string, parentId: string | null = null) => {
     fixtureSessions.set(sid, { ...session, id: sid, parentId, title: `Fixture ${sid}` })
