@@ -43,6 +43,19 @@ Download the archive or package for your platform from [Releases](https://github
 
 The Linux builds are currently built and tested on Ubuntu 24.04. Compatibility with older distributions is not yet guaranteed. The Electron deb sets up Chromium's sandbox during installation and replaces a previously installed Tauri deb. The Tauri installer, macOS app and AppImage update themselves from within the app.
 
+On Linux, from the download folder:
+
+```bash
+# Electron deb
+sudo apt install ./CodeNomad-Electron-linux-x64-*.deb
+
+# Tauri AppImage
+chmod +x CodeNomad-Tauri-linux-x64-*.AppImage
+./CodeNomad-Tauri-linux-x64-*.AppImage
+```
+
+Without FUSE (for example in a container), start the AppImage with `--appimage-extract-and-run`.
+
 Desktop builds bundle Node.js and npm; **you do not need to install Node.js separately**. On first launch, select an existing compatible OpenCode executable or install OpenCode through the setup screen. You can manage the executable, updates, and service later in **Preferences → OpenCode**.
 
 Open a project folder, connect your model provider, and start a session. Git must be available to the CodeNomad backend for repository and worktree features; see [Requirements](#requirements).
