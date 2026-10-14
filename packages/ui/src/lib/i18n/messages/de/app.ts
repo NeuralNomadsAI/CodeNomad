@@ -46,6 +46,7 @@ export const appMessages = {
   "releases.desktop.downloading": "Update wird heruntergeladen und überprüft…",
   "releases.desktop.restarting": "Fenster werden gespeichert und das Update installiert…",
   "releases.desktop.failed": "Das Update konnte nicht abgeschlossen werden. Versuchen Sie es erneut oder laden Sie es von der Release-Seite herunter.",
+  "releases.desktop.busy": "Ein anderes CodeNomad-Fenster sucht bereits nach einem Update oder installiert es.",
   "releases.upgradeRequired.message.withVersion": "Aktualisieren Sie auf CodeNomad {version}, um die neueste Benutzeroberfläche zu verwenden.",
   "releases.upgradeRequired.message.noVersion": "Aktualisieren Sie CodeNomad, um die neueste Benutzeroberfläche zu verwenden.",
   "releases.upgradeRequired.action.getUpdate": "Update holen",

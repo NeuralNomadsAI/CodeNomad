@@ -55,7 +55,9 @@ marker and a nonempty `APPIMAGE` path. `APPRUN` alone is insufficient. Installer
 signatures are independent of Apple code signing/notarization and Authenticode.
 
 `desktop_updater.rs` authorizes native callers against local application origins
-and serializes checks/downloads across windows. Only the three guarded application
+and serializes checks/downloads across windows. A check while another window
+checks or installs returns `busy`, shown as information rather than a failure
+(a notification still opens its release page). Only the three guarded application
 commands (check, install, take failure) are granted to local webviews;
 updater/process plugin permissions are not granted to previews, remote windows or
 renderers generally.
@@ -139,10 +141,12 @@ so slow connections can still fetch large installers.
 produce no update manifest. Linux arm64 remains outside the existing release matrix.
 
 The Linux build requests `deb,appimage` with verbose linuxdeploy diagnostics.
-The CLI minimum is 2.10.0: 2.9.4 searches for an old unmangled bundle symbol,
-while the pinned Rust library uses `__TAURI_BUNDLE_TYPE_VAR_UNK`. The newer CLI
-patches that token and restores the original binary between package formats.
-The workspace lock currently resolves CLI 2.11.5.
+The CLI minimum is 2.11.5, the first release that records the app version in
+updater signatures' trusted comments; `requireSignedVersion` and publication's
+signed-version gate depend on it. Packaging alone needs 2.10.0: 2.9.4 searches
+for an old unmangled bundle symbol, while the pinned Rust library uses
+`__TAURI_BUNDLE_TYPE_VAR_UNK`. Newer CLIs patch that token and restore the
+original binary between package formats.
 
 Linux desktop resources omit msgpackr's musl-only native modules. The official
 bundled Node runtime is glibc-based; linuxdeploy otherwise runs `ldd` over the

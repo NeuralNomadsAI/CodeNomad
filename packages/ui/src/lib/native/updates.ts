@@ -7,6 +7,7 @@ export type DesktopUpdateCheck =
   | { status: "unsupported" }
   | { status: "current" }
   | { status: "available"; version: string }
+  | { status: "busy" }
 
 export function supportsDesktopUpdateChecks(): boolean {
   return isTauriHost() && isLocalWindow()

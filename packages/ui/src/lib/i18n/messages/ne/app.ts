@@ -46,6 +46,7 @@ export const appMessages = {
   "releases.desktop.downloading": "अद्यावधिक डाउनलोड र प्रमाणीकरण गर्दै…",
   "releases.desktop.restarting": "सञ्झ्यालहरू सुरक्षित गरी अद्यावधिक स्थापना गर्दै…",
   "releases.desktop.failed": "अद्यावधिक पूरा हुन सकेन। फेरि प्रयास गर्नुहोस् वा संस्करण पृष्ठबाट डाउनलोड गर्नुहोस्।",
+  "releases.desktop.busy": "अर्को CodeNomad सञ्झ्यालले पहिले नै अद्यावधिक जाँच वा स्थापना गर्दैछ।",
   "releases.upgradeRequired.message.withVersion": "नयाँ UI प्रयोग गर्न CodeNomad {version} मा अपडेट गर्नुहोस्।",
   "releases.upgradeRequired.message.noVersion": "नयाँ UI प्रयोग गर्न CodeNomad अपडेट गर्नुहोस्।",
   "releases.upgradeRequired.action.getUpdate": "अपडेट प्राप्त गर्नुहोस्",

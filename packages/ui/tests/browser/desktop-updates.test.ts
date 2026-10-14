@@ -47,6 +47,7 @@ async function fixture(scenario: string, host = "tauri", context = "local", meta
           if (scenario === "check-error") throw new Error("unavailable endpoint")
           if (scenario === "slow-check") await new Promise<void>(resolve => { w.finishCheck = resolve })
           if (scenario === "current-after-check" && w.calls.filter((c: any) => c.command === command).length > 1) return { status: "current" }
+          if (scenario === "busy") return { status: "busy" }
           return scenario === "unsigned" ? { status: "unsupported" }
             : scenario === "current" ? { status: "current" } : { status: "available", version: "0.21.0" }
         }
@@ -193,6 +194,21 @@ test("a notified release that cannot be installed in place opens its own release
       assert.equal(await page.getByText("CodeNomad is up to date.").count(), 0)
     } finally { await page.close() }
   }
+})
+
+test("another window's update in progress is not reported as a failure", async () => {
+  const page = await fixture("busy")
+  try {
+    await page.getByRole("button", { name: "Check updates" }).click()
+    await page.getByText("Another CodeNomad window is already checking for or installing an update.").waitFor()
+    assert.equal(await page.getByText(/The update could not be completed/).count(), 0)
+    // A notification still leads to the release it announces.
+    await serveMeta(page, notificationMeta("preview"))
+    await page.evaluate(() => (window as any).fixture.releases())
+    await notificationAction(page, "Update available").click()
+    await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+    assert.deepEqual(await openedUrls(page), ["https://example.com/preview"])
+  } finally { await page.close() }
 })
 
 test("a stalled backend does not hold the check; the native host derives the feed", async () => {

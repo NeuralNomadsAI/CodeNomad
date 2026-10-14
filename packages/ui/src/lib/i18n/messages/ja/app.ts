@@ -46,6 +46,7 @@ export const appMessages = {
   "releases.desktop.downloading": "更新をダウンロードして検証しています…",
   "releases.desktop.restarting": "ウィンドウを保存して更新をインストールしています…",
   "releases.desktop.failed": "更新を完了できませんでした。再試行するか、リリースページからダウンロードしてください。",
+  "releases.desktop.busy": "別の CodeNomad ウィンドウが更新を確認またはインストールしています。",
   "releases.upgradeRequired.message.withVersion": "最新の UI を使うには CodeNomad {version} に更新してください。",
   "releases.upgradeRequired.message.noVersion": "最新の UI を使うには CodeNomad を更新してください。",
   "releases.upgradeRequired.action.getUpdate": "更新を取得",

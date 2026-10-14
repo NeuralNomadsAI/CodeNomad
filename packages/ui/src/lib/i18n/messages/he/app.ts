@@ -46,6 +46,7 @@ export const appMessages = {
   "releases.desktop.downloading": "מוריד ומאמת את העדכון…",
   "releases.desktop.restarting": "שומר חלונות ומתקין את העדכון…",
   "releases.desktop.failed": "לא ניתן להשלים את העדכון. אפשר לנסות שוב או להוריד אותו מדף הגרסאות.",
+  "releases.desktop.busy": "חלון אחר של CodeNomad כבר בודק או מתקין עדכון.",
   "releases.upgradeRequired.message.withVersion": "שדרג ל-CodeNomad {version} כדי להשתמש בממשק המעודכן.",
   "releases.upgradeRequired.message.noVersion": "שדרג את CodeNomad כדי להשתמש בממשק המעודכן.",
   "releases.upgradeRequired.action.getUpdate": "קבל עדכון",

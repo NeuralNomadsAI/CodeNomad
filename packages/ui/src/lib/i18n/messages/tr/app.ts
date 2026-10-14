@@ -43,6 +43,7 @@ export const appMessages = {
   "releases.desktop.downloading": "Güncelleme indiriliyor ve doğrulanıyor…",
   "releases.desktop.restarting": "Pencereler kaydediliyor ve güncelleme yükleniyor…",
   "releases.desktop.failed": "Güncelleme tamamlanamadı. Tekrar deneyebilir veya sürümler sayfasından indirebilirsiniz.",
+  "releases.desktop.busy": "Başka bir CodeNomad penceresi zaten bir güncellemeyi denetliyor veya yüklüyor.",
   "releases.upgradeRequired.message.withVersion": "En son arayüzü kullanmak için CodeNomad {version} sürümüne güncelleyin.",
   "releases.upgradeRequired.message.noVersion": "En son arayüzü kullanmak için CodeNomad'ı güncelleyin.",
   "releases.upgradeRequired.action.getUpdate": "Güncellemeyi al",

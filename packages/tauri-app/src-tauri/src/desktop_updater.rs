@@ -67,6 +67,8 @@ pub(crate) enum CheckResult {
     Unsupported,
     Current,
     Available { version: String },
+    /// Another window is checking or installing; not a failure of this request.
+    Busy,
 }
 
 pub(crate) fn register<R: tauri::Runtime>(
@@ -96,11 +98,11 @@ pub(crate) async fn check_desktop_update(
     feed: Option<UpdateFeed>,
 ) -> Result<CheckResult, String> {
     crate::require_preferences_or_local_app_webview(&webview, &state)?;
-    let _lease = UpdateLease::acquire()?;
     let app = webview.app_handle();
+    if !configured(app) { return Ok(CheckResult::Unsupported); }
+    let Ok(_lease) = UpdateLease::acquire() else { return Ok(CheckResult::Busy) };
     let updates = app.state::<UpdateState>();
     updates.checked.lock().map_err(|e| e.to_string())?.take();
-    if !configured(app) { return Ok(CheckResult::Unsupported); }
     let current = app.package_info().version.to_string();
     let feed = UpdateFeed::resolve(feed, &current);
     let Some(candidate) = crate::update_releases::find_candidate(feed, &current).await? else {

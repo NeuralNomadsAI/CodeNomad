@@ -133,6 +133,8 @@ export async function requestDesktopUpdate(announcedRelease?: string): Promise<v
       await openExternalUrl(releasePage())
     } else if (result.status === "current") {
       notice = showToastNotification({ message: tGlobal("releases.desktop.current"), variant: "success" })
+    } else if (result.status === "busy") {
+      notice = showToastNotification({ message: tGlobal("releases.desktop.busy"), variant: "info" })
     } else {
       notice = showToastNotification({
         message: tGlobal("releases.desktop.available", { version: result.version }),
