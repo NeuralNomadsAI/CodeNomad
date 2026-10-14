@@ -5,11 +5,6 @@
   border-radius: 0 !important;
 }
 
-/* Explicit round exception requested for overlay navigation. */
-.session-header-drawer-toggle .MuiIconButton-root {
-  border-radius: 50% !important;
-}
-
 .button-primary,
 button.button-primary {
   @apply px-3 text-sm;

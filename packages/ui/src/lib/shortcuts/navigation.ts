@@ -3,15 +3,10 @@ import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import { activeSessionId, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
 
-export function registerNavigationShortcuts() {
-  const isMac = () => navigator.platform.toLowerCase().includes("mac")
-
-
-
+export function registerNavigationShortcuts(isMainView: () => boolean = () => true) {
+  const hasInstance = () => isMainView() && Boolean(activeInstanceId())
   keyboardRegistry.register({
     id: "instance-prev",
-    key: "[",
-    modifiers: { ctrl: !isMac(), meta: isMac() },
     handler: () => selectPreviousAppTab(),
     description: "previous tab",
     context: "global",
@@ -19,8 +14,6 @@ export function registerNavigationShortcuts() {
 
   keyboardRegistry.register({
     id: "instance-next",
-    key: "]",
-    modifiers: { ctrl: !isMac(), meta: isMac() },
     handler: () => selectNextAppTab(),
     description: "next tab",
     context: "global",
@@ -28,8 +21,7 @@ export function registerNavigationShortcuts() {
 
   keyboardRegistry.register({
     id: "session-prev",
-    key: "[",
-    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    condition: hasInstance,
     handler: () => {
       const instanceId = activeInstanceId()
       if (!instanceId) return
@@ -58,8 +50,7 @@ export function registerNavigationShortcuts() {
 
   keyboardRegistry.register({
     id: "session-next",
-    key: "]",
-    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    condition: hasInstance,
     handler: () => {
       const instanceId = activeInstanceId()
       if (!instanceId) return
@@ -82,8 +73,7 @@ export function registerNavigationShortcuts() {
 
   keyboardRegistry.register({
     id: "switch-to-info",
-    key: "l",
-    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    condition: hasInstance,
     handler: () => {
       const instanceId = activeInstanceId()
       if (instanceId) setActiveSession(instanceId, "info")
@@ -91,4 +81,5 @@ export function registerNavigationShortcuts() {
     description: "info tab",
     context: "global",
   })
+  return () => ["instance-prev", "instance-next", "session-prev", "session-next", "switch-to-info"].forEach(id => keyboardRegistry.unregister(id))
 }

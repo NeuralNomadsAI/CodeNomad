@@ -35,13 +35,18 @@ const client: any = {
     switchAgent: async () => {}, switchModel: async () => {}, prompt: native.session.prompt,
   },
   model: { default: async () => model },
+  skill: { list: async () => ({ data: [] }) },
   message: { list: async () => ({ data: [], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: directory, port: 0, pid: 0, proxyPath: "", status: "ready", client })
 setActiveInstanceId(instanceId)
 setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
+// Boot stages for the readiness diagnostic installed by the test page.
+const bootMark = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
+bootMark("modules-evaluated")
 await fetchSessions(instanceId)
+bootMark("sessions-fetched")
 setActiveSession(instanceId, "source")
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={mounted()}>
@@ -50,11 +55,15 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <button id="outside" style={{ position: "fixed", top: "8px", right: "8px" }}>Outside composer</button>
   <Toaster />
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+bootMark("rendered")
 await updatePreferences({ locale: (params.get("locale") || "en") as any })
+bootMark("preferences-updated")
 ;(window as any).fixture = {
   switch: (id: string) => setActiveSession(instanceId, id),
   active: setActive,
   mounted: setMounted,
+  submitOnEnter: (value: boolean) => updatePreferences({ promptSubmitOnEnter: value }),
+  hotkeys: (value: Parameters<typeof updatePreferences>[0]["hotkeyOverrides"]) => updatePreferences({ hotkeyOverrides: value }),
   move: (directory: string) => setSessions(previous => {
     const next = new Map(previous), list = new Map(next.get(instanceId))
     const id = activeSessionId().get(instanceId)!

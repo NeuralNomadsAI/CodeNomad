@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "CodeNomad に再ログイン",
   "authRecovery.description": "CodeNomad のログインが無効になりました。サーバーの再起動後に発生することがあります。再接続するには、もう一度ログインしてください。",
+  "authRecovery.pairing": "このデバイスは CodeNomad とのペアリングが解除されています。ホストで 設定 → リモートアクセス を開き、新しいペアリングリンクを作成してこのデバイスで開いてから、もう一度確認してください。",
+  "authRecovery.pairingTitle": "このデバイスを再ペアリング",
   "authRecovery.drafts": "下書きを保持するため、このページは開いたままになります。再接続後、失敗した操作をもう一度実行してください。",
   "authRecovery.username": "ユーザー名",
   "authRecovery.password": "パスワード",

@@ -71,7 +71,7 @@ test("a disposed panel cannot queue a trailing Git refresh or diff after a slow 
   let release!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })
   try {
-    const statusRequested = page.waitForRequest(request => request.url().endsWith("/git-status"))
+    const statusRequested = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/git-status"))
     const { requests, errors } = await setup(page, blocked)
     await statusRequested
     await page.evaluate(() => (window as any).fixture.invalidate("first"))
@@ -127,8 +127,8 @@ test("explicit refresh cannot launch a new diff after deactivation aborts its st
     const { requests } = await setup(page)
     await page.waitForFunction(() => document.querySelector('[data-project="first"] [data-diff]')?.textContent === "new\n")
     const diffs = requests.filter(path => path.endsWith("/git-diff")).length
-    await page.route("**/git-status", async route => { await blocked; await route.fulfill({ json: [] }).catch(() => {}) })
-    const requested = page.waitForRequest(r => r.url().endsWith("/git-status"))
+    await page.route(/\/git-status(?:\?|$)/, async route => { await blocked; await route.fulfill({ json: [] }).catch(() => {}) })
+    const requested = page.waitForRequest(r => new URL(r.url()).pathname.endsWith("/git-status"))
     await page.evaluate(() => { (window as any).refresh = (window as any).fixture.panels.first.refreshGitStatus() })
     await requested
     await page.evaluate(() => (window as any).fixture.deactivate())

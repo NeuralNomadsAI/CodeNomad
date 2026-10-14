@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "CodeNomad’a yeniden giriş yapın",
   "authRecovery.description": "CodeNomad oturumunuz artık geçerli değil. Bu, sunucu yeniden başlatıldıktan sonra olabilir. Yeniden bağlanmak için tekrar giriş yapın.",
+  "authRecovery.pairing": "Bu cihaz artık CodeNomad ile eşleştirilmiş değil. Ana bilgisayarda Ayarlar → Uzak Erişim'i açın, yeni bir eşleştirme bağlantısı oluşturup bu cihazda açın, ardından tekrar kontrol edin.",
+  "authRecovery.pairingTitle": "Bu cihazı yeniden eşleştirin",
   "authRecovery.drafts": "Taslaklarınızı korumak için bu sayfa açık kalır. Yeniden bağlandıktan sonra başarısız olan işlemi tekrar deneyin.",
   "authRecovery.username": "Kullanıcı adı",
   "authRecovery.password": "Parola",

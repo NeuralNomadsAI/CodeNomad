@@ -65,6 +65,33 @@
   }
 }
 
+/* Use the full conversation width, before the visible timeline takes space
+   from the composer. Worktree is the first cell. */
+@container session-center (width < 460px) {
+  .prompt-context-controls[data-has-worktree="true"] {
+    grid-template-columns: var(--touch-target-size-compact) minmax(0, 0.85fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  }
+
+  .prompt-context-controls[data-has-worktree="true"] > .sidebar-selector:first-child .selector-trigger > div {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .prompt-context-controls[data-has-worktree="true"] > .sidebar-selector:first-child .selector-trigger {
+    justify-content: center;
+    padding-inline: 0;
+    gap: 0;
+  }
+
+  .prompt-context-controls[data-has-worktree="true"] > .sidebar-selector:first-child .selector-trigger-icon {
+    margin-inline-start: 0;
+  }
+}
+
 @media (pointer: coarse) {
   .prompt-context-controls .selector-trigger {
     min-height: var(--touch-target-size);

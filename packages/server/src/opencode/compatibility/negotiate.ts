@@ -9,7 +9,7 @@ function object(value: unknown): ObjectValue {
 
 // Unknown release numbers are not a startup/version gate. Read their declared
 // HTTP contract before selecting a serializer; never trial a write operation.
-export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch, signal: AbortSignal): Promise<Exclude<ContractProfile, "unknown">> {
+export async function readRuntimeContract(endpoint: Endpoint, fetcher: typeof fetch, signal: AbortSignal): Promise<ObjectValue> {
   const response = await fetcher(new URL("/openapi.json", endpoint.url), {
     headers: Service.headers(endpoint), redirect: "error",
     signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
@@ -32,7 +32,11 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
     }
   } catch (error) { await reader.cancel().catch(() => {}); throw error }
   finally { reader.releaseLock() }
-  const document = object(JSON.parse(Buffer.concat(chunks, length).toString("utf8")))
+  return object(JSON.parse(Buffer.concat(chunks, length).toString("utf8")))
+}
+
+export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch, signal: AbortSignal): Promise<Exclude<ContractProfile, "unknown">> {
+  const document = await readRuntimeContract(endpoint, fetcher, signal)
   const paths = object(document.paths)
   const resolve = (input: unknown) => {
     const schema = object(input)

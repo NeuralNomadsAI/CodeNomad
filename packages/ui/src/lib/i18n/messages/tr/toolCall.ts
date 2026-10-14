@@ -54,6 +54,7 @@ export const toolCallMessages = {
   "toolCall.renderer.action.searchingContent": "İçerik aranıyor...",
   "toolCall.renderer.action.listingDirectory": "Dizin listeleniyor...",
   "toolCall.renderer.bash.title.timeout": "Zaman aşımı: {timeout}",
+  "toolCall.output.truncated": "[Çıktı görüntüleme için kısaltıldı; tam çıktıya erişmek için kopyalayın]",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
   "toolCall.renderer.todo.empty": "Planlanmış öğe yok",

@@ -77,13 +77,9 @@ export function copyMonacoPublicAssets(params) {
     }
   }
 
-  // Copy baseline basic tokenizers.
-  for (const lang of ["python", "markdown", "cpp", "kotlin"]) {
-    const src = resolve(sourceRoot, "basic-languages", lang)
-    if (fs.existsSync(src)) {
-      copyRecursive(src, resolve(destRoot, "basic-languages", lang))
-    }
-  }
+  // Workspace previews may open any supported language, including YAML and
+  // TypeScript. Keep tokenizers local so source views work without a CDN.
+  copyRecursive(resolve(sourceRoot, "basic-languages"), resolve(destRoot, "basic-languages"))
 
   // Copy monaco.contribution.js entrypoints (needed by some loads).
   const monacoContribution = resolve(sourceRoot, "basic-languages", "monaco.contribution.js")

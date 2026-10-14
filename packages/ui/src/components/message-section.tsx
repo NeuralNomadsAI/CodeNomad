@@ -1,12 +1,14 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
-import Kbd from "./kbd"
+import { matchesHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
+import WindowCloseButton from "./window-close-button"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
+import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import { getTimelineRecordSignature } from "./message-timeline-projection"
@@ -19,10 +21,10 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
+import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
-import HistoryStatistics from "./history-statistics"
 import HistoryMessagePreview from "./history-message-preview"
 import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
@@ -101,7 +103,8 @@ export default function MessageSection(props: MessageSectionProps) {
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
-    const visible = messageIds().filter((messageId) => {
+    const ids = messageIds()
+    const visible = ids.filter((messageId, index) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -128,7 +131,7 @@ export default function MessageSection(props: MessageSectionProps) {
       }
 
       if (info.error) {
-        return true
+        return !isDuplicateRunFailure(ids, index, resolvedStore.getMessageInfo)
       }
 
       const timeInfo = info.time as { created: number; completed?: number } | undefined
@@ -150,7 +153,8 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
       if (record.role === "user") return [null]
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map<TechnicalCleanupTranscriptItem[]>((part) => {
         const partId = typeof part.id === "string" ? part.id : ""
         if (!partId) return []
         if (part.type === "tool" || part.type === "reasoning") {
@@ -161,6 +165,9 @@ export default function MessageSection(props: MessageSectionProps) {
         }
         return []
       })
+      // Omitted parts may hold boundaries: never select a cleanup run across them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
@@ -194,7 +201,8 @@ export default function MessageSection(props: MessageSectionProps) {
       const completed = record.status === "complete" || record.status === "error"
       const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
       const messageInfo = resolvedStore.getMessageInfo(messageId)
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map((part) => {
         if (part.type === "step-finish") {
           return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
         }
@@ -217,6 +225,9 @@ export default function MessageSection(props: MessageSectionProps) {
           revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
         }]
       })
+      // Technical groups never span omitted parts; the gap renders between them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)
   })
@@ -225,7 +236,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const displayPartIds = getRecordDisplayPartIds(record)
+    const displayPartIds = getRecordDisplayPartIds(props.instanceId, record)
     const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
@@ -281,7 +292,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
-  const isSearchOpen = () => isSessionSearchOpen(props.instanceId, props.sessionId)
+  // Workspace metadata updates can re-evaluate the identity accessors without
+  // changing search visibility. Only a real close may cancel history reads.
+  const isSearchOpen = createMemo(() => isSessionSearchOpen(props.instanceId, props.sessionId))
   const setIsSearchOpen = (open: boolean) => setSessionSearchOpen(props.instanceId, props.sessionId, open)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
@@ -292,6 +305,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
   const [includeTechnical, setIncludeTechnical] = createSignal(false)
+  const [scannedSearchMessages, setScannedSearchMessages] = createSignal(0)
   const [searchPageCursor, setSearchPageCursor] = createSignal<string>()
   const [nextSearchCursor, setNextSearchCursor] = createSignal<string | null>(null)
   const [skippedSearchMessages, setSkippedSearchMessages] = createSignal(0)
@@ -320,12 +334,14 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; revealed: number; signature: string; segments: TimelineSegment[] }>()
   const residentTimelineSegments = createMemo(() => {
     sessionRevision()
     const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
+    // Revealing omitted parts changes the rendered window without a record revision.
+    const revealedByMessage = new Map(ids.map((messageId) => [messageId, getRevealedRecordParts(props.instanceId, messageId)]))
 
     return untrack(() => {
       const activeIds = new Set(ids)
@@ -333,16 +349,17 @@ export default function MessageSection(props: MessageSectionProps) {
       for (const messageId of ids) {
         const record = resolvedStore.getMessage(messageId)
         if (!record) continue
+        const revealed = revealedByMessage.get(messageId) ?? 0
         const cached = timelineSegmentCache.get(messageId)
-        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale && cached.revealed === revealed) {
           segments.push(...cached.segments)
           continue
         }
         const signature = getTimelineRecordSignature(record)
-        const current = cached?.signature === signature && cached.locale === activeLocale
+        const current = cached?.signature === signature && cached.locale === activeLocale && cached.revealed === revealed
           ? cached.segments
           : buildTimelineSegments(props.instanceId, record, t)
-        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, revealed, signature, segments: current })
         segments.push(...current)
       }
       for (const messageId of timelineSegmentCache.keys()) {
@@ -744,6 +761,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setNextSearchCursor(null)
     setPreviewSearchMatch(undefined)
     setSkippedSearchMessages(0)
+    setScannedSearchMessages(0)
     setSearchQuery("")
     setDebouncedSearchQuery("")
     setSearchedQuery("")
@@ -1026,8 +1044,10 @@ export default function MessageSection(props: MessageSectionProps) {
     setFailedSearchQuery("")
     setSearchMatches([])
     setNextSearchCursor(null)
+    setActiveSearchIndex(0)
     setPreviewSearchMatch(undefined)
     setSkippedSearchMessages(0)
+    setScannedSearchMessages(0)
     const instanceId = props.instanceId
     const sessionId = props.sessionId
     const generation = ++searchGeneration
@@ -1041,14 +1061,15 @@ export default function MessageSection(props: MessageSectionProps) {
       && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
       && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
-    void findHistoryMatches(instanceId, {
-      sessionID: workspace ? undefined : sessionId, query, purpose: "search", includeTechnical: technical, cursor,
-    }, controller.signal).then((page) => {
+    const publish = (page: Awaited<ReturnType<typeof findHistoryMatches>>, settled: boolean) => {
       if (!isCurrentSearch()) return
+      if (frame !== undefined) cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         if (!isCurrentSearch()) return
         batch(() => {
-          setSearchMatches(page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map(hit => ({
+          // Progress only appends hits within this page. Preserve row identities
+          // so Solid keeps existing result buttons and their keyboard focus.
+          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
             sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
@@ -1056,13 +1077,17 @@ export default function MessageSection(props: MessageSectionProps) {
           })))
           setNextSearchCursor(page.cursor)
           setSkippedSearchMessages(page.skipped)
+          setScannedSearchMessages(page.scanned)
           setSearchedQuery(query)
-          setActiveSearchIndex(0)
-          setIsSearchPending(false)
+          setIsSearchPending(!settled)
         })
       })
-    }).catch((error) => {
+    }
+    void findHistoryMatches(instanceId, {
+      sessionID: workspace ? undefined : sessionId, query, purpose: "search", includeTechnical: technical, cursor,
+    }, controller.signal, page => publish(page, false)).then(page => publish(page, true)).catch((error) => {
       if (!isCurrentSearch()) return
+      if (frame !== undefined) cancelAnimationFrame(frame)
       setIsSearchPending(false)
       setFailedSearchQuery(query)
       log.error("Failed to query message history", { instanceId, sessionId, error })
@@ -1134,9 +1159,8 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (typeof document === "undefined") return
     const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase()
-      const isModSearch = (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && key === "f"
-      if (isModSearch && isActive()) {
+      if (event.defaultPrevented) return
+      if (matchesHotkey("session-search", event) && isActive()) {
         const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
         if (!modalOpen) {
           event.preventDefault()
@@ -1277,6 +1301,7 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
+              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} active={isActive()} />
               <Show when={olderMessageLoadFailed()}>
                 <div class="flex justify-center py-2">
                   <button
@@ -1305,7 +1330,6 @@ export default function MessageSection(props: MessageSectionProps) {
                       <ul>
                         <li>
                           <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                          <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                         </li>
                         <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                         <li>
@@ -1322,7 +1346,6 @@ export default function MessageSection(props: MessageSectionProps) {
                     <ul>
                       <li>
                         <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                        <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                       </li>
                       <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                       <li>
@@ -1351,6 +1374,7 @@ export default function MessageSection(props: MessageSectionProps) {
             </>
           )}
           renderItem={(messageId, index) => (
+            <>
             <MessageBlock
               messageId={messageId}
               instanceId={props.instanceId}
@@ -1382,7 +1406,10 @@ export default function MessageSection(props: MessageSectionProps) {
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
+              alignRevealedParts={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
+            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            </>
           )}
           renderOverlay={() => (
             <>
@@ -1392,12 +1419,14 @@ export default function MessageSection(props: MessageSectionProps) {
                 onClose={closeSearch}
                 title={t("messageSection.search.ariaLabel")}
                 class="message-search-popover"
+              draggable
               inline
               initialFocus={() => searchInputRef}
               >
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
-                  <div class="window-toolbar history-search-toolbar">
-                    <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
+                  <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
+                    <div class="history-search-options">
+                    <select class="selector-input history-search-scope" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
                       onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
                       <option value="session">{t("history.session")}</option>
                       <option value="workspace">{t("history.workspace")}</option>
@@ -1405,10 +1434,9 @@ export default function MessageSection(props: MessageSectionProps) {
                     <label><input type="checkbox" checked={includeTechnical()} onChange={event => batch(() => {
                       setSearchPageCursor(undefined); setIncludeTechnical(event.currentTarget.checked)
                     })} /> {t("history.technical")}</label>
+                    </div>
+                    <WindowCloseButton onClose={closeSearch} label={t("messageSection.search.closeAriaLabel")} />
                   </div>
-                  <Show when={isSearchOpen()}>
-                    <HistoryStatistics instanceId={props.instanceId} sessionId={searchWorkspace() ? undefined : props.sessionId} />
-                  </Show>
                   <div class="modal-search-container message-search-container">
                     <div class="message-search-input-row">
                       <Search class="w-4 h-4 modal-search-icon" aria-hidden="true" />
@@ -1426,9 +1454,11 @@ export default function MessageSection(props: MessageSectionProps) {
                           updateSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
-                          if (event.key === "Enter") {
+                          if (event.defaultPrevented || !isActive()) return
+                          const previous = matchesHotkey("search-prev-result", event)
+                          if (previous || matchesHotkey("search-next-result", event)) {
                             event.preventDefault()
-                            moveSearchMatch(event.shiftKey ? -1 : 1)
+                            moveSearchMatch(previous ? -1 : 1)
                             return
                           }
                         }}
@@ -1469,19 +1499,15 @@ export default function MessageSection(props: MessageSectionProps) {
                       >
                         <ChevronDown class="w-4 h-4" aria-hidden="true" />
                       </button>
-                      <button
-                        type="button"
-                        class="message-search-button"
-                        onClick={closeSearch}
-                        aria-label={t("messageSection.search.closeAriaLabel")}
-                        title={t("messageSection.search.closeAriaLabel")}
-                      >
-                        <X class="w-4 h-4" aria-hidden="true" />
-                      </button>
                     </div>
                   </div>
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
+                  </Show>
+                  <Show when={hasMessageSearchAuthority(searchQuery(), searchedQuery())}>
+                    <div class="history-statistics" role="status">
+                      {t("history.searchProgress", { matches: currentSearchMatches().length, messages: scannedSearchMessages() })}
+                    </div>
                   </Show>
                   <Show when={searchFailed()}>
                     <div class="modal-empty-state message-search-empty">

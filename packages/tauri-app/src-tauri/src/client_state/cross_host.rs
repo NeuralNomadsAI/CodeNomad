@@ -89,7 +89,7 @@ fn valid_home(value: OsString, platform: &str) -> Option<String> {
     valid.then_some(value)
 }
 
-fn configured_home(
+pub(super) fn configured_home(
     platform: &str,
     environment: &impl Fn(&str) -> Option<OsString>,
     fallback_home: Option<&Path>,
@@ -123,7 +123,7 @@ fn resolve_election_directory_for(
     })
 }
 
-fn resolve_state_path_for(
+pub(super) fn resolve_state_path_for(
     platform: &str,
     environment: impl Fn(&str) -> Option<OsString>,
     fallback_home: Option<&Path>,
@@ -152,7 +152,7 @@ pub(super) fn legacy_state_path() -> Result<PathBuf, String> {
     .ok_or_else(|| "user home directory is unavailable".to_string())
 }
 
-fn resolve_legacy_state_path_for(
+pub(super) fn resolve_legacy_state_path_for(
     platform: &str,
     environment: impl Fn(&str) -> Option<OsString>,
     fallback_home: Option<&Path>,
@@ -835,13 +835,13 @@ fn is_unsupported_sync_error(error: &std::io::Error) -> bool {
 }
 
 #[cfg(unix)]
-fn pid_is_alive(pid: u32) -> bool {
+pub(crate) fn pid_is_alive(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(windows)]
-fn pid_is_alive(pid: u32) -> bool {
+pub(crate) fn pid_is_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, STILL_ACTIVE};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,

@@ -1,0 +1,44 @@
+/* Direct (LAN) access settings, collapsed below Remote Control. */
+.remote-direct-access {
+  border-top: 1px solid var(--border-divider);
+  padding-top: 0.875rem;
+}
+
+.remote-direct-access-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.remote-direct-access-summary::-webkit-details-marker {
+  display: none;
+}
+
+.remote-direct-access-summary:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+}
+
+.remote-direct-access-summary > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.remote-direct-access-chevron {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.15rem;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.remote-direct-access-help {
+  max-width: 60ch;
+}
+
+.remote-direct-access[open] > .remote-direct-access-summary {
+  margin-bottom: 0.25rem;
+}

@@ -1,11 +1,9 @@
 import type { JSX } from "solid-js"
 
-import type { RightPanelManifest } from "./plugin-manifest"
 import type { RightPanelModule } from "./registry"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 
 interface CoreRightPanelRenderers {
-  renderGitChangesTab: () => JSX.Element
   renderFilesTab: () => JSX.Element
   renderStatusTab: () => JSX.Element
 }
@@ -17,42 +15,29 @@ interface CoreStatusSectionRenderers {
   renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
   renderPluginStatus: () => JSX.Element
-  renderWebSearch: () => JSX.Element
 }
 
-export function createCoreRightPanelManifest(renderers: CoreRightPanelRenderers): RightPanelManifest {
+export function createCoreRightPanelModule(renderers: CoreRightPanelRenderers): RightPanelModule {
   return {
     id: "core-right-panel",
     displayNameKey: "instanceShell.rightPanel.modules.core",
     descriptionKey: "instanceShell.rightPanel.modules.core.description",
     origin: "first-party",
-    create: () => ({
-      id: "core-right-panel",
-      displayNameKey: "instanceShell.rightPanel.modules.core",
-      descriptionKey: "instanceShell.rightPanel.modules.core.description",
-      origin: "first-party",
-      tabs: [
-        {
-          id: "git-changes",
-          labelKey: "instanceShell.rightPanel.tabs.gitChanges",
-          order: 10,
-          render: renderers.renderGitChangesTab,
-        },
-        {
-          id: "files",
-          labelKey: "instanceShell.rightPanel.tabs.files",
-          order: 20,
-          render: renderers.renderFilesTab,
-        },
-        {
-          id: "status",
-          labelKey: "instanceShell.rightPanel.tabs.status",
-          order: 30,
-          alwaysVisible: true,
-          render: renderers.renderStatusTab,
-        },
-      ],
-    }),
+    tabs: [
+      {
+        id: "files",
+        labelKey: "instanceShell.rightPanel.tabs.files",
+        order: 20,
+        render: renderers.renderFilesTab,
+      },
+      {
+        id: "status",
+        labelKey: "instanceShell.rightPanel.tabs.status",
+        order: 30,
+        alwaysVisible: true,
+        render: renderers.renderStatusTab,
+      },
+    ],
   }
 }
 
@@ -64,7 +49,6 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,
     plugins: renderers.renderPluginStatus,
-    websearch: renderers.renderWebSearch,
   }
 
   return {

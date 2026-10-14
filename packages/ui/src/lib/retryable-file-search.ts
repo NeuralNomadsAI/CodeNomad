@@ -1,5 +1,5 @@
 export class HttpResponseError extends Error {
-  constructor(message: string, readonly status: number, readonly retryAfter: string | null) {
+  constructor(message: string, readonly status: number, readonly retryAfter: string | null, readonly code?: string) {
     super(message)
   }
 }

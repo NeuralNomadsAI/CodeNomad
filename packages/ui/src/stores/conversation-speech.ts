@@ -4,6 +4,7 @@ import { showToastNotification } from "../lib/notifications"
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
+import { createObjectUrlFromBase64, streamToMediaSource } from "../lib/audio-utils"
 import { serverSettings } from "./preferences"
 import { loadSpeechCapabilities, speechCapabilities } from "./speech"
 import { getActiveSession, sessions } from "./session-state"
@@ -400,6 +401,7 @@ async function createStreamingPlaybackHandle(text: string, format: SpeechTtsForm
           mediaSource,
           stream,
           mimeType,
+          appendErrorMessage: () => tGlobal("messageItem.actions.speak.error.generate"),
           onPlayable: async () => {
             if (startedPlayback) return
             startedPlayback = true
@@ -421,94 +423,6 @@ async function createStreamingPlaybackHandle(text: string, format: SpeechTtsForm
     stop: () => resolveDone(),
     done,
   }
-}
-
-async function streamToMediaSource(options: {
-  mediaSource: MediaSource
-  stream: ReadableStream<Uint8Array>
-  mimeType: string
-  onPlayable: () => Promise<void>
-  onError: (error: unknown) => void
-}) {
-  try {
-    const sourceBuffer = options.mediaSource.addSourceBuffer(options.mimeType)
-    const reader = options.stream.getReader()
-    const queue: Uint8Array[] = []
-    let processing = false
-    let playbackStarted = false
-
-    const flushQueue = async () => {
-      if (processing || sourceBuffer.updating || queue.length === 0) return
-      processing = true
-      const chunk = queue.shift()!
-      await appendChunk(sourceBuffer, chunk)
-      if (!playbackStarted) {
-        playbackStarted = true
-        await options.onPlayable()
-      }
-      processing = false
-      await flushQueue()
-    }
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value && value.byteLength > 0) {
-        queue.push(value)
-        await flushQueue()
-      }
-    }
-
-    while (queue.length > 0 || sourceBuffer.updating) {
-      if (queue.length > 0) {
-        await flushQueue()
-      } else {
-        await waitForUpdateEnd(sourceBuffer)
-      }
-    }
-
-    if (options.mediaSource.readyState === "open") {
-      options.mediaSource.endOfStream()
-    }
-  } catch (error) {
-    options.onError(error)
-  }
-}
-
-function appendChunk(sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const handleUpdateEnd = () => {
-      cleanup()
-      resolve()
-    }
-    const handleError = () => {
-      cleanup()
-      reject(new Error(tGlobal("messageItem.actions.speak.error.generate")))
-    }
-    const cleanup = () => {
-      sourceBuffer.removeEventListener("updateend", handleUpdateEnd)
-      sourceBuffer.removeEventListener("error", handleError)
-    }
-
-    sourceBuffer.addEventListener("updateend", handleUpdateEnd, { once: true })
-    sourceBuffer.addEventListener("error", handleError, { once: true })
-    sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer)
-  })
-}
-
-function waitForUpdateEnd(sourceBuffer: SourceBuffer): Promise<void> {
-  return new Promise((resolve) => {
-    sourceBuffer.addEventListener("updateend", () => resolve(), { once: true })
-  })
-}
-
-function createObjectUrlFromBase64(audioBase64: string, mimeType: string): string {
-  const binary = atob(audioBase64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/mpeg" }))
 }
 
 function extractLeadingSpokenBlock(text: string): string {

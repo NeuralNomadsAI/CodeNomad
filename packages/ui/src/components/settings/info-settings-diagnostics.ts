@@ -1,4 +1,5 @@
 import type { NetworkAddress, ServerMeta } from "../../../../server/src/api-types"
+import type { BugReportEnvironment } from "../../lib/bug-report"
 
 export interface DiagnosticRuntime {
   host: string
@@ -10,6 +11,8 @@ export interface DiagnosticLabels {
   reportTitle: string
   generated: string
   serverVersion: string
+  serverOs: string
+  serverArch: string
   uiVersion: string
   uiSource: string
   runtime: string
@@ -27,6 +30,15 @@ export interface DiagnosticLabels {
 }
 
 export type DiagnosticListeningMode = ServerMeta["listeningMode"] | "specific"
+
+export function getServerOperatingSystem(meta: ServerMeta | null): string {
+  switch (meta?.system?.platform) {
+    case "win32": return "Windows"
+    case "darwin": return "macOS"
+    case "linux": return "Linux"
+    default: return meta?.system?.platform || "—"
+  }
+}
 
 export function getDiagnosticListeningMode(meta: ServerMeta): DiagnosticListeningMode {
   if (isWildcardBindHost(meta.host)) return "all"
@@ -51,6 +63,37 @@ function normalizeBindHost(host: string): string {
   return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value
 }
 
+export interface BugReportVersions {
+  opencodeInstalled?: string | null
+  opencodeDaemon?: string | null
+  userAgent?: string
+}
+
+/** Environment values for the issue form, in the form's own (English) terms.
+ * Never includes listeners, addresses, paths, credentials or conversation data. */
+export function buildBugReportEnvironment(
+  meta: ServerMeta | null,
+  osDisplay: string,
+  runtime: DiagnosticRuntime,
+  versions: BugReportVersions,
+): BugReportEnvironment {
+  const server = meta?.serverVersion
+  const ui = meta?.ui?.version
+  const codenomadVersion = server && ui && ui !== server ? `${server} (UI ${ui})` : server ?? ui ?? ""
+  const { opencodeInstalled: installed, opencodeDaemon: daemon } = versions
+  const opencodeVersion = daemon && installed && daemon !== installed
+    ? `${installed} (running daemon ${daemon})`
+    : daemon ?? installed ?? ""
+  const variant = runtime.host === "electron" ? "Electron" : runtime.host === "tauri" ? "Tauri" : "Web browser"
+  const context = [
+    `- Client: ${variant} (${runtime.platform}, ${runtime.windowContext} window)`,
+    `- UI source: ${meta?.ui?.source ?? "—"}`,
+    `- Server OS: ${getServerOperatingSystem(meta)} ${meta?.system?.arch ?? ""}`.trimEnd(),
+  ]
+  if (runtime.host === "web" && versions.userAgent) context.push(`- Browser: ${versions.userAgent}`)
+  return { codenomadVersion, opencodeVersion, operatingSystem: osDisplay, additionalContext: context.join("\n") }
+}
+
 export function buildDiagnosticReport(
   meta: ServerMeta | null,
   osDisplay: string,
@@ -65,6 +108,8 @@ export function buildDiagnosticReport(
     "============================",
     `${labels.generated}: ${generatedAt.toISOString()}`,
     `${labels.serverVersion}: ${meta?.serverVersion ?? "—"}`,
+    `${labels.serverOs}: ${getServerOperatingSystem(meta)}`,
+    `${labels.serverArch}: ${meta?.system?.arch ?? "—"}`,
     `${labels.uiVersion}: ${meta?.ui?.version ?? "—"}`,
     `${labels.uiSource}: ${meta?.ui?.source ?? "—"}`,
     `${labels.runtime}: ${runtime.host}`,

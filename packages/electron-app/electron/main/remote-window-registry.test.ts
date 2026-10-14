@@ -33,6 +33,24 @@ test("remote profiles reuse one window and preserve direct profile sessions", ()
   assert.deepEqual(cleaned, [])
 })
 
+test("remote badge authority resolves only the live registered renderer", () => {
+  const registry = new RemoteWindowRegistry(() => {})
+  const first = window()
+  Object.assign(first.value, { webContents: {} })
+  registry.register("profile", first.value, "proxy-one")
+  assert.equal(registry.resolve(first.value.webContents), first.value)
+  assert.equal(registry.resolve({} as never), undefined)
+  registry.reuse("profile", "proxy-two")
+  assert.equal(registry.resolve(first.value.webContents), undefined)
+  const replacement = window()
+  Object.assign(replacement.value, { webContents: {} })
+  registry.register("profile", replacement.value)
+  first.events.get("closed")?.()
+  assert.equal(registry.resolve(replacement.value.webContents), replacement.value)
+  replacement.events.get("closed")?.()
+  assert.equal(registry.resolve(replacement.value.webContents), undefined)
+})
+
 test("proxy replacement destroys the old window without triggering close interception", () => {
   const cleaned: string[] = []
   const registry = new RemoteWindowRegistry((id) => cleaned.push(id))

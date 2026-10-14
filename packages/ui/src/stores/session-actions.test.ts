@@ -864,6 +864,32 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("coordinator steering preserves the native profile while still syncing instructions", async () => {
+    const calls: string[] = []
+    seed({ session: {
+      instructions: { entry: { put: async () => { calls.push("instruction") }, remove: async () => {} } },
+      switchAgent: async () => { calls.push("agent") },
+      switchModel: async () => { calls.push("model") },
+      prompt: async (input: any) => { calls.push(input.delivery); return { id: input.id } },
+    } })
+    await sendMessage(instanceId, sessionId, "Human instruction", [], { delivery: "steer", preserveNativeProfile: true })
+    assert.ok(calls.includes("instruction"))
+    assert.equal(calls[calls.length - 1], "steer")
+    assert.ok(!calls.includes("agent") && !calls.includes("model"))
+  })
+
+  it("rechecks a guarded view after awaited instruction setup before native prompt admission", async () => {
+    let current = true, prompts = 0
+    seed({ session: {
+      instructions: { entry: { put: async () => { current = false }, remove: async () => {} } },
+      prompt: async () => { prompts++ },
+    } })
+    await assert.rejects(sendMessage(instanceId, sessionId, "Stale instruction", [], {
+      delivery: "steer", preserveNativeProfile: true, admissionCurrent: () => current,
+    }), /Session action view changed/)
+    assert.equal(prompts, 0)
+  })
+
   it("admits compaction after an in-flight prompt", async () => {
     const admissions: string[] = []
     let releasePrompt!: () => void

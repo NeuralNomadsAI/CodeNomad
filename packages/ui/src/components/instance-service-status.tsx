@@ -127,7 +127,8 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
               const switchDisabled = () => isPending() || !instance().client
               const statusDotClass = () => {
                 if (isPending()) return "status-dot animate-pulse"
-                if (server.status === "running") return "status-dot ready animate-pulse"
+                // A connected server is idle; only pending operations need motion.
+                if (server.status === "running") return "status-dot ready"
                 if (server.status === "error") return "status-dot error"
                 return "status-dot stopped"
               }

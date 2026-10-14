@@ -1,7 +1,7 @@
 /* Dropdown utilities */
 .dropdown-surface {
   @apply absolute w-full shadow-lg z-50;
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   border: 1px solid var(--border-base);
 }
 
@@ -32,11 +32,12 @@
 }
 
 .dropdown-item:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--menu-item-hover-bg);
 }
 
 .dropdown-item-highlight {
-  background-color: var(--dropdown-highlight-bg);
+  /* The keyboard-selected row (what Enter/Tab inserts) stays distinct from hover. */
+  background-color: var(--menu-item-selected-bg);
   color: var(--dropdown-highlight-text);
 }
 
@@ -80,7 +81,7 @@
   padding: 0.25rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   box-shadow: var(--popover-shadow);
   color: var(--text-primary);
   z-index: 1000;
@@ -104,7 +105,7 @@
 
 .action-overflow-item:hover,
 .action-overflow-item[data-highlighted] {
-  background-color: var(--surface-hover);
+  background-color: var(--menu-item-hover-bg);
 }
 
 .action-overflow-item[data-disabled] {

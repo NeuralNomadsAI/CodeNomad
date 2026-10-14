@@ -22,7 +22,7 @@ CodeNomad publishes Winget updates from the stable GitHub release pipeline. `.gi
 
 - `WINGET_PACKAGE_IDENTIFIER` (default fallback in workflow: `NeuralNomadsAI.CodeNomad`)
 - `WINGET_FORK_OWNER` (default fallback in workflow: `pascalandr`)
-- `WINGET_WINDOWS_ASSET_NAME_TEMPLATE` (default fallback in workflow: `CodeNomad-Tauri-windows-x64-{version}.zip`)
+- `WINGET_WINDOWS_ASSET_NAME_TEMPLATE` (default fallback in workflow: `CodeNomad-Tauri-windows-x64-{version}.exe`)
 - `WINGET_ASSET_WAIT_TIMEOUT_SECONDS` (optional, default fallback: `900`)
 - `WINGET_ASSET_POLL_INTERVAL_SECONDS` (optional, default fallback: `15`)
 
@@ -39,5 +39,5 @@ CodeNomad publishes Winget updates from the stable GitHub release pipeline. `.gi
 ## Notes
 
 - The workflow does not depend on a persistent local `winget-pkgs` clone.
-- The current package in `winget-pkgs` uses the release ZIP with a nested NSIS installer, so the workflow targets the stable `CodeNomad-Tauri-windows-x64-{version}.zip` asset.
+- Releases publish the Tauri NSIS installer directly as `CodeNomad-Tauri-windows-x64-{version}.exe` (it is also the signed in-app updater payload); the former ZIP wrapper is no longer published. The `winget-pkgs` manifest must declare that installer as `nsis` rather than a ZIP with a nested NSIS installer.
 - If a maintainer publishes a release outside the standard release workflow, they should manually run `Update Winget` for that stable tag.

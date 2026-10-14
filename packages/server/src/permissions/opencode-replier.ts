@@ -1,9 +1,11 @@
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createInstanceClient } from "../workspaces/instance-client"
 import type { AutoAcceptReply, PermissionReplier } from "./auto-accept-manager"
+import type { PermissionReceipts } from "./receipts"
 
 interface OpencodeReplierDeps {
   workspaceManager: WorkspaceManager
+  permissionReceipts?: PermissionReceipts
 }
 
 /**
@@ -12,7 +14,8 @@ interface OpencodeReplierDeps {
  */
 export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): PermissionReplier {
   return async (reply: AutoAcceptReply) => {
-    const client = await createInstanceClient(deps.workspaceManager, reply.instanceId)
+    const connection = deps.permissionReceipts ? await deps.workspaceManager.getSharedServiceConnection(reply.instanceId) : undefined
+    const client = connection?.client ?? await createInstanceClient(deps.workspaceManager, reply.instanceId)
     if (!client) {
       throw new Error(`Yolo: instance ${reply.instanceId} is not ready`)
     }
@@ -22,10 +25,20 @@ export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): Perm
       throw new Error(`Yolo: session ${reply.sessionId} does not belong to workspace ${reply.instanceId}`)
     }
 
-    await client.permission.reply({
-      sessionID: reply.sessionId,
-      requestID: reply.permissionId,
-      decision: "once",
-    })
+    const confirm = connection && await deps.permissionReceipts?.prepare(reply.instanceId, connection,
+      reply.sessionId, reply.permissionId, "once", "yolo")
+    connection?.assertCurrent()
+    try {
+      await client.permission.reply({
+        sessionID: reply.sessionId,
+        requestID: reply.permissionId,
+        decision: "once",
+      })
+    } catch {
+      // Dispatch may have succeeded even when its response was lost. A later
+      // duplicate event/toggle must not replay this native mutation.
+      throw Object.assign(new Error("Yolo permission reply failed after dispatch"), { retryable: false })
+    }
+    await confirm?.()
   }
 }

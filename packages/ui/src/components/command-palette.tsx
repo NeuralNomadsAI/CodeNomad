@@ -1,7 +1,8 @@
 import { Component, createSignal, For, Show, createEffect, createMemo, on } from "solid-js"
 import DismissibleWindow from "./dismissible-window"
+import WindowCloseButton from "./window-close-button"
 import { resolveResolvable, type Command } from "../lib/commands"
-import Kbd from "./kbd"
+import { hotkeyLabel } from "../lib/hotkeys"
 import { useI18n } from "../lib/i18n"
 
 interface CommandPaletteProps {
@@ -11,19 +12,6 @@ interface CommandPaletteProps {
   onClose: () => void
   commands: Command[]
   onExecute: (command: Command) => void
-}
-
-function buildShortcutString(shortcut: Command["shortcut"]): string {
-  if (!shortcut) return ""
-
-  const parts: string[] = []
-
-  if (shortcut.meta || shortcut.ctrl) parts.push("cmd")
-  if (shortcut.shift) parts.push("shift")
-  if (shortcut.alt) parts.push("alt")
-  parts.push(shortcut.key)
-
-  return parts.join("+")
 }
 
 const CommandPalette: Component<CommandPaletteProps> = (props) => {
@@ -167,6 +155,8 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   })
 
   function handleKeyDown(e: KeyboardEvent) {
+    // Header controls and focused result buttons retain native activation.
+    if (e.target !== inputRef) return
     const ordered = orderedCommands()
 
     if (ordered.length === 0) {
@@ -221,12 +211,14 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       open={props.open}
       onClose={props.onClose}
       title={t("commandPalette.title")}
+      initialFocus={() => inputRef}
       description={t("commandPalette.description")}
-      class="fixed top-[20vh] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl max-h-[60vh]"
+      class="fixed top-[20vh] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl max-h-[min(60vh,var(--window-visible-height,60vh))]"
+      draggable
       onKeyDown={handleKeyDown}
     >
 
-            <div class="modal-search-container">
+            <div class="modal-search-container" data-window-drag-handle>
               <div class="flex items-center gap-3">
                 <svg class="w-5 h-5 modal-search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -245,8 +237,9 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                     setSelectedCommandId(null)
                   }}
                   placeholder={t("commandPalette.searchPlaceholder")}
-                  class="modal-search-input"
+                  class="modal-search-input min-w-0"
                 />
+                <WindowCloseButton onClose={props.onClose} />
               </div>
             </div>
 
@@ -276,6 +269,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
                               disabled={disabled}
+                              title={resolveResolvable(command.label) + (command.shortcutId && hotkeyLabel(command.shortcutId) ? ` (${hotkeyLabel(command.shortcutId)})` : "")}
                               class={`modal-item ${selectedCommandId() === command.id ? "modal-item-highlight" : ""}`}
                               onPointerMove={(event) => {
                                 if (event.movementX === 0 && event.movementY === 0) return
@@ -295,11 +289,6 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                                   {resolveResolvable(command.description)}
                                 </div>
                               </div>
-                              <Show when={command.shortcut}>
-                                <div class="mt-1">
-                                  <Kbd shortcut={buildShortcutString(command.shortcut)} />
-                                </div>
-                              </Show>
                             </button>
                           )
                         }}

@@ -18,7 +18,7 @@ import { testNativeWorktreeFamily } from "./test-worktree-families-native.mjs"
 import { testNativeWorktreeManagement } from "./test-native-worktree-management.mjs"
 import { testNativeEventRelay } from "./test-native-event-relay.mjs"
 
-export async function testNativeLocationIdentity({ client, connection, root }) {
+export async function testNativeLocationIdentity({ client, connection, root, service }) {
   const { contractProfile, runtimeIdentity } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const profile = connection.profile ? await connection.profile() : contractProfile(runtimeIdentity(connection.endpoint))
@@ -36,7 +36,7 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
   const rootLocation = await client.location.get({ location: { directory } })
   const worktreeLocation = await client.location.get({ location: { directory: worktree } })
   assert.equal(rootLocation.project.id, worktreeLocation.project.id)
-  await testNativeEventRelay({ client, location: rootLocation })
+  await testNativeEventRelay({ client, location: rootLocation, service })
   await testNativeWorktreeFamily({ client, profile, rootLocation, worktreeLocation })
   await testNativeWorktreeManagement({ client, root })
   if (profile !== "legacy") {
@@ -187,7 +187,7 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
   }
 }
 
-async function runIsolated(cli) {
+export async function runIsolated(cli, run = testNativeLocationIdentity) {
   if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable path")
   const temporaryRoot = path.join(os.tmpdir(), "opencode")
   await mkdir(temporaryRoot, { recursive: true })
@@ -232,7 +232,7 @@ async function runIsolated(cli) {
     console.log(`Testing official runtime ${identity.version}`)
     assert.equal((await client.server.info()).version, identity.version)
     console.log(`PASS: production ${identity.discovery} discovery and canonical client.server.info()`)
-    await testNativeLocationIdentity({ client, connection, root })
+    await run({ client, connection, root })
   } finally {
     child.kill()
     await stopped

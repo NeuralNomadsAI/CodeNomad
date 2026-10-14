@@ -1,4 +1,5 @@
 import type { ToolSearchTextContext } from "./types"
+import { getQuestionReceipts } from "./renderers/question-data"
 import {
   formatUnknown,
   isToolStateCompleted,
@@ -6,9 +7,6 @@ import {
   isToolStateRunning,
   readToolStatePayload,
 } from "./utils"
-
-type QuestionOption = { label?: unknown; description?: unknown }
-type QuestionPrompt = { header?: unknown; question?: unknown; options?: unknown; multiple?: unknown; answer?: unknown }
 
 function appendString(values: string[], value: unknown) {
   if (typeof value === "string" && value.trim().length > 0) values.push(value)
@@ -163,23 +161,18 @@ export function getTodoToolSearchText(context: ToolSearchTextContext): string[] 
 
 export function getQuestionToolSearchText(context: ToolSearchTextContext): string[] {
   const values: string[] = []
-  const { input, metadata } = readToolStatePayload(context.toolState)
-  const questions = Array.isArray(input.questions) ? (input.questions as QuestionPrompt[]) : []
-  const answers = Array.isArray((metadata as any).answers) ? ((metadata as any).answers as unknown[]) : []
+  const questions = getQuestionReceipts(readToolStatePayload(context.toolState))
   appendBaseToolText(values, context)
 
   for (const question of questions) {
     appendString(values, question.header)
-    appendString(values, question.question)
-    const options = Array.isArray(question.options) ? (question.options as QuestionOption[]) : []
-    for (const option of options) {
+    appendString(values, question.prompt)
+    for (const option of [...question.selected ?? [], ...question.remaining]) {
       appendString(values, option.label)
       appendString(values, option.description)
     }
-    appendFormatted(values, question.answer)
   }
 
-  appendFormatted(values, answers)
   appendToolErrorText(values, context)
   return values
 }

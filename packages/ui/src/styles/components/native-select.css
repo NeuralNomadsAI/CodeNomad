@@ -1,0 +1,113 @@
+/* Native <select> elements are controls, not fields: the closed control matches
+   the selector trigger (control surface, chevron) and, where the engine supports
+   customizable selects with content-box clipping (Chromium: Electron and WebView2),
+   the open list matches the shared menus; elsewhere the system list remains.
+   Customizable selects size to the value shown: auto-width selects need a stable
+   width from their feature.
+   :not([multiple]):not([size]) outranks per-feature select backgrounds; keyboard focus
+   is left to each select's own focus treatment (border, background). */
+select:not([multiple]):not([size]):not(:focus-visible) {
+  background-color: var(--surface-control);
+}
+
+select:not([multiple]):not([size]):not(:focus-visible):hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+@supports (appearance: base-select) and (overflow-clip-margin: content-box) {
+  select,
+  select::picker(select) {
+    appearance: base-select;
+  }
+
+  /* One line: a long value clips at the content edge, beside the chevron, instead
+     of wrapping. The chevron is a background so the clip cannot hide it. */
+  select:not([multiple]):not([size]) {
+    display: inline-grid;
+    align-content: center;
+    white-space: nowrap;
+    overflow: clip;
+    overflow-clip-margin: content-box;
+    /* base-select rounds the control by default; chrome stays square. */
+    border-radius: 0;
+  }
+
+  select::picker-icon {
+    display: none;
+  }
+
+  /* Same chevron as the selector triggers, drawn in the theme's icon colour; it
+     points up while the list is open. Outranks feature `background` shorthands. */
+  select:not([multiple]):not([size]) {
+    --select-chevron: color-mix(in srgb, var(--icon-button-color) calc(var(--icon-button-idle-opacity) * 100%), transparent);
+    /* Room for the chevron; the value clips before it. */
+    padding-inline-end: 1.75rem;
+    background-image:
+      linear-gradient(45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%),
+      linear-gradient(-45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%);
+    background-size: 0.25rem 0.25rem;
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center, right 0.5rem center;
+  }
+
+  select:not([multiple]):not([size]):hover:not(:disabled) {
+    --select-chevron: var(--icon-button-hover-color);
+  }
+
+  /* Customizable selects lose the native disabled dimming; match the selector triggers. */
+  select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  select:not([multiple]):not([size]):open {
+    background-image:
+      linear-gradient(-45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%),
+      linear-gradient(45deg, transparent 38%, var(--select-chevron) 38%, var(--select-chevron) 62%, transparent 62%);
+  }
+
+  select:not([multiple]):not([size]):dir(rtl) {
+    background-position: left 0.5rem center, left 0.75rem center;
+  }
+
+  select::picker(select) {
+    padding: 0.25rem;
+    border: 1px solid var(--border-base);
+    border-radius: 0;
+    background-color: var(--surface-overlay);
+    box-shadow: var(--popover-shadow);
+    color: var(--text-primary);
+  }
+
+  /* Same item geometry and treatment as the action menus and selectors. */
+  select option {
+    box-sizing: border-box;
+    min-height: 2rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: 0;
+    background-color: transparent;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    line-height: 1.2;
+  }
+
+  select option:hover,
+  select option:focus-visible {
+    background-color: var(--menu-item-hover-bg);
+    outline: none;
+  }
+
+  select option:checked,
+  select option:checked:hover {
+    background-color: var(--menu-item-selected-bg);
+    font-weight: inherit;
+  }
+
+  select option::checkmark {
+    display: none;
+  }
+
+  select option:disabled {
+    opacity: 0.5;
+  }
+}

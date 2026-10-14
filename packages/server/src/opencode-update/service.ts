@@ -102,11 +102,12 @@ export class OpenCodeUpdateService {
           }
         }
         status.canRestart = Boolean(lifecycle.restart) && state === "ready"
-          && (status.serviceState === "restart_required" || status.serviceState === "restart_available")
+          && (status.serviceState === "ready" || status.serviceState === "restart_required" || status.serviceState === "restart_available")
+          && canReplaceDaemon(currentVersion, identity?.version)
       } catch { status.serviceState = "error"; status.serviceError = "service_check_failed" }
     }
     const effectiveVersion = status.daemonVersion ?? currentVersion
-    if (!status.incompatibilityReason && effectiveVersion && isBelowOpenCodeMinimum(effectiveVersion)) status.incompatibilityReason = "step_timestamp"
+    if (!status.incompatibilityReason && effectiveVersion && isBelowOpenCodeMinimum(effectiveVersion)) status.incompatibilityReason = "plugin_runtime"
     status.versionAssessment = status.incompatibilityReason ? "incompatible"
       : effectiveVersion === RECOMMENDED_OPENCODE_VERSION ? "tested" : "untested"
     return status
@@ -148,13 +149,13 @@ export class OpenCodeUpdateService {
     const installedVersion = await this.readCurrentVersion(binary.path)
     const lifecycle = await this.deps.lifecycle?.(binary)
     if (!lifecycle) throw new Error("OpenCode service lifecycle unavailable")
+    if (restart && !lifecycle.restart) throw new Error("OpenCode service restart unavailable")
     const previous = await lifecycle.discover()
     if (!previous || restart) assertSupportedOpenCode(installedVersion)
     if (restart && previous) {
       const identity = runtimeIdentity(previous)
-      if (!identity || !comparableVersion(identity.version) || !comparableVersion(installedVersion)
-        || compareOpenCodeVersionStrings(installedVersion, identity.version) <= 0) {
-        throw new Error("The shared daemon is not an older runtime eligible for this update")
+      if (!canReplaceDaemon(installedVersion, identity?.version)) {
+        throw new Error("The selected OpenCode executable cannot safely replace the running daemon")
       }
     }
     const assertCurrent = () => {
@@ -318,6 +319,13 @@ export function createOpenCodeUpdateService(
     admitActivation: binary => workspaceManager.assertSetupExecutionHost(binary.path),
     reload: (binary, assertCurrent) => workspaceManager.reloadConfigurationAfterSetup(binary.path, assertCurrent),
   })
+}
+
+// Explicit troubleshooting can replace the same release, but must retain the
+// update path's authenticated-version fence against downgrades/unknown builds.
+function canReplaceDaemon(installed: string | null, running?: string): boolean {
+  return Boolean(installed && running && comparableVersion(installed) && comparableVersion(running)
+    && compareOpenCodeVersionStrings(installed, running) >= 0)
 }
 
 function comparableVersion(version: string): boolean {

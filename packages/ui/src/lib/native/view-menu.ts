@@ -3,6 +3,7 @@ import { useI18n } from "../i18n"
 import { setWorkspaceMenuEnabled } from "../workspace-open"
 import { useConfig } from "../../stores/preferences"
 import { getLogger } from "../logger"
+import { nativeMenuLabels, type NativeMenuLabels } from "./menu-labels"
 
 export interface ViewMenuItemState {
   label: string
@@ -15,6 +16,8 @@ export interface ViewMenuState {
   rightPanel: ViewMenuItemState
   timeline: ViewMenuItemState
   timelineTools: ViewMenuItemState
+  /** Labels for the rest of the native menu; older hosts ignore this field. */
+  menuLabels?: NativeMenuLabels
 }
 
 interface ViewMenuPanels {
@@ -55,6 +58,7 @@ export function useViewMenu(activeInstanceId: Accessor<string | undefined>) {
       rightPanel: { label: t("window.menu.rightPanel"), checked: drawersEnabled && Boolean(controller()?.rightOpen()), enabled: drawersEnabled },
       timeline: { label: t("window.menu.timeline"), checked: timeline, enabled },
       timelineTools: { label: t("window.menu.timelineTools"), checked: preferences().showTimelineTools, enabled: enabled && timeline },
+      menuLabels: nativeMenuLabels(t),
     }
     // Keep IPC updates ordered when a project switch and its shell mount race.
     pending = pending.then(() => setWorkspaceMenuEnabled(enabled, state))

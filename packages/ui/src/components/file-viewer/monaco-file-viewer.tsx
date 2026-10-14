@@ -3,12 +3,14 @@ import { loadMonaco } from "../../lib/monaco/setup"
 import { getOrCreateTextModel } from "../../lib/monaco/model-cache"
 import { inferMonacoLanguageId } from "../../lib/monaco/language"
 import { ensureMonacoLanguageLoaded } from "../../lib/monaco/setup"
-import { useTheme } from "../../lib/theme"
+import { useMonacoTheme } from "../../lib/monaco/theme"
+import { matchesHotkey } from "../../lib/hotkeys"
 
 interface MonacoFileViewerProps {
   scopeKey: string
   path: string
   content: string
+  readOnly?: boolean
   wordWrap?: "on" | "off"
   compactGutter?: boolean
   onSave?: (content: string) => void
@@ -16,14 +18,17 @@ interface MonacoFileViewerProps {
 }
 
 export function MonacoFileViewer(props: MonacoFileViewerProps) {
-  const { isDark } = useTheme()
   let host: HTMLDivElement | undefined
 
   let editor: any = null
   let monaco: any = null
+  let removeSaveListener: (() => void) | undefined
   const [ready, setReady] = createSignal(false)
+  useMonacoTheme(() => ready() ? monaco : null)
 
   const disposeEditor = () => {
+    removeSaveListener?.()
+    removeSaveListener = undefined
     try {
       editor?.setModel(null)
     } catch {
@@ -55,11 +60,11 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       if (cancelled) return
       if (!host || !monaco) return
 
-      monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
       editor = monaco.editor.create(host, {
         value: "",
         language: "plaintext",
-        readOnly: false,
+        readOnly: props.readOnly ?? false,
+        occurrencesHighlight: props.readOnly ? "off" : "singleFile",
         automaticLayout: true,
         lineNumbers: "on",
         lineNumbersMinChars: lineNumbersMinChars(props.content),
@@ -73,7 +78,16 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
         fontSize: 13,
       })
 
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveContent)
+      // Capture before Monaco handles its own commands; resolve the current
+      // binding at dispatch time so preferences do not recreate the editor.
+      const handleSave = (event: KeyboardEvent) => {
+        if (!props.onSave || props.readOnly || !matchesHotkey("file-save", event)) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        saveContent()
+      }
+      host.addEventListener("keydown", handleSave, { capture: true })
+      removeSaveListener = () => host?.removeEventListener("keydown", handleSave, { capture: true })
 
       editor.onDidChangeModelContent(() => {
         if (props.onContentChange) {
@@ -89,11 +103,6 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       setReady(false)
       disposeEditor()
     })
-  })
-
-  createEffect(() => {
-    if (!ready() || !monaco || !editor) return
-    monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
   })
 
   createEffect(() => {

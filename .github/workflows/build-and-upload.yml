@@ -61,12 +61,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -217,7 +217,7 @@ jobs:
 
       - name: Upload Actions artifacts (Electron macOS)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-macos
           path: packages/electron-app/release/*.zip
@@ -232,12 +232,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -267,7 +267,7 @@ jobs:
 
       - name: Upload Actions artifacts (Electron Windows)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-windows
           path: packages/electron-app/release/*.zip
@@ -282,12 +282,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -305,23 +305,90 @@ jobs:
       - name: Verify bundled Node resource (Electron Linux)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
 
-      - name: Verify Electron portable archive
+      # The deb installs as root, so its post-install script can give Chromium's
+      # sandbox helper the root ownership and 4755 mode a user archive cannot.
+      - name: Package and verify Electron deb
         run: |
           set -euo pipefail
           shopt -s nullglob
-          archives=(packages/electron-app/release/*.tar.gz)
-          if [ "${#archives[@]}" -ne 1 ]; then
-            echo "Expected one Electron Linux tar.gz, found ${#archives[@]}" >&2
+          VERSION_TO_USE="${VERSION:-}"
+          if [ -z "$VERSION_TO_USE" ]; then
+            VERSION_TO_USE=$(node -p "require('./packages/electron-app/package.json').version")
+          fi
+          debs=(packages/electron-app/release/*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "Expected one Electron Linux deb, found ${#debs[@]}" >&2
             exit 1
           fi
 
+          # electron-builder names deb architectures the Debian way (amd64).
+          artifact="packages/electron-app/release/CodeNomad-Electron-linux-x64-${VERSION_TO_USE}.deb"
+          if [ "${debs[0]}" != "$artifact" ]; then
+            mv "${debs[0]}" "$artifact"
+          fi
+          # electron-builder writes prerelease dashes as "~", which dpkg sorts before
+          # the release. Dev builds (<stable>-dev-<date>-<sha>) follow their stable
+          # base, so they become <stable>+dev.<date>.<commit time>.<sha> to install
+          # as upgrades, in order even for several builds on the same day.
+          case "$VERSION_TO_USE" in
+            *-dev-*)
+              dev_suffix="${VERSION_TO_USE#*-dev-}"
+              commit_time=$(TZ=UTC git show -s --format=%cd --date=format-local:%H%M%S HEAD)
+              debian_version="${VERSION_TO_USE%%-dev-*}+dev.${dev_suffix%%-*}.${commit_time}.${dev_suffix#*-}"
+              ;;
+            *) debian_version=$(printf '%s' "$VERSION_TO_USE" | tr - '~') ;;
+          esac
+          set_deb_version() {
+            local repack_dir
+            repack_dir=$(mktemp -d)
+            dpkg-deb --raw-extract "$1" "$repack_dir"
+            chmod 0755 "$repack_dir"
+            sed -i "s/^Version: .*/Version: $2/" "$repack_dir/DEBIAN/control"
+            dpkg-deb --root-owner-group -Zxz --build "$repack_dir" "$1" >/dev/null
+            rm -rf "$repack_dir"
+          }
+          check_deb_fields() {
+            local field
+            for field in Package:codenomad Conflicts:code-nomad Replaces:code-nomad "Version:$2"; do
+              if [ "$(dpkg-deb --field "$1" "${field%%:*}")" != "${field#*:}" ]; then
+                echo "Electron deb ${field%%:*} must be ${field#*:}" >&2
+                exit 1
+              fi
+            done
+          }
+          if [ "$(dpkg-deb --field "$artifact" Version)" != "$debian_version" ]; then
+            set_deb_version "$artifact" "$debian_version"
+          else
+            # PR and stable builds keep electron-builder's version; exercise the dev
+            # rewrite on a copy so it is proven before a dev release depends on it.
+            probe=$(mktemp --suffix=.deb)
+            cp "$artifact" "$probe"
+            set_deb_version "$probe" "0.0.0+dev.20000101.000000.deadbeef"
+            check_deb_fields "$probe" "0.0.0+dev.20000101.000000.deadbeef"
+            # Same files, modes and owners (the archive root's own mode aside).
+            diff <(dpkg-deb --contents "$artifact" | awk '$6 != "./" {print $1, $2, $6}') \
+              <(dpkg-deb --contents "$probe" | awk '$6 != "./" {print $1, $2, $6}')
+            diff <(dpkg-deb --ctrl-tarfile "$artifact" | tar -t | sort) <(dpkg-deb --ctrl-tarfile "$probe" | tar -t | sort)
+            rm -f "$probe"
+          fi
+          dpkg-deb --info "$artifact"
+          check_deb_fields "$artifact" "$debian_version"
+
           extract_dir=$(mktemp -d)
           trap 'rm -rf "$extract_dir"' EXIT
-          tar -xzf "${archives[0]}" -C "$extract_dir"
+          dpkg-deb --extract "$artifact" "$extract_dir"
+          dpkg-deb --control "$artifact" "$extract_dir/DEBIAN"
+          grep -Fq "chmod 4755 '/opt/CodeNomad/chrome-sandbox'" "$extract_dir/DEBIAN/postinst"
 
-          binary=$(find "$extract_dir" -type f -name CodeNomad -print -quit)
-          if [ -z "$binary" ] || [ ! -x "$binary" ]; then
-            echo "Electron portable archive does not contain an executable CodeNomad binary" >&2
+          binary="$extract_dir/opt/CodeNomad/CodeNomad"
+          for required in "$binary" "$extract_dir/opt/CodeNomad/chrome-sandbox" "$extract_dir/usr/share/applications/CodeNomad.desktop"; do
+            if [ ! -e "$required" ]; then
+              echo "Missing path in Electron deb: ${required#"$extract_dir"}" >&2
+              exit 1
+            fi
+          done
+          if [ ! -x "$binary" ]; then
+            echo "Electron deb does not contain an executable CodeNomad binary" >&2
             exit 1
           fi
 
@@ -332,7 +399,7 @@ jobs:
 
           app_asar="$resources_dir/app.asar"
           if [ ! -f "$app_asar" ]; then
-            echo "Electron portable archive does not contain resources/app.asar" >&2
+            echo "Electron deb does not contain resources/app.asar" >&2
             exit 1
           fi
           node - "$app_asar" <<'NODE'
@@ -366,16 +433,58 @@ jobs:
 
           ldd "$binary" | tee /tmp/codenomad-electron-ldd.txt
           if grep -q "not found" /tmp/codenomad-electron-ldd.txt; then
-            echo "Electron portable binary has unresolved shared libraries" >&2
+            echo "Electron deb binary has unresolved shared libraries" >&2
             exit 1
           fi
+
+      # Installs over a stand-in for the previous Tauri deb (package code-nomad),
+      # which shipped the same desktop entry, so upgrading users are not blocked.
+      - name: Verify Electron deb installation on Ubuntu 24.04
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(packages/electron-app/release/*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "Expected one packaged Electron deb, found ${#debs[@]}" >&2
+            exit 1
+          fi
+
+          artifact=$(realpath "${debs[0]}")
+          docker run --rm \
+            --volume "$artifact:/tmp/codenomad.deb:ro" \
+            ubuntu:24.04 \
+            bash -euc '
+              export DEBIAN_FRONTEND=noninteractive
+              mkdir -p /tmp/previous/DEBIAN /tmp/previous/usr/share/applications
+              printf "%s\n" "Package: code-nomad" "Version: 0.20.1" "Architecture: amd64" \
+                "Maintainer: CodeNomad <ci@example.invalid>" "Description: previous Tauri deb" \
+                > /tmp/previous/DEBIAN/control
+              printf "[Desktop Entry]\nName=CodeNomad\n" > /tmp/previous/usr/share/applications/CodeNomad.desktop
+              dpkg-deb --build /tmp/previous /tmp/previous.deb >/dev/null
+              dpkg -i /tmp/previous.deb >/dev/null
+
+              apt-get update >/dev/null
+              # Without recommends, ldd below proves the declared Depends suffice.
+              apt-get install -y --no-install-recommends /tmp/codenomad.deb >/dev/null
+              if dpkg-query -W -f "\${Status}" code-nomad 2>/dev/null | grep -q "install ok installed"; then
+                echo "The Electron deb did not replace the previous Tauri deb" >&2
+                exit 1
+              fi
+              test "$(dpkg-query -S /usr/share/applications/CodeNomad.desktop)" = "codenomad: /usr/share/applications/CodeNomad.desktop"
+              test -x /opt/CodeNomad/CodeNomad
+              test -x /usr/bin/CodeNomad
+              # Chromium refuses to start unless its setuid sandbox helper is root-owned 4755.
+              test "$(stat -c "%U:%G %a" /opt/CodeNomad/chrome-sandbox)" = "root:root 4755"
+              ldd /opt/CodeNomad/CodeNomad | tee /tmp/codenomad-electron-ldd.txt
+              ! grep -q "not found" /tmp/codenomad-electron-ldd.txt
+            '
 
       - name: Upload release assets
         if: ${{ inputs.upload && inputs.tag != '' }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(packages/electron-app/release/*.tar.gz)
+          files=(packages/electron-app/release/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then
             echo "Expected one Electron Linux release asset, found ${#files[@]}" >&2
             exit 1
@@ -392,7 +501,7 @@ jobs:
 
           gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
-              CodeNomad-Electron-linux-*.zip|CodeNomad-Electron-linux-*.AppImage|CodeNomad-Electron-linux-*.flatpak)
+              CodeNomad-Electron-linux-*.tar.gz|CodeNomad-Electron-linux-*.zip|CodeNomad-Electron-linux-*.AppImage|CodeNomad-Electron-linux-*.flatpak)
                 echo "Deleting obsolete Linux asset $asset"
                 gh release delete-asset "$TAG" "$asset" --yes
                 ;;
@@ -401,27 +510,28 @@ jobs:
 
       - name: Upload Actions artifacts (Electron Linux)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux
-          path: packages/electron-app/release/*.tar.gz
+          path: packages/electron-app/release/*.deb
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
   build-tauri-macos:
     runs-on: macos-15-intel
     env:
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -445,9 +555,17 @@ jobs:
       - name: Verify bundled Node resource (Tauri macOS x64)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-x64
 
+      - name: Configure Tauri updater (macOS x64)
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Build macOS bundle (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        env:
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (macOS)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -461,9 +579,25 @@ jobs:
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-macos-x64-${VERSION}.zip"
           fi
 
+      - name: Stage and publish signed updater (macOS x64)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage darwin-x86_64
+
+      - name: Retain updater publication receipt (macOS x64)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: updater-${{ github.run_id }}-darwin-x86_64
+          overwrite: true
+          path: packages/tauri-app/release-updater/darwin-x86_64.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Actions artifacts (Tauri macOS)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-macos
           path: packages/tauri-app/release-tauri/*.zip
@@ -484,17 +618,18 @@ jobs:
   build-tauri-macos-arm64:
     runs-on: macos-26
     env:
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -518,9 +653,17 @@ jobs:
       - name: Verify bundled Node resource (Tauri macOS arm64)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-arm64
 
+      - name: Configure Tauri updater (macOS arm64)
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Build macOS bundle (Tauri, arm64)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        env:
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (macOS arm64)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -534,9 +677,25 @@ jobs:
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-macos-arm64-${VERSION}.zip"
           fi
 
+      - name: Stage and publish signed updater (macOS arm64)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage darwin-aarch64
+
+      - name: Retain updater publication receipt (macOS arm64)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: updater-${{ github.run_id }}-darwin-aarch64
+          overwrite: true
+          path: packages/tauri-app/release-updater/darwin-aarch64.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Actions artifacts (Tauri macOS arm64)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-macos-arm64
           path: packages/tauri-app/release-tauri/*.zip
@@ -557,17 +716,18 @@ jobs:
   build-tauri-windows:
     runs-on: windows-2025
     env:
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -592,31 +752,55 @@ jobs:
       - name: Verify bundled Node resource (Tauri Windows)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@win32-x64
 
+      - name: Configure Tauri updater (Windows)
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Build Windows bundle (Tauri)
         shell: bash
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        env:
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (Windows)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         shell: pwsh
         run: |
-          $bundleRoot = "packages/tauri-app/target/release/bundle"
+          # The NSIS installer is both the download and the updater payload.
+          $ErrorActionPreference = "Stop"
           $artifactDir = "packages/tauri-app/release-tauri"
           if (Test-Path $artifactDir) { Remove-Item $artifactDir -Recurse -Force }
           New-Item -ItemType Directory -Path $artifactDir | Out-Null
-          $exe = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Select-Object -First 1
-          if ($null -ne $exe) {
-            $dest = Join-Path $artifactDir ("CodeNomad-Tauri-windows-x64-$env:VERSION.zip")
-            Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
-          }
+          $installers = @(Get-ChildItem -Path "packages/tauri-app/target/release/bundle/nsis" -File -Filter *.exe)
+          if ($installers.Count -ne 1) { throw "Expected one Tauri NSIS installer, found $($installers.Count)" }
+          $version = if ($env:VERSION) { $env:VERSION } else { (Get-Content packages/tauri-app/package.json | ConvertFrom-Json).version }
+          Copy-Item $installers[0].FullName (Join-Path $artifactDir "CodeNomad-Tauri-windows-x64-$version.exe")
+
+      - name: Stage and publish signed updater (Windows)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage windows-x86_64
+
+      - name: Retain updater publication receipt (Windows)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: updater-${{ github.run_id }}-windows-x86_64
+          overwrite: true
+          path: packages/tauri-app/release-updater/windows-x86_64.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Actions artifacts (Tauri Windows)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-windows
-          path: packages/tauri-app/release-tauri/*.zip
+          path: packages/tauri-app/release-tauri/*.exe
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: warn
 
@@ -624,11 +808,22 @@ jobs:
         if: ${{ inputs.upload && inputs.tag != '' }}
         shell: pwsh
         run: |
-          if (Test-Path "packages/tauri-app/release-tauri") {
-            Get-ChildItem -Path "packages/tauri-app/release-tauri" -Filter *.zip -File | ForEach-Object {
+          $ErrorActionPreference = "Stop"
+          # A signed build already uploaded these exact bytes as the updater payload.
+          $signed = (Get-Content packages/tauri-app/release-updater/windows-x86_64.json | ConvertFrom-Json).signed
+          if (-not $signed) {
+            Get-ChildItem -Path "packages/tauri-app/release-tauri" -Filter *.exe -File | ForEach-Object {
               Write-Host "Uploading $($_.FullName)"
               gh release upload $env:TAG $_.FullName --clobber
+              if ($LASTEXITCODE -ne 0) { throw "Upload failed: $($_.Name)" }
             }
+          }
+          $assets = gh release view $env:TAG --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -ne 0) { throw "Could not list release assets" }
+          $assets | Where-Object { $_ -like "CodeNomad-Tauri-windows-*.zip" } | ForEach-Object {
+            Write-Host "Deleting obsolete Windows asset $_"
+            gh release delete-asset $env:TAG $_ --yes
+            if ($LASTEXITCODE -ne 0) { throw "Could not delete obsolete asset: $_" }
           }
 
   build-tauri-linux:
@@ -637,14 +832,15 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -672,6 +868,12 @@ jobs:
       - name: Sync Tauri package version
         run: npm run sync:version --workspace @codenomad/tauri-app
 
+      # The updater is enabled only when a verifiable public key is available.
+      # Its private half stays in a repository secret that an administrator
+      # adds, so an unsigned build never advertises an update it cannot verify.
+      - name: Configure Tauri updater
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
@@ -681,15 +883,24 @@ jobs:
       - name: Verify bundled Node resource (Tauri Linux)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@linux-x64
 
-      - name: Build Debian package (Tauri)
+      # Linux Tauri ships only the self-updating AppImage; the deb comes from Electron.
+      - name: Build AppImage (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build --bundles deb
+        env:
+          # Only this step holds the private key. Prebuild already ran without it,
+          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # Run the bundling tools in extraction mode without requiring FUSE.
+          # --verbose retains linuxdeploy diagnostics if packaging fails.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm exec -- tauri build --bundles appimage --verbose --config src-tauri/tauri.prebuilt.conf.json
 
-      - name: Package and verify Tauri deb
+      - name: Package and verify Tauri AppImage
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         run: |
           set -euo pipefail
-          BUNDLE_ROOT="packages/tauri-app/target/release/bundle/deb"
+          BUNDLE_ROOT="packages/tauri-app/target/release/bundle/appimage"
           ARTIFACT_DIR="packages/tauri-app/release-tauri"
           VERSION_TO_USE="${VERSION:-}"
           if [ -z "$VERSION_TO_USE" ]; then
@@ -699,87 +910,90 @@ jobs:
           mkdir -p "$ARTIFACT_DIR"
           shopt -s nullglob
 
-          debs=("$BUNDLE_ROOT"/*.deb)
-          if [ "${#debs[@]}" -ne 1 ]; then
-            echo "Expected one Tauri deb under $BUNDLE_ROOT, found ${#debs[@]}" >&2
+          appimages=("$BUNDLE_ROOT"/*.AppImage)
+          if [ "${#appimages[@]}" -ne 1 ]; then
+            echo "Expected one Tauri AppImage under $BUNDLE_ROOT, found ${#appimages[@]}" >&2
             exit 1
           fi
 
-          artifact="$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.deb"
-          cp "${debs[0]}" "$artifact"
-          dpkg-deb --info "$artifact"
-          dpkg-deb --contents "$artifact"
-          package_version=$(dpkg-deb --field "$artifact" Version)
-          if [ "$package_version" != "$VERSION_TO_USE" ]; then
-            echo "Tauri deb version mismatch: expected $VERSION_TO_USE, found $package_version" >&2
-            exit 1
-          fi
+          artifact="$(pwd)/$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.AppImage"
+          cp "${appimages[0]}" "$artifact"
+          chmod 0755 "$artifact"
 
+          # linuxdeploy must have produced a self-contained image with the runtime
+          # and the bundled server reachable from AppRun.
           extract_dir=$(mktemp -d)
           trap 'rm -rf "$extract_dir"' EXIT
-          dpkg-deb --extract "$artifact" "$extract_dir"
-
-          binary="$extract_dir/usr/bin/codenomad-tauri"
-          resources_dir="$extract_dir/usr/lib/CodeNomad/resources"
-          desktop_file="$extract_dir/usr/share/applications/CodeNomad.desktop"
-          for required in "$binary" "$resources_dir" "$desktop_file"; do
-            if [ ! -e "$required" ]; then
-              echo "Missing path in Tauri deb: $required" >&2
+          (cd "$extract_dir" && "$artifact" --appimage-extract >/dev/null)
+          root="$extract_dir/squashfs-root"
+          for required in AppRun usr/bin/codenomad-tauri \
+            usr/lib/CodeNomad/resources/node/linux-x64/bin/node \
+            usr/lib/CodeNomad/resources/server/dist/bin.js \
+            usr/lib/CodeNomad/resources/ui-loading/loading.html; do
+            if [ ! -e "$root/$required" ]; then
+              echo "Missing path in Tauri AppImage: $required" >&2
               exit 1
             fi
           done
-
-          grep -Fx "Exec=codenomad-tauri" "$desktop_file"
-          if grep -Fxq "NoDisplay=true" "$desktop_file"; then
-            echo "Generated Tauri desktop entry must be visible" >&2
+          binary="$root/usr/bin/codenomad-tauri"
+          if [ ! -x "$root/AppRun" ] || [ ! -x "$binary" ]; then
+            echo "Tauri AppImage entry point is not executable" >&2
+            exit 1
+          fi
+          desktop_entries=$(find "$root" -maxdepth 1 -name '*.desktop' | wc -l)
+          if [ "$desktop_entries" -ne 1 ]; then
+            echo "Expected exactly one desktop entry in the Tauri AppImage, found $desktop_entries" >&2
             exit 1
           fi
           node scripts/smoke-packaged-resources.cjs \
-            --resources "$resources_dir" \
-            --loading "$resources_dir/ui-loading" \
+            --resources "$root/usr/lib/CodeNomad/resources" \
+            --loading "$root/usr/lib/CodeNomad/resources/ui-loading" \
             --target linux-x64
 
-          ldd "$binary" | tee /tmp/codenomad-tauri-ldd.txt
-          if grep -q "not found" /tmp/codenomad-tauri-ldd.txt; then
-            echo "Tauri deb binary has unresolved shared libraries" >&2
+          LD_LIBRARY_PATH="$root/usr/lib:$root/usr/lib/x86_64-linux-gnu" \
+            ldd "$binary" | tee /tmp/codenomad-tauri-appimage-ldd.txt
+          if grep -q "not found" /tmp/codenomad-tauri-appimage-ldd.txt; then
+            echo "Tauri AppImage binary has unresolved shared libraries" >&2
             exit 1
           fi
 
-      - name: Verify Tauri deb installation on Ubuntu 24.04
-        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          debs=(packages/tauri-app/release-tauri/*.deb)
-          if [ "${#debs[@]}" -ne 1 ]; then
-            echo "Expected one packaged Tauri deb, found ${#debs[@]}" >&2
+          # An AppImage built on a recent base raises the glibc it needs, which
+          # silently excludes older distributions. Report the floor instead of
+          # leaving it for a user to discover, and keep the job log comparable
+          # between releases. objdump prints the version bare, and GLIBCXX_ and
+          # GLIBC_PRIVATE must not be mistaken for a glibc floor.
+          glibc_floor=$(objdump -T "$binary" \
+            | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -V | tail -n 1)
+          if [ -z "$glibc_floor" ]; then
+            echo "Could not determine the GLIBC floor of the Tauri AppImage" >&2
             exit 1
           fi
+          echo "Tauri AppImage requires GLIBC_${glibc_floor} or newer"
+          echo "GLIBC_${glibc_floor}" > "$ARTIFACT_DIR/appimage-glibc-floor.txt"
 
-          artifact=$(realpath "${debs[0]}")
-          docker run --rm \
-            --volume "$artifact:/tmp/codenomad.deb:ro" \
-            ubuntu:24.04 \
-            bash -euc '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update >/dev/null
-              apt-get install -y /tmp/codenomad.deb >/dev/null
-              test -x /usr/bin/codenomad-tauri
-              test -x /usr/lib/CodeNomad/resources/node/linux-x64/bin/node
-              test -f /usr/lib/CodeNomad/resources/server/dist/bin.js
-              test -f /usr/lib/CodeNomad/resources/ui-loading/loading.html
-              /usr/lib/CodeNomad/resources/node/linux-x64/bin/node \
-                /usr/lib/CodeNomad/resources/server/dist/bin.js --version
-              ldd /usr/bin/codenomad-tauri | tee /tmp/codenomad-tauri-ldd.txt
-              ! grep -q "not found" /tmp/codenomad-tauri-ldd.txt
-            '
+      - name: Stage and publish signed updater (Linux)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage linux-x86_64
+
+      - name: Retain updater publication receipt (Linux)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: updater-${{ github.run_id }}-linux-x86_64
+          overwrite: true
+          path: packages/tauri-app/release-updater/linux-x86_64.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-linux
-          path: packages/tauri-app/release-tauri/*.deb
+          path: packages/tauri-app/release-tauri/*.AppImage
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
@@ -788,29 +1002,52 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(packages/tauri-app/release-tauri/*.deb)
+          files=(packages/tauri-app/release-tauri/*.AppImage)
           if [ "${#files[@]}" -ne 1 ]; then
-            echo "Expected one Tauri Linux release asset, found ${#files[@]}" >&2
+            echo "Expected the Tauri Linux AppImage, found ${#files[@]}" >&2
             exit 1
           fi
 
-          file="${files[0]}"
-          asset_name=$(basename "$file")
-          echo "Uploading $file"
-          gh release upload "$TAG" "$file" --clobber
-          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
-            echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
-            exit 1
-          fi
+          for file in "${files[@]}"; do
+            asset_name=$(basename "$file")
+            echo "Uploading $file"
+            gh release upload "$TAG" "$file" --clobber
+            if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
+              echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
+              exit 1
+            fi
+          done
 
           gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
-              CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.AppImage|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
+              CodeNomad-Tauri-linux-*.deb|CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
                 echo "Deleting obsolete Linux asset $asset"
                 gh release delete-asset "$TAG" "$asset" --yes
                 ;;
             esac
           done
+
+  publish-tauri-updater:
+    needs: [build-tauri-windows, build-tauri-macos, build-tauri-macos-arm64, build-tauri-linux]
+    if: ${{ inputs.upload && inputs.tag != '' }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: updater-${{ github.run_id }}-*
+          path: updater-receipts
+          merge-multiple: true
+      - name: Publish complete updater manifest after all platform uploads
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs publish updater-receipts
 
   build-tauri-linux-arm64:
     if: ${{ false }}
@@ -821,17 +1058,17 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4.4.0
         with:
           platforms: linux/arm64
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm

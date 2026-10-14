@@ -1,0 +1,58 @@
+.permission-receipts {
+  margin-block: 0.35rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-inline-start: 2px solid var(--border-base);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.permission-receipts summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.permission-receipts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.permission-receipt + .permission-receipt {
+  border-block-start: 1px solid var(--border-base);
+  margin-block-start: 0.5rem;
+  padding-block-start: 0.5rem;
+}
+
+.permission-receipt-heading,
+.permission-receipts-error {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+}
+
+.permission-receipt-origin {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.permission-receipt[data-decision="reject"] strong {
+  color: var(--status-error-fg);
+}
+
+.permission-receipt-resource {
+  display: block;
+  white-space: pre-wrap;
+  font-size: var(--font-size-xs);
+}
+
+.permission-receipt p {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}
+
+.permission-receipt-reason {
+  color: var(--text-secondary);
+}

@@ -11,6 +11,14 @@ export interface ShellEnvironment {
   env: NodeJS.ProcessEnv
 }
 
+/** Login-shell discovery supplies tools/PATH, never the desktop's profile. */
+export function restoreDesktopProfileEnvironment(env: NodeJS.ProcessEnv, selected: NodeJS.ProcessEnv): void {
+  for (const key of ["CODENOMAD_UPDATE_CHANNEL", "CODENOMAD_PROFILE_CONFIG_IDENTITY", "CLI_CONFIG"]) {
+    if (selected[key] === undefined) delete env[key]
+    else env[key] = selected[key]
+  }
+}
+
 /** Null means an incomplete frame; invalid complete frames are rejected. */
 export function parseShellEnvironment(output: string): ShellEnvironment | null {
   const marker = output.indexOf(MARKER)

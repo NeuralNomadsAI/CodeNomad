@@ -1,9 +1,12 @@
-import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component, type JSXElement } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
+import { MissionReader } from "../mission-reader"
+import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
+import { missionStore } from "../../stores/missions"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -23,11 +26,13 @@ import { clearConversationPlaybackForSession } from "../../stores/conversation-s
 import { useConfig } from "../../stores/preferences"
 import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
+import { FilesPreviewView } from "../files-preview-view"
+import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
-import { messagesLoaded } from "../../stores/session-state"
+import { sessionMessagesNeedLoad, sessions } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
@@ -37,13 +42,14 @@ function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text
 }
 
 interface SessionViewProps {
+  interruptionPanel?: JSXElement
+  interruptionExpanded?: boolean
   sessionId: string
   activeSessions: Map<string, Session>
   instanceId: string
   instanceFolder: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
-  compactPromptLayout?: boolean
   focusConversationOnActivate?: boolean
   onConversationFocusHandled?: () => void
   showSidebarToggle?: boolean
@@ -76,7 +82,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   })
   const { t } = useI18n()
   const { preferences } = useConfig()
-  const session = () => props.activeSessions.get(props.sessionId)
+  const session = () => props.activeSessions.get(props.sessionId) ?? sessions().get(props.instanceId)?.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
   const messagesLoadError = createMemo(() => getSessionMessagesLoadError(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -101,6 +107,30 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const missionReader = () => props.isActive ? missionProjectView(props.instanceFolder).reader : undefined
+  const readingMission = () => Boolean(missionReader())
+  // A layout-restored reader for a one-time Mission the loaded map no longer
+  // contains has nothing to show: release the central surface to the transcript.
+  createEffect(() => {
+    const target = missionReader()
+    if (!target || target.kind === "recurrence" || target.recurrence) return
+    const state = missionStore.state(props.instanceId)
+    if ((state.status === "ready" || state.status === "unavailable") && !state.missions.some(mission => mission.id === target.missionId))
+      updateMissionProjectView(props.instanceFolder, { reader: undefined })
+  })
+  const filePreview = createMemo(() => {
+    const target = getFilePreview(props.instanceId)
+    return target?.sessionId === props.sessionId ? target : null
+  })
+  createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
+  const centralPreview = () => props.isActive !== false && preview()?.mode === "preview" && !filePreview() && !readingMission()
+  // The latest explicit reader selection owns the central surface. Opening one
+  // must not leave the other mounted invisibly above it; editor drafts live in
+  // their own store and the composer stays outside both readers.
+  createEffect(on(filePreview, target => {
+    if (target && props.isActive) updateMissionProjectView(props.instanceFolder, { reader: undefined })
+  }, { defer: true }))
+  createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -286,8 +316,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   createEffect(
     on(
-      () => props.isActive,
-      (isActive) => {
+      () => [props.isActive, props.sessionId] as const,
+      ([isActive]) => {
         if (!isActive) {
           if (props.focusConversationOnActivate) props.onConversationFocusHandled?.()
           clearConversationPlaybackForSession(props.instanceId, props.sessionId)
@@ -299,33 +329,42 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         // Don't steal focus from other inputs (command palette, dialogs, selectors, etc.)
         if (typeof document === "undefined") return
-        const activeEl = document.activeElement as HTMLElement | null
-        const activeIsInput =
-          activeEl?.tagName === "INPUT" ||
-          activeEl?.tagName === "TEXTAREA" ||
-          activeEl?.tagName === "SELECT" ||
-          Boolean(activeEl?.isContentEditable)
-        if (activeIsInput) return
-
-        const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
-        if (modalOpen) return
+        const activeEl = document.activeElement
+        const focusIsProtected = () => {
+          const current = document.activeElement as HTMLElement | null
+          return current?.matches("input, textarea, select") || current?.isContentEditable
+            || Boolean(current?.closest(".interruption-dock"))
+            || Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
+        }
+        if (focusIsProtected()) return
 
         // Defer until the session pane is visible and the textarea is mounted.
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (!props.isActive) return
+        // Cleanup also fences already-dispatched frames across rapid reactivation.
+        let cancelled = false
+        let frame: number
+        onCleanup(() => {
+          cancelled = true
+          cancelAnimationFrame(frame)
+        })
+        frame = requestAnimationFrame(function waitForActivatedSession() {
+          if (cancelled || !props.isActive) return
+          frame = requestAnimationFrame(function focusActivatedSession() {
+            if (cancelled || !props.isActive || !rootRef?.isConnected) return
+            const activeElement = document.activeElement
+            const focusIsUnclaimed =
+              !activeElement || activeElement === document.body || activeElement === document.documentElement
+            // Input/modal ownership can change while either frame is pending.
+            // Preserve a newly claimed control, including the dock's own chrome.
+            const focusIsBlocked = focusIsProtected() || (!focusIsUnclaimed && activeElement !== activeEl)
             if (props.focusConversationOnActivate) {
-              const activeElement = document.activeElement
-              const focusIsUnclaimed =
-                !activeElement || activeElement === document.body || activeElement === document.documentElement
-              const modalIsOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
-              if (focusIsUnclaimed && !modalIsOpen && focusConversationStream(rootRef)) {
+              if (focusIsUnclaimed && !focusIsBlocked && focusConversationStream(rootRef)) {
                 props.onConversationFocusHandled?.()
                 return
               }
               props.onConversationFocusHandled?.()
-              if (!focusIsUnclaimed || modalIsOpen) return
+              if (!focusIsUnclaimed) return
             }
+            if (focusIsBlocked) return
             if (promptInputApi) {
               promptInputApi.focus()
               return
@@ -355,7 +394,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     session,
     shouldLoad: () => {
       const id = session()?.id
-      return Boolean(id && !messagesLoaded().get(props.instanceId)?.has(id))
+      // A load in progress closes the gate; if it ends without loading the
+      // session (superseded or invalidated by a startup refresh), reopening the
+      // gate reloads it, as switching sessions would.
+      return Boolean(id && sessionMessagesNeedLoad(props.instanceId, id))
     },
     loadMessages,
     waitForHydration: waitForInstanceReady,
@@ -606,10 +648,23 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         </div>
       }
     >
-      <div ref={rootRef} class="session-view">
+      <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
+        <Show when={preview()}>
+          <SessionPreviewView
+            preview={preview()!}
+            active={centralPreview()}
+            onInsertComment={handleInsertPreviewComment}
+          />
+        </Show>
+        <Show when={props.isActive !== false}>
+        {/* The active web preview owns the central flex space; the transcript surface yields it. */}
+        <div class="mission-transcript-surface" style={{ display: centralPreview() ? "none" : undefined }}>
+        <div class="mission-transcript-content" inert={readingMission()}
+          style={{ visibility: readingMission() ? "hidden" : undefined }}>
+        <Show when={filePreview()} fallback={
         <Show
-          when={preview()?.mode === "preview"}
-          fallback={
+          when={preview()?.mode !== "preview" || readingMission()}
+        >
             <MessageSection
               timelineMount={timelineMount()}
               instanceId={props.instanceId}
@@ -629,7 +684,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
               onRevert={handleRevert}
               onFork={handleFork}
-              isActive={props.isActive}
+              // Hidden beneath a reader, the stream defers scroll restore/follow
+              // and re-applies them, against live geometry, once it is shown again.
+              isActive={props.isActive && !readingMission()}
               registerScrollToBottom={(fn) => {
                 scrollToBottomHandle = fn ?? undefined
               }}
@@ -643,13 +700,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onPendingPromptRemove={(item) => void manageQueuedPrompt(item, "remove")}
               onQuoteSelection={handleQuoteSelection}
             />
-          }
-        >
-          <SessionPreviewView
-            preview={preview()!}
-            onInsertComment={handleInsertPreviewComment}
-          />
         </Show>
+        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
+
+        </div>
+        <Show when={readingMission()}>
+          <MissionReader instanceId={props.instanceId} scope={props.instanceFolder} />
+        </Show>
+        </div>
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar
@@ -665,12 +723,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           />
         </Show>
 
+        {props.interruptionPanel}
         <PromptInput
+          interruptionExpanded={props.interruptionExpanded}
           instanceId={props.instanceId}
           instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}
           isActive={props.isActive}
-          compactLayout={props.compactPromptLayout}
           onSend={handleSendMessage}
           onRunShell={handleRunShell}
           escapeInDebounce={props.escapeInDebounce}
@@ -691,7 +750,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
           registerPromptInputApi={registerPromptInputApi}
         />
-        <div class="session-timeline-slot" ref={setTimelineMount} />
+        <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
+        </Show>
       </div>
     </Show>
   )

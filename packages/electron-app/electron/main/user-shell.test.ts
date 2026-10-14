@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { buildUserShellCommand, getDefaultShellPath } from "./user-shell"
-import { parseShellEnvironment, resolveShellEnvironment, shellEnvironmentScript } from "./shell-environment"
+import { parseShellEnvironment, resolveShellEnvironment, restoreDesktopProfileEnvironment, shellEnvironmentScript } from "./shell-environment"
+import { resolveSelectedConfig } from "./startup"
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -22,6 +23,20 @@ describe("desktop POSIX shell selection", () => {
 })
 
 describe("bounded desktop shell environment", () => {
+  it("initial/replacement shell discovery cannot replace the captured desktop profile or JSON source", () => {
+    const config = resolveSelectedConfig("Émilie/custom.json", process.cwd())!
+    const selected = { CODENOMAD_UPDATE_CHANNEL: "dev-v2", CODENOMAD_PROFILE_CONFIG_IDENTITY: "owned-config.yaml", CLI_CONFIG: config }
+    for (const replacement of [false, true]) {
+      const env = { PATH: "/shell/tools", CODENOMAD_UPDATE_CHANNEL: "stable", CODENOMAD_PROFILE_CONFIG_IDENTITY: "foreign", CLI_CONFIG: "/foreign.yaml" }
+      restoreDesktopProfileEnvironment(env, selected)
+      assert.deepEqual(env, { PATH: "/shell/tools", ...selected }, String(replacement))
+      assert.ok(path.isAbsolute(env.CLI_CONFIG)); assert.ok(env.CLI_CONFIG.endsWith("custom.json"))
+      restoreDesktopProfileEnvironment(env, { ...selected, CLI_CONFIG: undefined })
+      assert.equal(env.CLI_CONFIG, undefined)
+    }
+    const manager = readFileSync(new URL("./process-manager.ts", import.meta.url), "utf8")
+    assert.ok(manager.indexOf("restoreDesktopProfileEnvironment(env, this.desktopProfile)") > manager.indexOf("env = discovered.env"))
+  })
   it("ignores banners and preserves multiline values without interpreting shell syntax", () => {
     const snapshot = { executable: "/usr/bin/node", env: { PATH: "/custom/bin", SECRET: "a=b\n'$(not-a-command)'" } }
     const frame = `banner\n\0CODENOMAD_SHELL_ENV\0${JSON.stringify(snapshot)}\0trailing noise`

@@ -690,7 +690,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       </Show>
                     </div>
 
-                    <pre class="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all border border-danger/30 bg-surface-primary px-3 py-2 text-xs text-primary select-text leading-5">{message()}</pre>
+                    <pre class="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all border border-danger/30 bg-surface-inset px-3 py-2 text-xs text-primary select-text leading-5">{message()}</pre>
 
                     <div class="grid grid-cols-2 gap-2">
                       <button

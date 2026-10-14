@@ -1,9 +1,9 @@
 @import "./components/buttons.css";
+@import "./components/alert-dialog.css";
 @import "./components/switches.css";
 @import "./components/window.css";
 @import "./components/auth-recovery.css";
 @import "./components/session-aside.css";
-@import "./components/prompt-skills.css";
 @import "./components/websearch-settings.css";
 @import "./components/provider-accounts.css";
 @import "./components/plugin-package-action.css";
@@ -15,15 +15,19 @@
 @import "./components/folder-loading.css";
 @import "./components/dropdown.css";
 @import "./components/selector.css";
+@import "./components/native-select.css";
 @import "./components/env-vars.css";
 @import "./components/directory-browser.css";
 @import "./components/directory-browser-address.css";
 @import "./components/remote-access.css";
+@import "./components/remote-direct-access.css";
+@import "./components/remote-control.css";
 @import "./components/permission-notification.css";
 @import "./components/form-request.css";
 @import "./components/form-request-options.css";
 @import "./components/toast-history.css";
 @import "./components/settings-screen.css";
+@import "./components/hotkeys-settings.css";
 @import "./components/theme-scheme-settings.css";
 @import "./components/theme-scheme-swatches.css";
 @import "./components/settings-info.css";
@@ -33,3 +37,4 @@
 @import "./components/provider-model-visibility.css";
 @import "./components/prompt-context-controls.css";
 @import "./components/plugin-controls.css";
+@import "./components/interruption-dock.css";

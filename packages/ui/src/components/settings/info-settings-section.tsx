@@ -5,64 +5,15 @@ import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
 import { canOpenRemoteWindows, runtimeEnv } from "../../lib/runtime-env"
 import { openSettings } from "../../stores/settings-screen"
-import { buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode } from "./info-settings-diagnostics"
-
-interface UserAgentData {
-  platform?: string
-  getHighEntropyValues?: (hints: string[]) => Promise<Record<string, string>>
-}
-
-function getUserAgentData(): UserAgentData | undefined {
-  return (navigator as any).userAgentData
-}
-
-function detectOs(): string {
-  if (typeof navigator === "undefined") return "Unknown"
-
-  const uaData = getUserAgentData()
-  if (uaData?.platform) {
-    const arch = extractArchFromUA(navigator.userAgent)
-    return arch ? `${uaData.platform} ${arch}` : uaData.platform
-  }
-
-  const ua = navigator.userAgent
-  const p = navigator.platform
-  if (!p) return "Unknown"
-
-  const maybeArch = extractArchFromUA(ua)
-  if (maybeArch && !p.includes(maybeArch)) {
-    return `${p} ${maybeArch}`
-  }
-  return p
-}
-
-function extractArchFromUA(ua: string): string | null {
-  const match = ua.match(/Linux\s+(x86_64|aarch64|armv[0-9]+[a-z]*|i[3-6]86)/i)
-    ?? ua.match(/Win64;\s*(x64|arm64)/i)
-    ?? ua.match(/Mac\s*OS\s*X[^)]*?_(x86_64|arm64)/i)
-  return match ? match[1] : null
-}
-
-async function resolveArchitecture(): Promise<string | null> {
-  try {
-    const uaData = getUserAgentData()
-    if (!uaData?.getHighEntropyValues) return null
-    const values = await uaData.getHighEntropyValues(["architecture", "bitness"])
-    const parts: string[] = []
-    if (values.architecture && !values.architecture.startsWith("x86")) {
-      parts.push(values.architecture)
-    }
-    if (values.bitness && values.bitness !== "64") {
-      parts.push(`${values.bitness}-bit`)
-    }
-    if (!parts.length && values.architecture) {
-      parts.push(values.architecture)
-    }
-    return parts.length > 0 ? parts.join(" ") : null
-  } catch {
-    return null
-  }
-}
+import { setUpdateFeed } from "../../stores/preferences"
+import { requestDesktopUpdate } from "../../stores/desktop-updates"
+import { supportsDesktopUpdateChecks } from "../../lib/native/updates"
+import type { UpdateFeed } from "../../../../server/src/api-types"
+import { openExternalUrl } from "../../lib/external-url"
+import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
+import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
+import { describeClientOs, readClientOsHints, type ClientNavigator } from "./client-os"
+import { buildBugReportEnvironment, buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 function downloadTextFile(filename: string, text: string) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
@@ -105,13 +56,7 @@ export const InfoSettingsSection: Component = () => {
     }
   })
   const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
-  const [osArch, setOsArch] = createSignal<string | null>(null)
-
-  createEffect(() => {
-    resolveArchitecture().then((arch) => {
-      if (arch) setOsArch(arch)
-    })
-  })
+  const [osHints] = createResource(() => readClientOsHints())
 
   const updateInfo = createMemo(() => {
     const m = meta()
@@ -125,6 +70,8 @@ export const InfoSettingsSection: Component = () => {
     reportTitle: t("settings.info.diagnostics.reportTitle"),
     generated: t("settings.info.diagnostics.generated"),
     serverVersion: t("settings.info.version.server"),
+    serverOs: t("settings.info.server.os"),
+    serverArch: t("settings.info.server.arch"),
     uiVersion: t("settings.info.version.ui"),
     uiSource: t("settings.info.version.uiSource"),
     runtime: t("settings.info.runtime.type"),
@@ -149,17 +96,21 @@ export const InfoSettingsSection: Component = () => {
     },
   }))
 
+  // On the preview feed the server already ranked stable releases by publication
+  // order; a SemVer comparison against the stable fallback would offer an older stable.
+  const stableFallback = createMemo(() => meta()?.updateFeed === "preview" ? null : supportInfo())
+
   const latestVersion = createMemo(() => {
     const update = updateInfo()
     if (update?.version) return update.version
-    return supportInfo()?.latestServerVersion ?? null
+    return stableFallback()?.latestServerVersion ?? null
   })
 
   const showDownloadLink = createMemo(() => {
     let url: string | null = null
     const update = updateInfo()
     if (update?.url) url = update.url
-    else if (supportInfo()?.latestServerUrl) url = supportInfo()!.latestServerUrl ?? null
+    else if (stableFallback()?.latestServerUrl) url = stableFallback()!.latestServerUrl ?? null
     if (!url) return { url: null, show: false }
     if (update?.url) return { url, show: true }
     const current = meta()?.serverVersion
@@ -189,17 +140,40 @@ export const InfoSettingsSection: Component = () => {
     }
   }
 
-  const osDisplay = createMemo(() => {
-    const base = detectOs()
-    const arch = osArch()
-    return arch ? `${base} (${arch})` : base
-  })
+  const [feedSaving, setFeedSaving] = createSignal(false)
+  const [feedSaveFailed, setFeedSaveFailed] = createSignal(false)
+  const handleFeedChange = async (feed: UpdateFeed) => {
+    setFeedSaving(true)
+    setFeedSaveFailed(false)
+    try {
+      await setUpdateFeed(feed)
+    } catch {
+      setFeedSaveFailed(true)
+    } finally {
+      setFeedSaving(false)
+    }
+    // Reread in every case so the selector shows the feed the server actually uses.
+    await handleRefresh()
+  }
+
+  const osDisplay = createMemo(() => describeClientOs(navigator as ClientNavigator, osHints() ?? null))
 
   const handleCopy = async () => {
     const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels())
     const ok = await copyToClipboard(report)
     if (ok) setCopyFeedback("success")
     else setCopyFeedback("error")
+  }
+
+  // Warm both reads: the click opens GitHub at once, within the browser's user activation.
+  void readBugReportTemplateStatus()
+  if (!openCodeSetupStatus()) void refreshOpenCodeSetup()
+  const handleReportBug = () => {
+    const opencode = openCodeSetupStatus()
+    const environment = buildBugReportEnvironment(meta() ?? null, osDisplay(), runtimeEnv, {
+      opencodeInstalled: opencode?.currentVersion, opencodeDaemon: opencode?.daemonVersion, userAgent: navigator.userAgent,
+    })
+    void openExternalUrl(buildBugReportUrl(environment, currentBugReportTemplateStatus()), "bug-report")
   }
 
   const handleDownload = () => {
@@ -223,9 +197,16 @@ export const InfoSettingsSection: Component = () => {
 
         <div class="settings-info-grid">
           <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.version.ui")}</span>
-            <span class="settings-info-value">{meta()?.ui?.version ?? "—"}</span>
+            <span class="settings-info-label">{t("settings.info.version.app")}</span>
+            <span class="settings-info-value" dir="ltr">{meta()?.serverVersion ?? meta()?.ui?.version ?? "—"}</span>
           </div>
+          {/* The served UI normally matches the server; show it only when it differs. */}
+          <Show when={meta()?.serverVersion && meta()?.ui?.version && meta()!.ui!.version !== meta()!.serverVersion}>
+            <div class="settings-info-row">
+              <span class="settings-info-label">{t("settings.info.version.ui")}</span>
+              <span class="settings-info-value" dir="ltr">{meta()?.ui?.version}</span>
+            </div>
+          </Show>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.version.uiSource")}</span>
             <span class="settings-info-value settings-info-value-muted">
@@ -236,6 +217,14 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-label">{t("settings.info.runtime.type")}</span>
             <span class="settings-info-value">{runtimeEnv.host}</span>
           </div>
+          <Show when={meta()?.desktopProfile}>
+            {(profile) => (
+              <div class="settings-info-row" data-testid="settings-data-profile">
+                <span class="settings-info-label">{t("settings.info.runtime.dataProfile")}</span>
+                <span class="settings-info-value" dir="ltr">{profile()}</span>
+              </div>
+            )}
+          </Show>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.runtime.platform")}</span>
             <span class="settings-info-value">{runtimeEnv.platform}</span>
@@ -245,8 +234,116 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-value settings-info-value-muted">{osDisplay()}</span>
           </div>
         </div>
+
+        <h4 class="settings-card-title">{t("settings.info.updates.title")}</h4>
+        <div class="settings-info-grid">
+          <div class="settings-info-row">
+            <label class="settings-info-label" for="settings-update-feed">{t("settings.info.updates.feed")}</label>
+            <select
+              id="settings-update-feed"
+              class="selector-input w-full max-w-xs"
+              value={meta()?.updateFeed ?? ""}
+              disabled={!meta()?.updateFeed || feedSaving()}
+              aria-describedby="settings-update-feed-help"
+              onChange={(event) => void handleFeedChange(event.currentTarget.value as UpdateFeed)}
+            >
+              <option value="stable">{t("settings.info.updates.feed.stable")}</option>
+              <option value="preview">{t("settings.info.updates.feed.preview")}</option>
+            </select>
+          </div>
+          <div class="settings-info-row">
+            <span class="settings-info-label">{t("settings.info.updates.latest")}</span>
+            <span class="settings-info-value settings-info-value-muted">
+              {latestVersion() ?? "—"}
+            </span>
+          </div>
+        </div>
+        <p id="settings-update-feed-help" class="settings-help-text">{t("settings.info.updates.feed.help")}</p>
+        <Show when={feedSaveFailed()}>
+          <div class="settings-error-message" role="alert">{t("settings.info.updates.feed.saveFailed")}</div>
+        </Show>
+
+        <div class="settings-info-actions">
+          {showDownloadLink().show && (
+            <Show
+              when={supportsDesktopUpdateChecks()}
+              fallback={
+                <a
+                  href={showDownloadLink().url!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="settings-pill-button"
+                >
+                  {t("settings.info.updates.download")}
+                </a>
+              }
+            >
+              {/* Installs in place when this build can; otherwise opens the same release page. */}
+              <button
+                type="button"
+                class="settings-pill-button"
+                onClick={() => void requestDesktopUpdate(showDownloadLink().url!)}
+              >
+                {t("settings.info.updates.install")}
+              </button>
+            </Show>
+          )}
+          <button
+            type="button"
+            class="settings-pill-button"
+            onClick={handleRefresh}
+            disabled={meta.loading}
+          >
+            {t("settings.info.updates.refresh")}
+          </button>
+        </div>
       </div>
 
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.info.diagnostics.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.info.diagnostics.subtitle")}</p>
+          </div>
+        </div>
+
+        <div class="settings-card-message">{t("settings.info.diagnostics.privacy")}</div>
+
+        <div class="settings-info-actions">
+          <button
+            type="button"
+            class="settings-pill-button"
+            onClick={handleCopy}
+          >
+            {t("settings.info.diagnostics.copy")}
+          </button>
+          <button
+            type="button"
+            class="settings-pill-button"
+            onClick={handleDownload}
+          >
+            {t("settings.info.diagnostics.download")}
+          </button>
+          <button
+            type="button"
+            class="settings-pill-button"
+            onClick={handleReportBug}
+          >
+            {t("settings.info.diagnostics.reportBug")}
+          </button>
+        </div>
+
+        {copyFeedback() === "success" && (
+          <div class="settings-info-toast" role="status" aria-live="polite">
+            {t("settings.info.diagnostics.copied")}
+          </div>
+        )}
+        {copyFeedback() === "error" && (
+          <div class="settings-error-message" role="alert">
+            {t("settings.info.diagnostics.copyFailed")}
+          </div>
+        )}
+      </div>
       <div class="settings-card">
         <div class="settings-card-header">
           <div class="settings-card-heading-with-icon">
@@ -273,8 +370,12 @@ export const InfoSettingsSection: Component = () => {
             <>
               <dl class="settings-info-grid">
                 <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.version.server")}</dt>
-                  <dd class="settings-info-value" dir="ltr">{serverMeta().serverVersion ?? "—"}</dd>
+                  <dt class="settings-info-label">{t("settings.info.server.os")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{getServerOperatingSystem(serverMeta())}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.arch")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{serverMeta().system?.arch ?? "—"}</dd>
                 </div>
                 <div class="settings-info-row">
                   <dt class="settings-info-label">{t("remoteAccess.sections.listeningMode.label")}</dt>
@@ -339,87 +440,6 @@ export const InfoSettingsSection: Component = () => {
         </Show>
       </div>
 
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div>
-            <h3 class="settings-card-title">{t("settings.info.updates.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.info.updates.subtitle")}</p>
-          </div>
-        </div>
-
-        <div class="settings-info-grid">
-          <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.version.server")}</span>
-            <span class="settings-info-value">{meta()?.serverVersion ?? "—"}</span>
-          </div>
-          <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.updates.latest")}</span>
-            <span class="settings-info-value settings-info-value-muted">
-              {latestVersion() ?? "—"}
-            </span>
-          </div>
-        </div>
-
-        <div class="settings-info-actions">
-          {showDownloadLink().show && (
-            <a
-              href={showDownloadLink().url!}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="settings-pill-button"
-            >
-              {t("settings.info.updates.download")}
-            </a>
-          )}
-          <button
-            type="button"
-            class="settings-pill-button"
-            onClick={handleRefresh}
-            disabled={meta.loading}
-          >
-            {t("settings.info.updates.refresh")}
-          </button>
-        </div>
-      </div>
-
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div>
-            <h3 class="settings-card-title">{t("settings.info.diagnostics.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.info.diagnostics.subtitle")}</p>
-          </div>
-        </div>
-
-        <div class="settings-card-message">{t("settings.info.diagnostics.privacy")}</div>
-
-        <div class="settings-info-actions">
-          <button
-            type="button"
-            class="settings-pill-button"
-            onClick={handleCopy}
-          >
-            {t("settings.info.diagnostics.copy")}
-          </button>
-          <button
-            type="button"
-            class="settings-pill-button"
-            onClick={handleDownload}
-          >
-            {t("settings.info.diagnostics.download")}
-          </button>
-        </div>
-
-        {copyFeedback() === "success" && (
-          <div class="settings-info-toast" role="status" aria-live="polite">
-            {t("settings.info.diagnostics.copied")}
-          </div>
-        )}
-        {copyFeedback() === "error" && (
-          <div class="settings-error-message" role="alert">
-            {t("settings.info.diagnostics.copyFailed")}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

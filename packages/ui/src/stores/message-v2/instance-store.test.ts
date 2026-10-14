@@ -3,7 +3,14 @@ import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
-import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
+import {
+  buildRecordDisplayData,
+  clearRecordDisplayCacheForInstance,
+  getRecordDisplayPartIds,
+  MESSAGE_PART_DISPLAY_LIMIT,
+  MESSAGE_PART_REVEAL_STEP,
+  revealHiddenRecordParts,
+} from "./record-display-cache.ts"
 import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
 import type { MessageInfo } from "../../types/message"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
@@ -19,9 +26,11 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(data.orderedParts.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(data.orderedParts[0]?.id, "part-0")
   assert.equal(data.orderedParts.at(-1)?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
-  assert.equal(data.truncated, true)
+  assert.equal(data.hiddenCount, 2)
+  assert.equal(data.gapIndex, MESSAGE_PART_DISPLAY_LIMIT / 2)
+  assert.equal(data.orderedParts[data.gapIndex]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + 2}`)
 
-  const displayPartIds = getRecordDisplayPartIds({
+  const displayPartIds = getRecordDisplayPartIds("bounded-parts", {
     id: "message", sessionId: "session", role: "assistant", status: "complete",
     createdAt: 1, updatedAt: 1, revision: 1, partIds,
     parts: {},
@@ -29,6 +38,36 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(displayPartIds[0], "part-0")
   assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+})
+
+it("reveals omitted parts in place and resets with the instance", () => {
+  const total = MESSAGE_PART_DISPLAY_LIMIT + MESSAGE_PART_REVEAL_STEP + 5
+  const partIds = Array.from({ length: total }, (_, index) => `part-${index}`)
+  const record = {
+    id: "message", sessionId: "session", role: "assistant" as const, status: "complete" as const,
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: Object.fromEntries(partIds.map((id) => [id, { id, revision: 1, data: { id, type: "text" as const, text: id } }])),
+  }
+  const initial = buildRecordDisplayData("revealed-parts", record)
+  assert.equal(initial.hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
+  assert.equal(initial.hiddenStart, MESSAGE_PART_DISPLAY_LIMIT / 2)
+
+  revealHiddenRecordParts("revealed-parts", "message")
+  const partial = buildRecordDisplayData("revealed-parts", record)
+  assert.notEqual(partial, initial, "revealing must invalidate the cached projection")
+  assert.equal(partial.hiddenCount, 5)
+  assert.equal(partial.orderedParts.length, total - 5)
+  assert.equal(partial.orderedParts[partial.gapIndex - 1]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + MESSAGE_PART_REVEAL_STEP - 1}`)
+  assert.equal(partial.orderedParts[partial.gapIndex]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + MESSAGE_PART_REVEAL_STEP + 5}`)
+
+  revealHiddenRecordParts("revealed-parts", "message")
+  const complete = buildRecordDisplayData("revealed-parts", record)
+  assert.equal(complete.hiddenCount, 0)
+  assert.deepEqual(complete.orderedParts.map((part) => part.id), partIds)
+  assert.deepEqual(getRecordDisplayPartIds("revealed-parts", record), partIds)
+
+  clearRecordDisplayCacheForInstance("revealed-parts")
+  assert.equal(buildRecordDisplayData("revealed-parts", record).hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
 })
 
 describe("message window replacement authority", () => {
@@ -191,18 +230,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.clearInstance()
   })
 
-  it("clears pending parts omitted by authoritative hydration", () => {
-    const store = createInstanceMessageStore("pending-cleanup")
-    store.hydrateMessages("session-1", [{ id: "old", sessionId: "session-1", role: "assistant", status: "complete" }])
-    store.bufferPendingPart({ messageId: "old", sessionId: "session-1", part: { type: "text", text: "pending" } as any, receivedAt: 1 })
-
-    store.hydrateMessages("session-1", [{ id: "current", sessionId: "session-1", role: "user", status: "complete" }])
-
-    assert.equal(store.state.pendingParts.old, undefined)
-    assert.deepEqual(store.getSessionMessageIds("session-1"), ["current"])
-    store.clearInstance()
-  })
-
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
@@ -266,7 +293,33 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.deepEqual(record?.clientPromptDisplayMetadata, displayMetadata, "metadata survives the same-id confirmation")
   })
 
-  it("retains client part identity through a metadata-only same-id snapshot", () => {
+  it("carries pending-send identity and display metadata through message ID replacement", () => {
+    const store = createInstanceMessageStore("replacement")
+    const metadata = { segments: [{ kind: "pasted" as const, length: 5 }] }
+    store.upsertMessage({
+      id: "temporary", sessionId: "session", role: "user", status: "sending", isEphemeral: true,
+      parts: [{ id: "client-part", type: "text", text: "hello" } as any], clientPromptDisplayMetadata: metadata,
+    })
+    store.markSendPending("temporary")
+    store.replaceMessageId({ oldId: "temporary", newId: "confirmed" })
+    store.reconcileEmptyAuthoritativeSnapshot("session")
+
+    assert.equal(store.getMessage("temporary"), undefined)
+    assert.deepEqual(store.getSessionMessageIds("session"), ["confirmed"])
+    assert.equal(store.hasPendingSends("session"), true)
+    assert.deepEqual(store.getMessage("confirmed")?.clientPromptDisplayMetadata, metadata)
+
+    store.hydrateMessages("session", [{
+      id: "confirmed", sessionId: "session", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-part", type: "text", text: "hello" } as any],
+    }])
+    assert.equal(store.hasPendingSends("session"), false)
+    assert.deepEqual(store.getMessage("confirmed")?.partIds, ["server-part"])
+    assert.deepEqual(store.getMessage("confirmed")?.clientPromptDisplayMetadata, metadata)
+    store.clearInstance()
+  })
+
+  it("retains client parts through a metadata-only snapshot until authoritative parts replace them", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.upsertMessage({
@@ -278,13 +331,14 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       { id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false },
     ])
 
-    store.confirmServerMessage("msg-1", { clearOptimisticParts: true })
-    store.applyPartUpdate({
-      messageId: "msg-1",
-      part: { id: "server-part", type: "text", text: "hello" } as any,
-    })
+    assert.deepEqual(store.getMessage("msg-1")?.partIds, ["client-part"])
+    store.hydrateMessages("session-1", [{
+      id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-part", type: "text", text: "hello" } as any],
+    }])
 
     assert.deepEqual(store.getMessage("msg-1")?.partIds, ["server-part"])
+    assert.equal(store.hasPendingSends("session-1"), false)
   })
 
   it("dedupes repeated snapshot ids so messageIds never repeat", () => {
@@ -363,16 +417,16 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.reconcileEmptyAuthoritativeSnapshot("session-1")
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-accepted"])
 
-    store.confirmServerMessage("msg-accepted", { clearOptimisticParts: true })
-    store.applyPartUpdate({
-      messageId: "msg-accepted",
-      part: { id: "server-part", type: "text", text: "hello", synthetic: false } as any,
-    })
+    store.hydrateMessages("session-1", [{
+      id: "msg-accepted", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-part", type: "text", text: "hello", synthetic: false } as any],
+    }])
     assert.deepEqual(store.getMessage("msg-accepted")?.partIds, ["server-part"])
     assert.equal(store.getMessage("msg-accepted")?.isEphemeral, false)
+    assert.equal(store.hasPendingSends("session-1"), false)
   })
 
-  it("clears only client-created parts when the server confirms a send", () => {
+  it("replaces client parts with the authoritative snapshot without discarding server synthetic parts", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.upsertMessage({
@@ -380,14 +434,14 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       parts: [{ id: "client-part", type: "text", text: "hello", synthetic: true } as any], isEphemeral: true,
     })
     store.markSendPending("msg-1")
-    store.applyPartUpdate({
-      messageId: "msg-1",
-      part: { id: "server-synthetic", type: "text", text: "server", synthetic: true } as any,
-    })
-
-    store.confirmServerMessage("msg-1", { clearOptimisticParts: true })
+    store.hydrateMessages("session-1", [{
+      id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-synthetic", type: "text", text: "server", synthetic: true } as any],
+    }])
 
     assert.deepEqual(store.getMessage("msg-1")?.partIds, ["server-synthetic"])
+    assert.equal((store.getMessage("msg-1")?.parts["server-synthetic"]?.data as any).synthetic, true)
+    assert.equal(store.hasPendingSends("session-1"), false)
   })
 
   it("drops an unconfirmed accepted send once idle message authority settles", () => {
@@ -416,7 +470,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       id: "msg-stale", sessionID: "session-1", role: "assistant", time: { created: 1 },
       tokens: { input: 2, output: 3, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 1,
     } as any])
-    store.bufferPendingPart({ messageId: "msg-stale", part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
     store.upsertPermission({
       permission: { id: "permission-stale", sessionID: "session-1", action: "edit", resources: [] },
       messageId: "msg-stale",
@@ -434,7 +487,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-inflight"], "stale records cleared, in-flight send preserved")
     assert.equal(store.getMessage("msg-stale"), undefined)
-    assert.equal(store.state.pendingParts["msg-stale"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-stale"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
@@ -451,7 +503,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       id: "msg-old", sessionID: "session-1", role: "assistant", time: { created: 1 },
       tokens: { input: 2, output: 3, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 1,
     } as any])
-    store.bufferPendingPart({ messageId: "msg-old", part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
     store.upsertPermission({
       permission: { id: "permission-old", sessionID: "session-1", action: "edit", resources: [] },
       messageId: "msg-old",
@@ -465,7 +516,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-new"])
     assert.equal(store.getMessage("msg-old"), undefined)
-    assert.equal(store.state.pendingParts["msg-old"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-old"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)

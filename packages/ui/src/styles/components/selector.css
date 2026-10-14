@@ -83,7 +83,7 @@
 .selector-popover {
   @apply overflow-hidden min-w-[300px];
   margin-block: var(--space-xs);
-  background-color: var(--surface-control);
+  background-color: var(--surface-overlay);
   border: 1px solid var(--border-base);
   z-index: 2200;
 }
@@ -97,7 +97,7 @@
   @apply w-full px-3 text-xs border outline-none transition-colors;
   min-height: var(--control-height);
   border-radius: 0;
-  background-color: var(--surface-control);
+  background-color: var(--surface-field);
   border-color: var(--border-base);
   color: var(--text-primary);
 }
@@ -113,7 +113,7 @@
 
 .selector-listbox {
   @apply max-h-64 overflow-auto p-1;
-  background-color: var(--surface-control);
+  background-color: var(--surface-overlay);
 }
 
 .selector-option {
@@ -126,17 +126,14 @@
 .selector-option:hover,
 .selector-option[data-highlighted],
 .selector-option[data-focused] {
-  background-color: var(--selection-highlight-bg);
+  background-color: var(--menu-item-hover-bg);
 }
 
 .selector-option[data-selected],
-.selector-option-selected {
-  background-color: var(--selection-highlight-strong-bg);
-}
-
+.selector-option-selected,
 .selector-option[data-selected]:hover,
 .selector-option-selected:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--menu-item-selected-bg);
 }
 
 .selector-option-content {
@@ -213,7 +210,7 @@
 .selector-favorites-toggle {
   @apply p-2 border transition-colors flex items-center justify-center;
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   border-color: var(--border-base);
   color: var(--text-muted);
 }
@@ -238,7 +235,7 @@
 .selector-footer {
   @apply border-t;
   border-color: var(--border-base);
-  background-color: var(--surface-control);
+  background-color: var(--surface-overlay);
   position: relative;
   z-index: 1;
 }
@@ -299,7 +296,7 @@
   @apply flex-1 px-2 text-sm border outline-none transition-colors;
   min-height: var(--control-height);
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-field);
   border-color: var(--border-base);
   color: var(--text-primary);
 }
@@ -338,13 +335,13 @@
 }
 
 .selector-button-secondary {
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   color: var(--text-primary);
   border-color: var(--border-base);
 }
 
 .selector-button-secondary:hover:not(:disabled) {
-  background-color: var(--surface-secondary);
+  background-color: var(--surface-interactive-hover);
   border-color: var(--border-base);
   color: var(--text-primary);
 }

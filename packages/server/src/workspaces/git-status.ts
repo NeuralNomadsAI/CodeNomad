@@ -5,6 +5,7 @@ import type { GitChangeKind, WorktreeGitDiffResponse, WorktreeGitDiffScope, Work
 import type { LogLike } from "./git-worktrees"
 import { normalizeGitWorktreeRelativePath } from "./git-mutations"
 import { runGitProcess } from "./git-process"
+import { gitImageMime, readGitImageBlob, readWorktreeImage } from "./git-image-preview"
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
@@ -24,11 +25,11 @@ async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingO
   return result.stdout
 }
 
-async function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
+async function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0], priority: "foreground" | "background" = "background"): Promise<GitResult> {
   try {
     // Preserve the previous streaming reader's unrestricted content size. Process
     // creation belongs to the worker, including per-untracked-file numstat reads.
-    return { ok: true, stdout: await runGitProcess(cwd, args, { maxBuffer: Infinity }) }
+    return { ok: true, stdout: await runGitProcess(cwd, args, { maxBuffer: Infinity, priority }) }
   } catch (cause) {
     const result = cause as Error & { code?: string | number; stdout?: string; stderr?: string }
     const stdout = result.stdout ?? "", stderr = result.stderr ?? ""
@@ -196,20 +197,27 @@ function applyNumstatOutput(
   }
 }
 
+// Reads with and without whitespace detection return different inventories.
+const gitStatusRequestKey = (workspaceFolder: string, hideWhitespace: boolean) => `${hideWhitespace ? "w" : "-"}:${workspaceFolder}`
+
 export async function getWorktreeGitStatus(params: {
   workspaceFolder: string
   logger?: LogLike
+  hideWhitespace?: boolean
 }, run: RunGit = runGit): Promise<WorktreeGitStatusEntry[]> {
   const workspaceFolder = await realpath(params.workspaceFolder)
+  const hideWhitespace = params.hideWhitespace === true
+  const key = gitStatusRequestKey(workspaceFolder, hideWhitespace)
   const generation = gitStatusGenerations.get(workspaceFolder) ?? 0
-  const pending = gitStatusRequests.get(workspaceFolder)
+  const pending = gitStatusRequests.get(key)
   if (pending?.generation === generation) return pending.request
 
-  const request = readWorktreeGitStatus({ ...params, workspaceFolder }, run).finally(() => {
-    if (gitStatusRequests.get(workspaceFolder)?.request === request) gitStatusRequests.delete(workspaceFolder)
-    if (!gitStatusRequests.has(workspaceFolder)) gitStatusGenerations.delete(workspaceFolder)
+  const request = readWorktreeGitStatus({ ...params, workspaceFolder, hideWhitespace }, run).finally(() => {
+    if (gitStatusRequests.get(key)?.request === request) gitStatusRequests.delete(key)
+    if (!gitStatusRequests.has(gitStatusRequestKey(workspaceFolder, true))
+      && !gitStatusRequests.has(gitStatusRequestKey(workspaceFolder, false))) gitStatusGenerations.delete(workspaceFolder)
   })
-  gitStatusRequests.set(workspaceFolder, { generation, request })
+  gitStatusRequests.set(key, { generation, request })
   return request
 }
 
@@ -218,17 +226,46 @@ export async function invalidateWorktreeGitStatus(workspaceFolder: string): Prom
   gitStatusGenerations.set(canonicalDirectory, (gitStatusGenerations.get(canonicalDirectory) ?? 0) + 1)
 }
 
+/**
+ * Flags unstaged edits of tracked text files that `git diff --ignore-all-space`
+ * omits entirely: Git drops a file from that numstat when its content differs
+ * only by whitespace (including CR and a missing final newline) and its mode is
+ * unchanged. Any listed record stays visible, even `0 0`: Git lists mode changes
+ * and unmerged paths that way, and older Git versions list every whitespace-only
+ * file that way, so those simply never hide (fail-open). Binary (`-`),
+ * untracked, added/deleted/renamed, unmerged and staged changes are never flagged.
+ */
+function applyUnstagedWhitespaceOnly(map: Map<string, WorktreeGitStatusEntry>, ignoreAllSpaceNumstat: string) {
+  const listed = new Set<string>()
+  for (const record of ignoreAllSpaceNumstat.split("\0")) {
+    const parts = record.split("\t")
+    if (parts.length >= 3) listed.add(normalizeGitStatusPath(parts.slice(2).join("\t")))
+  }
+  for (const entry of map.values()) {
+    if (entry.unstagedStatus !== "modified" || entry.stagedStatus === "unmerged") continue
+    if (entry.unstagedAdditions + entry.unstagedDeletions === 0) continue
+    entry.unstagedWhitespaceOnly = !listed.has(entry.path)
+  }
+}
+
 async function readWorktreeGitStatus(params: {
   workspaceFolder: string
   logger?: LogLike
+  hideWhitespace: boolean
 }, run: RunGit): Promise<WorktreeGitStatusEntry[]> {
-  const { workspaceFolder, logger } = params
-  const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult] = await Promise.all([
+  const { workspaceFolder, logger, hideWhitespace } = params
+  const unstagedNumstat = run(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder)
+  const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult, whitespaceResult] = await Promise.all([
     run(["diff", "--name-status", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
     run(["diff", "--name-status", "-z", "--find-renames", "--find-copies"], workspaceFolder),
     run(["ls-files", "--others", "--exclude-standard"], workspaceFolder),
     run(["diff", "--numstat", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
-    run(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder),
+    unstagedNumstat,
+    // One extra bounded worker read, only when the display option asks for it.
+    // It starts after the unstaged numstat, so a write between the two reads can
+    // only make the hidden state follow the newer file content: real content
+    // read later is listed (visible), never hidden by an older whitespace read.
+    hideWhitespace ? unstagedNumstat.then(() => run(["diff", "--numstat", "-z", "--ignore-all-space"], workspaceFolder)) : undefined,
   ])
 
   for (const result of [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult]) {
@@ -250,6 +287,9 @@ async function readWorktreeGitStatus(params: {
   applyUntrackedOutput(entries, untrackedOutput)
   applyNumstatOutput(entries, stagedNumstatOutput, "staged")
   applyNumstatOutput(entries, unstagedNumstatOutput, "unstaged")
+  if (whitespaceResult?.ok) applyUnstagedWhitespaceOnly(entries, whitespaceResult.stdout)
+  // Detection is a display aid: on failure every change stays visible.
+  else if (whitespaceResult) logger?.warn?.({ workspaceFolder, err: whitespaceResult.error }, "Failed to detect whitespace-only git changes")
   await applyUntrackedFileStats(entries, workspaceFolder)
 
   return Array.from(entries.values()).sort((a, b) => a.path.localeCompare(b.path))
@@ -271,7 +311,7 @@ function decodeGitShowResult(result: GitResult, missingOk = false): string {
 }
 
 async function readGitIndexBlob(workspaceFolder: string, normalizedPath: string): Promise<GitResult> {
-  return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder)
+  return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder, [0], "foreground")
 }
 
 async function getTrackedDiffMetadata(params: {
@@ -290,7 +330,7 @@ async function getTrackedDiffMetadata(params: {
     args.push(params.normalizedOriginalPath)
   }
 
-  const result = await runGit(args, params.workspaceFolder)
+  const result = await runGit(args, params.workspaceFolder, [0], "foreground")
   if (!result.ok) {
     throw result.error
   }
@@ -304,7 +344,7 @@ async function getUntrackedDiffMetadata(params: {
   normalizedPath: string
 }): Promise<{ isBinary: boolean }> {
   const absolutePath = path.join(params.workspaceFolder, params.normalizedPath)
-  const result = await runGit(["diff", "--numstat", "--no-index", "--", "/dev/null", absolutePath], params.workspaceFolder, [0, 1])
+  const result = await runGit(["diff", "--numstat", "--no-index", "--", "/dev/null", absolutePath], params.workspaceFolder, [0, 1], "foreground")
   if (!result.ok) {
     throw result.error
   }
@@ -348,6 +388,20 @@ export async function getWorktreeGitDiff(params: {
         })
       : trackedMetadata
 
+  const mime = gitImageMime(normalizedPath)
+  if (mime) {
+    let before = await readGitImageBlob(params.workspaceFolder, params.scope === "staged"
+      ? `HEAD:${normalizedOriginalPath ?? normalizedPath}` : `:${normalizedPath}`)
+    if (before === null && params.scope === "unstaged" && normalizedOriginalPath) {
+      before = await readGitImageBlob(params.workspaceFolder, `:${normalizedOriginalPath}`)
+    }
+    const after = params.scope === "staged"
+      ? await readGitImageBlob(params.workspaceFolder, `:${normalizedPath}`)
+      : await readWorktreeImage(params.workspaceFolder, normalizedPath)
+    return { path: normalizedPath, originalPath: normalizedOriginalPath, scope: params.scope,
+      before: "", after: "", isBinary: true, image: { mime, before, after } }
+  }
+
   if (diffMetadata.isBinary) {
     return {
       path: normalizedPath,
@@ -361,7 +415,7 @@ export async function getWorktreeGitDiff(params: {
 
   if (params.scope === "staged") {
     const [beforeResult, afterResult] = await Promise.all([
-      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder), true),
+      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder, [0], "foreground"), true),
       readGitBlobAsDiffText(readGitIndexBlob(params.workspaceFolder, normalizedPath), true),
     ])
 

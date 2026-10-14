@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { HostOpenCodeService, hostOpenCodeServiceIdentity } from "./host-opencode-service"
+import { HostOpenCodeService, daemonProcessEnvironment, hostOpenCodeServiceIdentity } from "./host-opencode-service"
 import type { OpenCodeCliServiceDependencies, ServiceExecOptions } from "./opencode-cli-service"
 import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../api-types"
 import { runtimeIdentity } from "../opencode/compatibility/runtime"
@@ -25,6 +25,29 @@ describe("HostOpenCodeService", () => {
     assert.equal(delegated, 1)
     assert.deepEqual(calls.map(call => call.args), [["service", "stop"], ...stoppedDiscovery, ["service", "start"], ["service", "get", "password"]])
     assert.equal(calls[0].options.env, undefined)
+  })
+
+  it("never hands the desktop profile scope or backend hand-offs to the shared daemon", () => {
+    const keys = ["CODENOMAD_UPDATE_CHANNEL", "CODENOMAD_PROFILE_CONFIG_IDENTITY", "CODENOMAD_DESKTOP_PROFILE",
+      "CODENOMAD_PROFILE", "CLI_CONFIG", "CODENOMAD_NATIVE_PARENT", "ELECTRON_RUN_AS_NODE", "OPENCODE_DB"]
+    const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+    try {
+      process.env.CODENOMAD_UPDATE_CHANNEL = "stable"
+      process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY = "owned-config.yaml"
+      process.env.CODENOMAD_DESKTOP_PROFILE = "dev-v2"
+      process.env.CLI_CONFIG = "/owned/config.yaml"
+      process.env.CODENOMAD_NATIVE_PARENT = "1"
+      process.env.ELECTRON_RUN_AS_NODE = "1"
+      const environment = daemonProcessEnvironment({ FIXTURE: "kept", CODENOMAD_PROFILE: "team", OPENCODE_DB: "/x.db" })
+      for (const key of keys) assert.equal(environment[key], undefined, key)
+      assert.equal(environment.FIXTURE, "kept")
+      assert.equal(environment.PATH ?? environment.Path, process.env.PATH ?? process.env.Path)
+    } finally {
+      for (const key of keys) {
+        if (saved[key] === undefined) delete process.env[key]
+        else process.env[key] = saved[key]
+      }
+    }
   })
 
   it("uses status, start, and password through buildSpawnSpec without a shell", async () => {

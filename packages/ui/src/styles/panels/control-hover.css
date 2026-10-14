@@ -1,17 +1,27 @@
-/* These controls rest on the base canvas, not the generic panel surface.
+/* These controls rest flush on the reading canvas, not the generic panel surface.
    Keep that canvas and add the same local overlay as message/session rows. */
-.files-toggle-button:hover,
 .files-header-icon-button:hover,
-.git-change-row-action:hover,
 .file-viewer-toolbar-icon-button:hover,
 .file-viewer-toolbar-button:hover,
 .git-change-commit-button:hover:not(:disabled),
 .git-change-commit-button-overlay:hover {
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 .git-change-section-header:hover {
   background-color: var(--surface-secondary);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
+
+/* Keep selected backgrounds intact and share the same subtle local rollover
+   across Files modes and their inline/overflow controls. */
+.workspace-tree-row:hover,
+.workspace-tree-row:focus-within,
+.git-panel-file-row:hover,
+.git-panel-file-row:focus-within,
+.file-row-icon-button:hover:not(:disabled),
+.file-row-icon-button:focus-visible:not(:disabled),
+.git-panel button:not(.git-panel-file-main):hover:not(:disabled) {
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }

@@ -1,0 +1,33 @@
+.hotkeys-settings { min-width: 0; container: hotkeys-settings / inline-size; }
+.hotkeys-toolbar { gap: var(--space-sm); flex-wrap: wrap; }
+.hotkeys-filter, .hotkeys-capture {
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-field);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  font: inherit;
+}
+.hotkeys-filter { flex: 1; }
+.hotkeys-capture { width: 100%; }
+.hotkeys-filter:focus-visible, .hotkeys-capture:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+.hotkeys-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 12rem) auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  border-bottom: 1px solid var(--border-base);
+}
+.hotkeys-action { min-width: 0; overflow-wrap: anywhere; }
+.hotkeys-binding { font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.hotkeys-actions { flex-wrap: wrap; gap: var(--space-xs); }
+.hotkeys-warning { margin: var(--space-xs) 0 0; font-size: var(--font-size-sm); color: var(--status-warning); }
+@container hotkeys-settings (max-width: 600px) {
+  .hotkeys-row { grid-template-columns: minmax(0, 1fr) minmax(7rem, 1fr); }
+  .hotkeys-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}

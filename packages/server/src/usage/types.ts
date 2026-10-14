@@ -13,13 +13,16 @@ export interface ProviderResult {
   usage: ProviderUsage | null
   fetchedAt: number
   error?: string
+  /** Upstream HTTP status of a failed read; server-only, never serialized. */
+  status?: number
 }
 
 export interface UsageProvider {
   id: string
   name: string
   aliases: readonly string[]
-  fetchQuota: () => Promise<ProviderResult>
+  /** `auth` holds each integration's selected credential in the legacy auth.json entry shape. */
+  fetchQuota: (auth: AuthFile) => Promise<ProviderResult>
 }
 
 export type AuthEntry = Record<string, unknown>

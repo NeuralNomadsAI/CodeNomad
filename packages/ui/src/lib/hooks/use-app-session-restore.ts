@@ -1,4 +1,4 @@
-import { onCleanup, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { getLogger } from "../logger"
 import { isWebHost } from "../runtime-env"
 import { useAppSessionCapture, type AppSessionCaptureController } from "./use-app-session-capture"
@@ -13,7 +13,7 @@ import {
 } from "../../stores/app-session-reconciliation"
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
-  activeAppTabId, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
+  activeAppTabId, appTabs, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
   getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
 import {
@@ -27,6 +27,8 @@ import {
 import { runWithSerializedCommits } from "../../stores/app-session-restore-queue"
 import { shouldWaitForSavedSessionList } from "../../stores/app-session-restore-readiness"
 import { waitForSettledPrerequisite } from "../trailing-resync"
+import { HttpResponseError } from "../retryable-file-search"
+import { registerOpenCodeRestoreRecovery } from "../../stores/opencode-setup"
 const log = getLogger("actions")
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
 const OPERATION_TIMEOUT_MS = 30_000
@@ -38,12 +40,13 @@ function startupTimeout(snapshot: RestorableSessionState): number {
   return Math.max(MINIMUM_STARTUP_TIMEOUT_MS,
     INITIAL_LOAD_TIMEOUT_MS + Math.max(1, workspaceCount) * (CREATE_TIMEOUT_MS + CLEANUP_TIMEOUT_MS) + 5_000)
 }
-function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController) {
+function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController, onUpdateRequired: () => void) {
   const orderRevision = appTabOrderRevision()
   const selectionRevision = appTabSelectionRevision()
   let ownedActiveTabId: string | null = null
   return {
-    snapshot, signal, capture,
+    snapshot, signal, capture, onUpdateRequired,
+    deferredWorkspaces: new Map<number, () => boolean>(),
     selectActive(tabId: string | null, requested: boolean) {
       if (appTabSelectionRevision() !== selectionRevision) return
       const current = activeAppTabId()
@@ -59,10 +62,14 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
   }
 }
 type RestoreContext = ReturnType<typeof createRestoreContext>
+function hasLocalRestoredTab(capture: AppSessionCaptureController, index: number): boolean {
+  const tabId = capture.restoredTabIds()[index]
+  return Boolean(tabId && appTabs().some(tab => tab.id === tabId))
+}
 const waitForWorkspaceMountAdoption = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
-async function restoreTabs(context: RestoreContext): Promise<void> {
+async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>): Promise<void> {
   const { snapshot, signal, capture } = context
-  const sidecars = snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
+  const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
   try {
     await runAbortable(async (operationSignal) => {
       await waitForInitialWorkspaceLoad(operationSignal)
@@ -77,19 +84,22 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
      : { kind: tab.kind }), Array.from(instances().values())
        .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
+    .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !hasLocalRestoredTab(capture, match.tabIndex)))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
-  existing.forEach(({ tabIndex, existingWorkspaceId }) => {
-    const tab = snapshot.tabs[tabIndex]
-    if (tab?.kind === "workspace") seedRestoredWorkspaceState(existingWorkspaceId!, tab)
-    capture.recordRestoredTab(tabIndex, getInstanceAppTabId(existingWorkspaceId!))
-    attachInstanceTab(existingWorkspaceId!, { source: "restore" })
+  batch(() => {
+    existing.forEach(({ tabIndex, existingWorkspaceId }) => {
+      const tab = snapshot.tabs[tabIndex]
+      if (tab?.kind === "workspace") seedRestoredWorkspaceState(existingWorkspaceId!, tab)
+      capture.recordRestoredTab(tabIndex, getInstanceAppTabId(existingWorkspaceId!))
+      attachInstanceTab(existingWorkspaceId!, { source: "restore" })
+    })
+    context.applyOrder()
+    const requestedId = capture.restoredTabIds()[snapshot.activeTabIndex]
+    if (requestedId && hasLocalRestoredTab(capture, snapshot.activeTabIndex)) context.selectActive(requestedId, true)
+    else if (existing[0]) context.selectActive(getInstanceAppTabId(existing[0].existingWorkspaceId!), false)
   })
   const claimedIds = new Set(existing.map(({ existingWorkspaceId }) => existingWorkspaceId!))
-  context.applyOrder()
-  const restoredIds = capture.restoredTabIds()
-  const requestedId = restoredIds[snapshot.activeTabIndex]
-  if (requestedId) context.selectActive(requestedId, true)
   const restoreWorkspace = async (
     match: (typeof matches)[number],
     waitForCreateCommit?: Promise<void>,
@@ -98,14 +108,17 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     if (signal.aborted) return
     const tab = snapshot.tabs[match.tabIndex]
     if (!tab || tab.kind !== "workspace") return
-    const canCommitCreation = capture.createRestoredTabCommitGuard(match.tabIndex)
+    const canCommitCreation = retryIndexes?.get(match.tabIndex) ?? capture.createRestoredTabCommitGuard(match.tabIndex)
+    if (!canCommitCreation()) return
+    let workspaceOpened = false
     try {
       const binding = await runAbortable(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
         const create = () => createInstance(tab.folder, tab.projectName, {
           signal: operationSignal,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
-          shouldCreateCommit: canCommitCreation,
+          shouldCreateCommit: id => canCommitCreation() && (!hasLocalRestoredTab(capture, match.tabIndex)
+            || capture.restoredTabIds()[match.tabIndex] === getInstanceAppTabId(id)),
           onBeforeCreateCommit: (id) => seedRestoredWorkspaceState(id, tab),
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
@@ -115,19 +128,23 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         const id = existingId ?? creation?.instanceId ?? null
         if (!id) return null
         claimedIds.add(id)
-        attachInstanceTab(id, { source: "restore" })
-        context.applyOrder()
         const tabId = getInstanceAppTabId(id)
         // Project selection belongs to the restored tab binding, not to the
         // slower conversation hydration (which can also settle in capture).
-        if (match.tabIndex === snapshot.activeTabIndex
-          && capture.restoredTabIds()[match.tabIndex] === tabId) context.selectActive(tabId, true)
+        batch(() => {
+          attachInstanceTab(id, { source: "restore" })
+          context.applyOrder()
+          // Do not let automatic fallback masquerade as user selection between
+          // attaching a recovered tab and restoring the saved active project.
+          if (capture.restoredTabIds()[match.tabIndex] === tabId) context.selectActive(tabId, match.tabIndex === snapshot.activeTabIndex)
+        })
         return { id, tabId, requestId: creation?.requestId }
       }, {
         timeoutMs: match.existingWorkspaceId ? OPERATION_TIMEOUT_MS : CREATE_TIMEOUT_MS,
         message: `Timed out restoring workspace ${tab.folder}`, signal,
       })
       if (!binding) return
+      workspaceOpened = true
       const { id, tabId, requestId } = binding
       const isCurrentBinding = () => capture.hasRestoredTabBinding(match.tabIndex, tabId)
       if (!isCurrentBinding()) return
@@ -158,6 +175,13 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         message: `Timed out restoring sessions for ${tab.folder}`, signal,
       })
     } catch (error) {
+      // Only a definitive runtime refusal before a tab was bound is retryable.
+      // Timeouts, lost replies and later hydration failures are never replayed.
+      if (!signal.aborted && !workspaceOpened && !hasLocalRestoredTab(capture, match.tabIndex)
+        && error instanceof HttpResponseError && error.status === 426 && error.message === "opencode_update_required") {
+        context.deferredWorkspaces.set(match.tabIndex, canCommitCreation)
+        context.onUpdateRequired()
+      }
       if (!signal.aborted) log.warn("Skipped workspace while restoring app session", { folder: tab.folder, error })
     }
   }
@@ -187,17 +211,51 @@ export function useAppSessionRestore(): void {
   const capture = useAppSessionCapture()
   const controller = new AbortController()
   let disposed = false
+  let context: RestoreContext | undefined
+  let initialRestore = Promise.resolve()
+  let recovering: Promise<void> | undefined
+  let unregisterRecovery = () => {}
+  const canRecover = () => !disposed && clientStateIsPrimary() && restorePreviousStateEnabled() && Boolean(loadedRestorableSession())
+  const resumeRestoration = (): Promise<void> => {
+    // A new explicit Continue may consume a fresh refusal while a sibling is
+    // still recovering. Process that request after the current pass, not as a
+    // join that would silently lose the consumed continuation.
+    if (recovering) return recovering.then(resumeRestoration)
+    return recovering = (async () => {
+      // Collect all concurrent refusals, even if setup finishes during startup.
+      await initialRestore
+      // Late refusals from that pass may have re-registered this continuation
+      // after setup consumed it. Drain them before a retry can offer new work.
+      unregisterRecovery()
+      if (!context || !canRecover()) return
+      const retryIndexes = new Map([...context.deferredWorkspaces]
+        .filter(([index, current]) => current() && !hasLocalRestoredTab(capture, index))
+        .map(([index, current]) => [index, () => canRecover() && current()] as const))
+      context.deferredWorkspaces.clear()
+      if (!retryIndexes.size) return
+      await runAbortable(async signal => {
+        await restoreTabs({ ...context!, signal }, retryIndexes)
+        if (!signal.aborted) context!.applyOrder()
+      }, { signal: controller.signal, timeoutMs: startupTimeout(context.snapshot) })
+    })().catch(error => {
+      if (!disposed) log.error("Failed to resume saved workspaces after OpenCode setup", error)
+    }).finally(() => { recovering = undefined })
+  }
+  const offerRecovery = () => {
+    unregisterRecovery()
+    unregisterRecovery = registerOpenCodeRestoreRecovery(resumeRestoration)
+  }
   onMount(() => {
     const snapshot = loadedRestorableSession()
     const shouldRestore = shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)
     setShowFolderSelection(snapshot?.homeActive === true)
-    void (async () => {
+    initialRestore = (async () => {
       try {
         await capture.ready
         if (!shouldRestore) return capture.start()
         capture.start(snapshot!)
         await runAbortable(async (signal) => {
-          const context = createRestoreContext(snapshot!, signal, capture)
+          context = createRestoreContext(snapshot!, signal, capture, offerRecovery)
           await restoreTabs(context)
           if (signal.aborted) return
           context.applyOrder()
@@ -216,6 +274,7 @@ export function useAppSessionRestore(): void {
   })
   onCleanup(() => {
     disposed = true
+    unregisterRecovery()
     controller.abort(new Error("App session restore disposed"))
     releaseAppSessionRestoreGate()
   })

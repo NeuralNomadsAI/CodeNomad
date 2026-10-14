@@ -1,12 +1,7 @@
+import { matchesHotkey } from "./hotkeys"
+
 export interface KeyboardShortcut {
   id: string
-  key: string
-  modifiers: {
-    ctrl?: boolean
-    meta?: boolean
-    shift?: boolean
-    alt?: boolean
-  }
   handler: () => void
   description: string
   context?: "global" | "input" | "messages"
@@ -30,7 +25,7 @@ class KeyboardRegistry {
 
   findMatch(event: KeyboardEvent): KeyboardShortcut | null {
     for (const shortcut of this.shortcuts.values()) {
-      if (this.matches(event, shortcut)) {
+      if (matchesHotkey(shortcut.id, event)) {
         if (shortcut.context === "input" && !this.isInputFocused()) continue
         if (shortcut.context === "messages" && this.isInputFocused()) continue
 
@@ -40,20 +35,6 @@ class KeyboardRegistry {
       }
     }
     return null
-  }
-
-  private matches(event: KeyboardEvent, shortcut: KeyboardShortcut): boolean {
-    const shortcutKey = shortcut.key.toLowerCase()
-    const eventKey = event.key ? event.key.toLowerCase() : ""
-    const eventCode = event.code ? event.code.toLowerCase() : ""
-
-    const keyMatch = eventKey === shortcutKey || eventCode === shortcutKey
-    const ctrlMatch = event.ctrlKey === (shortcut.modifiers.ctrl ?? false)
-    const metaMatch = event.metaKey === (shortcut.modifiers.meta ?? false)
-    const shiftMatch = event.shiftKey === (shortcut.modifiers.shift ?? false)
-    const altMatch = event.altKey === (shortcut.modifiers.alt ?? false)
-
-    return keyMatch && ctrlMatch && metaMatch && shiftMatch && altMatch
   }
 
   private isInputFocused(): boolean {

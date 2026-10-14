@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-data-profiles-delete-others"
+description = "Enables the data_profiles_delete_others command without any pre-configured scope."
+commands.allow = ["data_profiles_delete_others"]
+
+[[permission]]
+identifier = "deny-data-profiles-delete-others"
+description = "Denies the data_profiles_delete_others command without any pre-configured scope."
+commands.deny = ["data_profiles_delete_others"]

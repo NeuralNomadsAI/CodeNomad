@@ -18,13 +18,17 @@ function deferred<T>() {
 
 function fixture(instanceId: string) {
   let sequence = 0
+  let idleApplied = false
   let resynced: ReturnType<typeof applyOpenCodeDataEvent> | undefined
   const projected = deferred<void>()
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>) => projectOpenCodeMessages(instanceId, sessionId, data)
   const emit = (type: string, data: Record<string, unknown> = {}) => {
     const created = ++sequence
     const event = { id: `event-${created}`, type, created, data: { sessionID: sessionId, ...data } } as OpenCodeEvent
-    const result = applyOpenCodeDataEvent(instanceId, "/work", event, project, next => {
+    const result = applyOpenCodeDataEvent(instanceId, "/work", event, next => {
+      project(next)
+      if (type === "session.idle") idleApplied = true
+    }, next => {
       resynced = next
       projectOpenCodeMessages(instanceId, sessionId, next, false)
       projected.resolve()
@@ -35,6 +39,7 @@ function fixture(instanceId: string) {
   }
   return {
     emit, projected,
+    get idleApplied() { return idleApplied },
     get resynced() { return resynced },
     store: messageStoreBus.getOrCreate(instanceId),
     fill() {
@@ -67,6 +72,13 @@ function assertFinal(store: ReturnType<typeof messageStoreBus.getOrCreate>) {
   assert.ok(store.getSessionMessageIds(sessionId).length <= 200)
 }
 
+async function waitForReplay(done: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 500 && !done(); turn++) {
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+  }
+  assert.ok(done(), "cooperative replay did not publish its final event")
+}
+
 test("idle drains the queued final step before retiring a rotating reducer", async () => {
   const f = fixture("idle-rotation-drain")
   try {
@@ -74,7 +86,7 @@ test("idle drains the queued final step before retiring a rotating reducer", asy
     f.finalStep()
     const retiring = f.emit("session.idle")
     assert.equal(f.store.getMessage("final"), undefined, "the final step is still queued")
-    await new Promise<void>(resolve => setImmediate(resolve))
+    await waitForReplay(() => f.idleApplied)
     assertFinal(f.store)
     const replacement = f.emit("permission.replied", { requestID: "missing" })
     assert.notEqual(replacement, retiring, "release the idle reducer after the final projection")
@@ -91,9 +103,9 @@ test("a new execution cancels deferred idle retirement while rotation drains", a
     const retained = f.emit("session.idle")
     f.emit("session.execution.started")
     f.emit("session.step.started", { assistantMessageID: "resumed", agent: "build", model })
-    await new Promise<void>(resolve => setImmediate(resolve))
     f.emit("session.text.started", { assistantMessageID: "resumed" })
     const current = f.emit("session.text.delta", { assistantMessageID: "resumed", delta: "still running" })
+    await waitForReplay(() => (f.store.getMessage("resumed")?.parts["resumed-text-0"]?.data as any)?.text === "still running")
     assert.equal(current, retained)
     assert.equal((f.store.getMessage("resumed")?.parts["resumed-text-0"]?.data as any)?.text, "still running")
   } finally { f.cleanup() }

@@ -1,11 +1,11 @@
 import { createEffect, createSignal } from "solid-js"
-import { invoke } from "@tauri-apps/api/core"
+import { requestDesktopUpdate } from "./desktop-updates"
 import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
 import { tGlobal } from "../lib/i18n"
-import { isLocalWindow, isTauriHost } from "../lib/runtime-env"
+import { supportsDesktopUpdateChecks } from "../lib/native/updates"
 import { hasInstances, showFolderSelection } from "./ui"
 
 const log = getLogger("actions")
@@ -63,7 +63,8 @@ function ensureVisibilityEffect() {
           ? {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
-              onClick: isTauriHost() && isLocalWindow() && navigator.userAgent.includes("Windows") ? () => invoke("install_stable_update") : undefined,
+              // The native updater follows the saved feed, like these notifications.
+              onClick: supportsDesktopUpdateChecks() ? () => requestDesktopUpdate(support.latestServerUrl) : undefined,
             }
           : undefined,
       })
@@ -146,21 +147,17 @@ function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
     variant: "info",
     duration: 12000,
     position: "bottom-right",
-    action: {
-      label: tGlobal("releases.devUpdateAvailable.action"),
-      href: update.url,
-    },
+    action: supportsDesktopUpdateChecks()
+      ? { label: tGlobal("releases.upgradeRequired.action.getUpdate"), href: update.url, onClick: () => requestDesktopUpdate(update.url) }
+      : { label: tGlobal("releases.devUpdateAvailable.action"), href: update.url },
   })
 }
 
 function ensureMetaRefresh(meta: ServerMeta) {
   if (metaRefreshInterval) return
 
-  const version = meta.serverVersion?.trim() ?? ""
-  const looksLikeDev = version.includes("-dev.") || version.includes("-dev-")
-  const hasDevUpdateChannel = Boolean(meta.update)
-
-  if (!looksLikeDev && !hasDevUpdateChannel) {
+  // Keep refreshing even on the stable feed so a later switch to preview is noticed.
+  if (!meta.updateFeed && !meta.update) {
     return
   }
 

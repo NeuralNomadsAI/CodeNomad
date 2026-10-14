@@ -28,8 +28,13 @@ interface UseAppLifecycleOptions {
 export function useAppLifecycle(options: UseAppLifecycleOptions) {
   onMount(() => {
     setEscapeStateChangeHandler(options.setEscapeInDebounce)
+    const isMainView = () => !options.showFolderSelection()
+    const hasActiveSession = () => {
+      const id = options.getActiveSessionIdForInstance()
+      return isMainView() && Boolean(options.getActiveInstance() && id && id !== "info" && id !== "logs")
+    }
 
-    setupTabKeyboardShortcuts(
+    const cleanupTabs = setupTabKeyboardShortcuts(
       options.handleNewInstanceRequest,
       options.handleCloseActiveTab,
       options.handleNewSession,
@@ -40,10 +45,11 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
           showCommandPalette(instance.id)
         }
       },
+      isMainView,
     )
 
-    registerNavigationShortcuts()
-    registerInputShortcuts(
+    const cleanupNavigation = registerNavigationShortcuts(isMainView)
+    const cleanupInput = registerInputShortcuts(
       () => {
         const textarea = document.querySelector(
           ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
@@ -56,9 +62,10 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         ) as HTMLTextAreaElement
         textarea?.focus()
       },
+      () => hasActiveSession() && Boolean(document.querySelector('.session-cache-pane[aria-hidden="false"] .prompt-input')),
     )
 
-    registerAgentShortcuts(
+    const cleanupAgent = registerAgentShortcuts(
       () => {
         const instance = options.getActiveInstance()
         if (!instance) return
@@ -74,12 +81,11 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         if (!instance) return
         emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
       },
+      hasActiveSession,
     )
 
-    registerEscapeShortcut(
+    const cleanupEscape = registerEscapeShortcut(
       () => {
-        if (options.showFolderSelection()) return true
-
         const instance = options.getActiveInstance()
         if (!instance) return false
 
@@ -93,11 +99,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         return isSessionBusy(instance.id, sessionId)
       },
       async () => {
-        if (options.showFolderSelection()) {
-          options.setShowFolderSelection(false)
-          return
-        }
-
         const instance = options.getActiveInstance()
         const sessionId = options.getActiveSessionIdForInstance()
         if (!instance || !sessionId || sessionId === "info") return
@@ -114,14 +115,17 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         active?.blur()
       },
       () => hideCommandPalette(),
+      hasActiveSession,
+      { isOpen: options.showFolderSelection, close: () => options.setShowFolderSelection(false) },
     )
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
+      if (e.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      const target = e.target instanceof Element ? e.target : null
 
-      const isInCombobox = target.closest('[role="combobox"]') !== null
-      const isInListbox = target.closest('[role="listbox"]') !== null
-      const isInAgentSelect = target.closest('[role="button"][data-agent-selector]') !== null
+      const isInCombobox = Boolean(target?.closest('[role="combobox"]'))
+      const isInListbox = Boolean(target?.closest('[role="listbox"]'))
+      const isInAgentSelect = Boolean(target?.closest('[role="button"][data-agent-selector]'))
 
       if (isInCombobox || isInListbox || isInAgentSelect) {
         return
@@ -130,7 +134,7 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
       const shortcut = keyboardRegistry.findMatch(e)
       if (shortcut) {
         e.preventDefault()
-        shortcut.handler()
+        if (!(shortcut.id === "session-abort" && e.repeat)) shortcut.handler()
       }
     }
 
@@ -138,6 +142,11 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
 
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
+      cleanupTabs()
+      cleanupNavigation()
+      cleanupInput()
+      cleanupAgent()
+      cleanupEscape()
     })
   })
 }

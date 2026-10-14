@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/capabilities.json",
+  "identifier": "owned-webview-zoom",
+  "description": "Allow primary application webviews to request bounded relative zoom of themselves only; the host validates registered ownership and renderer origin.",
+  "local": true,
+  "remote": { "urls": ["http://*:*", "https://*:*"] },
+  "webviews": ["local-*", "remote-*", "preferences"],
+  "permissions": ["allow-owned-webview-zoom"]
+}

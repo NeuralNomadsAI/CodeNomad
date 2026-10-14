@@ -23,7 +23,7 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   return a.isDirectory() && b.isDirectory() && a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs
 }
 
-export async function listNativeWorktrees(context: NativeWorktreeContext): Promise<WorktreeListResponse> {
+export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean } = {}): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
   let isGitRepo: boolean
   try {
@@ -42,9 +42,11 @@ export async function listNativeWorktrees(context: NativeWorktreeContext): Promi
   if (!mainHost || !await sameDirectory(local.common, (await readCheckout(mainHost)).common)) {
     throw new Error("OpenCode resolved a different local repository")
   }
-  const options = locationRequestOptions(location, { includeDirectory: true })
-  await client.worktree.refresh({ projectID: current.project.id }, options)
-  const native = await client.worktree.list({ projectID: current.project.id }, options)
+  const requestOptions = locationRequestOptions(location, { includeDirectory: true })
+  // Routing native events must not run strategy discovery or join a display
+  // scan held inside worktree.refresh. Native registration remains authority.
+  if (options.refresh !== false) await client.worktree.refresh({ projectID: current.project.id }, requestOptions)
+  const native = await client.worktree.list({ projectID: current.project.id }, requestOptions)
   const verifyCheckoutRoot = await createCheckoutRootVerifier(workspacePath)
   const annotations = new Map<string, Awaited<ReturnType<typeof readWorktreeAnnotations>>[number]>()
   for (const annotation of await readWorktreeAnnotations(workspacePath)) {
@@ -96,9 +98,20 @@ export async function listNativeWorktrees(context: NativeWorktreeContext): Promi
       head: annotation.head,
     })
   }
-  await Promise.all(Array.from({ length: Math.min(8, native.length) }, async () => {
-    for (const entry of pending) await inspect(entry)
-  }))
+  let failed = false
+  const scans = Array.from({ length: Math.min(8, native.length) }, async () => {
+    for (const entry of pending) {
+      if (failed) return
+      try { await inspect(entry) }
+      catch (error) { failed = true; throw error }
+    }
+  })
+  try { await Promise.all(scans) }
+  catch (error) {
+    // Keep custody of admitted reads until their filesystem/Git work has settled.
+    await Promise.allSettled(scans)
+    throw error
+  }
   if (!worktrees.some(entry => entry.kind === "root")) throw new Error("Native worktree inventory is missing the opened checkout")
   return {
     isGitRepo,

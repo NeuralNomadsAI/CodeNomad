@@ -36,6 +36,7 @@ export class EventBus extends EventEmitter {
     this.on("workspace.stopped", handler)
     this.on("workspace.log", handler)
     this.on("workspace.worktreesChanged", handler)
+    this.on("workspace.temporaryChanged", handler)
     this.on("sidecar.updated", handler)
     this.on("sidecar.removed", handler)
     this.on("storage.configChanged", handler)
@@ -45,6 +46,7 @@ export class EventBus extends EventEmitter {
     this.on("instance.eventStatus", handler)
     this.on("yolo.stateChanged", handler)
     this.on("yolo.autoAccepted", handler)
+    this.on("permission.receiptsChanged", handler)
     for (const status of this.instanceStatuses.values()) listener(status)
     return () => {
       this.off("workspace.created", handler)
@@ -53,6 +55,7 @@ export class EventBus extends EventEmitter {
       this.off("workspace.stopped", handler)
       this.off("workspace.log", handler)
       this.off("workspace.worktreesChanged", handler)
+      this.off("workspace.temporaryChanged", handler)
       this.off("sidecar.updated", handler)
       this.off("sidecar.removed", handler)
       this.off("storage.configChanged", handler)
@@ -62,6 +65,7 @@ export class EventBus extends EventEmitter {
       this.off("instance.eventStatus", handler)
       this.off("yolo.stateChanged", handler)
       this.off("yolo.autoAccepted", handler)
+      this.off("permission.receiptsChanged", handler)
     }
   }
 }

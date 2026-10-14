@@ -184,7 +184,7 @@ describe("renderer-local workspace tabs", () => {
     }
   })
 
-  it("selects the adjacent reordered local tab before an authoritative stop removes the catalog member", () => {
+  it("selects the adjacent reordered local tab before an authoritative stop removes the catalog member", async () => {
     const closed = instance("stopped-closed-catalog")
     const stopped = instance("stopped-active")
     const left = instance("stopped-left")
@@ -201,6 +201,10 @@ describe("renderer-local workspace tabs", () => {
       assert.equal(activeAppTabId(), `instance:${right.id}`)
       assert.deepEqual(appTabs().map((tab) => tab.id), [`instance:${right.id}`, `instance:${left.id}`])
       assert.equal(instances().has(closed.id), true)
+      // Its state clears only after the event batch has unmounted the tab.
+      assert.equal(instances().has(stopped.id), true)
+      await Promise.resolve()
+      assert.equal(instances().has(stopped.id), false)
     } finally {
       for (const candidate of [closed, stopped, left, right]) removeInstance(candidate.id, { authoritative: false })
     }

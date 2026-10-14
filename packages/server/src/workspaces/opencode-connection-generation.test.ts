@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { OpenCodeSharedService } from "./opencode-service"
 import { rememberRuntime } from "../opencode/compatibility/runtime"
+import { MINIMUM_OPENCODE_VERSION } from "../opencode/runtime-support"
 import type { Endpoint } from "@opencode/client/service"
 import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client"
 
@@ -12,11 +13,11 @@ test("same URL and credentials cannot keep the previous daemon's adapter or inva
     rememberRuntime(endpoint, { version, pid, discovery: "info" })
     return endpoint
   }
-  let endpoint = makeEndpoint("2.0.11", 1)
+  let endpoint = makeEndpoint(MINIMUM_OPENCODE_VERSION, 1)
   const service = new OpenCodeSharedService({ headers: () => undefined, makeClient: () => ({}) as never, now: () => now })
   await service.endpoint({ kind: "lifecycle", identity: "test", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })
   const old = await service.acquire()
-  endpoint = makeEndpoint("2.0.11", 2)
+  endpoint = makeEndpoint(MINIMUM_OPENCODE_VERSION, 2)
   now = 30_000
   const current = await service.acquire()
   assert.notEqual(current, old)
@@ -34,7 +35,7 @@ test("same URL and credentials cannot keep the previous daemon's adapter or inva
 
 test("invalidation during asynchronous mutation preparation prevents upstream dispatch", async (context) => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const upstream = context.mock.method(globalThis, "fetch", async () => new Response(null, { status: 204 }))
   const service = new OpenCodeSharedService()
   await service.endpoint({ kind: "lifecycle", identity: "test", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })

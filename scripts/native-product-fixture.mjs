@@ -18,6 +18,11 @@ export async function withProductRuntime(cli, prepare, run) {
   const root = await mkdtemp(path.join(parent, "product-native-"))
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|npm_config_)/i.test(key)))
   for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
+  // 2.0.29+ reads system-managed settings from %ProgramData%\opencode on Windows.
+  if (process.platform === "win32") {
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "programdata") delete env[key]
+    env.ProgramData = path.join(root, "ProgramData")
+  }
   const password = randomUUID()
   Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
@@ -58,11 +63,11 @@ export async function withProductRuntime(cli, prepare, run) {
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(output.slice(-3000))
       await delay(25)
     }
-    const client = OpenCode.make({ baseUrl: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0],
-      headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` },
-      fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) }),
-    })
-    await run({ client, root, requests })
+    const endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
+    const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
+    const client = OpenCode.make({ baseUrl: endpoint.url,
+      headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` }, fetch: boundedFetch })
+    await run({ client, root, requests, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
     if (providerError) throw providerError
   } finally {
     try { await stopFixtureChild(child, stopped) } finally {

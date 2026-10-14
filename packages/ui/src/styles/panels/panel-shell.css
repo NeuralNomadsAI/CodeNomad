@@ -3,7 +3,7 @@
   @apply border overflow-hidden min-w-0;
   border-radius: 0;
   box-shadow: none;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   border-color: var(--border-base);
   color: var(--text-primary);
 }
@@ -31,7 +31,7 @@
 
 .panel-body {
   @apply p-3;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
 }
 
 .panel-section {

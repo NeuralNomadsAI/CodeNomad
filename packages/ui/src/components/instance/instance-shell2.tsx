@@ -11,13 +11,11 @@ import {
 } from "solid-js"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
-import Drawer from "@suid/material/Drawer"
 import IconButton from "@suid/material/IconButton"
 import Toolbar from "@suid/material/Toolbar"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
-import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
@@ -25,11 +23,11 @@ import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
-import PermissionApprovalModal from "../permission-approval-modal"
-import { getFormRequestAutoOpenId } from "../form-request-auto-open"
-import { shouldRenderFormInFallback } from "../form-request-tool-target"
-import { messageStoreBus } from "../../stores/message-v2/bus"
+import { InterruptionDock } from "../interruption-dock"
+import { focusInterruption } from "../../stores/interruption-navigation"
 import SessionView from "../session/session-view"
+import { MissionReader } from "../mission-reader"
+import { missionProjectView } from "../../stores/mission-view-state"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { formatTokenTotal } from "../../lib/formatters"
@@ -41,15 +39,17 @@ import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
-import { activeInterruption, getPermissionQueueLength } from "../../stores/instances"
+import { getPermissionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
+import ShellPanelToggle from "./shell/ShellPanelToggle"
+import { useSessionNavigationHistory } from "./shell/useSessionNavigationHistory"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
-import { Command as CommandIcon, Globe, Maximize2, Search, ShieldAlert } from "lucide-solid"
+import { Command as CommandIcon, Globe, ListFilter, Maximize2, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
@@ -57,9 +57,9 @@ import { showAlertDialog } from "../../stores/alerts"
 import {
   DEFAULT_PREVIEW_URL,
   getSessionPreview,
+  getPreviewSessionIds,
   openSessionPreview,
   restoreSessionPreview,
-  sessionPreviews,
   showSessionChat,
   showSessionPreview,
 } from "../../stores/session-previews"
@@ -78,6 +78,7 @@ import {
   clampWidth,
 } from "./shell/storage"
 import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
+import { HostedDrawer } from "./shell/HostedDrawer"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
@@ -85,10 +86,11 @@ import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
+import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
-const MIN_SESSION_CENTER_WIDTH = 480
+const MIN_SESSION_CENTER_WIDTH = 390
 type SessionCenterWidthStep = "narrow" | "medium" | "wide"
 
 function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
@@ -134,13 +136,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
   const [headerDensity, setHeaderDensity] = createSignal(0)
+  const [narrowHeaderActions, setNarrowHeaderActions] = createSignal(false)
+  const headerActionsCollapsed = () => narrowHeaderActions() || headerDensity() === 4
+  const [filtersOpen, setFiltersOpen] = createSignal(false)
   let sessionToolbarEl: HTMLElement | undefined
   let headerLeftEl: HTMLElement | undefined
   let headerRightEl: HTMLElement | undefined
-  let headerIndicatorsEl: HTMLElement | undefined
+  const [headerIndicatorsEl, setHeaderIndicatorsEl] = createSignal<HTMLElement>()
 
-  const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
-  let lastAutoOpenedFormId: string | null = null
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
   const pendingFirstPromptText = new Map<string, string>()
@@ -165,25 +168,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
   })
 
-  createEffect(() => {
-    const active = activeInterruption().get(props.instance.id)
-    const form = active?.kind === "form"
-      ? getFormQueue(props.instance.id).find((entry) => entry.id === active.id)
-      : undefined
-    if (form && !shouldRenderFormInFallback(form, activeSessionIdForInstance(), messageStoreBus.getOrCreate(props.instance.id))) {
-      lastAutoOpenedFormId = form.id
-      return
-    }
-
-    const formId = getFormRequestAutoOpenId(active, lastAutoOpenedFormId)
-    if (!formId) return
-    lastAutoOpenedFormId = formId
-    setPermissionModalOpen(true)
-  })
+  // Shell ownership keeps partially answered requests alive as session panes change.
+  const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
+  const interruptionViewport = useInterruptionViewport(() => sessionCenterEl() ?? undefined, interruptionExpanded)
+  const interruptionPanel = <InterruptionDock instanceId={props.instance.id}
+    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} onExpandedChange={setInterruptionExpanded}
+    onViewConversation={handleSessionSelect} />
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
   const tabletQuery = useMediaQuery("(min-width: 768px)")
+  // Rotation-aware drawers apply to touch-primary devices, not to tall desktop windows.
+  const touchPrimaryQuery = useMediaQuery("(pointer: coarse)")
+  const portraitQuery = useMediaQuery("(orientation: portrait)")
+  const drawerOrientation = () => touchPrimaryQuery() ? (portraitQuery() ? "portrait" as const : "landscape" as const) : null
 
   const layoutMode = createMemo<LayoutMode>(() => {
     if (desktopQuery()) return "desktop"
@@ -193,7 +191,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
   const mobileFullscreen = createMemo(() => props.mobileFullscreenMode)
-  const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
 
   const { setDrawerHost, drawerContainer, drawerHostWidth, measureDrawerHost } = useDrawerHostMeasure()
 
@@ -210,6 +207,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     leftToggleButtonEl,
     rightToggleButtonEl,
     measureDrawerHost,
+    orientation: drawerOrientation,
   })
 
   const {
@@ -222,24 +220,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     setLeftOpen,
     setRightOpen,
     leftDrawerState,
-    rightDrawerState,
     closeLeft: closeLeftDrawer,
     closeRight: closeRightDrawer,
     closeFloatingDrawersIfAny,
-    leftAppBarButtonLabel,
-    rightAppBarButtonLabel,
-    leftAppBarButtonIcon,
-    rightAppBarButtonIcon,
-    handleLeftAppBarButtonClick,
-    handleRightAppBarButtonClick,
+    toggleLeft,
+    toggleRight,
   } = drawerChrome
+  const leftPanelId = () => `session-sidebar-${props.instance.id}`
+  const rightPanelId = () => `session-right-panel-${props.instance.id}`
 
   registerViewMenuPanels(props.instance.id, {
     enabled: () => !mobileFullscreen(),
     leftOpen,
     rightOpen,
-    toggleLeft: () => leftOpen() ? closeLeftDrawer() : handleLeftAppBarButtonClick(),
-    toggleRight: () => rightOpen() ? closeRightDrawer() : handleRightAppBarButtonClick(),
+    toggleLeft,
+    toggleRight,
   })
 
   // When the user switches away from this instance (e.g., taps a different
@@ -266,6 +261,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
       const target = event.target
       if (!(target instanceof Node)) return
+      // The fixed toggles sit above floating drawers and handle their own clicks.
+      if (leftToggleButtonEl()?.contains(target) || rightToggleButtonEl()?.contains(target)) return
+      // Menus, selectors and dialogs portal outside the drawer's DOM. Let their
+      // own dismissal/selection finish instead of unmounting them on pointerdown.
+      if (target instanceof Element && target.closest('[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]')) return
 
       const leftContent = leftDrawerContentEl()
       const rightContent = rightDrawerContentEl()
@@ -311,8 +311,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const handleResize = () => {
       const width = clampWidth(window.innerWidth * 0.3)
       setSessionSidebarWidth((current) => clampWidth(current || width))
-      const fallbackRight = window.innerWidth * 0.35
-      setRightDrawerWidth((current) => clampRightWidth(current || fallbackRight))
+      // Keep the selected width across transient native minimize sizes. The
+      // drawer layout constrains display without overwriting the preference.
       measureDrawerHost()
     }
 
@@ -323,11 +323,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   createEffect(() => {
     if (!props.isActiveInstance || mobileFullscreen() || typeof ResizeObserver === "undefined") return
+    // Session/status changes can replace this subtree. Rebind the observer to
+    // the current node instead of continuing to observe a detached indicator.
+    const indicators = headerIndicatorsEl()
+    if (!indicators) return
     let frame = 0
     const measure = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
-        if (!sessionToolbarEl || !headerLeftEl || !headerRightEl || !headerIndicatorsEl) return
+        if (!sessionToolbarEl || !headerLeftEl || !headerRightEl) return
 
         const gap = 8
         let density = 4
@@ -335,7 +339,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sessionCenterEl()?.setAttribute("data-session-header-density", String(candidate))
           const leftRect = headerLeftEl.getBoundingClientRect()
           const rightRect = headerRightEl.getBoundingClientRect()
-          const indicatorsRect = headerIndicatorsEl.getBoundingClientRect()
+          const indicatorsRect = indicators.getBoundingClientRect()
           const sidesFit = leftRect.right + gap <= rightRect.left
           const indicatorsFit = indicatorsRect.width === 0 ||
             (indicatorsRect.left >= leftRect.right + gap && indicatorsRect.right <= rightRect.left - gap)
@@ -348,7 +352,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       })
     }
     const observer = new ResizeObserver(measure)
-    ;[sessionToolbarEl, headerLeftEl, headerRightEl, headerIndicatorsEl]
+    ;[sessionToolbarEl, headerLeftEl, headerRightEl, indicators]
       .forEach((element) => element && observer.observe(element))
     measureDrawerHost()
     measure()
@@ -377,9 +381,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const element = sessionCenterEl()
     if (!element || typeof ResizeObserver === "undefined") return
 
+    let focusFrame = 0
     const updateWidthStep = (width: number) => {
       if (width <= 0) return
+      const moveFocus = width < 420 && sessionToolbarEl?.querySelector(".session-header-expanded-actions")?.contains(document.activeElement)
       setSessionCenterWidthStep(getSessionCenterWidthStep(width))
+      setNarrowHeaderActions(width < 420)
+      if (moveFocus) {
+        cancelAnimationFrame(focusFrame)
+        focusFrame = requestAnimationFrame(() => {
+          if (headerActionsCollapsed()) sessionToolbarEl?.querySelector<HTMLButtonElement>(".session-header-actions-menu")?.focus()
+        })
+      }
     }
 
     measureDrawerHost()
@@ -391,7 +404,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     })
     observer.observe(element)
 
-    onCleanup(() => observer.disconnect())
+    onCleanup(() => {
+      observer.disconnect()
+      cancelAnimationFrame(focusFrame)
+    })
   })
 
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
@@ -426,12 +442,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
   })
 
-  createEffect(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info" || sessionPreviews().has(props.instance.folder)) return
-    void restoreSessionPreview(sessionId, props.instance.folder).catch((error) => log.warn("Failed to restore web preview", { sessionId, error }))
-  })
-
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
     setSessionPromptApis((current) => ({
       ...current,
@@ -449,7 +459,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!sessionId || sessionId === "info") return
     try {
       const restored = await restoreSessionPreview(sessionId, props.instance.folder)
-      if (restored) showSessionPreview(props.instance.folder)
+      if (restored) showSessionPreview(restored.storageKey)
       else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
     } catch (error) {
       showAlertDialog(t("sessionPreview.open.title"), {
@@ -466,12 +476,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const preview = activeSessionPreview()
     if (preview?.mode === "preview") {
-      showSessionChat(props.instance.folder)
+      showSessionChat(preview.storageKey)
       return
     }
 
     if (preview) {
-      showSessionPreview(props.instance.folder)
+      showSessionPreview(preview.storageKey)
       return
     }
     void handleOpenPreview()
@@ -575,11 +585,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const renderSessionHeaderIndicators = () => (
-    <div ref={(element) => { headerIndicatorsEl = element }} class="session-header-indicators flex items-center justify-center gap-2">
+    <div ref={setHeaderIndicatorsEl} class="session-header-indicators flex items-center justify-center gap-2">
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
         <PermissionNotificationBanner
           instanceId={props.instance.id}
-          onClick={() => setPermissionModalOpen(true)}
+          onClick={handleProjectInterruptionClick}
         />
       </Show>
       {renderYoloModePill()}
@@ -626,6 +636,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const searchWindowId = () => sessionSearchWindowId(props.instance.id, activeSessionIdForInstance() ?? "")
   const paletteWindowId = () => `command-palette-${props.instance.id}`
 
+  createEffect(() => {
+    activeSessionIdForInstance()
+    props.isActiveInstance
+    setFiltersOpen(false)
+  })
+
   const headerActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = [{
       key: "commands",
@@ -652,6 +668,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           : <Globe class="w-4 h-4" aria-hidden="true" />,
         onSelect: runtimeEnv.platform === "mobile" ? props.onEnterMobileFullscreen : handlePreviewButtonClick,
       },
+      {
+        key: "content",
+        label: t("transcriptFilters.title"),
+        icon: <ListFilter class="w-4 h-4" aria-hidden="true" />,
+        onSelect: () => { setFiltersOpen(true) },
+      },
     )
     return items
   }
@@ -659,12 +681,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
   createEffect(() => { if (props.isActiveInstance === false) hideCommandPalette(props.instance.id) })
-
-  const keyboardShortcuts = createMemo(() =>
-    [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
-      (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
-    ),
-  )
 
   useSessionSidebarRequests({
     instanceId: () => props.instance.id,
@@ -683,6 +699,23 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessionId: activeSessionIdForInstance,
     isActiveInstance: () => Boolean(props.isActiveInstance),
   })
+
+  const sessionHistory = useSessionNavigationHistory({
+    activeSessionId: activeSessionIdForInstance,
+    isAvailable: (sessionId) => allInstanceSessions().has(sessionId),
+    select: handleSessionSelect,
+  })
+
+  // Keep only explicitly opened browser shells; inactive transcripts/composers
+  // still unmount and remain subject to the existing transcript memory budget.
+  const mountedSessionIds = createMemo<string[]>((previous) => {
+    const wanted = new Set([
+      ...getPreviewSessionIds(props.instance.folder).filter((id) => allInstanceSessions().has(id)),
+      ...cachedSessionIds(),
+    ])
+    // Reordering an Electron webview in the DOM can recreate its guest.
+    return [...previous.filter((id) => wanted.delete(id)), ...wanted]
+  }, [])
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
 
@@ -743,26 +776,23 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             activeSessionId={activeSessionIdForInstance}
             showSearch={showSessionSearch}
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
-            keyboardShortcuts={keyboardShortcuts}
             drawerState={leftDrawerState}
             onSelectSession={handleSidebarSessionSelect}
             onNewSession={props.onNewSession}
-            onCloseLeftDrawer={closeLeftDrawer}
+            panelId={leftPanelId()}
+            history={sessionHistory}
             setContentEl={setLeftDrawerContentEl}
           />
         </Box>
       )
     }
-    const container = drawerContainer()
-    const modalProps = container ? { container: container as Element } : undefined
     return (
-      <Drawer
+      <HostedDrawer
         class="session-floating-drawer"
         anchor={isRTL() ? "right" : "left"}
-        variant="temporary"
+        container={drawerContainer()}
         open={leftOpen()}
         onClose={closeLeftDrawer}
-        ModalProps={modalProps}
       >
         <SessionSidebar
           t={t}
@@ -771,14 +801,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           activeSessionId={activeSessionIdForInstance}
           showSearch={showSessionSearch}
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
-          keyboardShortcuts={keyboardShortcuts}
           drawerState={leftDrawerState}
           onSelectSession={handleSidebarSessionSelect}
           onNewSession={props.onNewSession}
-          onCloseLeftDrawer={closeLeftDrawer}
+          panelId={leftPanelId()}
+          history={sessionHistory}
           setContentEl={setLeftDrawerContentEl}
         />
-      </Drawer>
+      </HostedDrawer>
     )
   }
 
@@ -812,26 +842,25 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
+            onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
             onCloseRightDrawer={closeRightDrawer}
+            panelId={rightPanelId()}
             promptInputApi={activePromptInputApi}
             setContentEl={setRightDrawerContentEl}
           />
         </Box>
       )
     }
-    const container = drawerContainer()
-    const modalProps = container ? { container: container as Element } : undefined
     return (
-      <Drawer
+      <HostedDrawer
         class="session-floating-drawer"
         anchor={isRTL() ? "left" : "right"}
-        variant="temporary"
+        container={drawerContainer()}
         open={rightOpen()}
         onClose={closeRightDrawer}
-        ModalProps={modalProps}
       >
         <RightPanel
           isActive={() => props.isActiveInstance !== false && rightOpen()}
@@ -840,25 +869,28 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
+          onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}
           onCloseRightDrawer={closeRightDrawer}
+          panelId={rightPanelId()}
           promptInputApi={activePromptInputApi}
           setContentEl={setRightDrawerContentEl}
         />
-      </Drawer>
+      </HostedDrawer>
 
     )
   }
 
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+  const readingRecurrence = () => Boolean(props.isActiveInstance)
+    && missionProjectView(props.instance.folder).reader?.kind === "recurrence"
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
     return title || t("sessionList.session.untitled")
   })
-  const showHeaderLeftSlot = createMemo(() => !leftPinned())
   const showHeaderSessionTitle = createMemo(() => !leftOpen() && Boolean(activeSessionTitle()))
 
   const renderActiveSessionHeaderTitle = () => (
@@ -869,23 +901,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         title={activeSessionTitle() ?? undefined}
       >
         {activeSessionTitle()}
-      </span>
-    </Show>
-  )
-
-  const renderHeaderLeftSlot = () => (
-    <Show when={showHeaderLeftSlot() && leftDrawerState() === "floating-closed"}>
-      <span class="panel-header-actions session-header-drawer-toggle session-header-drawer-toggle--left">
-        <IconButton
-          ref={setLeftToggleButtonEl}
-          color="inherit"
-          onClick={handleLeftAppBarButtonClick}
-          aria-label={leftAppBarButtonLabel()}
-          size="small"
-          aria-expanded={leftDrawerState() !== "floating-closed"}
-        >
-          {leftAppBarButtonIcon()}
-        </IconButton>
       </span>
     </Show>
   )
@@ -1021,6 +1036,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (sessionId === "info" && showingInfoView()) handleBackToConversation()
     else handleSessionSelect(sessionId)
   }
+
+  function handleProjectInterruptionClick() {
+    // Info has no dock mount. Restore the ordinary conversation surface first,
+    // without treating the pending request's owner as a navigation destination.
+    if (showingInfoView()) handleBackToConversation()
+    focusInterruption(props.instance.id)
+  }
   const sessionLayout = (
     <div
       class="session-shell-panels relative flex flex-1 min-h-0 overflow-x-hidden"
@@ -1034,15 +1056,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <Box
         class="session-center-column"
         ref={setSessionCenterEl}
+        style={interruptionViewport()}
         data-session-center-width={sessionCenterWidthStep()}
         data-session-header-density={String(headerDensity())}
+        data-session-header-actions-forced={narrowHeaderActions() ? "true" : "false"}
+        data-left-toggle-reserve={leftPinned() ? undefined : "true"}
+        data-right-toggle-reserve={rightPinned() ? undefined : "true"}
         sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
       >
         <Show when={!mobileFullscreen()}>
           <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 0 }}>
             <Toolbar ref={(element) => { sessionToolbarEl = element }} variant="dense" class="panel-header session-toolbar flex items-center gap-2 py-0">
-              {renderHeaderLeftSlot()}
-
               <div ref={(element) => { headerLeftEl = element }} class="session-toolbar-left flex-1 flex items-center gap-3 min-w-0">
                 <Show when={!showingInfoView()}>
                   <ContextMeter
@@ -1094,6 +1118,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             <Search class="w-5 h-5" aria-hidden="true" />
                           </IconButton>
                           {renderHeaderThirdActionButton()}
+                          <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
+                            overflowAnchor={() => headerActionsCollapsed()
+                              ? sessionToolbarEl?.querySelector<HTMLElement>(".session-header-actions-menu") ?? undefined
+                              : undefined} />
                         </Show>
                       </div>
                       <ActionOverflowMenu
@@ -1120,27 +1148,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
                       </span>
                     </Show>
-                    <Show when={!showingInfoView()}>
-                      <div class="panel-header-actions"><TranscriptFilters /></div>
-                    </Show>
                   </div>
                 </div>
               </div>
-
-              <Show when={rightDrawerState() === "floating-closed"}>
-                <span class="panel-header-actions session-header-drawer-toggle session-header-drawer-toggle--right">
-                  <IconButton
-                    ref={setRightToggleButtonEl}
-                    color="inherit"
-                    onClick={handleRightAppBarButtonClick}
-                    aria-label={rightAppBarButtonLabel()}
-                    size="small"
-                    aria-expanded={rightDrawerState() !== "floating-closed"}
-                  >
-                    {rightAppBarButtonIcon()}
-                  </IconButton>
-                </span>
-              </Show>
             </Toolbar>
           </AppBar>
         </Show>
@@ -1153,9 +1163,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           <Show
             when={showingInfoView()}
             fallback={
-              <Show
-                when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
-                fallback={
+              <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
                       <MessageSection
@@ -1170,6 +1178,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </div>
                   }>
                   <div class="session-view">
+                    <div class="mission-transcript-surface">
                     <MessageSection
                       instanceId={props.instance.id}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
@@ -1180,6 +1189,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
+                    <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    </div>
 
                     <Show when={draftAttachments().length > 0}>
                       <PromptAttachmentsBar
@@ -1196,12 +1207,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       />
                     </Show>
 
+                    {interruptionPanel}
                     <PromptInput
+                      interruptionExpanded={interruptionExpanded()}
                       instanceId={props.instance.id}
                       instanceFolder={props.instance.folder}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
                       isActive={props.isActiveInstance}
-                      compactLayout={compactPromptLayout()}
                       onSend={handleFirstPromptSend}
                       onCommand={handleFirstPromptCommand}
                       onRunShell={handleFirstPromptShell}
@@ -1220,57 +1232,55 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     />
                   </div>
                   </Show>
-                }
-              >
-                <For each={cachedSessionIds()}>
-                  {(sessionId) => {
-                    const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
-                    return (
-                      <div
-                        class="session-cache-pane flex flex-col flex-1 min-h-0"
-                        style={{ display: isActive() ? "flex" : "none" }}
-                        data-session-id={sessionId}
-                        data-instance-id={props.instance.id}
-                        data-session-active={isActive() ? "true" : "false"}
-                        aria-hidden={!isActive()}
-                      >
-                        <Show when={isActive()}>
-                          <SessionView
-                            sessionId={sessionId}
-                            activeSessions={activeSessions()}
-                            instanceId={props.instance.id}
-                            instanceFolder={props.instance.folder}
-                            escapeInDebounce={props.escapeInDebounce}
-                            isPhoneLayout={isPhoneLayout()}
-                            compactPromptLayout={compactPromptLayout()}
-                            focusConversationOnActivate={focusConversationSessionId() === sessionId}
-                            onConversationFocusHandled={() => {
-                              if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
-                            }}
-                            registerSessionPromptApi={registerSessionPromptApi}
-                            showSidebarToggle={showEmbeddedSidebarToggle()}
-                            onSidebarToggle={() => setLeftOpen(true)}
-                            forceCompactStatusLayout={showEmbeddedSidebarToggle()}
-                            isActive={isActive()}
-                            onAgentChange={(agent) => props.handleSidebarAgentChange(sessionId, agent)}
-                            onModelChange={(model) => props.handleSidebarModelChange(sessionId, model)}
-                          />
-                        </Show>
-                      </div>
-                    )
-                  }}
-                </For>
               </Show>
             }
           >
-            <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
+            <div class="info-view-pane mission-transcript-surface flex flex-col flex-1 min-h-0 overflow-y-auto">
               <InfoView
                 instanceId={props.instance.id}
                 active={Boolean(props.isActiveInstance) && showingInfoView()}
                 onBackToConversation={handleBackToConversation}
               />
+              <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
             </div>
           </Show>
+          <For each={mountedSessionIds()}>
+            {(sessionId) => {
+              const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
+              return (
+                <div
+                  class="session-cache-pane flex flex-col flex-1 min-h-0"
+                  style={{ display: isActive() ? "flex" : "none" }}
+                  data-session-id={sessionId}
+                  data-instance-id={props.instance.id}
+                  data-session-active={isActive() ? "true" : "false"}
+                  aria-hidden={!isActive()}
+                >
+                  <SessionView
+                    interruptionPanel={interruptionPanel}
+                    interruptionExpanded={interruptionExpanded()}
+                    sessionId={sessionId}
+                    activeSessions={activeSessions()}
+                    instanceId={props.instance.id}
+                    instanceFolder={props.instance.folder}
+                    escapeInDebounce={props.escapeInDebounce}
+                    isPhoneLayout={isPhoneLayout()}
+                    focusConversationOnActivate={focusConversationSessionId() === sessionId}
+                    onConversationFocusHandled={() => {
+                      if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)
+                    }}
+                    registerSessionPromptApi={registerSessionPromptApi}
+                    showSidebarToggle={showEmbeddedSidebarToggle()}
+                    onSidebarToggle={() => setLeftOpen(true)}
+                    forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                    isActive={isActive()}
+                    onAgentChange={(agent) => props.handleSidebarAgentChange(sessionId, agent)}
+                    onModelChange={(model) => props.handleSidebarModelChange(sessionId, model)}
+                  />
+                </div>
+              )
+            }}
+          </For>
         </Box>
       </Box>
 
@@ -1285,7 +1295,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         data-instance-id={props.instance.id}
       >
         <Show when={!isLaunching()} fallback={<InstanceWelcomeView instance={props.instance} />}>
-          {sessionLayout}
+          {/* Outside the drawer host: modal sibling isolation never hides the toggles. */}
+          <div class="session-shell-frame">
+            <Show when={!mobileFullscreen()}>
+              <ShellPanelToggle side="left" expanded={leftOpen()} label={t("window.menu.leftPanel")} controls={leftPanelId()}
+                onToggle={toggleLeft} ref={setLeftToggleButtonEl} />
+              <ShellPanelToggle side="right" expanded={rightOpen()} label={t("window.menu.rightPanel")} controls={rightPanelId()}
+                onToggle={toggleRight} ref={setRightToggleButtonEl} />
+            </Show>
+            {sessionLayout}
+          </div>
         </Show>
       </div>
 
@@ -1298,11 +1317,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onExecute={props.onExecuteCommand}
       />
 
-      <PermissionApprovalModal
-        instanceId={props.instance.id}
-        isOpen={permissionModalOpen()}
-        onClose={() => setPermissionModalOpen(false)}
-      />
     </>
   )
 }

@@ -25,6 +25,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; w
       } },
     }) as any,
     ownsLocation: async () => options.owned !== false,
+    desktopPluginsReady: async () => {},
     getWorktreeIdentityForPath: async () => "/owned/worktree",
   } })
   return { app, calls, fence, requestOptions }

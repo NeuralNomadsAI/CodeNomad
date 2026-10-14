@@ -556,6 +556,12 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
 }
 #[test]
 fn normalizes_window_bounds_against_displays() {
+    for width in [320, 390, 430] {
+        assert_eq!(
+            clamp_window_bounds(&bounds(20, 30, width, 844), &[display(0, 0, 1920, 1080)]),
+            Some(bounds(20, 30, width.max(390), 844))
+        );
+    }
     let cases = [
         (
             bounds(4000, 2000, 1400, 900),
@@ -581,7 +587,7 @@ fn mixed_dpi_restore_selects_displays_in_physical_coordinates() {
             &bounds(1000, 500, 700, 600),
             &[display(0, 0, 1920, 1080), high_dpi],
         ),
-        Some(bounds(1000, 120, 800, 600))
+        Some(bounds(1000, 120, 700, 600))
     );
 }
 #[test]

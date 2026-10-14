@@ -1,10 +1,12 @@
 import { createEffect, createSignal, Show } from "solid-js"
-import { Copy, Loader2, X } from "lucide-solid"
+import { Copy, Loader2 } from "lucide-solid"
 import DismissibleWindow from "../dismissible-window"
+import WindowCloseButton from "../window-close-button"
 import { Markdown } from "../markdown"
 import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import type { PromptAsideController } from "./usePromptAside"
+import { hotkeyLabel, matchesHotkey } from "../../lib/hotkeys"
 
 export default function PromptAsideWindow(props: {
   id: string
@@ -31,7 +33,7 @@ export default function PromptAsideWindow(props: {
       returnFocus={props.returnFocus}>
       <div class="window-header">
         <h2 class="window-title">{t("promptInput.btw.title")}</h2>
-        <button ref={closeButton} type="button" class="window-icon-button" aria-label={t("promptInput.btw.close")} onClick={aside.close}><X /></button>
+        <WindowCloseButton ref={element => { closeButton = element }} label={t("promptInput.btw.close")} onClose={aside.close} />
       </div>
       <div class="window-body">
         <p class="session-aside-description">{t("promptInput.btw.description")}</p>
@@ -41,14 +43,16 @@ export default function PromptAsideWindow(props: {
             value={aside.question()} disabled={aside.pending()}
             onInput={event => aside.setQuestion(event.currentTarget.value)}
             onKeyDown={event => {
-              if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+              if (matchesHotkey("aside-send", event)) {
                 event.preventDefault()
+                event.stopPropagation()
                 void aside.ask()
               }
             }} />
           <div class="session-aside-actions">
             <Show when={aside.pending()} fallback={
-              <button type="submit" class="window-action" disabled={!aside.question().trim()}>{t("promptInput.btw.ask")}</button>
+              <button type="submit" class="window-action" disabled={!aside.question().trim()}
+                title={t("promptInput.btw.ask") + (hotkeyLabel("aside-send") ? ` (${hotkeyLabel("aside-send")})` : "")}>{t("promptInput.btw.ask")}</button>
             }>
               <span role="status" class="session-aside-loading"><Loader2 class="animate-spin" size={14} />{t("promptInput.btw.loading")}</span>
               <button type="button" class="window-action" onClick={aside.cancel}>{t("promptInput.btw.cancel")}</button>

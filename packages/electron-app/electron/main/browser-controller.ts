@@ -2,6 +2,7 @@ import { createRequire } from "node:module"
 import { randomUUID } from "node:crypto"
 import type { BrowserWindow, WebContents } from "electron"
 import { isBrowserUrlAllowed } from "./browser-webview-security"
+import { setBrowserEmulation } from "./browser-emulation"
 
 const electron = createRequire(import.meta.url)("electron") as typeof import("electron")
 
@@ -106,10 +107,48 @@ export class BrowserController {
     this.registrations.set(input.registrationId, { ...input, owner, guest })
   }
 
+  async emulate(owner: WebContents, registrationId: unknown, preset: unknown): Promise<void> {
+    const registration = typeof registrationId === "string" ? this.registrations.get(registrationId) : undefined
+    if (!registration || registration.owner !== owner) throw new Error("Browser target does not belong to this window")
+    await this.enqueue(registration.guest, async () => {
+      if (this.registrations.get(registration.registrationId) !== registration || owner.isDestroyed() || registration.guest.isDestroyed()) {
+        throw new Error("Browser target changed before emulation")
+      }
+      await setBrowserEmulation(registration.guest, preset)
+    })
+  }
+
   unregister(owner: WebContents, registrationId: unknown): void {
     if (typeof registrationId !== "string") return
     const registration = this.registrations.get(registrationId)
     if (registration?.owner === owner) this.registrations.delete(registrationId)
+  }
+
+  async history(owner: WebContents, guestId: unknown, entryId?: unknown): Promise<unknown> {
+    const guest = typeof guestId === "number" && Number.isInteger(guestId) ? this.electronApi.fromId(guestId) : undefined
+    const owned = () => guest && !owner.isDestroyed() && !guest.isDestroyed() && guest.getType() === "webview"
+      && guest.hostWebContents === owner && this.observedGuests.get(guest.id) === owner.id
+    if (!guest || !owned()) throw new Error("Browser target does not belong to this window")
+    // Retained guest ownership is separate from visible automation registration.
+    // A hidden guest can publish its journal without becoming an agent target.
+    return this.enqueue(guest, async () => {
+      if (!owned()) throw new Error("Browser target changed before history access")
+      // CDP supplies stable entry IDs, including same-URL and fragment entries.
+      return withDebugger(guest, Date.now() + 5000, async debuggerSession => {
+        const result = await debuggerSession.sendCommand("Page.getNavigationHistory") as { currentIndex: number; entries: Array<{ id: number; url: string }> }
+        if (entryId !== undefined) {
+          const entry = result.entries.find(entry => entry.id === entryId)
+          if (!Number.isInteger(entryId) || !entry || !isBrowserUrlAllowed(entry.url)) throw new Error("Invalid browser history entry")
+          if (!owned()) throw new Error("Browser target changed before history navigation")
+          await debuggerSession.sendCommand("Page.navigateToHistoryEntry", { entryId })
+          return
+        }
+        const start = Math.max(0, result.currentIndex - 16)
+        const entries = result.entries.slice(start, start + 32).filter(entry => isBrowserUrlAllowed(entry.url) && entry.url.length <= 2048)
+        const current = result.entries[result.currentIndex]
+        return { entries: entries.map(({ id, url }) => ({ id, url })), index: entries.findIndex(entry => entry.id === current?.id) }
+      })
+    })
   }
 
   claimOpen(owner: WebContents, requestID: unknown): boolean {
@@ -130,7 +169,14 @@ export class BrowserController {
     return true
   }
 
-  removeOwner(owner: WebContents): void {
+  observeOwner(window: BrowserWindow): void {
+    // BrowserWindow's native getters throw once "closed" is emitted. Retain
+    // the owner identity while it is alive; cleanup only compares references.
+    const owner = window.webContents
+    window.once("closed", () => this.removeOwner(owner))
+  }
+
+  private removeOwner(owner: WebContents): void {
     for (const [id, registration] of this.registrations) {
       if (registration.owner === owner) this.registrations.delete(id)
     }
@@ -337,12 +383,20 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 500) : ""
 }
 
-async function withDebugger<T>(guest: WebContents, deadline: number, operation: (debuggerSession: WebContents["debugger"]) => Promise<T>): Promise<T> {
+async function withDebugger<T>(guest: WebContents, deadline: number, operation: (debuggerSession: Pick<WebContents["debugger"], "sendCommand">) => Promise<T>): Promise<T> {
   const attached = guest.debugger.isAttached()
   if (!attached) guest.debugger.attach("1.3")
+  const debuggerSession = {
+    sendCommand: (...args: Parameters<WebContents["debugger"]["sendCommand"]>) => {
+      // A pending protocol reply can outlive the request deadline. Fence its
+      // continuation without detaching someone else's persistent overrides.
+      ensureDeadline(deadline)
+      return guest.debugger.sendCommand(...args)
+    },
+  }
   try {
-    return await withDeadline(() => operation(guest.debugger), deadline, () => {
-      if (guest.debugger.isAttached()) guest.debugger.detach()
+    return await withDeadline(() => operation(debuggerSession), deadline, () => {
+      if (!attached && guest.debugger.isAttached()) guest.debugger.detach()
     })
   } finally {
     if (!attached && guest.debugger.isAttached()) guest.debugger.detach()

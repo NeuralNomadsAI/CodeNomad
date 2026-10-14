@@ -1,0 +1,30 @@
+{
+  "language": "Türkçe",
+  "search": { "label": "Yardımda ara", "clear": "Temizle", "empty": "Makalelerde ve başlıklarda arayın.", "noResults": "'{query}' için sonuç bulunamadı. Başka bir terim deneyin.", "failure": "Arama yüklenemedi. Bu sayfayı yeniden yükleyin veya yardım konularını kullanın.", "loading": "Arama yükleniyor…", "count": "{count} sonuç" },
+  "siteTitle": "CodeNomad yardımı",
+  "brand": "Yardım",
+  "tagline": "Projeler, oturumlar ve worktree'ler için bir OpenCode çalışma alanı.",
+  "sections": {
+    "start": "Buradan başlayın",
+    "workflows": "İş akışları",
+    "opencode-setup": "OpenCode kurulumu",
+    "remote-access": "Uzaktan erişim",
+    "customize": "Özelleştir",
+    "extensions": "Eklentiler",
+    "desktop": "Masaüstü",
+    "help": "Yardım alın"
+  },
+  "onThisPage": "Bu sayfada",
+  "skipToContent": "İçeriğe geç",
+  "editPage": "Bu sayfayı düzenle",
+  "translatePage": "Bu sayfayı çevir",
+  "reportProblem": "Sorun bildir",
+  "download": "İndir",
+  "github": "GitHub",
+  "languageLabel": "Dil",
+  "projectLinks": "Proje bağlantıları",
+  "helpTopics": "Yardım konuları",
+  "scope": "Güncel CodeNomad · OpenCode V2",
+  "findHint": "{keys} ile metin arayın.",
+  "untranslated": "Bu sayfa henüz Türkçeye çevrilmedi. Aşağıda İngilizce sürüm gösteriliyor."
+}

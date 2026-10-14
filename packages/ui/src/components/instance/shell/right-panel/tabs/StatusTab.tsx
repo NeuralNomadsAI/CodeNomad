@@ -28,7 +28,6 @@ import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { ShellOutputDialog } from "../../../../shell-output-dialog"
-import { WebSearchSettingsCard } from "../../../../settings/websearch-settings-card"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -206,17 +205,17 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     </Show>
   )
 
-  const renderProviderUsage = () => {
-    const session = props.activeSession()
-    if (!session) {
-      return <div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>
-    }
-    return (
-      <div class="border border-base bg-surface-secondary px-3 py-2">
-        <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
-      </div>
-    )
-  }
+  const renderProviderUsage = () => (
+    <Show when={props.activeSession()} fallback={<div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>}>
+      {(session) => (
+        <div class="border border-base bg-surface-secondary px-3 py-2">
+          <ProviderUsagePanel instanceId={props.instanceId} sessionId={session().id} directory={session().location.directory}
+            providerId={session().model.providerId} modelId={session().model.modelId}
+            active={props.isActive() && props.expandedItems().includes("provider-usage")} />
+        </div>
+      )}
+    </Show>
+  )
 
   const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
     const sections = createCoreStatusSectionManifest({
@@ -228,12 +227,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderYoloModeSection,
       renderProviderUsage,
       renderBackgroundProcesses,
-      renderWebSearch: () => <Show when={props.isActive() && isSectionExpanded("websearch")}>
-        <div class="websearch-status-stack">
-          <WebSearchSettingsCard instanceId={props.instanceId} location={shellLocation()} scope="global" />
-          <WebSearchSettingsCard instanceId={props.instanceId} location={shellLocation()} scope="project" />
-        </div>
-      </Show>,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
         <InstanceServiceStatus

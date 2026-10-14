@@ -17,7 +17,7 @@ test("modern proxy preserves Forms scope and rejects obsolete selectors in curso
   upstream.all("/*", async request => { forwarded++; return { method: request.method, url: request.url, body: request.body, headers: request.headers } })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint: Endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`, auth: { type: "basic", username: "opencode", password: "fixture" } }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.0.27", pid: 1, discovery: "info" })
   const client = { session: { get: async ({ sessionID }: { sessionID: string }) => ({ location: { directory: sessionID === "foreign" ? "/foreign" : "/native" } }) } } as unknown as OpenCodeClient
   const connection = { endpoint, client, fetch: createRuntimeFetch(endpoint), assertCurrent() {}, invalidate() {}, profile: async () => "modern" as const }
   const directories = new Set(["/host", "/native"])

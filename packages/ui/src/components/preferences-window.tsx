@@ -18,6 +18,7 @@ import { runNativeWindowAction } from "../lib/native/window-controls"
 import { setActiveSettingsSection } from "../stores/settings-screen"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { sdkManager } from "../lib/sdk-manager"
+import { observeDesktopUpdates } from "../stores/desktop-updates"
 
 export const PreferencesWindow: Component = () => {
   const [request, setRequest] = createSignal<NativePreferencesRequest>({ section: "general" })
@@ -68,6 +69,8 @@ export const PreferencesWindow: Component = () => {
   }
 
   onMount(() => {
+    // Updates installed from Preferences report their failures to this window.
+    onCleanup(observeDesktopUpdates())
     let mounted = true
     let receivedLiveUpdate = false
     let requestGuardReady = false

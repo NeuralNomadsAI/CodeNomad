@@ -15,7 +15,8 @@ export const AdvancedSettingsSection: Component = () => {
         setting.id === "behavior.autoCleanupBlankSessions" ||
         setting.id === "behavior.keepUnseenSubagentIdleStatus" ||
         (setting.id === "behavior.focusExistingWindowOnSecondLaunch" && isNativeApplicationWindow()) ||
-        setting.id === "behavior.providerUsageCreditBalance",
+        setting.id === "behavior.providerUsageCreditBalance" ||
+        setting.id === "behavior.hideDiffWhitespaceChanges",
     ),
     {
       kind: "toggle",

@@ -51,7 +51,7 @@
   margin-top: 0.75rem;
   padding: 0.625rem 0.875rem;
   border: 1px solid var(--border-base);
-  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-base));
+  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-inset));
   border-radius: 0;
   color: var(--text-primary);
   font-size: var(--font-size-sm);

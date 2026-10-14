@@ -51,13 +51,13 @@ body {
   font-weight: var(--font-weight-regular);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   color: var(--text-primary);
 }
 
 #root {
   width: 100vw;
   height: 100vh;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
 }
 

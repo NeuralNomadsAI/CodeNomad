@@ -1,0 +1,16 @@
+{
+  "productName": "Isolated panel extension fixture",
+  "version": "0.0.0",
+  "identifier": "test.codenomad.panel-extension",
+  "build": { "frontendDist": "assets" },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": true,
+    "security": { "capabilities": [{
+      "identifier": "probe", "windows": ["probe"],
+      "remote": { "urls": ["http://127.0.0.1:*"] },
+      "permissions": ["allow-probe"]
+    }] }
+  },
+  "bundle": { "active": false, "icon": ["../../src-tauri/icon.ico"] }
+}

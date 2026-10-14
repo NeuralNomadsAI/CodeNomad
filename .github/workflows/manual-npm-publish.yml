@@ -49,15 +49,14 @@ jobs:
       PUBLISH_NPM_VERSION: 11.5.1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
-          registry-url: https://registry.npmjs.org
 
       - name: Prepare pinned npm CLI
         shell: bash
@@ -113,5 +112,8 @@ jobs:
             unset NODE_AUTH_TOKEN
           else
             echo "Using NPM_TOKEN authentication"
+            # Configure token auth only for publishing, not dependency installs.
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/publish.npmrc"
+            printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$NPM_CONFIG_USERCONFIG"
           fi
           node "$PINNED_NPM_CLI" publish --workspace packages/server --access public --tag ${DIST_TAG} --provenance

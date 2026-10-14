@@ -16,12 +16,14 @@ function merge(target: Record<string, any>, patch: Record<string, any>): Record<
 it("persists independent palettes, queued changes, overrides, deletion and failed writes", async () => {
   const originals = {
     loadConfigOwner: storage.loadConfigOwner, loadStateOwner: storage.loadStateOwner,
+    revalidateUiConfigOwner: storage.revalidateUiConfigOwner,
     patchStateOwner: storage.patchStateOwner, patchConfigOwner: storage.patchConfigOwner,
   }
   const legacy = normalizeColorScheme("slate")
   let state: Record<string, any> = { colorScheme: legacy, theme: "dark", untouched: { value: 123 } }
   let fail = false
   storage.loadConfigOwner = async () => ({})
+  storage.revalidateUiConfigOwner = async () => ({})
   storage.loadStateOwner = async () => structuredClone(state)
   storage.patchConfigOwner = async () => ({})
   storage.patchStateOwner = async (_owner, patch) => {

@@ -62,6 +62,7 @@ declare global {
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
+    setNotificationBadge?: (count: number) => Promise<unknown>
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
@@ -69,8 +70,12 @@ declare global {
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
     clearClientState?: (accessToken: string) => Promise<boolean>
+    listOtherDataProfiles?: () => Promise<unknown>
+    deleteOtherDataProfiles?: (ids: string[]) => Promise<unknown>
     registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
+    emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
+    browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
     claimBrowserOpen?: (requestID: string) => Promise<boolean>
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
     onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
@@ -90,6 +95,7 @@ declare global {
     preferencesReady?: () => Promise<unknown>
     acceptPreferencesRequest?: (request: unknown) => Promise<unknown>
     resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
+    openerStartupState?: (command: string, epoch?: number) => Promise<unknown>
     onPreferencesSection?: (callback: (request: unknown) => void) => () => void
     onPreferencesCloseRequested?: (callback: () => void) => () => void
     onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
@@ -127,6 +133,7 @@ declare global {
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
+       __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

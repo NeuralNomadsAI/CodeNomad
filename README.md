@@ -10,6 +10,8 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 
 *The 0.20 interface, rendered with demonstration data. [Download the latest stable release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).*
 
+[User help](https://neuralnomadsai.github.io/CodeNomad/) · [Read the English guide on GitHub](docs/help/en/index.md) — multilingual help for current CodeNomad and OpenCode V2.
+
 ---
 
 ## Features
@@ -19,7 +21,7 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 - **🌳 Git worktrees** — Create and select worktrees, move a session with its subsessions, and review Git changes without leaving the workspace.
 - **💬 Rich conversations** — Markdown, code, diffs, tool-result images, configurable reasoning/tool visibility, and `/btw` for a temporary side question.
 - **📎 Files and attachments** — Pick, paste, or drop device files; use `@` references for project files and browse your workspace from the file panel.
-- **🌐 Remote access** — Connect to a CodeNomad server from a desktop client or browser, with password authentication and HTTPS support.
+- **🌐 Remote access** — Connect to a CodeNomad server from a desktop client or browser, with password authentication and HTTPS support. Or turn on **Remote Control** to pair a phone or another computer from anywhere through an [OpenTunnel](https://github.com/anomalyco/opentunnel) relay, without opening ports: TLS ends on your machine.
 - **🧩 Tools and previews** — Monitor native background shells, manage MCP connections and Global/Project plugin activation, and open web tools as SideCars.
 - **🔎 Agent-driven browser previews** — Let your agent open and inspect a visible web preview in Electron or Windows Tauri, without a Developer Mode switch.
 - **🎙️ Voice input and speech** — Dictate prompts and listen to responses.
@@ -38,10 +40,23 @@ Download the archive or package for your platform from [Releases](https://github
 | Platform | Electron | Tauri |
 |----------|----------|-------|
 | macOS | ZIP, separate Intel and Apple Silicon builds | ZIP, separate Intel and Apple Silicon builds |
-| Windows | ZIP (x64) | ZIP containing the Windows installer (x64) |
-| Linux | Portable tar.gz (x64) | deb (x64) |
+| Windows | ZIP (x64) | Installer (x64) |
+| Linux | deb (x64) | AppImage (x64) |
 
-The Tauri deb is currently built and installation-tested on Ubuntu 24.04. Compatibility with older Debian-based distributions is not yet guaranteed.
+The Linux builds are currently built and tested on Ubuntu 24.04. Compatibility with older distributions is not yet guaranteed. The Electron deb sets up Chromium's sandbox during installation and replaces a previously installed Tauri deb. The Tauri installer, macOS app and AppImage update themselves from within the app.
+
+On Linux, from the download folder:
+
+```bash
+# Electron deb
+sudo apt install ./CodeNomad-Electron-linux-x64-<version>.deb
+
+# Tauri AppImage
+chmod +x CodeNomad-Tauri-linux-x64-<version>.AppImage
+./CodeNomad-Tauri-linux-x64-<version>.AppImage
+```
+
+Without FUSE (for example in a container), start the AppImage with `--appimage-extract-and-run`.
 
 Desktop builds bundle Node.js and npm; **you do not need to install Node.js separately**. On first launch, select an existing compatible OpenCode executable or install OpenCode through the setup screen. You can manage the executable, updates, and service later in **Preferences → OpenCode**.
 
@@ -75,7 +90,7 @@ npx @neuralnomads/codenomad-dev --password "your-password" --launch
 
 ## OpenCode V2 and upgrading from 0.19.x
 
-CodeNomad **0.20.0 requires OpenCode V2**: **2.0.7 minimum**, with **2.0.18 recommended and qualified for this release**. OpenCode V1 and the former V2 beta protocol are not supported. The current requirements are maintained in [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts).
+CodeNomad **0.20.0 requires OpenCode V2**: **2.0.7 minimum**, with **2.0.21 recommended and qualified for this release**. OpenCode V1 and the former V2 beta protocol are not supported. The current requirements are maintained in [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts).
 
 - **One shared OpenCode service** owns sessions and messages. Closing a CodeNomad tab, window, or backend leaves that service running. Desktop tabs, drafts, and layout are restored separately for each window.
 - **Use an existing CLI or install from CodeNomad.** Executables on `PATH` are preferred; the setup screen also supports a selected executable and a shared user npm installation. The former private CodeNomad OpenCode installation is no longer used.
@@ -147,7 +162,7 @@ Add SideCar as:
 
 ## Requirements
 
-- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.0.7 minimum; 2.0.18 recommended for CodeNomad 0.20.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
+- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.0.7 minimum; 2.0.21 recommended for CodeNomad 0.20.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
 - **[Git](https://git-scm.com/downloads)** — a prerequisite for full functionality (repository identity, Git operations and worktrees). Git must be executable in the CodeNomad backend's `PATH`; it is not bundled with the desktop installers.
 - **Node.js and npm** — required for the standalone npm server and source builds, bundled with desktop releases. Use **Node.js 24 LTS**; development and release builds use the version in [`.node-version`](.node-version) (currently 24.20.0).
 
@@ -201,7 +216,7 @@ On Intel Macs, also check **System Settings → Privacy & Security** on first la
 WebKitGTK DMA-BUF/GBM issue. Run with:
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad-tauri
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./CodeNomad-Tauri-linux-x64-<version>.AppImage
 ```
 
 This applies to the Tauri WebKitGTK build. Electron uses Chromium and can be used as an alternative on the same machine.

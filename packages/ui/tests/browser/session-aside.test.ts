@@ -1,44 +1,46 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page, type Route } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import type { ViteDevServer } from "vite"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { closeSessionAsideHarness, prepareSessionAsidePage, startSessionAsideFixture } from "./session-aside-harness"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "aside-fixture", configureServer(s) {
-      s.middlewares.use("/aside-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/aside-fixture", '<html><body><div id="root" style="margin:24px;max-width:1100px"></div><script type="module" src="/tests/browser/fixtures/session-aside.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+  let ready = false
+  await runWithDiagnosticCleanup({
+    run: async () => {
+      ;({ server, url } = await startSessionAsideFixture())
+      browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+      ready = true
+    },
+    diagnose: async () => {},
+    cleanup: async () => { if (!ready) await server?.close() },
+    onObservationError: error => console.error("aside startup observation", String(error).slice(0, 256)),
+    onCleanupError: error => console.error("aside startup cleanup", String(error).slice(0, 256)),
   })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/aside-fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(() => closeSessionAsideHarness(browser, server))
 
 async function setup(respond?: (route: Route) => Promise<void>, width = 1200) {
   const page = await browser.newPage({ viewport: { width, height: 850 }, locale: "en-US" })
   const requests: { url: string; body: any }[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript(`Object.defineProperty(navigator, 'clipboard', {value: {writeText: async (text) => {window.copiedText = text}}})`)
-  await page.route("**/api/**", async route => {
-    const request = route.request()
-    if (request.url().endsWith("/generate")) {
-      requests.push({ url: request.url(), body: request.postDataJSON() })
-      return respond ? respond(route) : route.fulfill({ json: { data: { text: "## Side answer\n\n**Only in this window.**" } } })
-    }
-    if (request.url().endsWith("/api/command")) return route.fulfill({ json: { data: [{ name: "btw", description: "Server collision" }, { name: "review", description: "Review code" }] } })
-    return route.fulfill({ json: {} })
+  return prepareSessionAsidePage(page, async () => {
+    await page.addInitScript(`Object.defineProperty(navigator, 'clipboard', {value: {writeText: async (text) => {window.copiedText = text}}})`)
+    await page.route("**/api/**", async route => {
+      const request = route.request()
+      if (request.url().endsWith("/generate")) {
+        requests.push({ url: request.url(), body: request.postDataJSON() })
+        return respond ? respond(route) : route.fulfill({ json: { data: { text: "## Side answer\n\n**Only in this window.**" } } })
+      }
+      if (request.url().endsWith("/api/command")) return route.fulfill({ json: { data: [{ name: "btw", description: "Server collision" }, { name: "review", description: "Review code" }] } })
+      return route.fulfill({ json: {} })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    return { page, requests, errors }
   })
-  await page.goto(url)
-  await page.waitForFunction(() => Boolean((window as any).fixture))
-  return { page, requests, errors }
 }
 const composer = (page: Page) => page.locator(".prompt-input-container textarea").first()
 async function send(page: Page, text: string) {

@@ -72,14 +72,14 @@ bun run build:win-arm64
 ### Linux
 
 ```bash
-# Portable Electron archive (x64)
+# Electron Debian package (x64)
 npm run build:linux --workspace @neuralnomads/codenomad-electron-app
 
-# Tauri Debian package (x64)
-npm exec --workspace @codenomad/tauri-app -- tauri build --bundles deb
+# Tauri AppImage (x64)
+npm exec --workspace @codenomad/tauri-app -- tauri build --bundles appimage
 ```
 
-**Release formats:** Electron `.tar.gz` portable archive and Tauri `.deb` installer.
+**Release formats:** Electron `.deb` installer and self-updating Tauri `.AppImage`.
 
 ### Build All Platforms
 
@@ -103,10 +103,10 @@ Build artifacts are generated in package-specific output directories:
 
 ```
 packages/electron-app/release/
-└── CodeNomad-Electron-linux-x64-0.18.0.tar.gz
+└── CodeNomad-Electron-linux-amd64-0.18.0.deb
 
-packages/tauri-app/target/release/bundle/deb/
-└── CodeNomad_0.18.0_amd64.deb
+packages/tauri-app/target/release/bundle/appimage/
+└── CodeNomad_0.18.0_amd64.AppImage
 ```
 
 ## File Naming Convention
@@ -119,9 +119,9 @@ CodeNomad-Tauri-{os}-{arch}-{version}.{ext}
 - **version**: From package.json (e.g., `0.18.0`)
 - **os**: `macos`, `windows`, `linux`
 - **arch**: `x64`, `arm64`, `universal`
-- **ext**: `dmg`, `zip`, `exe`, `deb`, `tar.gz`
+- **ext**: `zip`, `exe`, `app.tar.gz`, `deb`, `AppImage`
 
-The Tauri build directory uses Tauri's native Debian filename. CI renames the package to the convention above when preparing release assets.
+Electron names deb architectures the Debian way (`amd64`) and Tauri keeps its native bundle filenames. CI renames both to the convention above when preparing release assets.
 
 ## Platform Requirements
 
@@ -140,8 +140,8 @@ The Tauri build directory uses Tauri's native Debian filename. CI renames the pa
 ### Linux
 
 - **Build on:** Linux x64
-- **Electron portable:** extract the tar.gz and run the `CodeNomad` executable
-- **Tauri deb:** built and installation-tested on Ubuntu 24.04; older distributions are not yet guaranteed
+- **Electron deb:** built and installation-tested on Ubuntu 24.04; its post-install step gives `chrome-sandbox` the root ownership and 4755 mode Chromium's sandbox requires, and it replaces the former Tauri deb (`code-nomad`)
+- **Tauri AppImage:** built and tested on Ubuntu 24.04; older distributions are not yet guaranteed
 
 ## Troubleshooting
 
@@ -154,7 +154,7 @@ xcode-select --install
 
 ### Build fails on Linux
 
-Install the Electron and Tauri build dependencies documented by their upstream projects. Release builds currently target Linux x64 and produce an Electron portable archive plus a Tauri Debian package.
+Install the Electron and Tauri build dependencies documented by their upstream projects. Release builds currently target Linux x64 and produce an Electron Debian package plus a Tauri AppImage.
 
 ### "electron-builder not found"
 

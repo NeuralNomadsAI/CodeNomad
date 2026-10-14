@@ -5,6 +5,7 @@ import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
+import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
 import { getSessionListIds, prependSessionListId, sessions, setSessions } from "./session-state.ts"
@@ -113,6 +114,9 @@ it("keeps an in-project move in the source instance when another tab opens that 
 it("still removes the old instance projection when the session really leaves its location scope", async () => {
   const target = setup("move-real-target", "/other")
   const source = setup("move-real-source", "/repo")
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+  setInstanceMetadata(source.session.instanceId, { project: { id: "source-project", canonical: "/repo" } as any })
   source.client.session.list = async () => ({ data: [] })
   try {
     handleNativeSessionEvent(source.session.instanceId, {
@@ -124,5 +128,5 @@ it("still removes the old instance projection when the session really leaves its
     assert.equal(sessions().get(target.session.instanceId)?.get("restored")?.location.directory, "/other")
     assert.deepEqual(getSessionListIds(source.session.instanceId), [])
     assert.deepEqual(getSessionListIds(target.session.instanceId), ["restored"])
-  } finally { source.cleanup(); target.cleanup() }
+  } finally { serverApi.fetchWorktrees = original; source.cleanup(); target.cleanup() }
 })

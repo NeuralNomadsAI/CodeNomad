@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { queryHistoryPage, type HistoryScope } from "./history-store"
-import { historyQuerySchema, type HistoryPage } from "./history-contract"
+import { historyQuerySchema, historyNativePageSchema, type HistoryNativePage } from "./history-contract"
 import { pruneTransaction } from "./transaction"
 import { validateClaimFence, storageKey } from "./claim-fence"
 import { revision } from "./planner"
@@ -25,10 +25,11 @@ function fixture(count = 1) {
   return db
 }
 async function all(db: DatabaseSync, owner = scope, value: Record<string, unknown> = {}) {
-  const pages: HistoryPage[] = []
+  const pages: HistoryNativePage[] = []
   let cursor: string | undefined
   do {
     const page = await queryHistoryPage(db, owner, historyQuerySchema.parse({ purpose: "stats", ...value, cursor }), new AbortController().signal)
+    historyNativePageSchema.parse(page)
     pages.push(page)
     cursor = page.cursor ?? undefined
   } while (cursor)
@@ -68,6 +69,48 @@ test("searches edit diffs stored in tool metadata", async () => {
   } finally { db.close() }
 })
 
+test("text-only searches project readable fields, preserve part positions and skip malformed data per message", async () => {
+  const db = fixture(0)
+  try {
+    const samples = [
+      ["assistant", { content: [null, "scalar", { type: "tool", state: { content: [{ type: "text", text: "x".repeat(1024 * 1024) }] } },
+        { type: "reasoning", text: "hidden" }, { type: "text", text: "ÉTÉ needle" }] }],
+      ["user", { text: "ÉTÉ needle", attachments: [{ data: "x".repeat(1024 * 1024) }] }],
+      ["system", { summary: "ÉTÉ needle" }],
+      ["shell", { output: { output: "ÉTÉ needle" } }],
+      ["shell", { command: "ÉTÉ needle" }],
+    ] as const
+    for (const [n, [type, value]] of samples.entries()) db.prepare("INSERT INTO session_message VALUES (?, 's', ?, ?, ?)").run(`text-${n}`, type, n, JSON.stringify(value))
+    for (const [n, value] of ["{", "null", "[]", '{"content":42}', '"scalar"'].entries()) {
+      db.prepare("INSERT INTO session_message VALUES (?, 's', 'assistant', ?, ?)").run(`bad-${n}`, n, value)
+    }
+    let materialized = 0
+    const prepare = db.prepare.bind(db)
+    db.prepare = ((sql: string) => {
+      const statement = prepare(sql)
+      if (sql.includes("AS data")) {
+        const iterate = statement.iterate.bind(statement)
+        statement.iterate = function* (...params) {
+          for (const row of Reflect.apply(iterate, statement, params)) {
+            materialized += typeof row.data === "string" ? row.data.length : 0
+            yield row
+          }
+        }
+      }
+      return statement
+    }) as typeof db.prepare
+    const pages = await all(db, scope, { purpose: "search", query: "été", includeTechnical: false })
+    assert.deepEqual(pages.flatMap(p => p.hits.map(h => [h.messageID, h.partIndex])), [["text-0", 4], ["text-1", 0], ["text-2", 0], ["text-3", 0], ["text-4", 0]])
+    assert.equal(pages.reduce((n, p) => n + p.skipped, 0), 5)
+    assert(pages.every(p => p.tools === 0 && p.reasoning === 0))
+    assert(materialized < 1024, `unneeded payload materialized: ${materialized} characters`)
+    materialized = 0
+    const counts = await all(db, scope, { includeTechnical: false })
+    assert.equal(counts.reduce((n, p) => n + p.scanned, 0), 10, "message statistics include all message rows, without reading content")
+    assert.equal(materialized, 0)
+  } finally { db.close() }
+})
+
 test("includes native text messages, nested directories and historical global sessions, excluding sibling paths and other identities", async () => {
   const db = fixture(0)
   try {
@@ -101,6 +144,37 @@ test("cursor is scope/query bound and scan horizon excludes appended messages", 
     await assert.rejects(queryHistoryPage(db, scope, { ...input, query: "changed", cursor: first.cursor }, new AbortController().signal), /cursor/)
     const abort = new AbortController(); abort.abort()
     await assert.rejects(queryHistoryPage(db, scope, input, abort.signal), /abort/i)
+  } finally { db.close() }
+})
+
+test("metadata counts batch many messages but keep ownership provenance bounded and complete", async () => {
+  const db = fixture(1100)
+  try {
+    for (let n = 0; n < 40; n++) {
+      const id = `owner-${n}`
+      db.prepare("INSERT INTO session_v2 VALUES (?, '/repo', NULL, 'p', NULL, NULL, NULL)").run(id)
+      db.prepare("INSERT INTO session_message VALUES (?, ?, 'user', 0, '{}')").run(id, id)
+    }
+    const pages = await all(db, { directory: "/repo", projectID: "p" }, { includeTechnical: false })
+    assert.equal(pages.reduce((n, p) => n + p.scanned, 0), 1140)
+    assert(pages.some(p => p.scanned > 32), "metadata-only counts amortize RPC overhead")
+    assert(pages.every(p => p.scanned <= 1024))
+    assert(pages.every(p => p.sessions.length <= 32))
+    assert.equal(pages.reduce((n, p) => n + p.skipped, 0), 0)
+  } finally { db.close() }
+})
+
+test("sparse search amortizes scan batches without exceeding the native hit limit", async () => {
+  const db = fixture(1100)
+  try {
+    db.prepare("UPDATE session_message SET data=? WHERE id='m-1099'").run(JSON.stringify({ content: [{ type: "text", text: "Rare needle answer" }] }))
+    const sparse = await all(db, scope, { purpose: "search", query: "Rare needle", includeTechnical: false })
+    assert.deepEqual(sparse.flatMap(p => p.hits.map(h => h.messageID)), ["m-1099"])
+    assert.equal(sparse.reduce((n, p) => n + p.scanned, 0), 1100)
+    assert(sparse.some(p => p.scanned > 32))
+    const dense = await all(db, scope, { purpose: "search", query: "answer", includeTechnical: false })
+    assert.equal(dense.flatMap(p => p.hits).length, 1100)
+    assert(dense.every(p => p.hits.length <= 32 && p.scanned <= 1024))
   } finally { db.close() }
 })
 

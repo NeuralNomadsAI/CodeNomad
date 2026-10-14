@@ -6,8 +6,11 @@ import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
+import { installKeyboardOffset } from "./lib/keyboard-offset"
 import { showConfirmDialog } from "./stores/alerts"
+import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
@@ -31,16 +34,18 @@ import OpenCodeSetup from "./components/opencode-setup"
 import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
-import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
+import { observeDesktopUpdates, requestDesktopUpdate } from "./stores/desktop-updates"
+import { runtimeEnv } from "./lib/runtime-env"
+import { listenMenuActions } from "./lib/native/menu-actions"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import { startNotificationIconBadge } from "./lib/notification-icon-badge"
 import {
   claimNativeBrowserOpen,
   onNativeBrowserOpen,
   releaseNativeBrowserOpen,
   selectBrowserOpenOwner,
 } from "./lib/native/browser"
-import { resolveResolvable } from "./lib/commands"
 import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
@@ -125,6 +130,7 @@ async function withForegroundRefreshTimeout<T>(
 }
 
 const App: Component = () => {
+  onMount(() => onCleanup(startNotificationIconBadge()))
   useAppSessionRestore()
   const { t } = useI18n()
   const {
@@ -133,12 +139,10 @@ const App: Component = () => {
     serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
-    toggleKeyboardShortcutHints,
     toggleShowMessageTimeline,
     toggleShowTimelineTools,
     toggleAutoCleanupBlankSessions,
     toggleUsageMetrics,
-    togglePromptSubmitOnEnter,
     toggleShowPromptVoiceInput,
     setDiffViewMode,
     setToolOutputExpansion,
@@ -189,13 +193,6 @@ const App: Component = () => {
     setMobileFullscreenMode(false)
   }
 
-  createEffect(() => {
-    if (typeof document === "undefined") return
-    const shouldShow =
-      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? false)
-    document.documentElement.dataset.keyboardHints = shouldShow ? "show" : "hide"
-  })
-
   const updateInstanceTabBarHeight = () => {
     if (typeof document === "undefined") return
     const element = document.querySelector<HTMLElement>(".tab-bar-instance")
@@ -211,27 +208,8 @@ const App: Component = () => {
 
   onMount(() => {
     if (typeof window === "undefined") return
-    const vv = window.visualViewport
-    if (!vv) return
-
-    const updateKeyboardOffset = () => {
-      // visualViewport shrinks when the OSK is visible. Use the delta as a bottom inset.
-      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      document.documentElement.style.setProperty("--keyboard-offset", `${Math.floor(inset)}px`)
-    }
-
-    const schedule = () => requestAnimationFrame(updateKeyboardOffset)
-    schedule()
-    vv.addEventListener("resize", schedule)
-    vv.addEventListener("scroll", schedule)
-    window.addEventListener("orientationchange", schedule)
-
-    onCleanup(() => {
-      vv.removeEventListener("resize", schedule)
-      vv.removeEventListener("scroll", schedule)
-      window.removeEventListener("orientationchange", schedule)
-      document.documentElement.style.removeProperty("--keyboard-offset")
-    })
+    // On-screen keyboard inset, limited to touch devices editing text.
+    onCleanup(installKeyboardOffset(window))
   })
 
   // If the user exits browser fullscreen via browser UI, restore chrome.
@@ -533,6 +511,31 @@ const App: Component = () => {
 
   useDesktopFolderLaunch(handleSelectFolder)
 
+  async function handleNewTemporaryInstance(): Promise<void> {
+    clearLaunchError()
+    setIsSelectingFolder(true)
+    try {
+      selectInstanceTab(await openTemporaryInstance())
+      setShowFolderSelection(false)
+    } catch (error) {
+      const message = formatLaunchErrorMessage(
+        error,
+        t("app.launchError.fallbackMessage"),
+        t("app.launchError.invalidConfig"),
+        t("opencodeBinarySelector.validation.v2Required"),
+      )
+      const missingBinary = isMissingBinaryMessage(message)
+      if (missingBinary || message.includes("opencode_update_required")) {
+        openOpenCodeSetup(() => handleNewTemporaryInstance())
+        return
+      }
+      showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
+      log.error("Failed to create temporary instance", error)
+    } finally {
+      setIsSelectingFolder(false)
+    }
+  }
+
   function handleSelectExistingInstance(instanceId: string, recentPath: string) {
     const instance = instances().get(instanceId)
     if (!instance) return
@@ -554,6 +557,13 @@ const App: Component = () => {
   function handleNewInstanceRequest() {
     setShowFolderSelection(true)
   }
+
+  const [launcherOpen, setLauncherOpen] = createSignal(false)
+  const [launcherAnchor, setLauncherAnchor] = createSignal<HTMLElement>()
+  // The launcher is anchored to the tab bar: the home page or a closed tab bar retires it.
+  createEffect(() => {
+    if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
+  })
 
   function handleOpenSidecarPicker() {
     setSidecarPickerOpen(true)
@@ -587,6 +597,10 @@ const App: Component = () => {
   }
 
   async function handleStopInstance(instanceId: string) {
+    if (instances().get(instanceId)?.temporary) {
+      await closeTemporaryInstance(instanceId)
+      return
+    }
     const confirmed = await showConfirmDialog(
       t("app.stopInstance.confirmMessage"),
       {
@@ -638,6 +652,12 @@ const App: Component = () => {
 
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
+    if (tab.kind === "instance" && tab.instance.temporary) {
+      // Asks to keep or discard unless untouched; a refused discard restores the tab.
+      await closeTemporaryInstance(tab.instance.id)
+      return
+    }
+
     if (tab.kind === "instance") {
       closeInstanceTab(tab.instance.id)
     } else {
@@ -663,15 +683,13 @@ const App: Component = () => {
     await updateSessionModel(instanceId, sessionId, model)
   }
 
-  const { commands: paletteCommands, executeCommand } = useCommands({
+  const { commands: paletteCommands, executeCommand, executeMenuCommand } = useCommands({
     preferences,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
-    toggleKeyboardShortcutHints,
     toggleShowMessageTimeline,
     toggleShowTimelineTools,
     toggleUsageMetrics,
-    togglePromptSubmitOnEnter,
     toggleShowPromptVoiceInput,
     setDiffViewMode,
     setToolOutputExpansion,
@@ -679,6 +697,7 @@ const App: Component = () => {
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
     handleNewInstanceRequest,
+    handleNewTemporaryInstance: () => handleNewTemporaryInstance(),
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
     handleStopInstance,
     handleNewSession,
@@ -702,40 +721,20 @@ const App: Component = () => {
   // Native visibility actions share the shell/preferences state; other actions use palette commands.
   const executeViewMenuAction = useViewMenu(() => activeInstance()?.id)
   onMount(() => {
+    onCleanup(observeDesktopUpdates())
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (action === "get-updates") { void requestDesktopUpdate(); return }
       if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {
         const instance = activeInstance()
         if (instance) showCommandPalette(instance.id)
         return
       }
-      const command = paletteCommands().find((candidate) => candidate.id === action)
-      if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+      executeMenuCommand(action)
     }
 
-    if (isTauriHost()) {
-      const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
-      if (tauriBridge?.event) {
-        let unlistenMenu: (() => void) | null = null
-
-        tauriBridge.event.listen("menu:action", (event) => {
-          executeMenuAction(event.payload)
-        }).then((unlisten) => {
-          unlistenMenu = unlisten
-        }).catch((error) => {
-          log.error("Failed to listen for native menu actions", error)
-        })
-
-        onCleanup(() => {
-          unlistenMenu?.()
-        })
-      }
-      return
-    }
-
-    const unsubscribe = window.electronAPI?.onMenuAction?.(executeMenuAction)
-    onCleanup(() => unsubscribe?.())
+    onCleanup(listenMenuActions(executeMenuAction))
   })
 
   return (
@@ -820,6 +819,13 @@ const App: Component = () => {
                   onSelect={selectAppTab}
                   onClose={(tabId) => void handleCloseAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
+                  onOpenLauncher={(anchor) => {
+                    // The home page already offers everything; a hidden tab bar must not reopen it.
+                    if (showFolderSelection()) return
+                    setLauncherAnchor(anchor)
+                    setLauncherOpen(true)
+                  }}
+                  launcherOpen={launcherOpen()}
                   onMoveTab={moveAppTab}
                 />
               </Show>
@@ -874,6 +880,7 @@ const App: Component = () => {
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
             onSelectExistingInstance={handleSelectExistingInstance}
+            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
             onOpenSidecar={handleOpenSidecarPicker}
           />
@@ -885,6 +892,7 @@ const App: Component = () => {
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 onSelectExistingInstance={handleSelectExistingInstance}
+                onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {
@@ -896,6 +904,17 @@ const App: Component = () => {
           </div>
         </Show>
 
+        <NewInstanceLauncher
+          open={launcherOpen()}
+          anchor={launcherAnchor()}
+          isLoading={isSelectingFolder()}
+          onOpenChange={setLauncherOpen}
+          onSelectFolder={(path) => void handleSelectFolder(path)}
+          onSelectExistingInstance={handleSelectExistingInstance}
+          onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+          onOpenSidecar={handleOpenSidecarPicker}
+          onOpenHome={handleNewInstanceRequest}
+        />
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />

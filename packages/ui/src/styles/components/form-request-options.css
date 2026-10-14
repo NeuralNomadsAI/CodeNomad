@@ -14,7 +14,7 @@
   min-width: 0;
   padding: var(--space-sm);
   border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-control);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -25,7 +25,7 @@
 
 .form-request-choice[data-selected="true"] {
   border-color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-base));
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-control));
 }
 
 .form-request-choice:focus-within {

@@ -8,7 +8,7 @@ import type {
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { isLocalTauriHost, isWebHost } from "../runtime-env"
+import { isLocalTauriHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -41,12 +41,10 @@ export type BehaviorRegistryActions = {
   setUseTauriNativeEventTransport?: (next: boolean) => void
   updatePreferences?: (updates: Partial<Preferences>) => void | Promise<boolean>
   toggleShowThinkingBlocks: () => void
-  toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
-  togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: VisibilityPreference) => void
@@ -80,25 +78,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
   const updatePreferences = actions.updatePreferences
 
   return [
-    {
-      kind: "toggle",
-      id: "behavior.keyboardShortcutHints",
-      titleKey: "settings.behavior.keyboardHints.title",
-      subtitleKey: "settings.behavior.keyboardHints.subtitle",
-      get: (p) => Boolean(p.showKeyboardShortcutHints ?? false),
-      set: (next) => {
-        if (updatePreferences) {
-          updatePreferences({ showKeyboardShortcutHints: next })
-          return
-        }
-        setBooleanByToggle(
-          () => Boolean(prefs().showKeyboardShortcutHints ?? false),
-          actions.toggleKeyboardShortcutHints,
-          next,
-        )
-      },
-      disabled: () => isWebHost(),
-    },
     {
       kind: "toggle",
       id: "behavior.thinkingBlocks",
@@ -325,6 +304,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         updatePreferences?.({ showProviderUsageCreditBalance: next })
       },
     },
+    {
+      kind: "toggle",
+      id: "behavior.hideDiffWhitespaceChanges",
+      titleKey: "advancedSettings.hideDiffWhitespace.title",
+      subtitleKey: "advancedSettings.hideDiffWhitespace.subtitle",
+      get: (p) => p.hideDiffWhitespaceChanges ?? true,
+      set: (next) => updatePreferences?.({ hideDiffWhitespaceChanges: next }),
+    },
     ...(isLocalTauriHost() && actions.useTauriNativeEventTransport && actions.setUseTauriNativeEventTransport
       ? [
           {
@@ -369,40 +356,11 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         { value: "queue", labelKey: "settings.behavior.followUpBehavior.option.queue" },
       ],
     },
-    {
-      kind: "toggle",
-      id: "behavior.promptSubmitOnEnter",
-      titleKey: "settings.behavior.promptSubmit.title",
-      subtitleKey: "settings.behavior.promptSubmit.subtitle",
-      get: (p) => Boolean(p.promptSubmitOnEnter),
-      set: (next) => {
-        if (updatePreferences) {
-          updatePreferences({ promptSubmitOnEnter: next })
-          return
-        }
-        setBooleanByToggle(
-          () => Boolean(prefs().promptSubmitOnEnter),
-          actions.togglePromptSubmitOnEnter,
-          next,
-        )
-      },
-    },
   ]
 }
 
 export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[] {
   return [
-    {
-      id: "prompt-submit-shortcut",
-      label: () =>
-        actions.preferences().promptSubmitOnEnter
-          ? tGlobal("commands.promptSubmitShortcut.label.swapped")
-          : tGlobal("commands.promptSubmitShortcut.label.default"),
-      description: () => tGlobal("commands.promptSubmitShortcut.description"),
-      category: "Input & Focus",
-      keywords: () => splitKeywords("commands.promptSubmitShortcut.keywords"),
-      action: actions.togglePromptSubmitOnEnter,
-    },
     {
       id: "thinking",
       label: () =>
@@ -428,25 +386,6 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
       category: "System",
       keywords: () => splitKeywords("commands.timelineToolCalls.keywords"),
       action: actions.toggleShowTimelineTools,
-    },
-    {
-      id: "keyboard-shortcut-hints",
-      label: () =>
-        tGlobal(
-          actions.preferences().showKeyboardShortcutHints
-            ? "commands.keyboardShortcutHints.label.hide"
-            : "commands.keyboardShortcutHints.label.show",
-        ),
-      description: () =>
-        tGlobal(
-          isWebHost()
-            ? "commands.keyboardShortcutHints.description.disabledWeb"
-            : "commands.keyboardShortcutHints.description",
-        ),
-      category: "System",
-      keywords: () => splitKeywords("commands.keyboardShortcutHints.keywords"),
-      disabled: () => isWebHost(),
-      action: actions.toggleKeyboardShortcutHints,
     },
     {
       id: "thinking-default-visibility",

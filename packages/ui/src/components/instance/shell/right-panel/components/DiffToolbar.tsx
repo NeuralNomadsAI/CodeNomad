@@ -1,6 +1,6 @@
 import type { Component } from "solid-js"
 
-import { AlignJustify, FoldVertical, Split, UnfoldVertical } from "lucide-solid"
+import { Columns, FoldVertical, Rows, UnfoldVertical } from "lucide-solid"
 
 import { useI18n } from "../../../../../lib/i18n"
 import type { DiffContextMode, DiffViewMode } from "../types"
@@ -31,7 +31,7 @@ const DiffToolbar: Component<DiffToolbarProps> = (props) => {
         data-active={props.viewMode === "split" ? "true" : undefined}
         title={viewModeTitle()}
       >
-        {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
+        {props.viewMode === "split" ? <Columns class="h-4 w-4" aria-hidden="true" /> : <Rows class="h-4 w-4" aria-hidden="true" />}
       </button>
       <button
         type="button"
