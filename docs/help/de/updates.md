@@ -24,7 +24,7 @@ Stabil wählt das neueste endgültige Release. Vorschau folgt der Veröffentlich
 | Linux-x64-AppImage | Erfordert AppImage-Bundle-Markierung und nicht leeren `APPIMAGE`-Pfad sowie Unterstützung signierter Updates. `APPRUN` allein genügt nicht. |
 | Debian/RPM, lose Windows-Programmdatei, unsignierter/schlüsselloser Build | Öffnet Release-Seite statt In-App-Installation. |
 
-In Tauri-Anwendungsfenstern und nativen **Einstellungen**-Fenstern zeigt die Updates-Karte **Update installieren**, wenn ein Release angeboten wird. Sie prüft den ausgewählten Kanal und bietet **Installieren und neu starten** an, wenn ein In-App-Update verfügbar ist; andernfalls öffnet sie die auf der Karte angezeigte Release-Seite. Electron-, Web- und Remote-Fenster zeigen stattdessen den Link **Update herunterladen**, ohne native Updater-Prüfung.
+In Tauri-Anwendungsfenstern und nativen **Einstellungen**-Fenstern zeigt der Bereich Updates **Update installieren**, wenn ein Release angeboten wird. Er prüft den ausgewählten Kanal und bietet **Installieren und neu starten** an, wenn ein In-App-Update verfügbar ist; andernfalls öffnet er die dort angezeigte Release-Seite. Electron-, Web- und Remote-Fenster zeigen stattdessen den Link **Update herunterladen**, ohne native Updater-Prüfung.
 
 Das Tauri-Menü **Help → Get Updates...** führt den Update-Ablauf im fokussierten Anwendungsfenster aus. Aus den Einstellungen oder einem Remote-Fenster bringt es das zuletzt verwendete Anwendungsfenster in den Vordergrund, um die Prüfung auszuführen; es installiert nicht über das Remote-Fenster. Wenn kein Anwendungsfenster die Aktion empfangen kann, auch wenn das Zielfenster eine Lade-, Anmelde- oder Kopplungsseite zeigt, öffnet das Menü stattdessen die Release-Seite.
 
