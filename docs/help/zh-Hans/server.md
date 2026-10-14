@@ -59,7 +59,7 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 
 标志覆盖对应环境变量。带值标志使用所示参数；开关不带值。HTTPS/HTTP 值不区分大小写，将 `1`、`true`、`yes`、`y` 和 `on` 识别为启用；为清晰起见请显式使用 `true`/`false`。界面自动更新识别 `1`、`true` 和 `yes`。
 
-**开关环境变量只要定义就启用，无论值为何——包括 `false`、`0` 或空值。**取消设置 `CLI_UNRESTRICTED_ROOT`、`CLI_UI_NO_UPDATE`、`CLI_LAUNCH`、`CODENOMAD_GENERATE_TOKEN` 和 `CODENOMAD_SKIP_AUTH` 才能关闭相应开关。特别是，**`CODENOMAD_SKIP_AUTH=false` 仍会禁用认证**。下列 `false` 默认值适用于开关及其环境变量均不存在时。
+**严格布尔环境变量**（`CLI_UNRESTRICTED_ROOT`、`CLI_UI_NO_UPDATE`、`CLI_LAUNCH`、`CODENOMAD_GENERATE_TOKEN` 和 `CODENOMAD_SKIP_AUTH`）在值为 `1`、`true`、`yes` 或 `on` 时启用相应开关，忽略大小写及两端空白。`0`、`false`、`no`、`off`、空值、仅含空白的值或未设置的变量均让开关保持关闭。任何其他值都会阻止服务器启动，即使指定了对应的 CLI 标志。CLI 标志可覆盖有效的关闭值并启用开关；否则使用下列 `false` 默认值。
 
 | 标志 | 环境变量 | 默认值与影响 |
 | --- | --- | --- |

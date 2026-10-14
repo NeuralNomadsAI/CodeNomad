@@ -48,7 +48,7 @@ Verwenden Sie vertrauenswürdiges HTTPS für direkten Fernzugriff. Reines HTTP o
 
 Prüfen Sie [Bindungsmatrix und TLS-Verfahren](remote-access.md), besonders den eigenständigen Nur-HTTP-Modus: Er beachtet `--host` und kann Klartext über Loopback hinaus freigeben. Beheben Sie Zertifikatsfehler niemals durch deaktivierte Prüfung.
 
-**`CODENOMAD_SKIP_AUTH=false` deaktiviert die Authentifizierung trotzdem.** Diese Schalter-Umgebungsvariable ist aktiviert, sobald sie definiert ist, selbst als `false`, `0` oder leerer Wert. Entfernen Sie sie, um den Schalter zu deaktivieren; siehe [CLI-Referenz](server.md#cli-reference).
+**`CODENOMAD_SKIP_AUTH=false` lässt die Authentifizierung aktiviert, sofern `--dangerously-skip-auth` nicht angegeben wird.** `1`, `true`, `yes` oder `on` aktivieren die Authentifizierungsumgehung; Groß-/Kleinschreibung und umgebende Leerzeichen werden ignoriert. `0`, `false`, `no`, `off`, leere oder nur aus Leerzeichen bestehende Werte sowie eine nicht gesetzte Variable lassen sie aus. Jeder andere Wert verhindert den Serverstart, auch mit dem CLI-Flag. Das Flag hat Vorrang vor einem gültigen Aus-Wert; siehe [CLI-Referenz](server.md#cli-reference).
 
 ## Host-Grenze verstehen {#host-boundary}
 

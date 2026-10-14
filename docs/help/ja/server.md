@@ -59,7 +59,7 @@ HTTPS は **9898**、HTTP は **9899** を優先します。ポート指定が�
 
 フラグは対応する環境変数より優先します。値を取るフラグには表示した引数を指定し、スイッチには指定しません。HTTPS/HTTP の値は、大文字小文字を区別せず `1`、`true`、`yes`、`y`、`on` を有効と認識します。明確にするため `true`／`false` を明示してください。UI 自動更新は `1`、`true`、`yes` を認識します。
 
-**スイッチ型環境変数は、`false`、`0`、空の値を含め、値に関係なく定義されていれば有効です。** スイッチを無効にするには、`CLI_UNRESTRICTED_ROOT`、`CLI_UI_NO_UPDATE`、`CLI_LAUNCH`、`CODENOMAD_GENERATE_TOKEN`、`CODENOMAD_SKIP_AUTH` を未定義にします。特に、**`CODENOMAD_SKIP_AUTH=false` でも認証は無効になります**。下表の既定値 `false` は、スイッチと環境変数の両方がない場合に適用します。
+**厳密なブール値を取る環境変数**（`CLI_UNRESTRICTED_ROOT`、`CLI_UI_NO_UPDATE`、`CLI_LAUNCH`、`CODENOMAD_GENERATE_TOKEN`、`CODENOMAD_SKIP_AUTH`）は、`1`、`true`、`yes`、`on` でスイッチを有効にします。大文字・小文字と前後の空白は無視されます。`0`、`false`、`no`、`off`、空または空白のみの値、未定義の変数ではスイッチは無効のままです。それ以外の値では、対応する CLI フラグを指定してもサーバーは起動しません。CLI フラグは、有効な無効化値より優先してスイッチを有効にします。それ以外の場合は下表の既定値 `false` が適用されます。
 
 | フラグ | 環境変数 | 既定値と効果 |
 | --- | --- | --- |

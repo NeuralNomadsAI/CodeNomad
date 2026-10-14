@@ -48,7 +48,7 @@ Utilisez un HTTPS de confiance pour l’accès distant direct. HTTP en clair exp
 
 Vérifiez la [matrice d’écoute et les procédures TLS](remote-access.md), en particulier le mode autonome HTTP seul : il respecte `--host` et peut exposer du texte clair au-delà de la boucle locale. Ne résolvez jamais des erreurs de certificat en désactivant la vérification.
 
-**`CODENOMAD_SKIP_AUTH=false` désactive quand même l’authentification.** Cette variable de commutateur est activée dès qu’elle est définie, même à `false`, `0` ou vide. Supprimez sa définition pour désactiver le commutateur ; voir la [référence CLI](server.md#cli-reference).
+**`CODENOMAD_SKIP_AUTH=false` maintient l’authentification activée, sauf si `--dangerously-skip-auth` est passé.** `1`, `true`, `yes` ou `on` activent le contournement de l’authentification, sans tenir compte de la casse ni des espaces autour ; `0`, `false`, `no`, `off`, une valeur vide ou composée uniquement d’espaces, ou une variable non définie le laissent désactivé. Toute autre valeur empêche le serveur de démarrer, même avec l’option CLI. L’option prévaut sur une valeur valide de désactivation ; voir la [référence CLI](server.md#cli-reference).
 
 ## Comprendre la limite de l’hôte {#host-boundary}
 

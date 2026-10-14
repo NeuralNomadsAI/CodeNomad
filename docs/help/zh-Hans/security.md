@@ -48,7 +48,7 @@
 
 请检查[绑定矩阵和 TLS 流程](remote-access.md)，尤其是独立 HTTP-only 模式：它遵循 `--host`，可能将明文暴露到回环之外。切勿通过禁用验证解决证书错误。
 
-**`CODENOMAD_SKIP_AUTH=false` 仍会禁用认证。**此开关环境变量只要定义就启用，即使值为 `false`、`0` 或空值。取消设置才能关闭此开关；参阅 [CLI 参考](server.md#cli-reference)。
+**`CODENOMAD_SKIP_AUTH=false` 会保持认证启用，除非指定了 `--dangerously-skip-auth`。**`1`、`true`、`yes` 或 `on` 会启用认证绕过，忽略大小写及两端空白；`0`、`false`、`no`、`off`、空值、仅含空白的值或未设置的变量均让绕过保持关闭。任何其他值都会阻止服务器启动，即使指定了 CLI 标志。该标志可覆盖有效的关闭值；参阅 [CLI 参考](server.md#cli-reference)。
 
 ## 理解主机边界 {#host-boundary}
 

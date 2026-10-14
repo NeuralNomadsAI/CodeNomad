@@ -48,7 +48,7 @@ Use trusted HTTPS for direct remote access. Plain HTTP exposes passwords, sessio
 
 Check the [binding matrix and TLS procedures](remote-access.md), especially standalone HTTP-only mode: it honors `--host` and can expose cleartext beyond loopback. Never solve certificate errors by disabling verification.
 
-**`CODENOMAD_SKIP_AUTH=false` still disables authentication.** This switch environment variable is enabled whenever defined, even as `false`, `0` or an empty value. Unset it to disable the switch; see the [CLI reference](server.md#cli-reference).
+**`CODENOMAD_SKIP_AUTH=false` keeps authentication enabled unless `--dangerously-skip-auth` is passed.** `1`, `true`, `yes` or `on` enable the auth bypass, ignoring case and surrounding whitespace; `0`, `false`, `no`, `off`, empty/whitespace-only values or an unset variable leave it off. Any other value prevents server startup, even with the CLI flag. The flag overrides a valid off value; see the [CLI reference](server.md#cli-reference).
 
 ## Understand the host boundary {#host-boundary}
 

@@ -59,7 +59,7 @@ For listener exposure, certificates, VPN/SSH and reverse proxies, use [Direct re
 
 Flags override their environment counterparts. Value-taking flags use the shown argument; switches do not. HTTPS/HTTP values recognize `1`, `true`, `yes`, `y` and `on` as enabled, case-insensitively; use explicit `true`/`false` for clarity. UI auto-update recognizes `1`, `true` and `yes`.
 
-**Switch environment variables are enabled whenever defined, regardless of value — including `false`, `0`, or an empty value.** Unset `CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` and `CODENOMAD_SKIP_AUTH` to disable their switches. In particular, **`CODENOMAD_SKIP_AUTH=false` still disables authentication**. The `false` defaults below apply when the switch and its environment variable are absent.
+**Strict boolean environment variables** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` and `CODENOMAD_SKIP_AUTH`) enable their switches with `1`, `true`, `yes` or `on`, ignoring case and surrounding whitespace. `0`, `false`, `no`, `off`, empty/whitespace-only values or unset variables leave the switches off. Any other value prevents server startup, even with the corresponding CLI flag. A CLI flag enables its switch over a valid off value; otherwise, the `false` defaults below apply.
 
 | Flag | Environment | Default and effect |
 | --- | --- | --- |

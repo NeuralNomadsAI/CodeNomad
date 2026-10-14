@@ -48,7 +48,7 @@ direct remote access मा trusted HTTPS प्रयोग गर्नुह�
 
 [binding matrix र TLS प्रक्रिया](remote-access.md) जाँच्नुहोस्, विशेष गरी standalone HTTP-only मोड: यसले `--host` मान्छ र loopback बाहिर cleartext खोल्न सक्छ। certificate त्रुटि ठीक गर्न verification कहिल्यै अक्षम नगर्नुहोस्।
 
-**`CODENOMAD_SKIP_AUTH=false` ले पनि authentication अक्षम गर्छ।** यो switch environment variable परिभाषित भए enabled हुन्छ, `false`, `0` वा खाली मान भए पनि। switch बन्द गर्न unset गर्नुहोस्; [CLI सन्दर्भ](server.md#cli-reference) हेर्नुहोस्।
+**`--dangerously-skip-auth` नदिएसम्म `CODENOMAD_SKIP_AUTH=false` ले authentication सक्षम नै राख्छ।** `1`, `true`, `yes` वा `on` ले authentication bypass सक्षम गर्छन्; ठूला/साना अक्षर र सुरु तथा अन्त्यका whitespace बेवास्ता गरिन्छन्। `0`, `false`, `no`, `off`, खाली वा whitespace मात्र भएको मान र unset variable ले bypass बन्द नै राख्छन्। अन्य कुनै मानले CLI flag भए पनि server सुरु हुन दिँदैन। flag ले मान्य बन्द मानलाई उछिन्छ; [CLI सन्दर्भ](server.md#cli-reference) हेर्नुहोस्।
 
 ## host सीमा बुझ्नुहोस् {#host-boundary}
 

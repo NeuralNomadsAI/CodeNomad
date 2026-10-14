@@ -59,7 +59,7 @@ Dinleyicinin erişimi, sertifikalar, VPN/SSH ve ters proxy'ler için [Doğrudan 
 
 Bayraklar karşılık gelen ortam değişkenlerini geçersiz kılar. Değer alan bayraklar gösterilen argümanı kullanır; anahtarlar değer almaz. HTTPS/HTTP değerleri büyük/küçük harfe duyarsız olarak `1`, `true`, `yes`, `y` ve `on` değerlerini etkin sayar; açıklık için `true`/`false` kullanın. Arayüzün otomatik güncellemesi `1`, `true` ve `yes` değerlerini tanır.
 
-**Anahtar ortam değişkenleri, değere bakılmaksızın (`false`, `0` veya boş bir değer dahil) tanımlandığında etkinleştirilir.** Anahtarlarını devre dışı bırakmak için `CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` ve `CODENOMAD_SKIP_AUTH` ayarını kaldırın. Özellikle **`CODENOMAD_SKIP_AUTH=false` hâlâ kimlik doğrulamayı devre dışı bırakıyor**. Aşağıdaki `false` varsayılanları, anahtar ve ortam değişkeni olmadığında geçerlidir.
+**Katı boole ortam değişkenleri** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` ve `CODENOMAD_SKIP_AUTH`), büyük/küçük harf ayrımı yapmadan ve baştaki/sondaki boşlukları yok sayarak `1`, `true`, `yes` veya `on` ile anahtarlarını etkinleştirir. `0`, `false`, `no`, `off`, boş veya yalnızca boşluk içeren değerler ve tanımlanmamış değişkenler anahtarları kapalı bırakır. Diğer tüm değerler, ilgili CLI bayrağı verilse bile sunucunun başlamasını engeller. CLI bayrağı, geçerli bir kapalı değerini geçersiz kılarak anahtarı etkinleştirir; aksi halde aşağıdaki `false` varsayılanları uygulanır.
 
 | Bayrak | Ortam değişkeni | Varsayılan ve etki |
 | --- | --- | --- |

@@ -59,7 +59,7 @@ listener exposure, certificate, VPN/SSH र reverse proxy का लागि [�
 
 flag ले environment counterpart override गर्छन्। value-taking flag ले देखाइएको argument लिन्छन्; switch ले लिँदैनन्। HTTPS/HTTP मानले case-insensitive `1`, `true`, `yes`, `y` र `on` लाई enabled मान्छन्; स्पष्टताका लागि `true`/`false` प्रयोग गर्नुहोस्। UI auto-update ले `1`, `true` र `yes` चिन्छ।
 
-**switch environment variable परिभाषित भए enabled हुन्छन्, मान जे भए पनि—`false`, `0` वा खालीसमेत।** switch बन्द गर्न `CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` र `CODENOMAD_SKIP_AUTH` unset गर्नुहोस्। विशेष गरी **`CODENOMAD_SKIP_AUTH=false` ले पनि authentication अक्षम गर्छ**। तलका `false` default switch र environment variable अनुपस्थित हुँदा लागू हुन्छन्।
+**कडा boolean environment variable** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` र `CODENOMAD_SKIP_AUTH`) ले `1`, `true`, `yes` वा `on` हुँदा switch सक्षम गर्छन्; ठूला/साना अक्षर र सुरु तथा अन्त्यका whitespace बेवास्ता गरिन्छन्। `0`, `false`, `no`, `off`, खाली वा whitespace मात्र भएका मान र unset variable ले switch बन्द नै राख्छन्। अन्य कुनै मानले सम्बन्धित CLI flag भए पनि server सुरु हुन दिँदैन। CLI flag ले मान्य बन्द मानलाई उछिनेर switch सक्षम गर्छ; अन्यथा तलका `false` default लागू हुन्छन्।
 
 | Flag | Environment | Default र असर |
 | --- | --- | --- |

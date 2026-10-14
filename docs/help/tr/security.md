@@ -48,7 +48,7 @@ Doğrudan uzaktan erişimde güvenilir HTTPS kullanın. Düz HTTP, ağın o böl
 
 [Bağlama matrisi ve TLS işlemlerini](remote-access.md), özellikle bağımsız yalnızca HTTP modunu kontrol edin: bu mod `--host` değerine uyar ve düz metni loopback dışına açabilir. Sertifika hatalarını doğrulamayı kapatarak çözmeyin.
 
-**`CODENOMAD_SKIP_AUTH=false` yine de kimlik doğrulamayı devre dışı bırakır.** Bu anahtar ortam değişkeni, `false`, `0` veya boş değerle bile tanımlandığında etkindir. Anahtarı kapatmak için değişkeni tamamen kaldırın; bkz. [CLI başvurusu](server.md#cli-reference).
+**`CODENOMAD_SKIP_AUTH=false`, `--dangerously-skip-auth` verilmedikçe kimlik doğrulamayı açık tutar.** `1`, `true`, `yes` veya `on`, büyük/küçük harf ayrımı yapmadan ve baştaki/sondaki boşlukları yok sayarak kimlik doğrulama atlamasını etkinleştirir; `0`, `false`, `no`, `off`, boş veya yalnızca boşluk içeren değerler ve tanımlanmamış değişken bu atlamayı kapalı bırakır. Diğer tüm değerler, CLI bayrağı verilse bile sunucunun başlamasını engeller. Bayrak, geçerli bir kapalı değerine göre önceliklidir; bkz. [CLI başvurusu](server.md#cli-reference).
 
 ## Ana makine sınırını anlama {#host-boundary}
 

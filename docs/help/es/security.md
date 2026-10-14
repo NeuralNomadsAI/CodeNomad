@@ -48,7 +48,7 @@ Usa HTTPS de confianza para el acceso remoto directo. HTTP sin cifrar expone con
 
 Comprueba la [matriz de escucha y los procedimientos TLS](remote-access.md), especialmente el modo independiente solo HTTP: respeta `--host` y puede exponer texto sin cifrar más allá de loopback. Nunca resuelvas errores de certificado desactivando la verificación.
 
-**`CODENOMAD_SKIP_AUTH=false` sigue desactivando la autenticación.** Esta variable de entorno de tipo interruptor se activa siempre que esté definida, incluso como `false`, `0` o un valor vacío. Elimínala del entorno para desactivar el interruptor; consulta la [referencia CLI](server.md#cli-reference).
+**`CODENOMAD_SKIP_AUTH=false` mantiene la autenticación activada salvo que se pase `--dangerously-skip-auth`.** `1`, `true`, `yes` u `on` activan la omisión de autenticación, sin distinguir mayúsculas y minúsculas e ignorando los espacios alrededor; `0`, `false`, `no`, `off`, un valor vacío o solo con espacios o una variable sin definir la dejan desactivada. Cualquier otro valor impide que el servidor arranque, incluso con la opción CLI. La opción prevalece sobre un valor válido de desactivación; consulta la [referencia CLI](server.md#cli-reference).
 
 ## Comprender el límite del anfitrión {#host-boundary}
 
