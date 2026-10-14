@@ -172,7 +172,8 @@ async function sendMessage(
   sessionId: string,
   prompt: string,
   attachments: Attachment[] = [],
-  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload } = {},
+  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload;
+    preserveNativeProfile?: boolean; admissionCurrent?: () => boolean } = {},
 ): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -323,16 +324,18 @@ async function sendMessage(
     await admitSessionAction(instanceId, sessionId, async () => {
       const currentInstance = instances().get(instanceId)
       const currentSession = sessions().get(instanceId)?.get(sessionId)
+      if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
       if (!currentInstance?.client) throw new Error("Instance not ready")
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
       await syncSessionInstructions(client, instanceId, sessionId)
-      if (options.delivery !== "queue") {
+      if (options.delivery !== "queue" && !options.preserveNativeProfile) {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
           await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) })
         }
       }
+      if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
       const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
       confirmedId = result?.id || messageId
       if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })

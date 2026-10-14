@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -11,10 +11,13 @@ import solid from "vite-plugin-solid"
 import { readNavigationWindow, readSessionOutline } from "../../../server/src/opencode/session-pruning/navigation-store"
 import { readOutlinePreviews } from "../../../server/src/opencode/session-pruning/outline-preview"
 import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./fixtures/history-navigation-data"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "navigation-fixture", configureServer(server) {
       server.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -26,7 +29,7 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined,
     ignoreDefaultArgs: ["--hide-scrollbars"], args: ["--disable-features=OverlayScrollbar"] })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
 async function fixture(mixed = false, pausePreviews = false, holdMessages = false) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
@@ -445,17 +448,35 @@ async function dragNativeThumb(page: Page, selector: string, fraction: number) {
     const height = Math.max(18, track * element.clientHeight / element.scrollHeight)
     const travel = track - height
     const ratio = element.scrollTop / (element.scrollHeight - element.clientHeight)
-    return { x: rect.right - inset / 2, ratio, travel,
+    return { x: rect.right - inset / 2, ratio, travel, inset, track, height,
+      rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, height: rect.height },
+      clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop,
+      scrollbarWidth: getComputedStyle(element).scrollbarWidth,
       y: ratio > 0.99 ? rect.bottom - 16 : ratio < 0.01 ? rect.top + 16 : rect.top + inset + height / 2 + travel * ratio }
   })
+  if (process.env.CODENOMAD_THUMB_EVIDENCE && selector === '.message-timeline') {
+    await page.screenshot({ path: path.join(process.env.CODENOMAD_THUMB_EVIDENCE, 'thumb-start.png') })
+  }
   await page.mouse.move(geometry.x, geometry.y)
   await page.mouse.down()
-  await page.waitForTimeout(750)
-  // Native drags retain the grab offset within the thumb. At an end we grab
-  // near its edge, so targeting the future centre undershoots the requested
-  // ratio. Move by the scroll-ratio delta from the actual press instead.
-  await page.mouse.move(geometry.x, geometry.y + geometry.travel * (fraction - geometry.ratio), { steps: 12 })
-  await page.mouse.up()
+  try {
+    await page.waitForTimeout(750)
+    // Preserve the native thumb's grab offset by moving the ratio delta from
+    // the press. Dispatch the endpoint once: Chromium can leave rapid synthetic
+    // interpolation one event short even while pressed through two DOM frames.
+    // This remains a real held native-thumb drag, without setting scrollTop,
+    // retrying input, changing the target, or relaxing the ratio assertion.
+    const targetY = geometry.y + geometry.travel * (fraction - geometry.ratio)
+    await page.mouse.move(geometry.x, targetY)
+    const frame = await page.waitForFunction(selector => new Promise(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const element = document.querySelector(selector)!
+        resolve({ top: element.scrollTop, clientHeight: element.clientHeight, extent: element.scrollHeight,
+          ratio: element.scrollTop / (element.scrollHeight - element.clientHeight) })
+      }))
+    }), selector, { timeout: 1000 })
+    return { geometry, fraction, targetY, pressed: await frame.jsonValue() }
+  } finally { await page.mouse.up() }
 }
 
 test("native transcript thumb remains under reader control after a held press", async () => {
@@ -586,13 +607,19 @@ test("native timeline thumb follows the pointer without moving the transcript or
   const f = await fixture(true)
   try {
     const before = await snapshot(f.page)
-    await dragNativeThumb(f.page, '.message-timeline', 0.5)
+    const gesture = await dragNativeThumb(f.page, '.message-timeline', 0.5)
     await f.page.waitForTimeout(400)
     const read = () => f.page.locator('.message-timeline').evaluate(element => ({
       top: element.scrollTop, extent: element.scrollHeight,
       ratio: element.scrollTop / (element.scrollHeight - element.clientHeight),
     }))
     const middle = await read()
+    if (process.env.CODENOMAD_THUMB_EVIDENCE) {
+      const evidence = process.env.CODENOMAD_THUMB_EVIDENCE
+      await mkdir(evidence, { recursive: true })
+      await writeFile(path.join(evidence, 'thumb-middle.json'), JSON.stringify({ gesture, middle, before }, null, 2))
+      await f.page.screenshot({ path: path.join(evidence, 'thumb-middle.png') })
+    }
     assert(Math.abs(middle.ratio - 0.5) < 0.02, JSON.stringify(middle))
     await f.page.evaluate(() => (window as any).fixture.stream('Live token while browsing the rail.'))
     await f.page.waitForTimeout(400)
@@ -600,6 +627,12 @@ test("native timeline thumb follows the pointer without moving the transcript or
     assert.equal((await snapshot(f.page)).window.kind, before.window.kind)
     assert.equal(f.windows.length, 0, 'dragging the rail must not page the transcript')
     assert.deepEqual(f.errors, [])
+    if (process.env.CODENOMAD_THUMB_EVIDENCE) {
+      const evidence = process.env.CODENOMAD_THUMB_EVIDENCE
+      await writeFile(path.join(evidence, 'thumb-streamed.json'), JSON.stringify({ gesture, middle, streamed: await read(),
+        after: await snapshot(f.page), windows: f.windows, errors: f.errors }, null, 2))
+      await f.page.screenshot({ path: path.join(evidence, 'thumb-streamed.png') })
+    }
   } finally { await f.close() }
 })
 

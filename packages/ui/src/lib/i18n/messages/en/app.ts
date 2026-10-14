@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Error output",
   "app.launchError.openAdvancedSettings": "Open OpenCode Settings",
   "app.launchError.close": "Close",
-  "app.launchError.closeTitle": "Close (Esc)",
+  "app.launchError.closeTitle": "Close",
   "app.launchError.fallbackMessage": "Failed to launch workspace",
   "app.launchError.invalidConfig": "OpenCode configuration is invalid",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "You can have multiple instances of the same folder",
 
   "releases.upgradeRequired.title": "Upgrade required",
+  "releases.desktop.checking": "Checking for a CodeNomad update…",
+  "releases.desktop.current": "CodeNomad is up to date.",
+  "releases.desktop.available": "CodeNomad {version} is available. Installation will restart the application.",
+  "releases.desktop.install": "Install and restart",
+  "releases.desktop.downloading": "Downloading and verifying the update…",
+  "releases.desktop.restarting": "Saving windows and installing the update…",
+  "releases.desktop.failed": "The update could not be completed. You can try again or download it from the releases page.",
+  "releases.desktop.busy": "Another CodeNomad window is already checking for or installing an update.",
   "releases.upgradeRequired.message.withVersion": "Update to CodeNomad {version} to use the latest UI.",
   "releases.upgradeRequired.message.noVersion": "Update CodeNomad to use the latest UI.",
   "releases.upgradeRequired.action.getUpdate": "Get update",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI updated",
   "releases.uiUpdated.message": "UI is now updated to {version}.",
 
-  "releases.devUpdateAvailable.title": "Dev build available",
-  "releases.devUpdateAvailable.message": "A new dev build is available: {version}.",
+  "releases.devUpdateAvailable.title": "Update available",
+  "releases.devUpdateAvailable.message": "A newer release is available: {version}.",
   "releases.devUpdateAvailable.action": "View release",
 
   "theme.mode.system": "System",

@@ -1,13 +1,19 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import test from "node:test"
 import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
+import { clearProviderUsageCache } from "../../usage/service"
 
 function harness() {
   const expires = Date.now() + 3600000
-  const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false }
+  const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
+    daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>(),
+    integrations: {} as Record<string, string> }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
@@ -16,16 +22,23 @@ function harness() {
     if (state.fail) throw new Error("secret-refresh Authorization secret-token")
     if (url.pathname === "/api/session/missing") return Response.json({ _tag: "SessionNotFoundError", sessionID: "missing" }, { status: 404 })
     if (url.pathname.startsWith("/api/session/")) return Response.json({ data: { id: "session", location: { directory: state.directory } } })
-    if (url.pathname.startsWith("/api/provider/")) return Response.json({ location: { directory: state.directory }, data: {
-      id: "openai", name: "OpenAI", activation: "auto", package: "openai",
-    } })
+    if (url.pathname.startsWith("/api/provider/")) {
+      const id = decodeURIComponent(url.pathname.split("/")[3])
+      return Response.json({ location: { directory: state.directory }, data: {
+        id, name: id, activation: "auto", package: id, ...(state.integrations[id] ? { integrationID: state.integrations[id] } : {}),
+      } })
+    }
     if (url.pathname === "/api/integration/openai") return Response.json({ location: { directory: state.directory }, data: {
       id: "openai", name: "OpenAI", methods: [], connections: [{ type: "credential", method: "oauth", id: state.switched ? "other" : "selected", label: "Secret account" }],
     } })
     if (url.pathname === "/api/credential") return Response.json({ data: [{ id: "selected", integrationID: "openai", active: true, label: "Secret account",
       value: { type: "oauth", methodID: "chatgpt-headless", access: "secret-token", refresh: "secret-refresh", expires,
         metadata: { accountID: "secret-account" } },
-    }] }, { status: state.oldEndpoint ? 404 : 200 })
+    }, { id: "key", integrationID: "deepinfra", active: true, label: "Key", value: { type: "key", key: "secret-deepinfra" } },
+    { id: "go", integrationID: "opencode-go", active: true, label: "Go", value: { type: "key", key: "secret-go-key" } },
+    { id: "console", integrationID: "opencode", active: true, label: "Console", value: { type: "oauth", methodID: "device",
+      access: "secret-console", refresh: "secret-console-refresh", expires, metadata: { orgID: "org_fixture", server: "https://opencode.ai/console" } } }] },
+    { status: state.oldEndpoint ? 404 : 200 })
     return Response.json({}, { status: 404 })
   } })
   const connection = { client, assertCurrent: () => {} } as ServiceConnection
@@ -33,6 +46,9 @@ function harness() {
     get: id => id === "instance" ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
     ownsLocation: async (_id, location) => location.directory === "/wsl/repo",
+    getSessionEnvironment: async () => ({ ...state.daemonEnvironment }),
+    getServiceWslDistro: () => "Ubuntu",
+    getHostPathForServicePath: async (_id, servicePath) => state.hostFiles.get(servicePath)?.path,
   }
   registerUsageRoutes(app, { workspaceManager: manager })
   return { app, state, logs }
@@ -106,12 +122,125 @@ test("session movement during quota fetch fences publication", async () => {
 })
 
 test("owned unknown provider retains a typed unsupported result without a quota request", async () => {
-  const { app } = harness()
+  const { app, state } = harness()
   try {
     const response = await app.inject({ url: url.replace("/usage/openai", "/usage/unknown-provider") })
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().providerId, null)
     assert.equal(response.json().supported, false)
     assert.deepEqual(response.json().windows, {})
+    assert.equal(state.nativeCalls.includes("/api/credential"), false)
   } finally { await app.close() }
+})
+
+test("other providers use the daemon's selected native credential, never returning it", async () => {
+  const { app, logs } = harness()
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://api.deepinfra.com/v1/me?checklist=true")
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer secret-deepinfra")
+    return Response.json({ checklist: { stripe_balance: -4 } })
+  }
+  try {
+    const response = await app.inject({ url: url.replace("/usage/openai", "/usage/deepinfra") })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().ok, true)
+    assert.equal(response.json().windows.credits_balance.valueLabel, "$4.00")
+    assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+  } finally { globalThis.fetch = previousFetch; await app.close() }
+})
+
+test("OpenCode Go reads the session provider's own native login, without env cookies", async () => {
+  const { app, state, logs } = harness()
+  const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
+  delete process.env.OPENCODE_GO_WORKSPACE_ID; delete process.env.OPENCODE_GO_AUTH_COOKIE
+  const requests: Array<{ url: string; authorization: string | null; org: string | null }> = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers)
+    requests.push({ url: String(input), authorization: headers.get("authorization"), org: headers.get("x-org-id") })
+    return Response.json({ usage: { rolling: { status: "ok", percent: 42, resetsAt: new Date(Date.now() + 3_600_000).toISOString() } } })
+  }
+  const goUrl = url.replace("/usage/openai", "/usage/opencode-go")
+  try {
+    const key = await app.inject({ url: goUrl })
+    assert.equal(key.json().ok, true)
+    assert.equal(key.json().windows["5h"].usedPercent, 42)
+    state.integrations["opencode-go"] = "opencode"
+    assert.equal((await app.inject({ url: goUrl })).json().ok, true)
+    assert.deepEqual(requests, [
+      { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer secret-go-key", org: null },
+      { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer secret-console", org: "org_fixture" },
+    ])
+    assert.equal([key.body, ...logs].join("").includes("secret-"), false)
+  } finally {
+    globalThis.fetch = previousFetch
+    await app.close()
+    if (previous.workspace !== undefined) process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
+    if (previous.cookie !== undefined) process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
+  }
+})
+
+test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Console credentials to Go", async () => {
+  const { app, state, logs } = harness()
+  const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
+  delete process.env.OPENCODE_GO_WORKSPACE_ID; delete process.env.OPENCODE_GO_AUTH_COOKIE
+  const requests: Array<{ url: string; authorization: string | null; cookie: string | null }> = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers)
+    requests.push({ url: String(input), authorization: headers.get("authorization"), cookie: headers.get("cookie") })
+    return new Response('<script>rollingUsage:{usagePercent:12,resetInSec:60}</script>')
+  }
+  state.integrations.opencode = "opencode"
+  const zenUrl = url.replace("/usage/openai", "/usage/opencode")
+  clearProviderUsageCache()
+  try {
+    const unconfigured = await app.inject({ url: zenUrl })
+    assert.equal(unconfigured.json().configured, false, "previous Not configured result")
+    assert.deepEqual(requests, [])
+    process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_fixture"; process.env.OPENCODE_GO_AUTH_COOKIE = "fixture-cookie"
+    clearProviderUsageCache()
+    const scraped = await app.inject({ url: zenUrl })
+    assert.equal(scraped.json().windows["5h"].usedPercent, 12)
+    assert.deepEqual(requests, [{ url: "https://opencode.ai/workspace/wrk_fixture/go", authorization: null, cookie: "auth=fixture-cookie" }])
+    assert.equal([unconfigured.body, scraped.body, ...logs].join("").includes("secret-"), false)
+  } finally {
+    globalThis.fetch = previousFetch
+    await app.close()
+    if (previous.workspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID
+    else process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
+    if (previous.cookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE
+    else process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
+  }
+})
+
+test("claude-code sessions read Claude Code's login on the daemon host, never returning it", async () => {
+  const { app, state, logs } = harness()
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-route-claude-"))
+  const file = path.join(directory, "credentials.json")
+  fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: "secret-distro-login", expiresAt: Date.now() + 3_600_000 } }))
+  state.hostFiles.set("/home/dev/.claude/.credentials.json", { path: file })
+  const authorizations: string[] = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://api.anthropic.com/api/oauth/usage")
+    authorizations.push(new Headers(init?.headers).get("authorization") ?? "")
+    return Response.json({ limits: [{ kind: "session", percent: 7 }] })
+  }
+  const claudeUrl = url.replace("/usage/openai", "/usage/claude-code")
+  try {
+    const response = await app.inject({ url: claudeUrl })
+    assert.equal(response.json().providerId, "claude-code")
+    assert.equal(response.json().windows["5h"].usedPercent, 7)
+    // A profile token outranks the stored login and fences the cached snapshot.
+    state.daemonEnvironment.CLAUDE_CODE_OAUTH_TOKEN = "secret-profile-token"
+    assert.equal((await app.inject({ url: claudeUrl })).json().ok, true)
+    assert.deepEqual(authorizations, ["Bearer secret-distro-login", "Bearer secret-profile-token"])
+    assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+  } finally {
+    globalThis.fetch = previousFetch
+    await app.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 })

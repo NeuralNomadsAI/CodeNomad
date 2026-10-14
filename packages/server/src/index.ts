@@ -3,12 +3,15 @@
  * For now this only wires the typed modules together; actual command handling comes later.
  */
 import { Command, InvalidArgumentError, Option } from "commander"
+import type { IncomingMessage, ServerResponse } from "http"
 import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
+import { TemporaryFolderRegistry } from "./workspaces/temporary-workspaces"
 import { SettingsService } from "./settings/service"
 import { BinaryResolver } from "./settings/binaries"
 import { FileSystemBrowser } from "./filesystem/browser"
@@ -26,7 +29,8 @@ import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/networ
 import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
-import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
+import { resolveUpdateFeed, startPreviewReleaseMonitor } from "./releases/dev-release-monitor"
+import { readDesktopProfile } from "./desktop-profile"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
@@ -43,6 +47,9 @@ import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
+import { RemoteDeviceRegistry } from "./remote-control/devices"
+import { RemoteControlManager } from "./remote-control/manager"
+import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 
 const require = createRequire(import.meta.url)
 
@@ -379,6 +386,7 @@ async function main() {
   const pruningLifecycle = new PruningLifecycle()
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
+  const missionsLifecycle = new DesktopPluginLifecycle("missions")
   const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
     let paths
     try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
@@ -390,6 +398,7 @@ async function main() {
       await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
         pruning: pruningLifecycle,
         automation: nativeParent.available ? automationLifecycle : undefined,
+        missions: nativeParent.available ? missionsLifecycle : undefined,
       })
       return true
     } catch (error) {
@@ -397,13 +406,22 @@ async function main() {
       return false
     }
   }
+  const temporaryFolders = await TemporaryFolderRegistry.open(
+    path.join(configDir, "temporary-workspaces"),
+    path.join(configDir, "temporary-workspaces.json"),
+  ).catch((error) => {
+    logger.warn({ err: error }, "Temporary workspaces are unavailable")
+    return undefined
+  })
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
+    temporaryFolders,
     settings,
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
     prepareDesktopPlugins,
+    desktopPluginsReady: () => pruningLifecycle.ready(),
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
@@ -468,26 +486,44 @@ async function main() {
     minServerVersion: uiResolution.minServerVersion,
   }
 
-  const updateChannel = (process.env.CODENOMAD_UPDATE_CHANNEL ?? "").trim().toLowerCase()
+  serverMeta.desktopProfile = readDesktopProfile(process.env)
+
+  // The feed is a saved server preference, independent of the desktop data
+  // profile and of CODENOMAD_UPDATE_CHANNEL, which hosts read only as a deprecated profile alias.
   const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
-  const isDevVersion = packageJson.version.includes("-dev.") || packageJson.version.includes("-dev-")
-  const enableDevUpdateChecks = updateChannel === "dev" || (updateChannel === "" && isDevVersion)
-  const devReleaseMonitor = enableDevUpdateChecks
-    ? startDevReleaseMonitor({
-        currentVersion: packageJson.version,
-        repo: githubRepo,
-        logger: logger.child({ component: "updates" }),
-        onUpdate: (release) => {
-          serverMeta.update = release
-        },
-      })
-    : null
+  const readUpdateFeed = () => resolveUpdateFeed(settings.getOwner("config", "server")?.updateFeed, packageJson.version)
+  serverMeta.updateFeed = readUpdateFeed()
+  const devReleaseMonitor = startPreviewReleaseMonitor({
+    currentVersion: packageJson.version,
+    repo: githubRepo,
+    logger: logger.child({ component: "updates" }),
+    feed: () => serverMeta.updateFeed ?? "stable",
+    onUpdate: (release) => {
+      serverMeta.update = release
+    },
+  })
+  eventBus.on("storage.configChanged", (event: { owner?: string }) => {
+    if (event.owner !== "server" && event.owner !== "*") return
+    const feed = readUpdateFeed()
+    if (feed === serverMeta.updateFeed) return
+    serverMeta.updateFeed = feed
+    devReleaseMonitor.refresh()
+  })
 
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({
     authManager,
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
+  })
+  // Decrypted Remote Control requests enter the same application as local ones.
+  let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
+  const remoteControlManager = new RemoteControlManager({
+    registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
+    lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
+    router: () => remoteControlRouter,
+    tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
+    logger: logger.child({ component: "remote-control" }),
   })
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
@@ -502,6 +538,9 @@ async function main() {
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
+  const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
+    eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
+  })
 
   const httpServer = options.http || nativeParent.available
     ? createHttpServer({
@@ -521,8 +560,10 @@ async function main() {
         authManager,
         clientConnectionManager,
         remoteProxySessionManager,
+        remoteControlManager,
         yoloManager,
         permissionReceipts,
+        panelExtensions,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -550,8 +591,10 @@ async function main() {
         authManager,
         clientConnectionManager,
         remoteProxySessionManager,
+        remoteControlManager,
         yoloManager,
         permissionReceipts,
+        panelExtensions,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -562,6 +605,8 @@ async function main() {
 
   if (httpServer) servers.push(httpServer)
   if (httpsServer) servers.push(httpsServer)
+  const routingApp = servers[0]?.instance
+  remoteControlRouter = routingApp ? (request, response) => routingApp.routing(request, response) : null
 
   const [httpStart, httpsStart] = await Promise.all([
     httpServer ? httpServer.start() : Promise.resolve(null),
@@ -648,6 +693,9 @@ async function main() {
     }
   }
 
+  // Started earlier by the user and not stopped since; runs in the background.
+  void remoteControlManager.resume()
+
   if (options.launch) {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
@@ -666,6 +714,7 @@ async function main() {
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
+          stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
             instanceEventBridge.shutdown()
             yoloManager.stop()
@@ -675,6 +724,7 @@ async function main() {
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
             await automationLifecycle.stop()
+            await missionsLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()

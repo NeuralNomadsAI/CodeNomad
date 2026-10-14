@@ -38,6 +38,7 @@ interface Harness {
 function install(initial: Record<string, any>) {
   const harness: Harness = { state: initial, patches: [], applied: [], fail: false }
   storage.loadConfigOwner = async () => ({}) as any
+  storage.revalidateUiConfigOwner = async () => ({})
   storage.loadStateOwner = async () => structuredClone(harness.state) as any
   storage.patchConfigOwner = async () => ({}) as any
   storage.patchStateOwner = async (_owner: string, patch: unknown) => {
@@ -56,6 +57,7 @@ function install(initial: Record<string, any>) {
 
 const originals = {
   loadConfigOwner: storage.loadConfigOwner, loadStateOwner: storage.loadStateOwner,
+  revalidateUiConfigOwner: storage.revalidateUiConfigOwner,
   patchStateOwner: storage.patchStateOwner, patchConfigOwner: storage.patchConfigOwner,
 }
 

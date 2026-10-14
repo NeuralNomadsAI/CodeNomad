@@ -1,0 +1,26 @@
+/* Reserve space only for attachment/shell status or the transient abort reminder. */
+.prompt-input-field[data-prompt-help="true"] .prompt-input {
+  padding-bottom: var(--control-height-sm);
+}
+
+.prompt-input-wrapper[data-compact-auto="true"] .prompt-input-field[data-prompt-help="true"] .prompt-input {
+  padding-top: var(--space-2xs);
+}
+
+.prompt-input-field .prompt-input-overlay {
+  display: flex;
+  bottom: 0;
+  height: var(--control-height-sm);
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  pointer-events: auto;
+}
+
+.prompt-overlay-text {
+  flex: 0 0 auto;
+}

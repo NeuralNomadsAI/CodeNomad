@@ -1,7 +1,7 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
-import { storage, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile } from "../../../server/src/api-types"
+import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
+import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -10,7 +10,11 @@ import {
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
+import { normalizeHotkeyOverrides, type HotkeyBinding, type HotkeyOverrides } from "../lib/hotkey-bindings"
 import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
+import { encodeMissionDefaults, normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
+import { normalizeMissionModels, validMissionModels, parseMissionModel, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../lib/mission-model-library"
+import { missionPreferenceExpectation, missionPreferenceValue, type MissionPreferenceKey, type MissionPreferenceExpectation } from "../lib/mission-preferences-document"
 import {
   isColorSchemeColors,
   normalizeColorScheme,
@@ -106,16 +110,18 @@ export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "ha
 
 export interface UiSettings {
   showThinkingBlocks: boolean
-  showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
+  hotkeyOverrides: HotkeyOverrides
   followUpBehavior: FollowUpBehavior
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
+  /** Files panel diff readers compare lines without leading/trailing whitespace. */
+  hideDiffWhitespaceChanges: boolean
   toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
@@ -128,6 +134,8 @@ export interface UiSettings {
   keepUnseenSubagentIdleStatus: boolean
   focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
+  missionProfileDefaults: MissionProfileDefault[]
+  missionModels: UserMissionModel[]
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -213,15 +221,16 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
-  showKeyboardShortcutHints: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
   showTimelineTools: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
+  hotkeyOverrides: {},
   followUpBehavior: "steer",
   showPromptVoiceInput: true,
   diffViewMode: "split",
+  hideDiffWhitespaceChanges: true,
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
@@ -234,6 +243,8 @@ const defaultUiSettings: UiSettings = {
   keepUnseenSubagentIdleStatus: true,
   focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
+  missionProfileDefaults: [],
+  missionModels: [],
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -312,13 +323,12 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       : "expanded"
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
-    showKeyboardShortcutHints:
-      sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
     followUpBehavior:
       sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
         ? sanitized.followUpBehavior
@@ -326,6 +336,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    hideDiffWhitespaceChanges: sanitized.hideDiffWhitespaceChanges ?? defaultUiSettings.hideDiffWhitespaceChanges,
     toolCallExpansionDefaults,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: normalizeVisibilityPreference(
@@ -349,6 +360,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
     focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
+    missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
+    missionModels: normalizeMissionModels(sanitized.missionModels),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -523,11 +536,11 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
 
-function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string): RecentFolder[] {
+function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string, name?: string): RecentFolder[] {
   const matchingPaths = new Set([folderPath, aliasPath].filter((value): value is string => Boolean(value)))
   const aliasEntry = aliasPath ? source.find((folder) => folder.path === aliasPath) : undefined
   const canonicalEntry = source.find((folder) => folder.path === folderPath)
-  const projectName = aliasEntry?.projectName ?? canonicalEntry?.projectName
+  const projectName = name?.trim() || aliasEntry?.projectName || canonicalEntry?.projectName
   const folders = source.filter((folder) => !matchingPaths.has(folder.path))
   folders.unshift({
     path: folderPath,
@@ -593,6 +606,12 @@ const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
+// Mission inputs require a successful UI-owner read, not server/state readiness.
+const [isUiConfigLoaded, setIsUiConfigLoaded] = createSignal(false)
+const [uiConfigLoadFailed, setUiConfigLoadFailed] = createSignal(false)
+const missionDefaultsValid = () => isUiConfigLoaded() && validMissionDefaults(missionPreferenceValue(uiConfigBucket(), "missionProfileDefaults"))
+const missionModelsValid = () => isUiConfigLoaded() && validMissionModels(missionPreferenceValue(uiConfigBucket(), "missionModels"))
+const missionPreferenceSnapshot = (key: MissionPreferenceKey) => missionPreferenceExpectation(uiConfigBucket(), key)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const legacyThemePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
@@ -654,19 +673,18 @@ async function ensureLoaded(): Promise<void> {
   if (isLoaded()) return
   if (!loadPromise) {
     loadPromise = Promise.all([
-      storage.loadConfigOwner("ui"),
+      storage.revalidateUiConfigOwner().then(value => { setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
+        .catch(error => { setUiConfigLoadFailed(true); throw error }),
       storage.loadConfigOwner("server"),
       storage.loadStateOwner("ui"),
     ])
-      .then(([uiCfg, srvCfg, uiSt]) => {
-        setUiConfigBucket(uiCfg as any)
+      .then(([, srvCfg, uiSt]) => {
         setServerConfigBucket(srvCfg as any)
         setUiStateBucket(uiSt as any)
         setIsLoaded(true)
       })
       .catch((error) => {
         log.error("Failed to load settings", error)
-        setUiConfigBucket({})
         setServerConfigBucket({})
         setUiStateBucket({})
         setIsLoaded(true)
@@ -680,7 +698,12 @@ async function ensureLoaded(): Promise<void> {
 
 async function patchConfigOwner(owner: string, patch: unknown) {
   await ensureLoaded()
-  const updated = await storage.patchConfigOwner(owner, patch)
+  let updated: OwnerBucket
+  try { updated = await storage.patchConfigOwner(owner, patch) }
+  catch (error) {
+    if (owner === "ui" && error instanceof ConfigOwnerReconciliationPendingError) { setIsUiConfigLoaded(false); setUiConfigLoadFailed(true) }
+    throw error
+  }
   if (owner === "ui") setUiConfigBucket(updated as any)
   if (owner === "server") setServerConfigBucket(updated as any)
 }
@@ -709,7 +732,82 @@ function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
 }
 
 function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
+  const keys = Object.keys(updates)
+  const missionKeys = keys.filter((key): key is MissionPreferenceKey => key === "missionProfileDefaults" || key === "missionModels")
+  if (missionKeys.length) {
+    if (keys.length !== missionKeys.length || !isUiConfigLoaded()
+      || (missionKeys.includes("missionModels") && (!missionModelsValid() || !validMissionModels(updates.missionModels)))
+      || (missionKeys.includes("missionProfileDefaults") && (!missionDefaultsValid() || !validMissionDefaults(updates.missionProfileDefaults)))) return Promise.resolve(false)
+    return patchMissionPreferences({ settings: updates }, missionKeys.map(missionPreferenceSnapshot))
+      .then(() => true, () => false)
+  }
   return updateUiSettings(updates)
+}
+
+// Preserve null deletion markers rather than passing resets through normalizers.
+export function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Record<string, HotkeyBinding[] | null> | null } }): Promise<boolean> {
+  return patchConfigOwner("ui", patch).then(() => true, error => {
+    log.error("Failed to patch hotkey settings", error)
+    return false
+  })
+}
+
+// Serialize local library edits and resolve the array only after preferences load.
+// Targeted owner patches preserve all unrelated settings; no native config writes.
+async function reloadMissionPreferences(): Promise<void> {
+  try {
+    const owner = await storage.revalidateUiConfigOwner()
+    setUiConfigBucket(owner as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
+  } catch (error) { setIsUiConfigLoaded(false); setUiConfigLoadFailed(true); throw error }
+}
+
+async function patchMissionPreferences(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<void> {
+  setIsUiConfigLoaded(false)
+  try {
+    const owner = await storage.patchMissionPreferences(patch, expected)
+    setUiConfigBucket(owner as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
+  } catch (error) {
+    // A conflict, unknown mutation outcome or unordered acknowledged write is not
+    // permission to freeze the old owner into another mission. Explicit reload
+    // restores readiness; no mutation is retried here.
+    setIsUiConfigLoaded(false); setUiConfigLoadFailed(true)
+    throw error
+  }
+}
+
+function saveMissionDefaults(input: MissionProfileDefault[], expected: MissionPreferenceExpectation, repair = false): Promise<void> {
+  if (!isUiConfigLoaded() || (!missionDefaultsValid() && !repair) || !validMissionDefaults(input)
+    || expected.key !== "missionProfileDefaults") return Promise.reject(new Error("Invalid mission defaults document"))
+  return patchMissionPreferences({ settings: { missionProfileDefaults: encodeMissionDefaults(input) } }, [expected])
+}
+
+let missionModelWriteQueue = Promise.resolve()
+function saveUserMissionModel(input: UserMissionModel): Promise<void> {
+  const model = parseMissionModel(input)
+  if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
+  const expected = missionPreferenceSnapshot("missionModels")
+  const current = normalizeMissionModels(expected.present ? expected.value : [])
+  const write = missionModelWriteQueue.then(async () => {
+    await patchMissionPreferences({ settings: { missionModels: saveMissionModelRecord(current, model) } }, [expected])
+  })
+  missionModelWriteQueue = write.catch(() => undefined)
+  return write
+}
+function removeUserMissionModel(id: string, expected = missionPreferenceSnapshot("missionModels")): Promise<void> {
+  if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
+  if (expected.key !== "missionModels" || !validMissionModels(expected.present ? expected.value : undefined)) return Promise.reject(new Error("Invalid mission model expectation"))
+  const current = normalizeMissionModels(expected.present ? expected.value : [])
+  const write = missionModelWriteQueue.then(async () => {
+    await patchMissionPreferences({ settings: { missionModels: removeMissionModelRecord(current, id) } }, [expected])
+  })
+  missionModelWriteQueue = write.catch(() => undefined)
+  return write
+}
+
+function resetMissionModels(expected = missionPreferenceSnapshot("missionModels")): Promise<void> {
+  if (!isUiConfigLoaded()) return Promise.reject(new Error("Mission preferences not loaded"))
+  if (expected.key !== "missionModels") return Promise.reject(new Error("Invalid mission model expectation"))
+  return patchMissionPreferences({ settings: { missionModels: [] } }, [expected])
 }
 
 const modelVisibilityWriteQueues = new Map<string, Promise<void>>()
@@ -881,6 +979,11 @@ function deleteColorSchemePreset(id: string): Promise<void> {
    await patchConfigOwner("server", { listeningMode: mode })
  }
 
+/** Saves which releases are offered; desktop data and the backend stay unchanged. */
+async function setUpdateFeed(feed: UpdateFeed): Promise<void> {
+  await patchConfigOwner("server", { updateFeed: feed })
+}
+
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
   void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
     log.error("Failed to update environment variables", error),
@@ -988,6 +1091,8 @@ function removeRecentFolder(folderPath: string): void {
 async function renameRecentFolderProject(folderPath: string, projectName: string): Promise<void> {
   const name = projectName.trim()
   if (!folderPath || !name) return
+  // Derive from loaded state; an unloaded empty list would erase every recent folder.
+  await ensureLoaded()
   const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
   try {
     await patchStateOwner("ui", { recentFolders: next })
@@ -1026,6 +1131,12 @@ function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
   void patchStateOwner("ui", { recentFolders: nextFolders }).catch((error) =>
     log.error("Failed to update ui state on launch", error),
   )
+}
+
+/** Adds a named project to the recent folders, e.g. a kept temporary folder. */
+async function addNamedRecentFolder(folderPath: string, projectName: string): Promise<void> {
+  await ensureLoaded()
+  await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, recentFolders(), undefined, projectName) })
 }
 
 function addRecentModelPreference(model: ModelPreference): void {
@@ -1161,10 +1272,6 @@ function toggleShowThinkingBlocks(): void {
   updateUiSettings({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
-function toggleKeyboardShortcutHints(): void {
-  updatePreferences({ showKeyboardShortcutHints: !preferences().showKeyboardShortcutHints })
-}
-
 function toggleShowTimelineTools(): void {
   updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
@@ -1175,10 +1282,6 @@ function toggleShowMessageTimeline(): void {
 
 function toggleUsageMetrics(): void {
   updateUiSettings({ showUsageMetrics: !preferences().showUsageMetrics })
-}
-
-function togglePromptSubmitOnEnter(): void {
-  updateUiSettings({ promptSubmitOnEnter: !preferences().promptSubmitOnEnter })
 }
 
 function toggleShowPromptVoiceInput(): void {
@@ -1218,8 +1321,18 @@ void ensureLoaded().catch((error: unknown) => {
 
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
+  isUiConfigLoaded: typeof isUiConfigLoaded
+  uiConfigLoadFailed: typeof uiConfigLoadFailed
+  missionDefaultsValid: typeof missionDefaultsValid
+  missionModelsValid: typeof missionModelsValid
+  missionPreferenceSnapshot: typeof missionPreferenceSnapshot
+  reloadMissionPreferences: typeof reloadMissionPreferences
+  saveMissionDefaults: typeof saveMissionDefaults
+  resetMissionModels: typeof resetMissionModels
   preferences: typeof preferences
   updatePreferences: typeof updatePreferences
+  saveUserMissionModel: typeof saveUserMissionModel
+  removeUserMissionModel: typeof removeUserMissionModel
   setProviderModelVisibility: typeof setProviderModelVisibility
   getProviderModelVisibilityPreference: typeof getProviderModelVisibilityPreference
   providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
@@ -1275,12 +1388,10 @@ interface ConfigContextValue {
 
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
-  toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
   toggleShowMessageTimeline: typeof toggleShowMessageTimeline
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
-  togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
   toggleShowPromptVoiceInput: typeof toggleShowPromptVoiceInput
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
@@ -1297,8 +1408,18 @@ const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
   isLoaded,
+  isUiConfigLoaded,
+  uiConfigLoadFailed,
+  missionDefaultsValid,
+  missionModelsValid,
+  missionPreferenceSnapshot,
+  reloadMissionPreferences,
+  saveMissionDefaults,
+  resetMissionModels,
   preferences,
   updatePreferences,
+  saveUserMissionModel,
+  removeUserMissionModel,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,
   providerModelVisibilitySaveFailed,
@@ -1348,12 +1469,10 @@ const configContextValue: ConfigContextValue = {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
-  toggleKeyboardShortcutHints,
   toggleShowMessageTimeline,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
-  togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
   setToolOutputExpansion,
@@ -1372,17 +1491,14 @@ export const ConfigProvider: ParentComponent = (props) => {
 
     const unsubUi = storage.onConfigOwnerChanged("ui", (bucket) => {
       setUiConfigBucket(bucket as any)
-      setIsLoaded(true)
     })
     const unsubServer = storage.onConfigOwnerChanged("server", (bucket) => {
       setServerConfigBucket(bucket as any)
-      setIsLoaded(true)
       resetSpeechCapabilities()
       void loadSpeechCapabilities(true)
     })
     const unsubStateUi = storage.onStateOwnerChanged("ui", (bucket) => {
       setUiStateBucket(bucket as any)
-      setIsLoaded(true)
     })
 
     return () => {
@@ -1429,6 +1545,7 @@ export {
   getProviderModelVisibilityPreference,
   providerModelVisibilitySaveFailed,
   setListeningMode,
+  setUpdateFeed,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
@@ -1440,6 +1557,7 @@ export {
   addRecentFolder,
   removeRecentFolder,
   renameRecentFolderProject,
+  addNamedRecentFolder,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,
@@ -1451,11 +1569,9 @@ export {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
-  toggleKeyboardShortcutHints,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
-  togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
   setToolOutputExpansion,

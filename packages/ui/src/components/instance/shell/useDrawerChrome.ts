@@ -1,20 +1,19 @@
 import {
-  createComponent,
+  createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   onMount,
   type Accessor,
-  type JSX,
   type Setter,
 } from "solid-js"
-import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
-import ArrowBackIcon from "@suid/icons-material/ArrowBack"
 
 import type { TranslateParams } from "../../../lib/i18n"
 
 import type { DrawerViewState } from "./types"
 import { resolveEmbeddedDrawers } from "./drawer-layout"
+import { createOrientationDrawerMemory, type DrawerOrientation } from "./drawer-orientation"
 
 export interface UseDrawerChromeOptions {
   t: (key: string, params?: TranslateParams) => string
@@ -29,6 +28,8 @@ export interface UseDrawerChromeOptions {
   leftToggleButtonEl: Accessor<HTMLElement | null>
   rightToggleButtonEl: Accessor<HTMLElement | null>
   measureDrawerHost?: () => void
+  /** Touch tablets only: null keeps one open state for every window shape. */
+  orientation?: Accessor<DrawerOrientation | null>
 }
 
 export interface DrawerChromeApi {
@@ -45,12 +46,8 @@ export interface DrawerChromeApi {
   closeLeft: () => void
   closeRight: () => void
   closeFloatingDrawersIfAny: () => boolean
-  leftAppBarButtonLabel: Accessor<string>
-  rightAppBarButtonLabel: Accessor<string>
-  leftAppBarButtonIcon: Accessor<JSX.Element>
-  rightAppBarButtonIcon: Accessor<JSX.Element>
-  handleLeftAppBarButtonClick: () => void
-  handleRightAppBarButtonClick: () => void
+  toggleLeft: () => void
+  toggleRight: () => void
 }
 
 export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeApi {
@@ -64,8 +61,9 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     leftOpen: true,
     rightOpen: true,
   })
-  const [leftOpen, setLeftOpen] = createSignal(initialLayout.left)
-  const [rightOpen, setRightOpen] = createSignal(initialLayout.right)
+  const startsInPortrait = options.orientation?.() === "portrait"
+  const [leftOpen, setLeftOpen] = createSignal(startsInPortrait ? false : initialLayout.left)
+  const [rightOpen, setRightOpen] = createSignal(startsInPortrait ? false : initialLayout.right)
   const embeddedDrawers = createMemo(() =>
     resolveEmbeddedDrawers({
       hostWidth: options.hostWidth(),
@@ -110,36 +108,6 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     return rightOpen() ? "floating-open" : "floating-closed"
   })
 
-  const leftAppBarButtonLabel = () => {
-    return options.t("instanceShell.leftDrawer.toggle.open")
-  }
-
-  const rightAppBarButtonLabel = () => {
-    return options.t("instanceShell.rightDrawer.toggle.open")
-  }
-
-  const leftAppBarButtonIcon = () => {
-    return createComponent(ArrowForwardIcon, { fontSize: "small" })
-  }
-
-  const rightAppBarButtonIcon = () => {
-    return createComponent(ArrowBackIcon, { fontSize: "small" })
-  }
-
-  const handleLeftAppBarButtonClick = () => {
-    const state = leftDrawerState()
-    if (state !== "floating-closed") return
-    setLeftOpen(true)
-    measureDrawerHost()
-  }
-
-  const handleRightAppBarButtonClick = () => {
-    const state = rightDrawerState()
-    if (state !== "floating-closed") return
-    setRightOpen(true)
-    measureDrawerHost()
-  }
-
   const closeLeft = () => {
     blurIfInside(options.leftDrawerContentEl())
     setLeftOpen(false)
@@ -150,6 +118,21 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     blurIfInside(options.rightDrawerContentEl())
     setRightOpen(false)
     focusTarget(options.rightToggleButtonEl())
+  }
+
+  // Floating drawers cover the whole shell, so opening one replaces the other.
+  const toggleLeft = () => {
+    if (leftOpen()) return closeLeft()
+    if (!rightPinned() && rightOpen()) setRightOpen(false)
+    setLeftOpen(true)
+    measureDrawerHost()
+  }
+
+  const toggleRight = () => {
+    if (rightOpen()) return closeRight()
+    if (!leftPinned() && leftOpen()) setLeftOpen(false)
+    setRightOpen(true)
+    measureDrawerHost()
   }
 
   const closeFloatingDrawersIfAny = () => {
@@ -167,6 +150,33 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
       handled = true
     }
     return handled
+  }
+
+  if (options.orientation) {
+    // Started in portrait: landscape keeps drawers closed until the user opens
+    // them, so a rotated phone never gains overlays it did not ask for.
+    const rotate = createOrientationDrawerMemory(startsInPortrait ? { left: false, right: false } : initialLayout)
+    // A drawer closed by rotation hands focus to its toggle only if it held focus.
+    const applyRotation = (open: boolean, isOpen: boolean, setOpen: Setter<boolean>, content: HTMLElement | null, toggle: Accessor<HTMLElement | null>) => {
+      if (open || !isOpen) return void setOpen(open)
+      const focused = typeof document !== "undefined" ? document.activeElement : null
+      blurIfInside(content)
+      setOpen(false)
+      // Closing removed the focused control (the drawer header included): hand
+      // focus to the fixed toggle. Effect writes are batched, so resolve it on
+      // the next frame.
+      if (focused && focused !== document.body && (!focused.isConnected || content?.contains(focused))) {
+        requestAnimationFrame(() => toggle()?.focus())
+      }
+    }
+    // Not deferred: a deferred `on` would not record the initial orientation.
+    createEffect(on(options.orientation, (next, previous) => {
+      if (!next || !previous || next === previous) return
+      const target = rotate(previous, next, { left: leftOpen(), right: rightOpen() })
+      applyRotation(target.left, leftOpen(), setLeftOpen, options.leftDrawerContentEl(), options.leftToggleButtonEl)
+      applyRotation(target.right, rightOpen(), setRightOpen, options.rightDrawerContentEl(), options.rightToggleButtonEl)
+      measureDrawerHost()
+    }))
   }
 
   onMount(() => {
@@ -195,11 +205,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     closeLeft,
     closeRight,
     closeFloatingDrawersIfAny,
-    leftAppBarButtonLabel,
-    rightAppBarButtonLabel,
-    leftAppBarButtonIcon,
-    rightAppBarButtonIcon,
-    handleLeftAppBarButtonClick,
-    handleRightAppBarButtonClick,
+    toggleLeft,
+    toggleRight,
   }
 }

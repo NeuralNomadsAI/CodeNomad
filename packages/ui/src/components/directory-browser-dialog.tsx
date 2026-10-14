@@ -281,6 +281,10 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
   const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
+  // A trailing separator (but not a root such as "/" or "C:/") names the same folder.
+  const folderKey = (path: string) => normalizePathKey(path).replace(/(?<=[^:/])\/+$/, "")
+  const canGoToTypedPath = createMemo(() =>
+    pathInputDirty() && canSubmitPath() && folderKey(pathInput().trim()) !== folderKey(currentAbsolutePath()))
 
   const destinations = createMemo<DirectoryDestination[]>(() => {
     const meta = currentMetadata()
@@ -452,6 +456,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     onReset={() => { setPathInputDirty(false); setPathInput(currentAbsolutePath()) }}
                     onSubmit={() => void handlePathSubmit()}
                     onChoose={chooseDestination}
+                    canGo={canGoToTypedPath() && !creatingFolder()}
                   />
                   <Show when={props.mode !== "files"}>
                     <button

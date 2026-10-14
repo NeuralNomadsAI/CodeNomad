@@ -48,13 +48,13 @@ const savedEmphasisPairs = new Set([
 ])
 
 describe("palette quality", () => {
-  it("restores Classic's dev surface assignments including inset tool output", () => {
+  it("restores Classic's dev surface assignments with inset-role tool output", () => {
     const p = render("classic")
     assert.equal(p.get("--surface-base"), "#1A1A1A")
     assert.equal(p.get("--surface-secondary"), "#2A2A2A")
     assert.equal(p.get("--message-assistant-bg"), "#212529")
     assert.equal(p.get("--message-tool-bg"), "#212529")
-    assert.equal(p.get("--surface-code"), "#1A1A1A")
+    assert.equal(p.get("--surface-code"), "var(--surface-inset)")
   })
   it("has unique stable IDs, six soft light and four soft dark choices", () => {
     assert.equal(new Set(COLOR_SCHEME_IDS).size, COLOR_SCHEME_IDS.length)
@@ -90,7 +90,17 @@ describe("palette quality", () => {
       assert.notEqual(p.get("--message-assistant-bg"), p.get("--surface-base"))
       assert.notEqual(p.get("--message-user-bg"), p.get("--message-assistant-bg"))
       assert.equal(p.get("--message-tool-bg"), p.get("--message-assistant-bg"))
-      assert.notEqual(p.get("--surface-code"), p.get("--message-tool-bg"))
+      // Output blocks follow the inset role (title-bar tint: 25% secondary in OKLab) and
+      // must stay visibly distinct from tool cards. Classic Light pins its V1 code surface.
+      const code = p.get("--surface-code")!
+      if (code.startsWith("#")) assert.notEqual(code, p.get("--message-tool-bg"))
+      else {
+        assert.equal(code, "var(--surface-inset)")
+        const insetLab = lab(c.surfaceSecondary).map((v, i) => .25 * v + .75 * lab(c.surfaceBase)[i])
+        const toolLab = lab(p.get("--message-tool-bg")!)
+        const codeDistance = Math.hypot(...insetLab.map((v, i) => v - toolLab[i])) * 100
+        assert.ok(codeDistance >= 2, `inset output vs tool card: ${codeDistance}`)
+      }
       assert.notEqual(p.get("--surface-secondary"), p.get("--message-tool-bg"))
     })
     it(`${scheme.id}: keeps distinct participant roles or explicit V1 Classic identity`, () => {

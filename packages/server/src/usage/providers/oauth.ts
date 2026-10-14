@@ -62,8 +62,8 @@ const copilot: UsageProvider = {
   id: "github-copilot",
   name: "GitHub Copilot",
   aliases: copilotAliases,
-  async fetchQuota() {
-    const entry = getOAuthEntry(copilotAliases)
+  async fetchQuota(auth) {
+    const entry = getOAuthEntry(auth, copilotAliases)
     const token = getString(entry?.access) ?? getString(entry?.token)
     if (!token) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
@@ -84,13 +84,20 @@ const copilot: UsageProvider = {
       })) {
         if (!snapshot) continue
         const source = snapshot as Record<string, unknown>
+        if (source.unlimited === true) {
+          windows[key] = toUsageWindow({ usedPercent: null, resetAt, valueLabel: "Unlimited" })
+          continue
+        }
         const entitlement = toNumber(source.entitlement)
         const remaining = toNumber(source.remaining)
-        if (entitlement === null || entitlement <= 0 || remaining === null) continue
+        const counted = entitlement !== null && entitlement > 0 && remaining !== null
+        // Same fallback as VS Code Copilot Chat: percent_remaining is server-computed.
+        const percentRemaining = toNumber(source.percent_remaining)
+        if (!counted && percentRemaining === null) continue
         windows[key] = toUsageWindow({
-          usedPercent: entitlement && remaining !== null ? 100 - (remaining / entitlement) * 100 : null,
+          usedPercent: counted ? 100 - (remaining / entitlement) * 100 : 100 - percentRemaining!,
           resetAt,
-          valueLabel: entitlement !== null && remaining !== null ? `${remaining.toFixed(0)} / ${entitlement.toFixed(0)}` : null,
+          valueLabel: counted ? `${remaining.toFixed(0)} / ${entitlement.toFixed(0)}` : null,
         })
       }
       if (!Object.keys(windows).length) throw new Error("GitHub Copilot usage response contained no quota data")

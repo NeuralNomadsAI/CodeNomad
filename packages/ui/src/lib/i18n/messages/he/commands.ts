@@ -14,6 +14,9 @@ export const commandMessages = {
   "commands.newInstance.label": "מופע חדש",
   "commands.newInstance.description": "פתח בורר תיקיות ליצירת מופע חדש",
   "commands.newInstance.keywords": "תיקייה, פרויקט, סביבת עבודה",
+  "commands.newTemporaryInstance.label": "מופע זמני חדש",
+  "commands.newTemporaryInstance.description": "פתח מופע זמני ריק בלי לבחור תיקייה",
+  "commands.newTemporaryInstance.keywords": "זמני, טיוטה, מהיר, ריק, פרויקט, temporary",
   "commands.openWorkspace.folder.label": "פתיחת תיקיית הפרויקט",
   "commands.openWorkspace.folder.description": "פתיחת תיקיית הפרויקט הנוכחי במנהל הקבצים",
   "commands.openWorkspace.folder.keywords": "תיקייה, קבצים, סייר",
@@ -113,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "נקה את תיבת הטקסט של הפקודה",
   "commands.clearInput.keywords": "נקה, אפס",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: שורה חדשה, Cmd/Ctrl+Enter: שלח פקודה",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: שלח פקודה, Cmd/Ctrl+Enter: שורה חדשה",
-  "commands.promptSubmitShortcut.description": "החלף את התנהגות Enter ו-Cmd/Ctrl+Enter בקלט הפקודה",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, שלח, שורה חדשה, קיצור",
 
   "commands.thinkingBlocks.label.show": "הצג חשיבה",
   "commands.thinkingBlocks.label.hide": "הסתר חשיבה",

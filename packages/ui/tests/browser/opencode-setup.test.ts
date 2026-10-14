@@ -136,8 +136,8 @@ test("missing installation and incompatible daemon expose different actions; res
 
 test("closing required-update screen leaves recovery clickable above a pending folder overlay", async () => {
   const page = await browser.newPage()
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.6",
-    latestVersion: "2.0.11", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.26",
+    latestVersion: "2.0.27", minimumVersion: "2.0.27", recommendedVersion: "2.0.27", incompatibilityReason: "plugin_runtime", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
@@ -150,10 +150,11 @@ test("closing required-update screen leaves recovery clickable above a pending f
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "OpenCode setup required" }).click()
     await page.getByRole("dialog").waitFor()
-    assert.equal(await page.getByText("2.0.6", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("2.0.26", { exact: true }).count(), 1)
     assert.equal(await page.locator("details[open]").count(), 0)
     await page.getByText("Version details", { exact: true }).click()
-    await page.getByText(/introduced the native step-start timestamp/).waitFor()
+    await page.getByText(/requires OpenCode 2\.0\.27 or later for its native Effect 4\.0\.1 and Schema plugin runtime/).waitFor()
+    assert.equal(await page.getByText("settings.opencode.setup.plugin_runtime", { exact: true }).count(), 0)
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }
 })

@@ -1,5 +1,5 @@
 .transcript-filters {
-  background-color: var(--surface-control);
+  background-color: var(--surface-overlay);
   color: var(--text-secondary);
   border: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
   width: min(18rem, calc(100vw - 1rem));

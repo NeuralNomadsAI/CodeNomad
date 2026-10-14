@@ -1,11 +1,12 @@
 /**
- * 2.0.7 introduces session.step.started.data.started. The current Solid reducer
- * consumes this native timestamp directly; earlier releases need a retired
- * event adapter. This is a technical floor, not the latest qualified release.
+ * Native plugins share the daemon's Effect/SDK rather than embedding a second
+ * runtime. 2.0.27 supplies Effect 4.0.1 and Schema.isStartingWith consumed by the
+ * current schemas; 2.0.26 fails the isolated plugin-loading regression.
+ * See dev-docs/OPENCODE_V2_COMPATIBILITY.md for the demonstrated ABI boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.0.7"
+export const MINIMUM_OPENCODE_VERSION = "2.0.27"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.0.22"
+export const RECOMMENDED_OPENCODE_VERSION = "2.0.29"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {
@@ -21,15 +22,16 @@ export function isBelowOpenCodeMinimum(version: string): boolean {
     || (minor === minimumMinor && patch! < minimumPatch!)))
 }
 
-export type OpenCodeIncompatibility = "step_timestamp" | "canonical_api" | "session_environment"
+export type OpenCodeIncompatibility = "plugin_runtime" | "step_timestamp" | "canonical_api" | "session_environment"
 
 export class UnsupportedOpenCodeError extends Error {
   readonly code = OPENCODE_UPDATE_REQUIRED
   readonly statusCode = 426
   readonly minimumVersion = MINIMUM_OPENCODE_VERSION
-  constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "step_timestamp") {
-    super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "step_timestamp"
-      ? `requires the native session.step.started.data.started timestamp introduced in ${MINIMUM_OPENCODE_VERSION}`
+  constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "plugin_runtime") {
+    super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "plugin_runtime"
+      ? `requires the native Effect 4.0.1/Schema plugin runtime introduced in ${MINIMUM_OPENCODE_VERSION}`
+      : reason === "step_timestamp" ? "requires the native session.step.started.data.started timestamp introduced in 2.0.7"
       : reason === "session_environment" ? "requires PUT /api/session/{sessionID}/environment with variables"
         : "does not expose the canonical session, permission, Form and inbox API contract"}`)
     this.name = "UnsupportedOpenCodeError"

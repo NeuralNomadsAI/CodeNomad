@@ -6,36 +6,65 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createRequire } from "node:module"
 import { build } from "esbuild"
-import { chromium, devices, _electron, type ElectronApplication, type Browser } from "playwright"
+import { chromium, devices, _electron, type ElectronApplication, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
+async function disposeFixture() {
+  try { await browser?.close() }
+  finally {
+    if (server) await server.close()
+    else await cache?.dispose()
+  }
+}
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "header-windows-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  try {
+    cache = await createFixtureCache()
+    const shutdown = createFixtureShutdown(cache)
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+      cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "header-windows-fixture", configureServer(s) {
+        s.middlewares.use("/fixture", async (_req, res) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
+        })
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: {
+        // The middleware HTML is invisible to Vite's file scanner. Scan its real
+        // fixture entry instead of prebundling the unrelated application pages.
+        entries: ["tests/browser/fixtures/header-windows.tsx"],
+        exclude: ["lucide-solid"],
+      },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+    })
+    shutdown.own(server)
+    await server.listen()
+    await prepareInterruptionDock(server, "/tests/browser/fixtures/header-windows.tsx")
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) {
+    try { await disposeFixture() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Header fixture setup and cleanup failed") }
+    throw error
+  }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(disposeFixture)
 
-test("the real shell badge reopens the selected question with a same-session permission queued", async () => {
+test("the real shell badge reopens the selected question with a same-session permission queued", async (t) => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
   page.setDefaultTimeout(15000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  const diagnostics = observeHeaderFixture(page)
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await diagnostics.install()
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.locator("textarea.prompt-input").fill("Keep the composer draft")
@@ -56,7 +85,11 @@ test("the real shell badge reopens the selected question with a same-session per
     assert.equal(await answer.inputValue(), "Keep this question selected")
     assert.equal(await page.locator("textarea.prompt-input").inputValue(), "Keep the composer draft")
     assert.deepEqual(errors, [])
+  } catch (error) {
+    await diagnostics.diagnose(message => t.diagnostic(message)).catch(() => {})
+    throw error
   } finally {
+    diagnostics.detach()
     await page.close()
   }
 })
@@ -172,6 +205,9 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         await page.goto(url)
         await page.waitForFunction(() => Boolean((window as any).fixture))
         await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+        const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+        // Saving the locale does not await its lazily imported dictionary.
+        await worktree.filter({ hasText: "Espace de travail" }).waitFor()
         const input = page.locator("textarea.prompt-input")
         await input.fill("Brouillon mobile conservé")
         const geometry = await page.evaluate(() => {
@@ -196,7 +232,6 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         assert.equal(new Set(geometry.selectors).size, 1, "selectors retain one compact row")
         assert.ok(Math.abs(geometry.actionsY - geometry.selectors[0]) <= 1, "actions and selectors always share one row")
         if (width === 390) {
-          const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
           assert.match(await worktree.innerText(), /Espace de travail/)
           await worktree.focus()
           await page.keyboard.press("ArrowDown")
@@ -216,6 +251,32 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
     })
   })
 }
+
+test("composer locale settles after a held French dictionary import without losing its draft", { timeout: 20000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const requested = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/messages/fr/index.ts*", async route => {
+      requested.resolve()
+      await release.promise
+      await route.continue()
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    await input.fill("Brouillon conservé pendant le chargement")
+    await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+    await requested.promise
+    const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+    assert.match(await worktree.innerText(), /Workspace/)
+    assert.equal(await input.inputValue(), "Brouillon conservé pendant le chargement")
+    release.resolve()
+    await worktree.filter({ hasText: "Espace de travail" }).waitFor()
+    assert.match(await worktree.innerText(), /Espace de travail/)
+    assert.equal(await input.inputValue(), "Brouillon conservé pendant le chargement")
+  } finally { release.resolve(); await page.close() }
+})
 
 for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`timeline visibility follows conversation width on ${device}, independently of header density and height`, async () => {
   const page = await browser.newPage({ ...devices[device], viewport: { width: 1100, height: 1000 } })
@@ -523,6 +584,160 @@ test("content filters join the measured header overflow and restore keyboard foc
   } finally { await page.close() }
 })
 
+async function dragWindow(page: Page, panel: Locator, dx: number, dy: number) {
+  const handle = await panel.locator("[data-window-drag-handle]").boundingBox()
+  assert.ok(handle)
+  await page.mouse.move(handle.x + handle.width - 4, handle.y + 4)
+  await page.mouse.down()
+  await page.mouse.move(handle.x + handle.width - 4 + dx, handle.y + 4 + dy, { steps: 5 })
+  await page.mouse.up()
+  return (await panel.boundingBox())!
+}
+
+for (const kind of ["command-palette", "session-search"]) test(`${kind} stays visible when content grows after dragging`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/query")
+    ? { status: "page", scanned: 32, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+        hits: Array.from({ length: 32 }, (_, i) => ({ sessionID: "session", messageID: "hello", partIndex: i,
+          kind: "text", role: "user", excerpt: `fixture result ${i}` })) }
+    : {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
+    const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
+    const input = panel.locator(kind === "session-search" ? 'input[type="search"]' : 'input[type="text"]')
+    if (kind === "command-palette") await input.fill("no-such-command")
+    const before = await dragWindow(page, panel, 0, 2000)
+    await input.fill("fixture")
+    if (kind === "session-search") await panel.locator(".history-search-result").first().waitFor()
+    await page.waitForFunction(({ id, height }) => {
+      const r = document.getElementById(id!)!.getBoundingClientRect()
+      return r.height > height && r.bottom <= innerHeight && r.top >= 0
+    }, { id: await panel.getAttribute("id"), height: before.height })
+    if (kind === "session-search") {
+      await page.setViewportSize({ width: 932, height: 390 })
+      const raised = await dragWindow(page, panel, 0, -2000)
+      assert.ok(raised.y >= 16 && raised.y + raised.height <= 374, "landscape search is height-bounded and retains its top bar")
+      assert.equal(await panel.locator(".window-close-button").evaluate(el => {
+        const r = el.getBoundingClientRect()
+        return r.y >= 0 && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+      }), true)
+      const recovered = await dragWindow(page, panel, -40, 40)
+      assert.ok(Math.abs(recovered.x - raised.x + 40) < 1, "the visible bar can still move the oversized search")
+      await panel.locator(".window-close-button").click()
+      await panel.waitFor({ state: "hidden" })
+    }
+  } finally { await page.close() }
+})
+
+for (const kind of ["command-palette", "session-search"]) test(`${kind} close remains reachable after native zoom and pan`, async () => {
+  const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
+    const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
+    await panel.waitFor()
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 })
+    for (let i = 0; i < 4; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 180, y: 50 }] })
+      for (const x of [150, 120, 90, 60, 30]) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: 50 }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    }
+    const close = await panel.locator(".window-close-button").evaluate(el => {
+      const r = el.getBoundingClientRect(), v = window.visualViewport!
+      return { left: v.offsetLeft, reachable: r.x >= v.offsetLeft && r.right <= v.offsetLeft + v.width,
+        hit: el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }
+    })
+    assert.ok(close.left >= 179 && close.reachable && close.hit, JSON.stringify(close))
+    await cdp.detach()
+  } finally { await page.close() }
+})
+
+test("zoomed search can scroll to its last result and pagination without losing its toolbar", async () => {
+  const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
+  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/query")
+    ? { status: "page", scanned: 32, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: "fixture-next-page",
+        hits: Array.from({ length: 32 }, (_, i) => ({ sessionID: "session", messageID: "hello", partIndex: i,
+          kind: "text", role: "user", excerpt: `fixture result ${i}` })) }
+    : {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press("Control+f")
+    const panel = page.locator('[role="dialog"][id^="session-search-"]')
+    await panel.locator('input[type="search"]').fill("fixture")
+    await panel.locator(".history-search-result").first().waitFor()
+    const list = (await panel.locator(".history-search-results").boundingBox())!
+    await page.mouse.move(list.x + 30, list.y + 30)
+    await page.mouse.wheel(0, 10000)
+    await page.waitForFunction(() => document.querySelector(".history-search-results")!.scrollTop > 0)
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 3 })
+    for (let i = 0; i < 2; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 4, y: 430 }] })
+      for (const y of [400, 370, 340, 310, 280]) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 4, y }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    }
+    assert.ok(await page.evaluate(() => window.visualViewport!.offsetTop > 100), "native vertical pan occurred")
+    await panel.evaluate(el => el.scrollTo(0, el.scrollHeight))
+    await page.waitForFunction(id => {
+      const panel = document.getElementById(id!)!, v = window.visualViewport!
+      return [".history-search-result:last-child", "button.button-tertiary", "[data-window-drag-handle]"].every(selector => {
+        const el = panel.querySelector(selector)!, r = el.getBoundingClientRect()
+        return r.y >= v.offsetTop && r.bottom <= v.offsetTop + v.height
+          && el.contains(document.elementFromPoint(Math.max(r.x, v.offsetLeft) + 5, r.y + r.height / 2))
+      })
+    }, await panel.getAttribute("id"))
+    await cdp.detach()
+  } finally { await page.close() }
+})
+
+test("ported search opens inside the viewport with asymmetric drawers", async () => {
+  const page = await browser.newPage({ viewport: { width: 810, height: 600 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.viewAction("view-right-panel"))
+    await page.keyboard.press("Control+f")
+    const panel = page.locator('[role="dialog"][id^="session-search-"]')
+    await panel.waitFor()
+    const bounds = (await panel.boundingBox())!, close = (await panel.locator(".window-close-button").boundingBox())!
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 810 && close.x + close.width <= 810)
+    assert.equal(await panel.locator(".window-close-button").evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+    }), true)
+  } finally { await page.close() }
+})
+
+for (const first of ["command-palette", "session-search"]) test(`new utility window remains above the older ${first}`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const second = first === "command-palette" ? "session-search" : "command-palette"
+    for (const kind of [first, second]) await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
+    const older = page.locator(`[role="dialog"][id^="${first}-"]`), active = page.locator(`[role="dialog"][id^="${second}-"]`)
+    const a = (await older.boundingBox())!, b = (await active.boundingBox())!
+    await dragWindow(page, active, a.x - b.x, a.y - b.y)
+    assert.equal(await active.locator(".window-close-button").evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+    }), true)
+    await page.keyboard.press("Escape")
+    await active.waitFor({ state: "hidden" })
+    assert.equal(await older.isVisible(), true)
+  } finally { await page.close() }
+})
+
 for (const kind of ["command-palette", "session-search"]) test(`${kind} stays open outside, marks its toggle, and closes explicitly`, async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
   const errors: string[] = []
@@ -553,6 +768,21 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     assert.notEqual(await trigger.evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)")
     assert.equal(await page.locator(".modal-overlay").count(), 0)
     assert.notEqual(await panel.getAttribute("aria-modal"), "true")
+    const before = (await panel.boundingBox())!, moved = await dragWindow(page, panel, 60, 40)
+    assert.ok(Math.abs(moved.x - before.x - 60) < 1 && Math.abs(moved.y - before.y - 40) < 1, JSON.stringify({ before, moved }))
+    await dragWindow(page, panel, 2000, 2000)
+    await page.setViewportSize({ width: 900, height: 700 })
+    await page.waitForFunction(id => {
+      const r = document.getElementById(id!)!.getBoundingClientRect()
+      return r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight
+    }, id)
+    const resizedBounds = (await panel.boundingBox())!
+    assert.ok(resizedBounds.x >= 0 && resizedBounds.y >= 0 && resizedBounds.x + resizedBounds.width <= 900 && resizedBounds.y + resizedBounds.height <= 700)
+    assert.equal(await panel.locator("[data-window-drag-handle]").evaluate(el => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.right - 4, r.y + 4))
+    }), true, "moved bar remains reachable")
+    await page.setViewportSize({ width: 1800, height: 1000 })
     await trigger.click()
     await panel.waitFor({ state: "hidden" })
     assert.equal(await trigger.getAttribute("aria-expanded"), "false")
@@ -560,6 +790,8 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     await panel.waitFor()
     await page.locator("#outside").click()
     assert.equal(await panel.isVisible(), true)
+    // The toggle's blur ripple must finish without replaying window autofocus.
+    await page.waitForFunction(id => !document.querySelector(`button[aria-controls="${id}"] .MuiTouchRipple-ripple`), id)
     assert.equal(await page.locator("#outside").evaluate(el => el === document.activeElement), true)
     await trigger.click()
     await panel.waitFor({ state: "hidden" })
@@ -577,6 +809,46 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
   } finally { await page.close() }
 })
 
+test("composer tooltips follow effective bindings without permanent key strips", async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const composer = page.locator("textarea.prompt-input:visible")
+    const send = page.locator(".send-button:visible"), stop = page.locator(".stop-button:visible")
+    const sendName = await send.getAttribute("aria-label"), stopName = await stop.getAttribute("aria-label")
+    assert.equal(await page.locator(".prompt-input-overlay, .keyboard-hints, .kbd-hint").count(), 0)
+    assert.equal(await composer.getAttribute("aria-describedby"), null)
+    await page.evaluate(() => (window as any).fixture.setPreferences({ hotkeyOverrides: {
+      "prompt-send": [{ key: "j", mod: true }], "session-abort": [{ key: "e", mod: true }],
+      "session-search": [{ key: "g", mod: true }],
+    } }))
+    assert.equal(await send.getAttribute("title"), `${sendName} (Ctrl+J)`)
+    assert.equal(await stop.getAttribute("title"), `${stopName} (Ctrl+E)`)
+    assert.equal(await send.getAttribute("aria-label"), sendName)
+    assert.equal(await stop.getAttribute("aria-label"), stopName)
+    await page.keyboard.press("Control+f")
+    assert.equal(await page.getByRole("searchbox").count(), 0)
+    await page.keyboard.press("Control+g")
+    await page.getByRole("searchbox").waitFor()
+    await page.getByRole("button", { name: "Close search", exact: true }).click()
+    await page.evaluate(() => (window as any).fixture.setPreferences({ hotkeyOverrides: {
+      "prompt-send": [], "session-abort": [{ key: "e", mod: true }], "session-search": [{ key: "g", mod: true }],
+    } }))
+    assert.equal(await send.getAttribute("title"), sendName, "disabled bindings leave no empty tooltip suffix")
+    await page.evaluate(() => (window as any).fixture.setWorking())
+    await composer.fill("A draft survives the first abort key")
+    await composer.press("Control+e")
+    const reminder = page.locator(".prompt-input-overlay:visible")
+    await reminder.waitFor()
+    assert.equal(await reminder.innerText(), "Press again to stop", "transient confirmation must not display a key combination")
+    assert.equal(await reminder.locator("kbd").count(), 0)
+    assert.equal(await composer.getAttribute("aria-describedby"), await reminder.getAttribute("id"))
+    assert.equal(await composer.inputValue(), "A draft survives the first abort key")
+  } finally { await page.close() }
+})
+
 test("search shortcut, session changes and palette execution keep their own authority", async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
@@ -588,6 +860,7 @@ test("search shortcut, session changes and palette execution keep their own auth
     await page.getByRole("searchbox").waitFor()
     assert.equal(await search.getAttribute("aria-expanded"), "true")
     await page.getByRole("searchbox").fill("fixture")
+    await dragWindow(page, page.locator('[role="dialog"][id^="session-search-"]'), 40, 30)
     await page.locator("#outside").click()
     assert.equal(await page.getByRole("searchbox").inputValue(), "fixture")
     await page.evaluate(() => (window as any).fixture.showInfo())
@@ -596,6 +869,8 @@ test("search shortcut, session changes and palette execution keep their own auth
     const palette = page.locator('[role="dialog"][id^="command-palette-"]')
     await palette.waitFor()
     await palette.getByRole("textbox").fill("Fixture command")
+    await dragWindow(page, palette, 40, 30)
+    assert.equal(await palette.getByRole("textbox").inputValue(), "Fixture command")
     await page.keyboard.press("Enter")
     await palette.waitFor({ state: "hidden" })
     assert.equal(await page.evaluate(() => (window as any).fixture.executions()), 1)
@@ -619,6 +894,13 @@ test("compact touch controls can reopen their menu and explicitly toggle a persi
       await action.tap()
       const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
       await panel.waitFor()
+      const bar = (await panel.locator("[data-window-drag-handle]").boundingBox())!, before = (await panel.boundingBox())!
+      const cdp = await context.newCDPSession(page)
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bar.x + bar.width - 4, y: bar.y + 4 }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: bar.x + bar.width - 4, y: bar.y + 34 }] })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      await cdp.detach()
+      assert.ok(Math.abs((await panel.boundingBox())!.y - before.y - 30) < 1, "top bar supports native touch dragging")
       await page.locator("#outside").tap()
       assert.equal(await panel.isVisible(), true)
       await panel.locator(".window-close-button").tap()
@@ -647,7 +929,9 @@ test("utility windows remain visible and keyboard accessible in RTL", async () =
         assert.ok(host && bounds.x >= host.x && bounds.x + bounds.width <= host.x + host.width, "search is not clipped by the transcript")
       }
       await page.waitForFunction(({ id, selector }) => document.querySelector(`[id="${id}"] ${selector}`) === document.activeElement,
-        { id: await panel.getAttribute("id"), selector: kind === "session-search" ? 'input[type="search"]' : "input" })
+         { id: await panel.getAttribute("id"), selector: kind === "session-search" ? 'input[type="search"]' : "input" })
+      const moved = await dragWindow(page, panel, 45, 35)
+      assert.ok(bounds && Math.abs(moved.x - bounds.x - 45) < 1 && Math.abs(moved.y - bounds.y - 35) < 1, "RTL uses physical pointer coordinates")
       if (process.env.CODENOMAD_HEADER_CAPTURE_DIR) await page.screenshot({ path: `${process.env.CODENOMAD_HEADER_CAPTURE_DIR}/${kind}-rtl.png` })
       await page.keyboard.press("Escape")
       await panel.waitFor({ state: "hidden" })

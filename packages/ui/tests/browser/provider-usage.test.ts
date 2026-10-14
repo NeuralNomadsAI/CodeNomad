@@ -292,3 +292,23 @@ test("stable window labels handle removed quotas and passive read failure withou
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("Claude Code sessions label model-scoped limits beside the plan windows", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "claude-code", modelId: "claude-opus-5-5" }))
+    await waitRequests(requests, 2)
+    assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/claude-code")
+    const quota = (usedPercent: number, windowSeconds: number) => ({ usedPercent, remainingPercent: 100 - usedPercent, windowSeconds, resetAt: null })
+    await requests[1].fulfill({ contentType: "application/json", body: JSON.stringify({
+      requestedProviderId: "claude-code", providerId: "claude-code", providerName: "Claude", supported: true, configured: true, ok: true,
+      fetchedAt: Date.now(), windows: { "5h": quota(4, 18000), "7d": quota(1, 604800), "7d:Opus": quota(60, 604800) },
+    }) })
+    await page.getByText("7 days · Opus", { exact: true }).waitFor({ timeout: 5000 })
+    assert.equal(await page.getByRole("progressbar").count(), 3)
+    for (const label of ["5 hours", "7 days"]) assert.equal(await page.getByText(label, { exact: true }).count(), 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

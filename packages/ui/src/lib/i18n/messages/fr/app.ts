@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Sortie d'erreur",
   "app.launchError.openAdvancedSettings": "Ouvrir les paramètres OpenCode",
   "app.launchError.close": "Fermer",
-  "app.launchError.closeTitle": "Fermer (Esc)",
+  "app.launchError.closeTitle": "Fermer",
   "app.launchError.fallbackMessage": "Échec du lancement de l'espace de travail",
   "app.launchError.invalidConfig": "La configuration OpenCode n'est pas valide",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "Vous pouvez avoir plusieurs instances du même dossier",
 
   "releases.upgradeRequired.title": "Mise à jour requise",
+  "releases.desktop.checking": "Recherche d’une mise à jour de CodeNomad…",
+  "releases.desktop.current": "CodeNomad est à jour.",
+  "releases.desktop.available": "CodeNomad {version} est disponible. L’installation redémarrera l’application.",
+  "releases.desktop.install": "Installer et redémarrer",
+  "releases.desktop.downloading": "Téléchargement et vérification de la mise à jour…",
+  "releases.desktop.restarting": "Enregistrement des fenêtres et installation de la mise à jour…",
+  "releases.desktop.failed": "La mise à jour n’a pas pu aboutir. Vous pouvez réessayer ou la télécharger depuis la page des versions.",
+  "releases.desktop.busy": "Une autre fenêtre CodeNomad recherche ou installe déjà une mise à jour.",
   "releases.upgradeRequired.message.withVersion": "Mettez à jour vers CodeNomad {version} pour utiliser la dernière UI.",
   "releases.upgradeRequired.message.noVersion": "Mettez à jour CodeNomad pour utiliser la dernière UI.",
   "releases.upgradeRequired.action.getUpdate": "Obtenir la mise à jour",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI mise à jour",
   "releases.uiUpdated.message": "L'UI est maintenant mise à jour vers {version}.",
 
-  "releases.devUpdateAvailable.title": "Build dev disponible",
-  "releases.devUpdateAvailable.message": "Un nouveau build dev est disponible : {version}.",
+  "releases.devUpdateAvailable.title": "Mise à jour disponible",
+  "releases.devUpdateAvailable.message": "Une version plus récente est disponible : {version}.",
   "releases.devUpdateAvailable.action": "Voir la release",
 
   "theme.mode.system": "Système",

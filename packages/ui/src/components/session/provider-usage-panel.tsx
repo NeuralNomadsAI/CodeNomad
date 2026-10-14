@@ -80,7 +80,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     entries().map(([label]) => label).filter(label => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
   )
 
-  const windowLabel = (label: string) => {
+  const windowLabel = (label: string): string => {
+    // Model-scoped limits arrive as `window:Model`, e.g. `7d:Opus`.
+    const scope = label.indexOf(":")
+    if (scope > 0) return `${windowLabel(label.slice(0, scope))} · ${label.slice(scope + 1)}`
     const key = ({
       "5h": "fiveHours",
       "7d": "sevenDays",
@@ -165,7 +168,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                           </div>
                         </div>
                         <Show when={window().usedPercent !== null}>
-                          <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-base)" }}>
+                          <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-inset)" }}>
                             <div
                               class="h-full transition-[width] duration-300"
                               style={{ width: `${Math.max(0, Math.min(100, window().usedPercent ?? 0))}%`, "background-color": barColor(window().usedPercent) }}

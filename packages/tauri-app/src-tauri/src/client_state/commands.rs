@@ -185,6 +185,22 @@ pub fn client_state_renderer_flushed(
     Ok(())
 }
 
+/// Reply from the opener renderer to a forwarded Preferences startup command.
+/// Only the targeted window's claimed renderer can settle its own request.
+#[tauri::command]
+pub fn client_state_startup_command_result(
+    webview: Webview,
+    state: State<'_, ClientState>,
+    access_token: String,
+    id: u64,
+    state_result: Option<super::StartupStateSnapshot>,
+) -> Result<(), String> {
+    let (window_id, _) = validate_access(&webview, &state, &access_token)?;
+    state
+        .startup_commands
+        .complete(id, &window_id, state_result)
+}
+
 #[tauri::command]
 pub fn client_state_navigation_flushed(
     webview: Webview,

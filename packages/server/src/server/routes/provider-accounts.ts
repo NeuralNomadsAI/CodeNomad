@@ -48,11 +48,11 @@ export function registerProviderAccountsRoutes(app: FastifyInstance, deps: Deps)
         }
         signal.throwIfAborted(); connection.assertCurrent()
         if (method === "PUT") {
-          if (integrationID !== "openai" || ((input.data as z.infer<typeof writeSchema>).enabled && !snapshot.supported)) {
+          if (!deps.accounts.supports(integrationID) || ((input.data as z.infer<typeof writeSchema>).enabled && !snapshot.supported)) {
             return reply.code(409).send({ error: "Automatic account selection unavailable" })
           }
           const enabled = (input.data as z.infer<typeof writeSchema>).enabled
-          deps.accounts.setEnabled(enabled)
+          deps.accounts.setEnabled(enabled, integrationID)
           return { ...snapshot, enabled }
         }
         return snapshot

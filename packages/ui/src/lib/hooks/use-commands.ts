@@ -38,12 +38,10 @@ function splitKeywords(key: string): string[] {
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
   toggleShowThinkingBlocks: () => void
-  toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
-  togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: VisibilityPreference) => void
@@ -51,6 +49,7 @@ export interface UseCommandsOptions {
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
+  handleNewTemporaryInstance: () => Promise<void>
   handleCloseActiveTab: () => Promise<void>
   handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
@@ -119,8 +118,17 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.newInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.newInstance.keywords"),
-      shortcut: { key: "N", meta: true },
+      shortcutId: "new-instance",
       action: options.handleNewInstanceRequest,
+    })
+
+    commandRegistry.register({
+      id: "new-temporary-instance",
+      label: () => tGlobal("commands.newTemporaryInstance.label"),
+      description: () => tGlobal("commands.newTemporaryInstance.description"),
+      category: "Instance",
+      keywords: () => splitKeywords("commands.newTemporaryInstance.keywords"),
+      action: options.handleNewTemporaryInstance,
     })
 
     commandRegistry.register({
@@ -129,7 +137,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.closeInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.closeInstance.keywords"),
-      shortcut: { key: "W", meta: true },
+      shortcutId: "close-instance",
       action: async () => {
         await options.handleCloseActiveTab()
       },
@@ -192,7 +200,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.nextInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.nextInstance.keywords"),
-      shortcut: { key: "]", meta: true },
+      shortcutId: "instance-next",
       action: () => selectNextAppTab(),
     })
 
@@ -202,7 +210,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.previousInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.previousInstance.keywords"),
-      shortcut: { key: "[", meta: true },
+      shortcutId: "instance-prev",
       action: () => selectPreviousAppTab(),
     })
 
@@ -212,7 +220,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.newSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.newSession.keywords"),
-      shortcut: { key: "N", meta: true, shift: true },
+      shortcutId: "session-new",
       action: async () => {
         const instance = activeInstance()
         if (!instance) return
@@ -226,7 +234,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.closeSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.closeSession.keywords"),
-      shortcut: { key: "W", meta: true, shift: true },
+      shortcutId: "close-session",
       action: async () => {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
@@ -254,7 +262,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.instanceInfo.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.instanceInfo.keywords"),
-      shortcut: { key: "L", meta: true, shift: true },
+      shortcutId: "switch-to-info",
       action: () => {
         const instance = activeInstance()
         if (instance) setActiveSession(instance.id, "info")
@@ -267,7 +275,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.nextSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.nextSession.keywords"),
-      shortcut: { key: "]", meta: true, shift: true },
+      shortcutId: "session-next",
       action: () => {
         const instanceId = activeInstanceId()
         if (!instanceId) return
@@ -292,7 +300,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.previousSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.previousSession.keywords"),
-      shortcut: { key: "[", meta: true, shift: true },
+      shortcutId: "session-prev",
       action: () => {
         const instanceId = activeInstanceId()
         if (!instanceId) return
@@ -530,7 +538,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.openModelSelector.description"),
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.openModelSelector.keywords"),
-      shortcut: { key: "M", meta: true, shift: true },
+      shortcutId: "focus-model",
       action: () => {
         const instance = activeInstance()
         if (!instance) return
@@ -544,7 +552,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.selectModelVariant.description"),
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.selectModelVariant.keywords"),
-      shortcut: { key: "T", meta: true, shift: true },
+      shortcutId: "focus-variant",
       action: () => {
         const instance = activeInstance()
         if (!instance) return
@@ -558,7 +566,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.openAgentSelector.description"),
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.openAgentSelector.keywords"),
-      shortcut: { key: "A", meta: true, shift: true },
+      shortcutId: "open-agent-selector",
       action: () => {
         const instance = activeInstance()
         if (!instance) return
@@ -572,7 +580,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.clearInput.description"),
       category: "Input & Focus",
       keywords: () => splitKeywords("commands.clearInput.keywords"),
-      shortcut: { key: "K", meta: true },
+      shortcutId: "clear-input",
       action: () => {
         const textarea = findVisiblePromptTextarea()
         if (textarea) textarea.value = ""
@@ -582,12 +590,10 @@ export function useCommands(options: UseCommandsOptions) {
     registerBehaviorCommands((command) => commandRegistry.register(command), {
       preferences: options.preferences,
       toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
-      toggleKeyboardShortcutHints: options.toggleKeyboardShortcutHints,
       toggleShowMessageTimeline: options.toggleShowMessageTimeline,
       toggleShowTimelineTools: options.toggleShowTimelineTools,
       toggleUsageMetrics: options.toggleUsageMetrics,
       toggleAutoCleanupBlankSessions: options.toggleAutoCleanupBlankSessions,
-      togglePromptSubmitOnEnter: options.togglePromptSubmitOnEnter,
       toggleShowPromptVoiceInput: options.toggleShowPromptVoiceInput,
       setDiffViewMode: options.setDiffViewMode,
       setToolOutputExpansion: options.setToolOutputExpansion,

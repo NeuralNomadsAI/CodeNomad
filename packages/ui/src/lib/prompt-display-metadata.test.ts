@@ -1,10 +1,34 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { createTextAttachment } from "../types/attachment"
+import { createFileAttachment, createTextAttachment } from "../types/attachment"
 import { preparePromptDisplayText, resolvePastedPlaceholders, splitPromptDisplaySections } from "./prompt-display-metadata"
 
 describe("preparePromptDisplayText", () => {
+  it("resolves every root mention without changing parent paths or literal marker text", () => {
+    const prompt = "@./a @./b @. @. @.. @../c ___ROOT___ ___ROOT_NOSLASH___"
+    const expected = "./a ./b ./ ./ @.. @../c ___ROOT___ ___ROOT_NOSLASH___"
+    const attachments = [createFileAttachment("./a", "a"), createTextAttachment(".", "path:.", ".")]
+
+    assert.equal(resolvePastedPlaceholders(prompt, attachments), expected)
+    assert.equal(preparePromptDisplayText(prompt, attachments).promptToSend, expected)
+  })
+
+  it("preserves pasted text and display sections alongside repeated root mentions", () => {
+    const pasted = "@./verbatim ___ROOT___ ___ROOT_NOSLASH___"
+    const attachment = createTextAttachment(pasted, "pasted #1", "paste-1.txt")
+    const prompt = "@./a @./b\n[pasted #1]\n@. @."
+    const prepared = preparePromptDisplayText(prompt, [attachment])
+
+    assert.equal(prepared.promptToSend, `./a ./b\n${pasted}\n./ ./`)
+    assert.equal(resolvePastedPlaceholders(prompt, [attachment]), prepared.promptToSend)
+    assert.deepEqual(splitPromptDisplaySections(prepared.promptToSend, prepared.displayMetadata), [
+      { kind: "inline", text: "./a ./b\n" },
+      { kind: "pasted", text: pasted },
+      { kind: "inline", text: "\n./ ./" },
+    ])
+  })
+
   it("keeps pasted text fully visible to the model while storing display metadata", () => {
     const attachment = createTextAttachment("line 1\nline 2\nline 3\nline 4", "pasted #1 (4 lines)", "paste-1.txt")
 

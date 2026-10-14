@@ -14,6 +14,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Neue Instanz",
   "commands.newInstance.description": "Ordnerauswahl öffnen, um eine neue Instanz zu erstellen",
   "commands.newInstance.keywords": "ordner, projekt, arbeitsbereich",
+  "commands.newTemporaryInstance.label": "Neue temporäre Instanz",
+  "commands.newTemporaryInstance.description": "Leere temporäre Instanz öffnen, ohne einen Ordner zu wählen",
+  "commands.newTemporaryInstance.keywords": "temporär, entwurf, schnell, leer, projekt",
   "commands.openWorkspace.folder.label": "Projektordner öffnen",
   "commands.openWorkspace.folder.description": "Aktuellen Projektordner im Dateimanager öffnen",
   "commands.openWorkspace.folder.keywords": "Ordner, Explorer, Finder, Dateien",
@@ -113,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "Den Textbereich des Prompts löschen",
   "commands.clearInput.keywords": "löschen, zurücksetzen",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Neue Zeile, Cmd/Ctrl+Enter: Prompt absenden",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Prompt absenden, Cmd/Ctrl+Enter: Neue Zeile",
-  "commands.promptSubmitShortcut.description": "Verhalten von Enter und Cmd/Ctrl+Enter bei der Prompt-Eingabe vertauschen",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, senden, neuezeile, tastenkombination, prompt",
 
   "commands.thinkingBlocks.label.show": "Denken anzeigen",
   "commands.thinkingBlocks.label.hide": "Denken ausblenden",

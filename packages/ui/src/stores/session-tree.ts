@@ -103,6 +103,29 @@ export function getSessionAncestorIdsFromMap(instanceSessions: Map<string, Sessi
   return ancestors
 }
 
+export type DescendantActivity = { permission: number; working: number; compacting: number }
+
+/** Per-ancestor counts of active descendants, so a collapsed parent can show that its subtree is busy. */
+export function collectDescendantActivity(instanceSessions: Map<string, Session> | undefined): Map<string, DescendantActivity> {
+  const activity = new Map<string, DescendantActivity>()
+  for (const session of instanceSessions?.values() ?? []) {
+    const kind = session.pendingPermission || session.pendingForm
+      ? "permission"
+      : session.status === "working" || session.status === "compacting" ? session.status : null
+    if (!kind) continue
+    const seen = new Set([session.id])
+    let parentId = session.parentId
+    while (parentId && !seen.has(parentId) && instanceSessions!.has(parentId)) {
+      seen.add(parentId)
+      const counts = activity.get(parentId) ?? { permission: 0, working: 0, compacting: 0 }
+      counts[kind] += 1
+      activity.set(parentId, counts)
+      parentId = instanceSessions!.get(parentId)!.parentId
+    }
+  }
+  return activity
+}
+
 export function getDescendantSessionsFromMap(instanceSessions: Map<string, Session>, parentId: string): Session[] {
   const childrenByParent = new Map<string, Session[]>()
   for (const session of instanceSessions.values()) {

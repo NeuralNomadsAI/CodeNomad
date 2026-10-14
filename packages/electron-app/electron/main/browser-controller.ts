@@ -124,6 +124,33 @@ export class BrowserController {
     if (registration?.owner === owner) this.registrations.delete(registrationId)
   }
 
+  async history(owner: WebContents, guestId: unknown, entryId?: unknown): Promise<unknown> {
+    const guest = typeof guestId === "number" && Number.isInteger(guestId) ? this.electronApi.fromId(guestId) : undefined
+    const owned = () => guest && !owner.isDestroyed() && !guest.isDestroyed() && guest.getType() === "webview"
+      && guest.hostWebContents === owner && this.observedGuests.get(guest.id) === owner.id
+    if (!guest || !owned()) throw new Error("Browser target does not belong to this window")
+    // Retained guest ownership is separate from visible automation registration.
+    // A hidden guest can publish its journal without becoming an agent target.
+    return this.enqueue(guest, async () => {
+      if (!owned()) throw new Error("Browser target changed before history access")
+      // CDP supplies stable entry IDs, including same-URL and fragment entries.
+      return withDebugger(guest, Date.now() + 5000, async debuggerSession => {
+        const result = await debuggerSession.sendCommand("Page.getNavigationHistory") as { currentIndex: number; entries: Array<{ id: number; url: string }> }
+        if (entryId !== undefined) {
+          const entry = result.entries.find(entry => entry.id === entryId)
+          if (!Number.isInteger(entryId) || !entry || !isBrowserUrlAllowed(entry.url)) throw new Error("Invalid browser history entry")
+          if (!owned()) throw new Error("Browser target changed before history navigation")
+          await debuggerSession.sendCommand("Page.navigateToHistoryEntry", { entryId })
+          return
+        }
+        const start = Math.max(0, result.currentIndex - 16)
+        const entries = result.entries.slice(start, start + 32).filter(entry => isBrowserUrlAllowed(entry.url) && entry.url.length <= 2048)
+        const current = result.entries[result.currentIndex]
+        return { entries: entries.map(({ id, url }) => ({ id, url })), index: entries.findIndex(entry => entry.id === current?.id) }
+      })
+    })
+  }
+
   claimOpen(owner: WebContents, requestID: unknown): boolean {
     if (typeof requestID !== "string" || owner.isDestroyed()) return false
     const claim = this.openClaims.get(requestID)

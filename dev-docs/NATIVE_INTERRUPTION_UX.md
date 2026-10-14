@@ -8,6 +8,10 @@ its draft. The panel is non-modal and height-bounded. Request content scrolls
 independently; reply, cancel and permission actions remain in a fixed footer
 outside that scrolling content. Its square shared window chrome uses the existing
 accent/surface tokens for the header, icon and leading border.
+The leading question/permission icon is the same for local and external requests.
+Collapsed unrelated-conversation requests additionally show the shared red status
+badge, including its shield and localized text, at the trailing end of the header.
+Clicking that badge expands the selected request in place, like the project badge.
 
 An expanded request takes priority over a manually enlarged composer. The composer
 temporarily uses its minimum field height and disables resizing without overwriting

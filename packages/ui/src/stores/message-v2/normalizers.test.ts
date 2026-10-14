@@ -184,6 +184,36 @@ describe("native session message normalization", () => {
     assert.equal(aborted.message.parts.length, 1)
   })
 
+  it("renders the cause of a run that failed before or between model steps", () => {
+    const error = { type: "provider.quota", message: "Usage limit reached", status: 429, response: { body: "{}" } }
+    const failed = normalizeSessionMessage("session", {
+      id: "idle-failed", type: "idle", outcome: "failed", error, time: { created: 4 },
+    } as SessionMessageInfo)
+    assert.equal(failed.info.role, "assistant")
+    assert.equal(failed.message.status, "error")
+    assert.deepEqual(failed.info.error, { ...error, name: "provider.quota", data: { message: "Usage limit reached" } })
+    assert.deepEqual(failed.message.parts.map(part => part.type), ["text"])
+
+    // Exhausted restarts fail the run with an "aborted" explanation that must stay its own.
+    const exhausted = normalizeSessionMessage("session", {
+      id: "idle-exhausted", type: "idle", outcome: "failed", time: { created: 4 },
+      error: { type: "aborted", message: "Execution was interrupted repeatedly and will not be resumed automatically." },
+    } as SessionMessageInfo)
+    assert.equal(exhausted.info.error?.name, "aborted")
+    assert.equal(exhausted.info.error?.data?.message, "Execution was interrupted repeatedly and will not be resumed automatically.")
+
+    // Without a cause, and for interruptions or successes, the control record stays invisible.
+    for (const source of [
+      { id: "idle-bare", type: "idle", outcome: "failed", time: { created: 5 } },
+      { id: "idle-interrupted", type: "idle", outcome: "interrupted", error: { type: "aborted", message: "Interrupted" }, time: { created: 6 } },
+      { id: "idle-succeeded", type: "idle", outcome: "succeeded", time: { created: 7 } },
+    ]) {
+      const result = normalizeSessionMessage("session", source as SessionMessageInfo)
+      assert.equal(result.info.error, undefined, source.id)
+      assert.deepEqual(result.message.parts, [], source.id)
+    }
+  })
+
   it("retains optional provider response bodies without replacing the display message", () => {
     const error = { type: "ProviderError", message: "rate limited", status: 429, response: { body: '{"retry_after":60}' } }
     const result = normalizeSessionMessage("session", {

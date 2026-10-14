@@ -457,13 +457,18 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     })
   }
 
-  async function submitApiAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
-    await authClient.integration.connect.key({
+  async function submitCredentialAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
+    const method = selectedMethod()
+    const input = {
       integrationID: providerId,
-      key: apiKey().trim(),
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
       location: requestLocation(catalogLocation),
-    }, requestLocationOptions(catalogLocation))
+    }
+    if (method.type === "external") {
+      await authClient.integration.connect.external({ ...input, methodID: method.id }, requestLocationOptions(catalogLocation))
+    } else if (method.type === "key") {
+      await authClient.integration.connect.key({ ...input, key: apiKey().trim() }, requestLocationOptions(catalogLocation))
+    } else throw new Error(t("settings.providers.errors.noAuthorization"))
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
     if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
@@ -556,8 +561,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setStage("authorizing")
     setActionError(null)
     try {
-      if (selectedMethod().type === "key") {
-        await submitApiAuth(providerId, authClient, instanceId, operationVersion, catalogLocation)
+      if (selectedMethod().type === "key" || selectedMethod().type === "external") {
+        await submitCredentialAuth(providerId, authClient, instanceId, operationVersion, catalogLocation)
         return
       }
       if (selectedMethod().type === "command") {

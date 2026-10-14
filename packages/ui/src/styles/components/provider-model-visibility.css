@@ -47,7 +47,7 @@
   height: min(22rem, 45dvh);
   overflow-y: auto;
   border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  background: var(--surface-inset);
 }
 
 .provider-model-visibility-item {

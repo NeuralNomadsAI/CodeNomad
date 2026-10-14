@@ -29,7 +29,7 @@ Object.assign(env, {
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
 })
 const runtimeVersion = execFileSync(cli, ["--version"], { cwd: root, env, encoding: "utf8" }).trim().replace(/^opencode2? v/, "")
-assert.match(runtimeVersion, /^2\.0\.(19|21|22)$/, "This fixture qualifies only the requested runtimes")
+assert.match(runtimeVersion, /^2\.0\.(19|21|22|24)$/, "This fixture qualifies only the requested runtimes")
 await Promise.all(["config", "plugin", "pruning"].map(name => mkdir(path.join(root, name), { recursive: true })))
 const bundle = await build({
   entryPoints: [fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/plugin.ts", import.meta.url))],

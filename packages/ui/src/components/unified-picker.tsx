@@ -780,12 +780,6 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </Show>
         </div>
 
-        <div class="dropdown-footer">
-          <div>
-            <span class="font-medium">↑↓</span> {t("unifiedPicker.footer.navigate")} • <span class="font-medium">Tab/Enter</span> {t("unifiedPicker.footer.select")} •{" "}
-            <span class="font-medium">Esc</span> {t("unifiedPicker.footer.close")}
-          </div>
-        </div>
       </div>
     </Show>
   )

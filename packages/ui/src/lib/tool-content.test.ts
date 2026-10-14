@@ -21,12 +21,25 @@ test("native images survive normalization without entering copy, local search or
     assert.equal(state.status, "completed")
     if (state.status !== "completed") return
     assert.deepEqual(state.content, content)
+    assert.equal(state.content, content)
     assert.equal(state.content?.filter(isToolImageContent).length, 1)
+    assert.deepEqual(state.output, content.length === 1 ? [] : "Generated image")
     const chrome = defaultRenderer.getOutputChrome!({ toolState: () => state } as ToolRendererContext)
+    const copyText = chrome?.getCopyText?.()
     const search = defaultRenderer.getSearchText!({ toolCall: part, toolState: state, toolName: "mcp_image" })
     const speech = buildToolSpeechText({ title: "Image tool", state, t: key => key })
-    for (const text of [chrome?.copyText ?? "", search.join(" "), speech]) assert.ok(!text.includes("base64"))
-    assert.equal(chrome?.copyText, content.length === 1 ? undefined : "Generated image")
+    for (const text of [copyText ?? "", search.join(" "), speech]) {
+      assert.ok(!text.includes("base64"))
+      assert.ok(!text.includes("c2VjcmV0LWltYWdlLWJ5dGVz"))
+    }
+    assert.equal(copyText, content.length === 1 ? undefined : "Generated image")
+    if (content.length === 1) assert.equal(chrome, undefined)
+    else {
+      assert.equal(chrome?.hasCopyText, true)
+      assert.equal(chrome?.copyText, undefined)
+      assert.ok(search.join(" ").includes("Generated image"))
+      assert.ok(speech.includes("Generated image"))
+    }
   }
 })
 

@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "错误输出",
   "app.launchError.openAdvancedSettings": "打开 OpenCode 设置",
   "app.launchError.close": "关闭",
-  "app.launchError.closeTitle": "关闭 (Esc)",
+  "app.launchError.closeTitle": "关闭",
   "app.launchError.fallbackMessage": "启动工作区失败",
   "app.launchError.invalidConfig": "OpenCode 配置无效",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "同一个文件夹可以同时打开多个实例",
 
   "releases.upgradeRequired.title": "需要升级",
+  "releases.desktop.checking": "正在检查 CodeNomad 更新…",
+  "releases.desktop.current": "CodeNomad 已是最新版本。",
+  "releases.desktop.available": "CodeNomad {version} 已可用。安装将重启应用。",
+  "releases.desktop.install": "安装并重启",
+  "releases.desktop.downloading": "正在下载并验证更新…",
+  "releases.desktop.restarting": "正在保存窗口并安装更新…",
+  "releases.desktop.failed": "无法完成更新。您可以重试或从版本发布页面下载。",
+  "releases.desktop.busy": "另一个 CodeNomad 窗口正在检查或安装更新。",
   "releases.upgradeRequired.message.withVersion": "更新到 CodeNomad {version} 以使用最新的 UI。",
   "releases.upgradeRequired.message.noVersion": "更新 CodeNomad 以使用最新的 UI。",
   "releases.upgradeRequired.action.getUpdate": "获取更新",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI 已更新",
   "releases.uiUpdated.message": "UI 已更新到 {version}。",
 
-  "releases.devUpdateAvailable.title": "可用的开发版",
-  "releases.devUpdateAvailable.message": "有新的开发版可用：{version}。",
+  "releases.devUpdateAvailable.title": "有可用更新",
+  "releases.devUpdateAvailable.message": "有更新的版本可用：{version}。",
   "releases.devUpdateAvailable.action": "查看发布",
 
   "theme.mode.system": "系统",

@@ -18,7 +18,9 @@ import { hasSettledForm, markFormSettled } from "./form-settlements.ts"
 import { serverApi } from "../lib/api-client.ts"
 
 const originalPendingRequests = serverApi.getPendingRequests
-beforeEach(() => { serverApi.getPendingRequests = async () => ({ supported: false }) })
+beforeEach(() => { serverApi.getPendingRequests = async (_id, directories) => ({ supported: true,
+  directories: directories.map((directory) => ({ directory, status: "ok", locations: [{ location: { directory }, permissions: [], forms: [] }] })),
+}) })
 afterEach(() => { serverApi.getPendingRequests = originalPendingRequests })
 
 const form = {
@@ -156,6 +158,9 @@ describe("form interruption lifecycle", () => {
       }) },
     }
     addInstance({ id: instanceId, folder: "/worktree", status: "ready", client } as any)
+    serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: location.directory, status: "ok", locations: [{
+      location, permissions: [], forms: [{ ...form, id: "global-list-form", sessionID: "global" }, { ...form, id: "session-list-form" }],
+    }] }] })
 
     try {
       await syncPendingRequests(instanceId)
@@ -186,7 +191,7 @@ describe("form interruption lifecycle", () => {
     }
   })
 
-  it("does not reconcile one legacy Form location from another same-directory scan", async () => {
+  it("unavailable loaded-only recovery never scans or clears legacy Form identities", async () => {
     const instanceId = "same-directory-form-identities"
     const directory = "/workspace"
     const seen = new Set<string | undefined>()
@@ -200,13 +205,14 @@ describe("form interruption lifecycle", () => {
     addInstance({ id: instanceId, folder: directory, status: "ready", client: {
       permission: { request: { list } }, form: { list },
     } } as any)
+    serverApi.getPendingRequests = async () => ({ supported: false })
     try {
       for (const workspaceID of ["one", "two"]) addPendingForm(instanceId, {
         ...form, id: workspaceID, sessionID: "global", location: { directory, workspaceID },
       })
       await assert.rejects(syncPendingRequests(instanceId))
-      assert.deepEqual(seen, new Set([undefined, "one", "two"]))
-      assert.deepEqual(getFormQueue(instanceId).map(entry => entry.id), ["two"])
+      assert.deepEqual(seen, new Set())
+      assert.deepEqual(getFormQueue(instanceId).map(entry => entry.id), ["one", "two"])
     } finally { removeInstance(instanceId) }
   })
 
@@ -225,6 +231,7 @@ describe("form interruption lifecycle", () => {
       id: "session", location: worktreeLocation,
     } as any]])))
     markFormSettled(instanceId, "answered")
+    serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: "/workspace", status: "error" }] })
 
     try {
       await assert.rejects(syncPendingRequests(instanceId))

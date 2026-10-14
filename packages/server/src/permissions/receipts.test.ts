@@ -202,9 +202,14 @@ test("route validates queries and fresh session ownership, returns bounded conti
   const f = await fixture()
   const app = Fastify()
   registerPermissionReceiptRoutes(app, f.receipts)
-  const url = "/api/workspaces/w/sessions/s/permission-receipts"
+  const url = "/api/workspaces/w/sessions/ses_fixture/permission-receipts"
+  Object.assign(f.connection.client.permission, { get: async ({ requestID }: { requestID: string }) => ({ ...pending(requestID), sessionID: "ses_fixture" }) })
+  Object.assign(f.connection.client.session, { get: async () => ({ id: "ses_fixture", location: { directory: "/project" } }) })
   try {
-    for (const requestId of ["a", "b", "c"]) await (await f.receipts.prepare("w", f.connection, "s", requestId, "once", "codenomad"))()
+    for (const sessionId of ["__no_session_draft__", "invalid"]) {
+      assert.equal((await app.inject(`/api/workspaces/w/sessions/${sessionId}/permission-receipts?unanchored=true`)).statusCode, 400)
+    }
+    for (const requestId of ["a", "b", "c"]) await (await f.receipts.prepare("w", f.connection, "ses_fixture", requestId, "once", "codenomad"))()
     for (const query of ["", "?limit=1000&messageId=m", "?unanchored=false", "?messageId=m&unanchored=true", "?messageId=m&cursor=../../other"]) {
       assert.equal((await app.inject(`${url}${query}`)).statusCode, 400)
     }

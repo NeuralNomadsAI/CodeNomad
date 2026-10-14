@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Salida de error",
   "app.launchError.openAdvancedSettings": "Abrir Configuración de OpenCode",
   "app.launchError.close": "Cerrar",
-  "app.launchError.closeTitle": "Cerrar (Esc)",
+  "app.launchError.closeTitle": "Cerrar",
   "app.launchError.fallbackMessage": "No se pudo iniciar el workspace",
   "app.launchError.invalidConfig": "La configuración de OpenCode no es válida",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "Puedes tener varias instancias de la misma carpeta",
 
   "releases.upgradeRequired.title": "Actualización requerida",
+  "releases.desktop.checking": "Buscando una actualización de CodeNomad…",
+  "releases.desktop.current": "CodeNomad está actualizado.",
+  "releases.desktop.available": "CodeNomad {version} está disponible. La instalación reiniciará la aplicación.",
+  "releases.desktop.install": "Instalar y reiniciar",
+  "releases.desktop.downloading": "Descargando y verificando la actualización…",
+  "releases.desktop.restarting": "Guardando las ventanas e instalando la actualización…",
+  "releases.desktop.failed": "No se pudo completar la actualización. Puedes reintentarlo o descargarla desde la página de versiones.",
+  "releases.desktop.busy": "Otra ventana de CodeNomad ya está buscando o instalando una actualización.",
   "releases.upgradeRequired.message.withVersion": "Actualiza a CodeNomad {version} para usar la UI más reciente.",
   "releases.upgradeRequired.message.noVersion": "Actualiza CodeNomad para usar la UI más reciente.",
   "releases.upgradeRequired.action.getUpdate": "Obtener actualización",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI actualizada",
   "releases.uiUpdated.message": "La UI ahora está actualizada a {version}.",
 
-  "releases.devUpdateAvailable.title": "Compilación dev disponible",
-  "releases.devUpdateAvailable.message": "Hay una nueva compilación dev disponible: {version}.",
+  "releases.devUpdateAvailable.title": "Actualización disponible",
+  "releases.devUpdateAvailable.message": "Hay una versión más reciente disponible: {version}.",
   "releases.devUpdateAvailable.action": "Ver release",
 
   "theme.mode.system": "Sistema",

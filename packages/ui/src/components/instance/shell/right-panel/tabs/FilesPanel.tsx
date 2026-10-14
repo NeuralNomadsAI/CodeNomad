@@ -11,6 +11,7 @@ import {
 import { ArrowLeft, ChevronRight, Eye, GitBranch, GitCommitHorizontal, Minus, Plus, RefreshCw } from "lucide-solid"
 import type { useGitChanges } from "../useGitChanges"
 import type { useGitHistory } from "../useGitHistory"
+import type { useGitInit } from "../useGitInit"
 import { closeFilePreview, getFilePreview, type FilePreviewTarget } from "../../../../../stores/files-preview"
 import FileRowActions from "../FileRowActions"
 import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
@@ -25,7 +26,9 @@ interface FilesPanelProps {
   git: ReturnType<typeof useGitChanges>
   history: ReturnType<typeof useGitHistory>
   tree: ReturnType<typeof useWorkspaceTree>
+  /** False only for a known non-repository; Changes/Commits then offer Initialize Git. */
   gitAvailable: boolean
+  gitInit: ReturnType<typeof useGitInit>
   mode: FilesPanelMode
   onModeChange: (mode: FilesPanelMode) => void
   worktrees: Array<{ slug: string; directory: string; branch?: string | null }>
@@ -73,7 +76,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
     else props.git.unstageGitFile(item)
   }
   const loading = () => props.mode === "workspace" ? props.tree.busy().size > 0 : props.mode === "history" ? props.history.loading() || props.history.detailLoading() : props.git.gitStatusLoading()
-  const error = () => props.mode === "workspace" ? null : props.mode === "history" ? props.history.error() : props.git.gitStatusError()
+  const error = () => props.mode === "workspace" || !props.gitAvailable ? null : props.mode === "history" ? props.history.error() : props.git.gitStatusError()
   const basename = (path: string) => path.replace(/\\/g, "/").split("/").pop() || path
   const date = (value: string) => new Date(value).toLocaleDateString(document.documentElement.lang || undefined, { month: "short", day: "numeric" })
 
@@ -82,6 +85,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       <div class="git-panel-branch"><GitBranch size={16} /><strong>{props.gitAvailable ? props.branch || props.t("gitPanel.detached") : basename(props.directory)}</strong>
         <button class="files-header-icon-button" aria-label={props.t("instanceShell.rightPanel.actions.refresh")} disabled={loading()} onClick={() => {
           if (props.mode === "workspace") props.tree.refresh()
+          else if (!props.gitAvailable) void props.gitInit.recheck()
           else if (props.mode === "history") void props.history.refresh()
           else void props.git.refreshGitStatus()
         }}><RefreshCw size={14} class={loading() ? "animate-spin" : ""} /></button>
@@ -89,16 +93,16 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       <select class="git-panel-worktree" value={props.slug} aria-label={props.t("gitPanel.worktree")} title={props.directory}
         onChange={event => props.onWorktreeChange(event.currentTarget.value)}>
         <Show when={!props.worktrees.some(tree => tree.slug === props.slug)}><option value={props.slug}>{basename(props.directory)}</option></Show>
-        <For each={props.worktrees}>{tree => <option value={tree.slug}>{basename(tree.directory)} · {tree.branch || props.t("gitPanel.detached")}</option>}</For>
+        <For each={props.worktrees}>{tree => <option value={tree.slug}>{basename(tree.directory)}{props.gitAvailable ? ` · ${tree.branch || props.t("gitPanel.detached")}` : ""}</option>}</For>
       </select>
     </header>
     <div class="git-panel-tools">
       <div class="git-panel-switch" role="group" aria-label={props.t("instanceShell.rightPanel.tabs.files")}>
         <button aria-pressed={props.mode === "workspace"} onClick={() => props.onModeChange("workspace")}>{props.t("filesPanel.workspace")}</button>
-        <button disabled={!props.gitAvailable} aria-pressed={props.mode === "changes"} onClick={() => props.onModeChange("changes")}>{props.t("gitPanel.changes")}</button>
-        <button disabled={!props.gitAvailable} aria-pressed={props.mode === "history"} onClick={() => props.onModeChange("history")}>{props.t("filesPanel.commits")}</button>
+        <button aria-pressed={props.mode === "changes"} onClick={() => props.onModeChange("changes")}>{props.t("gitPanel.changes")}</button>
+        <button aria-pressed={props.mode === "history"} onClick={() => props.onModeChange("history")}>{props.t("filesPanel.commits")}</button>
       </div>
-      <Show when={props.mode === "changes" && props.git.gitStatusEntries()}>
+      <Show when={props.gitAvailable && props.mode === "changes" && props.git.gitStatusEntries()}>
         <span class="git-panel-count">{props.t("gitPanel.files", { count: props.git.gitStatusEntries()?.length ?? 0 })}</span>
       </Show>
     </div>
@@ -109,7 +113,17 @@ const FilesPanel: Component<FilesPanelProps> = props => {
         previewPath={getFilePreview(props.instanceId)?.kind === "workspace" && getFilePreview(props.instanceId)?.slug === props.slug ? getFilePreview(props.instanceId)?.path : undefined}
         onOpen={path => togglePreview({ kind: "workspace", path })} />
     </div>
-    <div ref={historyBody} class="git-panel-body" style={{ display: props.mode === "history" ? undefined : "none" }}>
+    <Show when={!props.gitAvailable && props.mode !== "workspace"}>
+      <div class="git-init-empty">
+        <p>{props.t("filesPanel.gitInit.notRepository")}</p>
+        <button type="button" class="git-change-commit-button git-init-button" disabled={props.gitInit.pending()} aria-busy={props.gitInit.pending()}
+          title={props.directory} onClick={() => void props.gitInit.initialize()}>
+          <GitBranch size={14} aria-hidden="true" />
+          {props.t(props.gitInit.pending() ? "filesPanel.gitInit.pending" : "filesPanel.gitInit.action")}
+        </button>
+      </div>
+    </Show>
+    <div ref={historyBody} class="git-panel-body" style={{ display: props.gitAvailable && props.mode === "history" ? undefined : "none" }}>
       <div style={{ display: props.history.selected() ? "none" : undefined }}>
         <input class="git-panel-filter" aria-label={props.t("gitPanel.filter")} placeholder={props.t("gitPanel.filter")} value={filter()} onInput={event => setFilter(event.currentTarget.value)} />
         <For each={commits()}>{commit => <button class="git-history-row" onClick={() => selectCommit(commit.id)}>
@@ -144,7 +158,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       </Show>
       <Show when={loading()}><p class="p-3 text-xs text-secondary" role="status">{props.t("instanceInfo.loading")}</p></Show>
     </div>
-    <div class="git-panel-body" style={{ display: props.mode === "changes" ? undefined : "none" }}>
+    <div class="git-panel-body" style={{ display: props.gitAvailable && props.mode === "changes" ? undefined : "none" }}>
       <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleStageDragEnd}>
         <DragDropSensors>
           <Show when={items().length === 0}><p class="p-3 text-xs text-secondary">{props.git.gitStatusLoading() ? props.t("instanceInfo.loading") : props.t("instanceShell.gitChanges.empty")}</p></Show>

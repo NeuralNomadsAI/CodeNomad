@@ -6,6 +6,7 @@ app.whenReady().then(() => {
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
   globalThis.emulationFixture = {
     apply: preset => setBrowserEmulation(window.webContents, preset),
+    contentSize: () => window.getContentSize(),
     snapshot: () => window.webContents.executeJavaScript(`({ width: innerWidth, height: innerHeight,
       dpr: devicePixelRatio, coarse: matchMedia('(pointer: coarse)').matches,
       hover: matchMedia('(hover: hover)').matches, mobile: navigator.userAgentData.mobile,

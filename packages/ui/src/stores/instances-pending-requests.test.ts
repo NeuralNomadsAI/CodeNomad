@@ -2,12 +2,14 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { OpenCodeClient, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
+import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied,
   addPendingForm, sendFormReply,
+  incompletePendingRecovery, clearReloadableInstanceState,
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled } from "./form-settlements"
@@ -15,6 +17,8 @@ import { sessions, setSessions } from "./session-state"
 import { createClientSession } from "../types/session"
 import { reloadWorktrees } from "./worktrees"
 import { sseManager } from "../lib/sse-manager"
+import { getToastHistory } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 
 const permission = (id: string): PermissionRequest => ({ id, sessionID: "background", action: "read", resources: ["file"] })
 const form = (id: string, sessionID = "global") => ({
@@ -101,6 +105,162 @@ test("partial and cold coverage only prune matching known locations; unknown que
   } finally { h.cleanup() }
 })
 
+test("loaded-only recovery outlives the old ten-second deadline but still times out and retains queues", async (t) => {
+  const h = harness()
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    addPermissionToQueue(h.id, permission("known"), h.directory)
+    addPendingForm(h.id, form("known"), h.directory)
+    const started = deferred<AbortSignal>()
+    serverApi.getPendingRequests = async (_id, _directories, signal) => new Promise((resolve, reject) => {
+      assert.ok(signal)
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+      started.resolve(signal)
+      setTimeout(() => resolve(snapshot(h.directory, [permission("known"), permission("recovered")], [form("known"), form("recovered")])), 19_000)
+    })
+    const syncing = syncPendingRequests(h.id)
+    const signal = await started.promise
+    t.mock.timers.tick(10_001)
+    assert.equal(signal.aborted, false, "a valid broker read must not be aborted at the old client deadline")
+    t.mock.timers.tick(8_999)
+    await syncing
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known", "recovered"])
+    assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["known", "recovered"])
+
+    const stalled = deferred<AbortSignal>()
+    serverApi.getPendingRequests = async (_id, _directories, nextSignal) => new Promise((_resolve, reject) => {
+      assert.ok(nextSignal)
+      nextSignal.addEventListener("abort", () => reject(nextSignal.reason), { once: true })
+      stalled.resolve(nextSignal)
+    })
+    const stalledSync = syncPendingRequests(h.id)
+    const rejected = assert.rejects(stalledSync)
+    const stalledSignal = await stalled.promise
+    t.mock.timers.tick(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
+    assert.equal(stalledSignal.aborted, false)
+    t.mock.timers.tick(5_000)
+    await rejected
+    assert.equal(stalledSignal.aborted, true)
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known", "recovered"])
+    assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["known", "recovered"])
+    assert.deepEqual(h.calls, [], "a slow or unavailable broker never falls back to ordinary pending lists")
+  } finally { h.cleanup(); t.mock.timers.reset() }
+})
+
+test("obsolete and foreign history can be excluded without repeated warnings or losing valid idle requests", async () => {
+  const h = harness()
+  try {
+    const deleted = "/deleted-temporary-history", foreign = `${h.directory}/foreign-fixture`, subdirectory = `${h.directory}/idle-subdirectory`
+    const warnings = () => getToastHistory().filter((item) => item.message === tGlobal("interruption.recoveryIncomplete")).length
+    const before = warnings()
+    setSessions((previous) => new Map(previous).set(h.id, new Map([deleted, foreign, subdirectory].map((directory, index) => {
+      const session = createClientSession({ id: `history-${index}`, title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
+      return [session.id, session]
+    }))))
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      assert(optional?.includes(deleted) && optional.includes(foreign))
+      return { supported: true, directories: directories.map((directory) => directory === deleted || directory === foreign
+        ? { directory, status: "excluded" as const }
+        : { directory, status: "ok" as const, locations: [{ location: { directory },
+          permissions: directory === subdirectory ? [permission("idle")] : [], forms: directory === subdirectory ? [form("idle")] : [],
+        }] }) }
+    }
+    await syncPendingRequests(h.id)
+    await syncPendingRequests(h.id)
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.equal(warnings(), before, "two successful recoveries with excluded hints must not emit the incomplete warning")
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["idle"])
+    assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["idle"])
+    assert.equal(sessions().get(h.id)?.size, 3, "excluding a recovery hint never deletes its historical session")
+    assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
+test("known permission/Form authority and active sessions cannot be excluded as obsolete history", async () => {
+  const h = harness()
+  try {
+    const activeDirectory = "/active-session", permissionDirectory = "/known-permission", formDirectory = "/known-form"
+    const active = createClientSession({ id: "active", title: "Active", location: { directory: activeDirectory }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
+    setSessions((previous) => new Map(previous).set(h.id, new Map([[active.id, active]])))
+    addPermissionToQueue(h.id, permission("known"), permissionDirectory)
+    addPendingForm(h.id, form("known"), formDirectory)
+    const draft = getFormQueue(h.id)[0]
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      assert.deepEqual(optional, [])
+      assert.deepEqual(new Set(directories), new Set([h.directory, activeDirectory, permissionDirectory, formDirectory]))
+      return { supported: true, directories: directories.map((directory) => directory === h.directory
+        ? { directory, status: "ok" as const, locations: [emptyLocation(directory)] }
+        : { directory, status: "excluded" as const }) }
+    }
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    assert.equal(getFormQueue(h.id)[0], draft)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known"])
+    assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
+test("the recovery warning needs consecutive incomplete attempts and a success re-arms it", async () => {
+  const h = harness()
+  const warnings = () => getToastHistory().filter((item) => item.message === tGlobal("interruption.recoveryIncomplete")).length
+  try {
+    const before = warnings()
+    const fail = async () => {
+      serverApi.getPendingRequests = async () => { throw new Error("Temporary transport failure") }
+      await assert.rejects(syncPendingRequests(h.id))
+    }
+    const succeed = async () => {
+      serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })) })
+      await syncPendingRequests(h.id)
+    }
+    await fail()
+    assert.equal(incompletePendingRecovery().has(h.id), true, "Incomplete state is immediate even without a warning")
+    assert.equal(warnings(), before, "One transient failure does not warn")
+    await succeed()
+    await fail()
+    assert.equal(warnings(), before, "Alternating success/failure never warns")
+    await fail()
+    assert.equal(warnings(), before + 1)
+    await fail()
+    assert.equal(warnings(), before + 1, "A persistent failure warns once")
+    await succeed()
+    await fail()
+    await fail()
+    assert.equal(warnings(), before + 2, "A new persistent failure after recovery warns again")
+  } finally { h.cleanup() }
+})
+
+test("history transport failures remain errors and a late known request fences historical exclusion", async () => {
+  const h = harness()
+  try {
+    const directory = "/historical-directory"
+    const session = createClientSession({ id: "history", title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions((previous) => new Map(previous).set(h.id, new Map([[session.id, session]])))
+    serverApi.getPendingRequests = async () => { throw new Error("Temporary transport failure") }
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    const pending = deferred<WorkspacePendingRequestsResponse>()
+    let reads = 0
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      if (++reads === 1) { assert.deepEqual(optional, [directory]); return pending.promise }
+      assert.deepEqual(optional, [])
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "error" as const })) }
+    }
+    const syncing = syncPendingRequests(h.id)
+    await Promise.resolve()
+    addPermissionToQueue(h.id, { ...permission("late"), sessionID: session.id }, directory)
+    pending.resolve({ supported: true, directories: [
+      { directory: h.directory, status: "ok", locations: [emptyLocation(h.directory)] }, { directory, status: "excluded" },
+    ] })
+    await assert.rejects(syncing)
+    assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["late"])
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    assert.deepEqual(h.calls, [])
+  } finally { h.cleanup() }
+})
+
 test("real SSE background permissions and Forms use cold native authority, not WSL host or realpath aliases", async () => {
   const originalClient = sdkManager.createClient
   try {
@@ -138,15 +298,17 @@ test("real SSE background permissions and Forms use cold native authority, not W
         assert.equal(getPermissionQueue(h.id).length, 2)
         assert.equal(getFormQueue(h.id).length, 3)
         serverApi.getPendingRequests = async () => ({ supported: true, directories: [{ directory: host, status: "ok", locations: [] }] })
-        await syncPendingRequests(h.id)
+        await assert.rejects(syncPendingRequests(h.id), "missing native coverage is still incomplete")
         assert.equal(getPermissionQueue(h.id).length, 2, "an outer UI alias is not native coverage")
         assert.equal(getFormQueue(h.id).length, 3, "empty placement provenance cannot clear Forms")
         serverApi.getPendingRequests = async (_id, directories) => {
           candidates = directories
-          return { supported: true, directories: [{ directory: host, status: "ok", locations: [emptyLocation(native)] }] }
+          return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const,
+            locations: [emptyLocation(native)],
+          })) }
         }
         await syncPendingRequests(h.id)
-        assert.deepEqual(candidates, [host])
+        assert.deepEqual(candidates, [host, native], "known permissions retain their native recovery candidate until authoritative coverage settles them")
         assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["orphan-alias"])
         assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["orphan-alias"])
         assert.deepEqual(h.calls, [])
@@ -270,7 +432,7 @@ test("complete empty pending coverage never implies a working session is idle", 
 })
 
 test("late snapshots cannot publish after removal, invalidation or client replacement", async () => {
-  for (const invalidate of ["remove", "reconnect", "client"] as const) {
+  for (const unsupported of [false, true]) for (const invalidate of ["remove", "reconnect", "client"] as const) {
     const h = harness()
     try {
       let reads = 0
@@ -281,7 +443,7 @@ test("late snapshots cannot publish after removal, invalidation or client replac
       if (invalidate === "remove") removeInstance(h.id, { authoritative: false })
       if (invalidate === "reconnect") invalidatePendingRequestSync(h.id)
       if (invalidate === "client") updateInstance(h.id, { client: { ...h.client } as OpenCodeClient })
-      pending.resolve(snapshot(h.directory, [permission("late")], [form("late")]))
+      pending.resolve(unsupported ? { supported: false } : snapshot(h.directory, [permission("late")], [form("late")]))
       await syncing
       assert.deepEqual(getPermissionQueue(h.id), [])
       assert.deepEqual(getFormQueue(h.id), [])
@@ -289,23 +451,49 @@ test("late snapshots cannot publish after removal, invalidation or client replac
   }
 })
 
-test("unsupported retains original discovery scans, while snapshot failures never silently clear queues", async () => {
+test("unsupported and failed snapshots retain queues without loading cold worktrees, then reconnect recovers active/global requests", async () => {
   const h = harness()
+  const originalWorktrees = serverApi.fetchWorktrees
   try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: Array.from({ length: 100 }, (_, index) => ({
+      slug: `cold-${index}`, directory: `/cold-${index}`, kind: "worktree" as const,
+    })) })
+    await reloadWorktrees(h.id)
     addPendingForm(h.id, { ...form("background"), location: { directory: "/background" } })
+    addPermissionToQueue(h.id, permission("background"), "/background")
     serverApi.getPendingRequests = async () => { throw new Error("snapshot unavailable") }
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(getFormQueue(h.id).length, 1)
+    assert.equal(incompletePendingRecovery().has(h.id), true)
     assert.deepEqual(h.calls, [])
     serverApi.getPendingRequests = async () => ({} as WorkspacePendingRequestsResponse)
     await assert.rejects(syncPendingRequests(h.id))
     assert.equal(getFormQueue(h.id).length, 1)
     assert.deepEqual(h.calls, [])
     serverApi.getPendingRequests = async () => ({ supported: false })
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.deepEqual(h.calls, [])
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["background"])
+    assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["background"])
+    clearReloadableInstanceState(h.id)
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["background"])
+    assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["background"])
+    assert.equal(incompletePendingRecovery().has(h.id), true)
+    invalidatePendingRequestSync(h.id)
+    updateInstance(h.id, { client: { ...h.client } as OpenCodeClient })
+    serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
+      directory, status: "ok" as const, locations: [{ location: { directory },
+        permissions: directory === h.directory ? [permission("active")] : directory === "/background" ? [permission("background")] : [],
+        forms: directory === h.directory ? [form("global")] : directory === "/background" ? [form("background")] : [],
+      }],
+    })) })
     await syncPendingRequests(h.id)
-    assert.ok((h.calls as string[]).includes("form:/background"))
-    assert.ok((h.calls as string[]).includes(`permission:${h.directory}`))
-  } finally { h.cleanup() }
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.deepEqual(h.calls, [])
+    assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["background", "active"])
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.id), ["background", "global"])
+    assert.equal(getFormQueue(h.id).find((entry) => entry.id === "global")?.location?.directory, h.directory)
+  } finally { serverApi.fetchWorktrees = originalWorktrees; h.cleanup(); assert.equal(incompletePendingRecovery().has(h.id), false) }
 })
 
 test("ambiguous global Form reply is not replayed and recovery keeps location authority", async () => {

@@ -1,17 +1,18 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import { chromium, devices, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
-let server: ViteDevServer, browser: Browser, url: string, cacheDir: string
+let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
 before(async () => {
-  cacheDir = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || tmpdir(), "codenomad-mobile-interruption-"))
-  server = await createServer({ cacheDir, configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ cacheDir: cache.cacheDir, configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "mobile-interruption-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -24,7 +25,13 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close(); if (cacheDir) await rm(cacheDir, { recursive: true, force: true }) })
+after(async () => {
+  try { await browser?.close() }
+  finally {
+    try { await server?.close() }
+    finally { await cache?.dispose() }
+  }
+})
 
 async function dockSnapshot(page: Page) {
   return page.evaluate(() => ({
@@ -225,6 +232,15 @@ for (const mobile of [false, true]) {
         "opening a preview keeps keyboard focus in the dock after the compact button is removed")
       assert.equal(await page.getByRole('heading', { name: 'Other conversation · Fixture foreign-0', exact: true }).isVisible(), true)
       await page.locator('.interruption-dock textarea:visible').fill("Foreign permission reason")
+      await page.getByRole('button', { name: 'Collapse requests', exact: true }).click()
+      assert.equal(await page.locator('.interruption-heading > .lucide-shield-check').count(), 1)
+      assert.equal(await page.locator('.interruption-dock .window-actions .session-permission').textContent(), 'Needs Permission')
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      if (process.env.CODENOMAD_MOBILE_CAPTURE) {
+        await page.screenshot({ path: join(process.env.CODENOMAD_MOBILE_CAPTURE, `external-${mobile ? "portrait" : "desktop"}-permission-compact.png`), scale: "css" })
+      }
+      await page.locator('.interruption-dock .window-actions .session-permission').click()
+      assert.equal(await page.locator('.interruption-dock textarea:visible').inputValue(), "Foreign permission reason")
       await page.getByRole('button', { name: 'Deny', exact: true }).click()
       assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), "foreign-0")
       assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].requestID), "question-session")
@@ -356,6 +372,8 @@ for (const mobile of [false, true]) {
       assert.equal(await dock.isVisible(), true)
       assert.equal(await answer.count(), 0)
       assert.equal(await page.getByRole('heading', { name: 'Other conversation · Fixture unrelated', exact: true }).isVisible(), true)
+      assert.equal(await page.locator('.interruption-heading > .lucide-message-circle-question').count(), 1)
+      assert.equal(await page.locator('.interruption-dock .window-actions .session-permission').textContent(), 'Needs Input')
       assert.ok((await dock.boundingBox())!.height < 80)
       assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
       assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)

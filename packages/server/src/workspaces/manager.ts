@@ -32,11 +32,13 @@ import {
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { initializeNativeGit } from "./git-init"
 import { WorktreeInventory } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
+import type { TemporaryFolderRegistry } from "./temporary-workspaces"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -45,6 +47,7 @@ type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
   acquire?: () => Promise<import("./opencode-service").ServiceConnection>
+  existingConnection?: () => import("./opencode-service").ServiceConnection | undefined
   fetch?: () => Promise<typeof fetch>
   endpoint: (options?: OpenCodeSharedServiceOptions) => Promise<Endpoint>
   client: (options?: OpenCodeSharedServiceOptions) => Promise<OpenCodeClient>
@@ -73,6 +76,8 @@ export function binaryPathsEqual(left: string, right: string, platform = process
 interface WorkspaceManagerOptions {
   startServiceCommand?: import("./opencode-cli-service").OpenCodeCliServiceDependencies["execFile"]
   rootDir: string
+  /** Folders opened as temporary workspaces until kept or discarded. */
+  temporaryFolders?: TemporaryFolderRegistry
   settings: SettingsService
   binaryResolver: BinaryResolver
   eventBus: EventBus
@@ -83,6 +88,8 @@ interface WorkspaceManagerOptions {
     connection: import("./opencode-service").ServiceConnection,
     deadlineAt?: number,
   ) => Promise<boolean>
+  /** Bounded wait for bundled plugins to register for this backend (never rejects). */
+  desktopPluginsReady?: () => Promise<void>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -225,8 +232,24 @@ export class WorkspaceManager {
     }
   }
 
+  get temporaryFolders(): TemporaryFolderRegistry | undefined {
+    return this.options.temporaryFolders
+  }
+
+  /** A kept temporary folder becomes an ordinary project in every open record. */
+  clearTemporary(folder: string): void {
+    for (const record of this.workspaces.values()) {
+      if (record.path === folder) delete record.temporary
+    }
+  }
+
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  /** Await before a bundled-plugin RPC: plugins register only after observing this backend's lease. */
+  desktopPluginsReady(): Promise<void> {
+    return this.options.desktopPluginsReady?.() ?? Promise.resolve()
   }
 
   async reserveWorktreeDeletion(directory: string): Promise<() => void> {
@@ -251,6 +274,11 @@ export class WorkspaceManager {
   async getSharedServiceConnection(id: string): Promise<import("./opencode-service").ServiceConnection | undefined> {
     if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
     return this.sharedService.acquire?.()
+  }
+
+  getExistingSharedServiceConnection(id: string): import("./opencode-service").ServiceConnection | undefined {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    return this.sharedService.existingConnection?.()
   }
 
   invalidateSharedServiceConnection(): void {
@@ -306,10 +334,10 @@ export class WorkspaceManager {
     return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
-  async getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined> {
+  async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
-    const owned = await this.resolveOwnedWorktree(record, directory)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
     if (!owned) return undefined
     return canonicalWorktreeIdentity(owned.worktreeDirectory)
   }
@@ -342,12 +370,19 @@ export class WorkspaceManager {
     return await this.resolveWslHostDirectory(servicePath, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
-  private async nativeWorktreeContext(id: string) {
+  private async nativeWorktreeContext(id: string, purpose: "request" | "event" = "request") {
     const record = this.workspaces.get(id)
     const location = this.getServiceLocation(id)
     if (!record || !location) throw new Error("Workspace has no native location")
+    // An adapter without connection lifecycle (no acquire/observation) only wraps an
+    // already-connected client, so its client cannot start or provision OpenCode.
+    const lifecycle = Boolean(this.sharedService.acquire || this.sharedService.existingConnection)
+    const client = purpose === "event" && lifecycle
+      ? this.getExistingSharedServiceConnection(id)?.client
+      : await this.getSharedServiceClient()
+    if (!client) throw new Error("OpenCode has no existing connection")
     return {
-      client: await this.getSharedServiceClient(), location, workspacePath: record.path,
+      client, location, workspacePath: record.path,
       toHost: async (directory: string) => record.wslDistro
         ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
         : directory,
@@ -370,10 +405,10 @@ export class WorkspaceManager {
     return this.worktreeInventory.read(id, mode)
   }
 
-  // Registered-only reads cannot join discovery scans. They retain all native,
+  // Registered-only reads cannot acquire a connection or join discovery scans. They retain all native,
   // physical Git, mutation and disposal checks used by the ordinary catalogue.
   private readonly eventWorktreeInventory = new WorktreeInventory({
-    load: (id) => this.nativeWorktreeContext(id).then(context => listNativeWorktrees(context, { refresh: false })),
+    load: (id) => this.nativeWorktreeContext(id, "event").then(context => listNativeWorktrees(context, { refresh: false })),
     changed: (id) => {
       invalidateWorktreeCache(`event:${id}`)
       this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
@@ -404,6 +439,13 @@ export class WorkspaceManager {
   async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
     await requireHostGit()
     try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
+    finally { this.invalidateWorktrees("blocking") }
+  }
+
+  /** Native `vcs.init` for the explicitly opened folder; callers hold its deletion fence. */
+  async initializeGit(id: string) {
+    await requireHostGit()
+    try { return await initializeNativeGit(await this.nativeWorktreeContext(id)) }
     finally { this.invalidateWorktrees("blocking") }
   }
 
@@ -617,6 +659,7 @@ export class WorkspaceManager {
       binaryVersion: binary.version,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(this.options.temporaryFolders?.has(workspacePath) ? { temporary: true } : {}),
     } as WorkspaceRecord
     Object.defineProperties(record, {
       wslDistro: { value: undefined, writable: true },
@@ -1098,7 +1141,7 @@ export class WorkspaceManager {
   async getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>> {
     const record = this.workspaces.get(id)
     if (!record || record.status !== "ready") throw new Error("Workspace is not ready")
-    const configured = this.options.settings.getOwner("config", "server").environmentVariables
+    const configured = await this.options.settings.readEnvironmentForAdmission(signal)
     return sessionEnvironment(configured, { distro: record.wslDistro, platform: this.options.platform, signal })
   }
 

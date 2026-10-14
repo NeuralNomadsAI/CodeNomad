@@ -40,11 +40,14 @@ export function ProviderAccounts(props: {
         trailing = false
         try {
           const catalog = await client.integration.list({ location: toRequestLocation(location) }, requestLocationOptions(location))
-          const snapshot = integrationID === "openai"
+          const current = catalog.data.find(item => item.id === integrationID)?.connections ?? []
+          // The server decides which integrations support automatic selection;
+          // only saved credentials can carry logins or become candidates.
+          const snapshot = current.some(item => item.type === "credential")
             ? await serverApi.getProviderAccounts(instanceId, integrationID, location.directory).catch(() => emptySnapshot())
             : emptySnapshot()
           if (!disposed && !trailing) {
-            setConnections(catalog.data.find(item => item.id === integrationID)?.connections ?? [])
+            setConnections(current)
             setSelection(snapshot)
             setError(false)
           }

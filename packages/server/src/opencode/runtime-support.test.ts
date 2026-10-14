@@ -5,26 +5,26 @@ import { isBelowOpenCodeMinimum, UnsupportedOpenCodeError, MINIMUM_OPENCODE_VERS
 import { rememberRuntime } from "./compatibility/runtime"
 import { OpenCodeSharedService } from "../workspaces/opencode-service"
 
-test("native timestamp minimum is distinct from recommendation and unfamiliar version labels", () => {
-  assert.equal(MINIMUM_OPENCODE_VERSION, "2.0.7")
-  assert.equal(RECOMMENDED_OPENCODE_VERSION, "2.0.22")
-  for (const version of ["2.0.7", "2.0.8", "2.0.9", "2.0.10", "2.0.11", "2.0.12", "2.0.13", "2.0.14", "2.0.15", "2.0.16", "2.0.17", "2.0.18", "2.0.19", "2.0.20", "2.0.21", "2.0.22", "2.1.0", "2.0.22-dev.1", "3.0.0", "custom-build"]) {
+test("native plugin runtime minimum does not become an allowlist of tested labels", () => {
+  assert.equal(MINIMUM_OPENCODE_VERSION, "2.0.27")
+  assert.equal(RECOMMENDED_OPENCODE_VERSION, "2.0.29")
+  for (const version of ["2.0.27", "2.0.28", "2.0.29", "2.1.0", "2.0.29-dev.1", "3.0.0", "custom-build"]) {
     assert.equal(isBelowOpenCodeMinimum(version), false, version)
   }
-  for (const version of ["2.0.0", "2.0.4", "2.0.5", "2.0.6", "0.0.0-beta-19507"]) assert.equal(isBelowOpenCodeMinimum(version), true, version)
+  for (const version of ["2.0.0", "2.0.7", "2.0.24", "2.0.25", "2.0.26", "0.0.0-beta-19507"]) assert.equal(isBelowOpenCodeMinimum(version), true, version)
 })
 
 test("refuses old authenticated daemons before client calls or plugin preparation", async () => {
   let constructed = 0, prepared = 0
   const endpoint: Endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.0.6", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.0.26", pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService({ headers: () => ({ authorization: "fixture" }), makeClient: () => { constructed++; throw new Error("not reached") } })
   const options = { kind: "lifecycle" as const, identity: "fixture",
     lifecycle: { discover: async () => endpoint, ensure: async () => { throw new Error("must not start") } },
     prepareDesktopPlugins: async () => { prepared++; return true },
   }
   await assert.rejects(service.client(options), (error: unknown) => error instanceof UnsupportedOpenCodeError
-    && error.actualVersion === "2.0.6" && error.minimumVersion === "2.0.7" && error.reason === "step_timestamp")
+    && error.actualVersion === "2.0.26" && error.minimumVersion === "2.0.27" && error.reason === "plugin_runtime")
   assert.equal(constructed, 0)
   assert.equal(prepared, 0)
 })

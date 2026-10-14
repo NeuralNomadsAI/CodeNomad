@@ -5,7 +5,12 @@ import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
 import { canOpenRemoteWindows, runtimeEnv } from "../../lib/runtime-env"
 import { openSettings } from "../../stores/settings-screen"
-import { buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
+import { setUpdateFeed } from "../../stores/preferences"
+import type { UpdateFeed } from "../../../../server/src/api-types"
+import { openExternalUrl } from "../../lib/external-url"
+import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
+import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
+import { buildBugReportEnvironment, buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 interface UserAgentData {
   platform?: string
@@ -151,17 +156,21 @@ export const InfoSettingsSection: Component = () => {
     },
   }))
 
+  // On the preview feed the server already ranked stable releases by publication
+  // order; a SemVer comparison against the stable fallback would offer an older stable.
+  const stableFallback = createMemo(() => meta()?.updateFeed === "preview" ? null : supportInfo())
+
   const latestVersion = createMemo(() => {
     const update = updateInfo()
     if (update?.version) return update.version
-    return supportInfo()?.latestServerVersion ?? null
+    return stableFallback()?.latestServerVersion ?? null
   })
 
   const showDownloadLink = createMemo(() => {
     let url: string | null = null
     const update = updateInfo()
     if (update?.url) url = update.url
-    else if (supportInfo()?.latestServerUrl) url = supportInfo()!.latestServerUrl ?? null
+    else if (stableFallback()?.latestServerUrl) url = stableFallback()!.latestServerUrl ?? null
     if (!url) return { url: null, show: false }
     if (update?.url) return { url, show: true }
     const current = meta()?.serverVersion
@@ -191,6 +200,22 @@ export const InfoSettingsSection: Component = () => {
     }
   }
 
+  const [feedSaving, setFeedSaving] = createSignal(false)
+  const [feedSaveFailed, setFeedSaveFailed] = createSignal(false)
+  const handleFeedChange = async (feed: UpdateFeed) => {
+    setFeedSaving(true)
+    setFeedSaveFailed(false)
+    try {
+      await setUpdateFeed(feed)
+    } catch {
+      setFeedSaveFailed(true)
+    } finally {
+      setFeedSaving(false)
+    }
+    // Reread in every case so the selector shows the feed the server actually uses.
+    await handleRefresh()
+  }
+
   const osDisplay = createMemo(() => {
     const base = detectOs()
     const arch = osArch()
@@ -202,6 +227,17 @@ export const InfoSettingsSection: Component = () => {
     const ok = await copyToClipboard(report)
     if (ok) setCopyFeedback("success")
     else setCopyFeedback("error")
+  }
+
+  // Warm both reads: the click opens GitHub at once, within the browser's user activation.
+  void readBugReportTemplateStatus()
+  if (!openCodeSetupStatus()) void refreshOpenCodeSetup()
+  const handleReportBug = () => {
+    const opencode = openCodeSetupStatus()
+    const environment = buildBugReportEnvironment(meta() ?? null, osDisplay(), runtimeEnv, {
+      opencodeInstalled: opencode?.currentVersion, opencodeDaemon: opencode?.daemonVersion, userAgent: navigator.userAgent,
+    })
+    void openExternalUrl(buildBugReportUrl(environment, currentBugReportTemplateStatus()), "bug-report")
   }
 
   const handleDownload = () => {
@@ -238,6 +274,14 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-label">{t("settings.info.runtime.type")}</span>
             <span class="settings-info-value">{runtimeEnv.host}</span>
           </div>
+          <Show when={meta()?.desktopProfile}>
+            {(profile) => (
+              <div class="settings-info-row" data-testid="settings-data-profile">
+                <span class="settings-info-label">{t("settings.info.runtime.dataProfile")}</span>
+                <span class="settings-info-value" dir="ltr">{profile()}</span>
+              </div>
+            )}
+          </Show>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.runtime.platform")}</span>
             <span class="settings-info-value">{runtimeEnv.platform}</span>
@@ -363,12 +407,30 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-value">{meta()?.serverVersion ?? "—"}</span>
           </div>
           <div class="settings-info-row">
+            <label class="settings-info-label" for="settings-update-feed">{t("settings.info.updates.feed")}</label>
+            <select
+              id="settings-update-feed"
+              class="selector-input w-full max-w-xs"
+              value={meta()?.updateFeed ?? ""}
+              disabled={!meta()?.updateFeed || feedSaving()}
+              aria-describedby="settings-update-feed-help"
+              onChange={(event) => void handleFeedChange(event.currentTarget.value as UpdateFeed)}
+            >
+              <option value="stable">{t("settings.info.updates.feed.stable")}</option>
+              <option value="preview">{t("settings.info.updates.feed.preview")}</option>
+            </select>
+          </div>
+          <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.updates.latest")}</span>
             <span class="settings-info-value settings-info-value-muted">
               {latestVersion() ?? "—"}
             </span>
           </div>
         </div>
+        <p id="settings-update-feed-help" class="settings-help-text">{t("settings.info.updates.feed.help")}</p>
+        <Show when={feedSaveFailed()}>
+          <div class="settings-error-message" role="alert">{t("settings.info.updates.feed.saveFailed")}</div>
+        </Show>
 
         <div class="settings-info-actions">
           {showDownloadLink().show && (
@@ -416,6 +478,13 @@ export const InfoSettingsSection: Component = () => {
             onClick={handleDownload}
           >
             {t("settings.info.diagnostics.download")}
+          </button>
+          <button
+            type="button"
+            class="settings-pill-button"
+            onClick={handleReportBug}
+          >
+            {t("settings.info.diagnostics.reportBug")}
           </button>
         </div>
 

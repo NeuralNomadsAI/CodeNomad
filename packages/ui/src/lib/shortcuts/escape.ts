@@ -1,4 +1,6 @@
+import { createEffect } from "solid-js"
 import { keyboardRegistry } from "../keyboard-registry"
+import { isHotkeyRecording } from "../hotkeys"
 
 type EscapeKeyState = "idle" | "firstPress"
 
@@ -28,40 +30,60 @@ export function registerEscapeShortcut(
   abortSession: () => Promise<void>,
   blurInput: () => void,
   closeModal: () => void,
+  hasActiveSession: () => boolean = () => true,
+  homeOverlay?: { isOpen: () => boolean; close: () => void },
 ) {
-  keyboardRegistry.register({
-    id: "escape",
-    key: "Escape",
-    modifiers: {},
-    handler: () => {
-      const hasOpenModal = document.querySelector('[role="dialog"]') !== null
-
-      if (hasOpenModal) {
-        closeModal()
-        resetEscapeState()
-        return
-      }
-
-      if (isSessionBusy()) {
-        if (escapeKeyState === "idle") {
-          escapeKeyState = "firstPress"
-          if (onEscapeStateChange) {
-            onEscapeStateChange(true)
-          }
-          escapeTimeoutId = window.setTimeout(() => {
-            resetEscapeState()
-          }, ESCAPE_DEBOUNCE_TIMEOUT)
-        } else if (escapeKeyState === "firstPress") {
-          resetEscapeState()
-          abortSession()
-        }
-        return
-      }
-
+  // A confirmation belongs to its surface, never to the session behind home.
+  createEffect(() => { homeOverlay?.isOpen(); resetEscapeState() })
+  const confirmDoublePress = (action: () => void) => {
+    if (escapeKeyState === "idle") {
+      escapeKeyState = "firstPress"
+      onEscapeStateChange?.(true)
+      escapeTimeoutId = window.setTimeout(resetEscapeState, ESCAPE_DEBOUNCE_TIMEOUT)
+    } else {
       resetEscapeState()
-      blurInput()
-    },
-    description: "cancel/close",
+      action()
+    }
+  }
+  // Closing transient layers remains conventional Escape, independent of the
+  // rebindable double-press session action.
+  const closeLayer = (event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229 || isHotkeyRecording()
+      || event.key !== "Escape" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+    if (event.defaultPrevented) {
+      if (homeOverlay?.isOpen()) resetEscapeState()
+      return
+    }
+    if (document.querySelector('[role="dialog"]')) {
+      event.preventDefault()
+      closeModal()
+      resetEscapeState()
+    } else if (homeOverlay?.isOpen()) {
+      event.preventDefault()
+      if (!event.repeat) confirmDoublePress(homeOverlay.close)
+    }
+  }
+  window.addEventListener("keydown", closeLayer)
+  keyboardRegistry.register({
+    id: "session-abort",
+    condition: () => hasActiveSession() && isSessionBusy(),
+    handler: () => confirmDoublePress(() => { void abortSession() }),
+    description: "abort session",
     context: "global",
   })
+  keyboardRegistry.register({
+    id: "prompt-blur",
+    condition: () => hasActiveSession() && !isSessionBusy()
+      && Boolean(document.activeElement?.matches(".prompt-input")),
+    handler: () => { resetEscapeState(); blurInput() },
+    description: "blur input",
+    context: "input",
+  })
+  return () => {
+    window.removeEventListener("keydown", closeLayer)
+    keyboardRegistry.unregister("session-abort")
+    keyboardRegistry.unregister("prompt-blur")
+    resetEscapeState()
+    onEscapeStateChange = null
+  }
 }

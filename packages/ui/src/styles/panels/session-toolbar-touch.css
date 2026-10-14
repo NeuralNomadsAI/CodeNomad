@@ -1,11 +1,19 @@
-/* Dense conversation chrome uses compact targets without widening icon gaps. */
+/* Dense conversation and session-list chrome uses compact targets without
+ * widening icon gaps, so the session list header keeps all five actions and
+ * the fixed panel toggle's reserve within its 220 px minimum width. */
 @media (pointer: coarse) {
-  .session-toolbar {
+  .session-toolbar,
+  .session-sidebar-header {
     --touch-target-size: var(--touch-target-size-compact);
   }
 
-  .session-toolbar .panel-header-actions {
+  .session-toolbar .panel-header-actions,
+  .session-sidebar-header .panel-header-actions {
     gap: 0;
+  }
+
+  .session-sidebar-header {
+    padding-inline-end: var(--space-xs);
   }
 
   .session-toolbar .connection-status-meta {

@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Fehlerausgabe",
   "app.launchError.openAdvancedSettings": "OpenCode-Einstellungen öffnen",
   "app.launchError.close": "Schließen",
-  "app.launchError.closeTitle": "Schließen (Esc)",
+  "app.launchError.closeTitle": "Schließen",
   "app.launchError.fallbackMessage": "Arbeitsbereich konnte nicht gestartet werden",
   "app.launchError.invalidConfig": "Die OpenCode-Konfiguration ist ungültig",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "Sie können mehrere Instanzen desselben Ordners haben",
 
   "releases.upgradeRequired.title": "Update erforderlich",
+  "releases.desktop.checking": "Suche nach einem CodeNomad-Update…",
+  "releases.desktop.current": "CodeNomad ist auf dem neuesten Stand.",
+  "releases.desktop.available": "CodeNomad {version} ist verfügbar. Die Installation startet die Anwendung neu.",
+  "releases.desktop.install": "Installieren und neu starten",
+  "releases.desktop.downloading": "Update wird heruntergeladen und überprüft…",
+  "releases.desktop.restarting": "Fenster werden gespeichert und das Update installiert…",
+  "releases.desktop.failed": "Das Update konnte nicht abgeschlossen werden. Versuchen Sie es erneut oder laden Sie es von der Release-Seite herunter.",
+  "releases.desktop.busy": "Ein anderes CodeNomad-Fenster sucht bereits nach einem Update oder installiert es.",
   "releases.upgradeRequired.message.withVersion": "Aktualisieren Sie auf CodeNomad {version}, um die neueste Benutzeroberfläche zu verwenden.",
   "releases.upgradeRequired.message.noVersion": "Aktualisieren Sie CodeNomad, um die neueste Benutzeroberfläche zu verwenden.",
   "releases.upgradeRequired.action.getUpdate": "Update holen",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI aktualisiert",
   "releases.uiUpdated.message": "Die Benutzeroberfläche wurde auf Version {version} aktualisiert.",
 
-  "releases.devUpdateAvailable.title": "Dev-Build verfügbar",
-  "releases.devUpdateAvailable.message": "Ein neuer Dev-Build ist verfügbar: {version}.",
+  "releases.devUpdateAvailable.title": "Update verfügbar",
+  "releases.devUpdateAvailable.message": "Ein neueres Release ist verfügbar: {version}.",
   "releases.devUpdateAvailable.action": "Release ansehen",
 
   "theme.mode.system": "System",

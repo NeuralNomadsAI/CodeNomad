@@ -107,7 +107,7 @@ export class OpenCodeUpdateService {
       } catch { status.serviceState = "error"; status.serviceError = "service_check_failed" }
     }
     const effectiveVersion = status.daemonVersion ?? currentVersion
-    if (!status.incompatibilityReason && effectiveVersion && isBelowOpenCodeMinimum(effectiveVersion)) status.incompatibilityReason = "step_timestamp"
+    if (!status.incompatibilityReason && effectiveVersion && isBelowOpenCodeMinimum(effectiveVersion)) status.incompatibilityReason = "plugin_runtime"
     status.versionAssessment = status.incompatibilityReason ? "incompatible"
       : effectiveVersion === RECOMMENDED_OPENCODE_VERSION ? "tested" : "untested"
     return status

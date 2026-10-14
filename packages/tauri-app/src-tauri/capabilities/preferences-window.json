@@ -14,6 +14,9 @@
     "allow-preferences-get-request",
     "allow-preferences-accept-request",
     "allow-preferences-resolve-transition",
+    "allow-preferences-opener-startup-state",
+    "allow-data-profiles-list-others",
+    "allow-data-profiles-delete-others",
     "allow-window-control",
     "dialog:allow-open",
     {

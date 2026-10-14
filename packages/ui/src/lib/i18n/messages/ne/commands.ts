@@ -14,6 +14,9 @@ export const commandMessages = {
   "commands.newInstance.label": "नयाँ उदाहरण (New Instance)",
   "commands.newInstance.description": "नयाँ उदाहरण सिर्जना गर्न फोल्डर चयनकर्ता खोल्नुहोस्",
   "commands.newInstance.keywords": "फोल्डर, परियोजना, कार्यस्थान",
+  "commands.newTemporaryInstance.label": "नयाँ अस्थायी उदाहरण",
+  "commands.newTemporaryInstance.description": "फोल्डर नछानी खाली अस्थायी उदाहरण खोल्नुहोस्",
+  "commands.newTemporaryInstance.keywords": "अस्थायी, मस्यौदा, छिटो, खाली, परियोजना, temporary",
   "commands.openWorkspace.folder.label": "परियोजना फोल्डर खोल्नुहोस्",
   "commands.openWorkspace.folder.description": "हालको परियोजना फोल्डर फाइल व्यवस्थापकमा खोल्नुहोस्",
   "commands.openWorkspace.folder.keywords": "फोल्डर, फाइल, एक्सप्लोरर",
@@ -113,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "प्रम्प्ट पाठ क्षेत्र सफा गर्नुहोस्",
   "commands.clearInput.keywords": "सफा, रिसेट",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: नयाँ लाइन, Cmd/Ctrl+Enter: प्रम्प्ट पठाउनुहोस्",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: प्रम्प्ट पठाउनुहोस्, Cmd/Ctrl+Enter: नयाँ लाइन",
-  "commands.promptSubmitShortcut.description": "प्रम्प्ट इनपुटमा Enter र Cmd/Ctrl+Enter को व्यवहार बदल्नुहोस्",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, पठाउनुहोस्, सर्टकट, प्रम्प्ट",
 
   "commands.thinkingBlocks.label.show": "सोचाइ देखाउनुहोस् (Show Thinking)",
   "commands.thinkingBlocks.label.hide": "सोचाइ लुकाउनुहोस् (Hide Thinking)",

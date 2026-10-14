@@ -28,6 +28,27 @@ export async function testSessionHistoryNative({ client, location, locationOptio
     return { scanned, tools, reasoning, candidates, hits }
   }
   try {
+    const assetMessage = structuredClone(messages[0])
+    assetMessage.id = "msg_assets_fixture"
+    const assetTool = assetMessage.content.find(part => part.type === "tool")
+    assert(assetTool)
+    assetTool.state.content = [{ type: "file", name: "Native image", mime: "image/png", uri: "data:image/png;base64,aGVsbG8=" },
+      { type: "file", name: "Native notes", mime: "text/plain", uri: "data:text/plain;base64,YQ==" }]
+    const assetSeed = await client.session.create({ title: "Isolated assets fixture", location }, locationOptions)
+    const assetExport = await client.session.export({ sessionID: assetSeed.id })
+    await client.session.remove({ sessionID: assetSeed.id })
+    const assetSession = await client.session.import({ ...assetExport, messages: [assetMessage], location }, locationOptions)
+    try {
+      const assets = await rpc("assets", { sessionID: assetSession.id })
+      assert.equal(assets.status, "page", JSON.stringify(assets))
+      assert.equal(assets.entries.length, 2)
+      assert(!JSON.stringify(assets).includes("aGVsbG8"), "Metadata does not expose bytes")
+      const read = await rpc("assetRead", { sessionID: assetSession.id, target: assets.entries[0].target })
+      assert.equal(read.status, "asset", JSON.stringify(read))
+      assert.equal(read.uri, assetTool.state.content[0].uri)
+      assert.equal((await rpc("assetRead", { sessionID: session.id, target: assets.entries[0].target })).status, "blocked")
+      console.log("PASS: native asset metadata, exact embedded bytes and cross-session isolation")
+    } finally { await client.session.remove({ sessionID: assetSession.id }) }
     const before = await scan("stats")
     assert.equal(before.scanned, 241)
     assert.equal(before.tools, 241)

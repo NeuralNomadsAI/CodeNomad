@@ -14,6 +14,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Nueva instancia",
   "commands.newInstance.description": "Abrir el selector de carpetas para crear una nueva instancia",
   "commands.newInstance.keywords": "carpeta, proyecto, workspace",
+  "commands.newTemporaryInstance.label": "Nueva instancia temporal",
+  "commands.newTemporaryInstance.description": "Abrir una instancia temporal vacía sin elegir carpeta",
+  "commands.newTemporaryInstance.keywords": "temporal, borrador, rápido, vacío, proyecto",
   "commands.openWorkspace.folder.label": "Abrir carpeta del proyecto",
   "commands.openWorkspace.folder.description": "Abrir la carpeta del proyecto actual en el explorador de archivos",
   "commands.openWorkspace.folder.keywords": "carpeta, explorador, archivos",
@@ -113,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "Borrar el área de texto del prompt",
   "commands.clearInput.keywords": "limpiar, reiniciar",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Nueva linea, Cmd/Ctrl+Enter: Enviar prompt",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Enviar prompt, Cmd/Ctrl+Enter: Nueva linea",
-  "commands.promptSubmitShortcut.description": "Intercambiar el comportamiento de Enter y Cmd/Ctrl+Enter en la entrada de prompt",
-  "commands.promptSubmitShortcut.keywords": "enter, enviar, salto de linea, atajo, teclado, cmd, ctrl, prompt",
 
   "commands.thinkingBlocks.label.show": "Mostrar pensamiento",
   "commands.thinkingBlocks.label.hide": "Ocultar pensamiento",

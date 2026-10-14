@@ -3,11 +3,12 @@ import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
 import { sdkManager } from "../lib/sdk-manager"
+import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry, WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
-import { PENDING_RECONCILIATION_HEADER } from "../../../server/src/api-types"
+import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
@@ -22,8 +23,8 @@ import {
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
-  resetSessionPagination,
 } from "./sessions"
+import { forgetSessionListRestoration } from "./session-list-restoration"
 import {
   ensureWorktreesLoaded,
   getWorktrees,
@@ -57,9 +58,8 @@ import {
   clearRepliedPermissions,
   hasRepliedPermission,
   markPermissionReplied,
-  pruneRepliedPermissions,
 } from "./permission-replies"
-import { clearSettledForms, hasSettledForm, markFormSettled, pruneSettledForms } from "./form-settlements"
+import { clearSettledForms, hasSettledForm, markFormSettled } from "./form-settlements"
 import {
   clearPermissionAutoAcceptForInstance,
   isPermissionAutoAcceptEnabled,
@@ -246,10 +246,13 @@ const [disconnectedInstance, setDisconnectedInstance] = createSignal<Disconnecte
 const MAX_LOG_ENTRIES = 1000
 
 const pendingRehydrations = new Map<string, Promise<void>>()
+// Stop events whose instance cleanup waits for the tab to unmount.
+const pendingWorkspaceStops = new Map<string, symbol>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
+const successfulPendingRecoveries = new Map<string, number>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
 const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
@@ -261,6 +264,34 @@ const pendingRequestSyncs = new Map<string, {
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
+const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
+export { incompletePendingRecovery }
+const notifiedPendingRecovery = new Set<string>()
+const failedPendingRecoveries = new Map<string, number>()
+// A single incomplete scan usually recovers on the next 30-second liveness pass.
+// Warn only when recovery stays incomplete across consecutive attempts.
+const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
+function markPendingRecovery(instanceId: string, incomplete: boolean, notify = false): void {
+  setIncompletePendingRecovery((previous) => {
+    if (previous.has(instanceId) === incomplete) return previous
+    const next = new Set(previous)
+    if (incomplete) next.add(instanceId)
+    else next.delete(instanceId)
+    return next
+  })
+  if (!incomplete) {
+    notifiedPendingRecovery.delete(instanceId)
+    failedPendingRecoveries.delete(instanceId)
+    return
+  }
+  if (!notify) return
+  const failures = (failedPendingRecoveries.get(instanceId) ?? 0) + 1
+  failedPendingRecoveries.set(instanceId, failures)
+  if (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && !notifiedPendingRecovery.has(instanceId)) {
+    notifiedPendingRecovery.add(instanceId)
+    showToastNotification({ message: tGlobal("interruption.recoveryIncomplete"), variant: "warning" })
+  }
+}
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 const pendingDiscoveryDeferred = new Error("Pending discovery deferred during compaction")
 type PendingCompaction = {
@@ -284,6 +315,7 @@ function isPendingDiscoveryCompacting(): boolean {
 
 function deferPendingDiscovery(instanceId: string): boolean {
   if (!isPendingDiscoveryCompacting()) return false
+  markPendingRecovery(instanceId, true)
   deferredPendingDiscovery.add(instanceId)
   return true
 }
@@ -328,7 +360,7 @@ function observePendingCompaction(instanceId: string, event: Parameters<NonNulla
   } else resumePendingDiscovery()
 }
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000): Promise<T> {
   const controller = new AbortController()
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
@@ -337,7 +369,7 @@ async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: Ab
     const timed = async () => {
       // Check after background queue admission, immediately before dispatch.
       if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
-      const timeout = setTimeout(() => controller.abort(), 10_000)
+      const timeout = setTimeout(() => controller.abort(), timeoutMs)
       try { return await run(controller.signal) }
       finally { clearTimeout(timeout) }
     }
@@ -379,6 +411,7 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 }
 
 function invalidatePendingRequestSync(instanceId: string): void {
+  if (instances().has(instanceId)) markPendingRecovery(instanceId, true)
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
@@ -555,10 +588,13 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
     binaryLabel: descriptor.binaryLabel,
     binaryVersion: descriptor.binaryVersion ?? existing?.binaryVersion,
     environmentVariables: existing?.environmentVariables ?? serverSettings().environmentVariables ?? {},
+    ...(descriptor.temporary ? { temporary: true } : {}),
   }
 }
 
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+  // A workspace (re)created after a stop event keeps its instance.
+  pendingWorkspaceStops.delete(descriptor.id)
   const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
@@ -607,6 +643,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   const sessionHydration = startInstanceSessionHydration(descriptor.id)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
   initialWorkspaceMetadataHydrations.set(descriptor.id, sessionHydration.workspaceMetadata)
+  const recovered = successfulPendingRecoveries.get(descriptor.id)
   const hydration = hydrateInstanceData(descriptor.id, {
     propagateErrors: true,
     sessionHydration: sessionHydration.sessions,
@@ -615,6 +652,9 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   initialHydrations.set(descriptor.id, hydration)
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
+    if (initialHydrations.get(descriptor.id) === hydration
+      && instances().get(descriptor.id)?.client === client
+      && successfulPendingRecoveries.get(descriptor.id) === recovered) markPendingRecovery(descriptor.id, true, true)
   })
 }
 
@@ -671,12 +711,24 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
-function getPendingRequestLocations(instanceId: string, rootDirectory?: string) {
+function getPendingRequestLocations(instanceId: string, rootDirectory?: string, includeHistorical = true) {
+  const instanceSessions = sessions().get(instanceId)
   return buildV2RequestLocations(rootDirectory, [
     getActiveCatalogLocation(instanceId),
     ...getWorktrees(instanceId),
-    ...Array.from(sessions().get(instanceId)?.values() ?? []).map((session) => session.location),
-    ...getFormQueue(instanceId).flatMap((form) => form.location ? [form.location] : []),
+    ...Array.from(instanceSessions?.values() ?? [])
+      .filter((session) => includeHistorical || session.status !== "idle" || session.pendingPermission || session.pendingForm)
+      .map((session) => session.location),
+    ...getPermissionQueue(instanceId).flatMap((permission) => {
+      const location = rememberedRequestLocation(permissionRequestLocations, instanceId, permission.id)
+        ?? instanceSessions?.get(getPermissionSessionId(permission) ?? "")?.location
+      return location ? [location] : []
+    }),
+    ...getFormQueue(instanceId).flatMap((form) => {
+      const location = rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location
+        ?? instanceSessions?.get(form.sessionID)?.location
+      return location ? [location] : []
+    }),
   ])
 }
 
@@ -697,6 +749,9 @@ function pendingSnapshotResults<T>(
 }
 
 async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean): Promise<WorkspacePendingRequestsResponse> {
+  const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
+    .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
+  const required = requiredDirectories()
   const directories = [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
     .flatMap((location) => location.directory ? [location.directory] : []))]
   const snapshot: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
@@ -706,19 +761,36 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     let end = offset, queryBytes = 0
     // ponytail: eight directories bound Git-heavy batches; tune only with native recovery proof.
     while (end < directories.length && end - offset < 8) {
-      queryBytes += new URLSearchParams({ directories: directories[end] }).toString().length + 1
+      const directory = directories[end]
+      const params = new URLSearchParams({ directories: directory })
+      if (!required.has(normalizeWorkspacePath(directory))) params.append("optionalDirectories", directory)
+      queryBytes += params.toString().length + 1
       if (end > offset && queryBytes > 7000) break
       end++
     }
     // Leave room for the route prefix/headers; an unsplittable oversized path
     // still fails closed rather than reporting its pending queue as empty.
     const batch = directories.slice(offset, end)
+    const optional = batch.filter((directory) => !required.has(normalizeWorkspacePath(directory)))
     offset = end
     try {
-      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal))
+      // Directory/Git authorization has a longer broker budget than native queue
+      // reads. Let it finish, with a small transport margin, before aborting.
+      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
-      snapshot.directories.push(...next.directories)
+      const currentRequired = requiredDirectories()
+      const reported = new Set(next.directories.map((entry) => normalizeWorkspacePath(entry.directory)))
+      for (const directory of batch) if (!reported.has(normalizeWorkspacePath(directory))) {
+        snapshot.directories.push({ directory, status: "error" })
+      }
+      for (const entry of next.directories) {
+        if (entry.status !== "excluded") snapshot.directories.push(entry)
+        else if (!optional.includes(entry.directory) || currentRequired.has(normalizeWorkspacePath(entry.directory))) {
+          snapshot.directories.push({ directory: entry.directory, status: "error" })
+        }
+        // Excluded historical hints never authorize clearing a known queue.
+      }
     } catch (error) {
       if (error === pendingDiscoveryDeferred) throw error
       if (!isCurrent()) throw pendingRequestSyncSuperseded
@@ -740,12 +812,13 @@ async function syncPendingPermissions(
   const mutationEpoch = pendingPermissionMutationEpochs.get(instanceId) ?? 0
 
   try {
-    const syncStartedAt = Date.now()
     const remote: Array<{ request: PermissionRequest; location: RequestAuthorityLocation; key: string }> = []
     const scannedLocations = new Set<string>()
     const pending = await snapshot
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    if (!pending?.supported && !targetLocations) throw new Error("Loaded-only pending requests unavailable; retain existing queues")
     if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
-    const locations = pending?.supported ? [] : targetLocations ?? getPendingRequestLocations(instanceId, instance.folder)
+    const locations = targetLocations ?? []
     const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.permissions) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
         instance.client!.permission.request.list({ location: toRequestLocation(location) }, {
@@ -774,14 +847,12 @@ async function syncPendingPermissions(
       remote.push(...response.data.map((request) => ({ request, location: authority, key })))
     }
 
-    const remotePendingIds = new Set(remote.map(({ request }) => request.id))
     if (!isCurrent() || (pendingPermissionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
     // ponytail: retain tombstones until instance removal; location-scoped settlement
     // provenance is needed before bounded coverage can safely retire them.
-    if (!pending?.supported && !targetLocations && !failures.length) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
 
     const pendingRemote = remote.filter(({ request }) => !hasRepliedPermission(instanceId, request.id))
     const remoteIds = new Set(pendingRemote.map(({ request }) => request.id))
@@ -825,12 +896,13 @@ async function syncPendingForms(
   const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
 
   try {
-    const syncStartedAt = Date.now()
     const remote: Array<{ form: FormWithLocation; location: RequestAuthorityLocation; key: string }> = []
     const scannedLocations = new Set<string>()
     const pending = await snapshot
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    if (!pending?.supported && !targetLocations) throw new Error("Loaded-only pending requests unavailable; retain existing queues")
     if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
-    const locations = pending?.supported ? [] : targetLocations ?? getPendingRequestLocations(instanceId, instance.folder)
+    const locations = targetLocations ?? []
     const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.forms) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
         instance.client!.form.list({ location: toRequestLocation(location) }, {
@@ -865,8 +937,6 @@ async function syncPendingForms(
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    const remotePendingIds = new Set(remote.map(({ form }) => form.id))
-    if (!pending?.supported && !targetLocations && !failures.length) pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
     const pendingRemote = remote.filter(({ form }) => !hasSettledForm(instanceId, form.id))
     const remoteIds = new Set(pendingRemote.map(({ form }) => form.id))
     for (const form of getFormQueue(instanceId)) {
@@ -893,6 +963,7 @@ async function runPendingRequestSync(
   token: { cancelled: boolean },
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  const startingClient = instances().get(instanceId)?.client
   for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
     if (!targetLocations && deferPendingDiscovery(instanceId)) return
     const epoch = (pendingRequestSyncEpochs.get(instanceId) ?? 0) + 1
@@ -904,21 +975,30 @@ async function runPendingRequestSync(
       && pendingRequestSyncEpochs.get(instanceId) === epoch
       && pendingRequestSyncGenerations.get(instanceId) === generation
     try {
-      // ponytail: capability only, not an unreleased version gate. Older daemons
-      // keep their existing discovery scans so background/global Forms survive.
+      // Unavailable loaded-only recovery is non-authoritative, never permission
+      // to construct every historical/worktree Location. Only settlement targets
+      // use ordinary lists; SSE and later snapshots still recover global Forms.
       const snapshot = targetLocations ? undefined : readPendingRequestSnapshot(instanceId, isCurrent)
       const results = await Promise.allSettled([
         syncPendingPermissions(instanceId, true, isCurrent, snapshot, targetLocations),
         syncPendingForms(instanceId, true, isCurrent, snapshot, targetLocations),
       ])
       for (const result of results) if (result.status === "rejected") throw result.reason
+      if (!targetLocations && isCurrent()) {
+        successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
+        markPendingRecovery(instanceId, false)
+      }
       return
     } catch (error) {
+      if (isCurrent()) markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded)
       if (error === pendingDiscoveryDeferred) { resumePendingDiscovery(); return }
       if (error !== pendingRequestSyncSuperseded) throw error
     }
   }
   if (!token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
+    if (instances().get(instanceId)?.client === startingClient) {
+      markPendingRecovery(instanceId, true, true)
+    }
     throw new Error("Pending request sync did not stabilize")
   }
 }
@@ -1027,7 +1107,8 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
   const sessions = Promise.resolve().then(async () => {
-    resetSessionPagination(instanceId)
+    // fetchSessions reconciles the index after publication. Clearing it here
+    // hides restored rows while the first network request is still pending.
     await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
@@ -1072,8 +1153,9 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
-  clearPermissionQueue(instanceId)
-  clearPendingFormQueue(instanceId)
+  // Recovery can be unavailable; only authoritative coverage or settlement
+  // removes known interruptions, not a catalogue/location rehydration.
+  markPendingRecovery(instanceId, true)
 }
 
 async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
@@ -1226,12 +1308,22 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       clearPermissionAutoAcceptForInstance(event.workspace.id)
       clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
-    case "workspace.stopped":
+    case "workspace.stopped": {
       requestInstanceTabClose(event.workspaceId)
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
-      releaseInstanceResources(event.workspaceId)
-      removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
+      // Clear the instance after this event batch has unmounted its tab: clearing
+      // a visible shell's state in the same update remounted views inside the
+      // dying subtree and broke the whole window. Skip a re-created workspace.
+      const stop = Symbol(event.workspaceId)
+      pendingWorkspaceStops.set(event.workspaceId, stop)
+      queueMicrotask(() => {
+        if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
+        pendingWorkspaceStops.delete(event.workspaceId)
+        releaseInstanceResources(event.workspaceId)
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
+      })
       break
+    }
     case "workspace.log":
       handleWorkspaceLog(event.entry)
       break
@@ -1415,6 +1507,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   abortPendingRequestWork(id)
   pendingRequestLiveness.delete(id)
   pendingRequestSyncGenerations.delete(id)
+  successfulPendingRecoveries.delete(id)
+  markPendingRecovery(id, false)
   resumePendingDiscovery()
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
@@ -1427,6 +1521,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
+  forgetSessionListRestoration(id)
   clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
@@ -1503,7 +1598,7 @@ async function createInstance(
   projectName?: string,
   options?: {
     signal?: AbortSignal
-    shouldCreateCommit?: () => boolean
+    shouldCreateCommit?: (instanceId: string) => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
@@ -1578,7 +1673,7 @@ async function createInstance(
       throw new Error(terminal.message || `Restore-created workspace ${workspace.id} ${terminal.status}`)
     }
     const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
-      || options?.shouldCreateCommit?.() === false
+      || options?.shouldCreateCommit?.(workspace.id) === false
     if (!discarded) {
       workspaceListReconciliationFence.markMutation(workspace.id)
       options?.onBeforeCreateCommit?.(workspace.id)
@@ -1983,14 +2078,16 @@ async function sendPermissionResponse(
   }
 }
 
-async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer): Promise<void> {
+async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer, interaction?: FormAnswerInteraction): Promise<void> {
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
+  const humanSubmit = form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
+  const options = formRequestOptions(form)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
     await getRootClient(instanceId).session.form.reply(
       { sessionID: form.sessionID, formID: form.id, answer },
-      formRequestOptions(form),
+      humanSubmit ? { ...options, headers: { ...options?.headers, "x-codenomad-human-answer": "1" } } : options,
     )
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)

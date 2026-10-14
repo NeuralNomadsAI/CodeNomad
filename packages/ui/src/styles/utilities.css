@@ -25,8 +25,21 @@
   color: var(--accent-primary);
 }
 
-.bg-surface-base {
-  background-color: var(--surface-base);
+/* Surface roles (see tokens.css): fields, reading canvas, floating surfaces, output/status blocks. */
+.bg-surface-field {
+  background-color: var(--surface-field);
+}
+
+.bg-surface-canvas {
+  background-color: var(--surface-canvas);
+}
+
+.bg-surface-overlay {
+  background-color: var(--surface-overlay);
+}
+
+.bg-surface-inset {
+  background-color: var(--surface-inset);
 }
 
 .bg-surface-secondary {
@@ -135,11 +148,21 @@
   text-transform: uppercase;
 }
 
-.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]),
-.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):hover {
-  background-color: var(--surface-hover) !important;
+/* Active toggles take a partial accent tint over whatever surface they rest on.
+   The ink leans 20% toward the accent's contrasting ink (--text-on-accent), so
+   accents as light as their surface (Parchment) still separate, then 10% toward
+   --surface-base, which always sits opposite the primary-text icon: the icon
+   keeps 3:1 on headers, canvases and muted message/tool cards alike.
+   :where keeps the historical specificity for overrides. */
+.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])) {
+  --icon-toggle-active-ink: color-mix(in oklab, color-mix(in oklab, var(--accent-primary) 80%, var(--text-on-accent)) 90%, var(--surface-base));
+  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 40%, transparent) !important;
   color: var(--text-primary) !important;
   opacity: 1;
+}
+
+.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):where(:not(:disabled, [aria-disabled="true"])):hover {
+  background-color: color-mix(in oklab, var(--icon-toggle-active-ink) 50%, transparent) !important;
 }
 
 .panel-header {
@@ -193,6 +216,10 @@ details[open] > summary .disclosure-chevron {
   transform: rotate(90deg);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .disclosure-chevron { transition: none; }
+}
+
 /* Focus helpers */
 .focus-ring-accent:focus {
   outline: none;
@@ -204,7 +231,7 @@ details[open] > summary .disclosure-chevron {
 .form-input {
   @apply w-full px-3 text-sm;
   min-height: var(--control-height);
-  background-color: var(--surface-base);
+  background-color: var(--surface-field);
   border: 1px solid var(--border-base);
   border-radius: 0;
   color: var(--text-primary);
@@ -238,30 +265,6 @@ details[open] > summary .disclosure-chevron {
 /* Shared layout helpers */
 .status-dot {
   @apply w-1 h-1 rounded-full;
-}
-
-.kbd {
-  @apply inline-flex items-center gap-0.5 font-mono text-xs px-1.5 py-0.5;
-  background-color: var(--surface-secondary);
-  border: 1px solid var(--border-base);
-  color: var(--text-primary);
-}
-
-.kbd-separator {
-  @apply opacity-50;
-}
-
-/*
-  Shortcut hints are useful on desktop native apps, but are noisy/irrelevant on
-  touch-first devices and in WebUI where browser shortcuts often conflict.
-*/
-html[data-runtime-host="web"] .keyboard-hints,
-html[data-runtime-host="web"] .kbd-hint,
-html[data-runtime-platform="mobile"] .keyboard-hints,
-html[data-runtime-platform="mobile"] .kbd-hint,
-html[data-keyboard-hints="hide"] .keyboard-hints,
-html[data-keyboard-hints="hide"] .kbd-hint {
-  display: none !important;
 }
 
 /* Truncate from the start (keeps end visible; good for paths) */

@@ -2,10 +2,6 @@
 
 ## Product/Git contract
 
-The user review on 2026-09-17 requires evaluating #649 as a development workflow,
-not merely replacing Git calls with similarly named native methods. The rules
-below define the implementation and its verification surface.
-
 - A Git worktree is a physical checkout with its own HEAD, index and working
   files. Branch refs and the object database are shared with its local repository.
   Sessions are not Git objects; multiple sessions can use one worktree.
@@ -120,7 +116,7 @@ for work elsewhere and read the instructions applicable to the target files.
 Changing every location-scoped service requires an explicit native move; a shell
 working-directory override does not do that.
 
-## Why an instruction belongs in PR #649
+## Session placement instructions
 
 The native `opencode.tools` plugin adds this general guidance through its session
 context hook:
@@ -154,155 +150,9 @@ blocking the proxy would not provide that guarantee. A tool-initiated native mov
 also does not become CodeNomad's multi-session family transaction merely because
 the instruction is present.
 
-## Windows spelling observation (2026-09-17)
+## Directory spelling
 
-During this review, the shared runtime stored the conversation's location as
-`D:\codenomad`, while the open workspace used `D:\CodeNomad`. Native location
-resolution returned the same project ID for both spellings. However, native
-`session.list` with `directory=D:\CodeNomad` and a matching title search returned
-no session; the same request with `directory=D:\codenomad` returned it. Moving
-the session to the exact open-folder spelling restored that native list result.
-
-This is independent of the placement instruction: preserving user intent cannot
-fix an exact-string directory filter. Do not claim that this PR fixes native path
-canonicalization, lowercase paths globally (including case-sensitive hosts), or
-broaden project authority to hide this discrepancy. When diagnosing an absent
+Do not lowercase paths globally (including case-sensitive hosts) or broaden
+project authority to hide native directory-filter discrepancies. When diagnosing an absent
 conversation, compare `session.get`, the actual directory-scoped list and the
 authorized workspace spelling before changing UI state.
-
-## Evidence and regression coverage
-
-### Existing-worktree selection latency (2026-09-21)
-
-Reproduced in the running Windows Tauri app with disposable sessions: choosing an
-existing checkout immediately displayed Workspace again, and the move endpoint
-did not respond within 90 seconds. Native location/list/refresh requests completed;
-the CodeNomad catalogue alone took 76.1 seconds for 174 entries. Repeated fresh
-transaction scans multiplied the per-checkout Git process cost.
-
-HEAD/branch annotations now come from one NUL-delimited `git worktree list`
-snapshot. Native OpenCode still supplies the inventory; physical common-directory
-and linked-checkout backlink checks retain local ownership and root validation.
-The same catalogue completed in 5.2 seconds during the first patched measurement.
-This is a local observation, not a performance bound. Authoritative transaction
-rescans, mutation fences and rollback remain in place.
-
-The selector displays the requested worktree and a busy spinner while moving,
-disables additional selections, and reconciles to the native location on success
-or failure. Browser regressions cover both delayed outcomes without optimistic
-mutation of the session location.
-
-The independent gatekeeper review added two regression cases. Administrative
-backlinks alone do not establish Git's effective root when `core.worktree` or
-worktree-specific configuration redirects it. The catalogue now reads effective
-configuration once and asks Git to validate each root when configuration can
-change it; ordinary scans retain a constant process count. Pending selector
-targets now live with the store's per-instance/family request and survive A/B
-session navigation and remounts, including either completion order and failure.
-
-### Final native/UI integration (2026-09-17)
-
-Follow-up: search/filter mode presents independent flat rows. The "Show subsessions"
-switch (off by default) includes children without requiring their parents in the
-results. Text and worktree filters must match the same session; activity, names and
-worktree labels also sort each session independently. Selection targets only the
-displayed matches. Server search results no longer require ancestor hydration.
-Closing search restores normal hierarchy and ignores its worktree filter. This
-supersedes the temporary root-only worktree-filter fix in `3921ba08`.
-
-The real-component browser regression covers the switch, cross-worktree children,
-text plus directory filters, independent badges, bulk selection, direct child
-navigation, results without loaded ancestors and returning to normal hierarchy.
-
-The rebuilt UI was also loaded in the installed Windows Tauri renderer. An
-existing child, "Analyze automation update", was verified through native reads
-in `D:\CodeNomad` while its parent remained in `pr649-final`. With its title and
-the Workspace filter selected, the child appeared alone only when subsessions
-were enabled. Selecting the parent's checkout hid it; closing search restored
-the hierarchy and preserved the active parent conversation. A first desktop wait
-of 30 seconds expired; the completed repeat used a 90-second bound. Directory
-search still traverses the local worktree catalogue, so this is not a latency
-guarantee. No native session locations were changed by this check.
-
-Merged `dev@e47e01c6` (PR #697) into this branch. Discovery and canonical
-`server.status()` adaptation are now inherited from that independently merged
-change. The native worktree/family fixture passed again against isolated official
-2.0.0 and 2.0.7 daemons, including legacy health and modern info discovery.
-
-Verified in the installed Windows Tauri application using dedicated disposable
-sessions in the actual `D:\CodeNomad` repository:
-
-- The separately created #697 checkout appears in the selector without moving
-  the original conversation away from `D:\CodeNomad-worktrees\pr649-final`.
-- Create/use creates a named branch under the main checkout's
-  `.codenomad/worktrees`, at the selected checkout's HEAD. Native session location,
-  composer selection and session-row badge all match the returned checkout.
-- A dedicated untracked marker appears in the Git panel and the local Git/API
-  inventories. Selecting the original checkout moves the test conversation back
-  and removes that marker from the panel. Explicit refresh was exercised.
-- A separate dedicated session moved with the agent's actual `session_move`
-  tool to #697 and back; both composer and row badges followed the native event.
-- Test sessions, marker files, temporary worktrees and branches were removed.
-  The original conversation's attachment was preserved throughout.
-
-The rendered test exposed stale native VCS rows being unioned into a complete
-local Git inventory. Local staged/unstaged details now exclude native-only rows;
-the status loader also rechecks request/worktree identity after its native wait.
-A regression covers stale rows, a clean local snapshot and native-only callers.
-The rebuilt UI/server resources were installed and CodeNomad restarted through
-Developer Mode. One immediate post-restart run exceeded the 30-second refresh
-button wait; the subsequent completed run verified the workflow and rendered
-exactly the dedicated marker. This does not establish a startup latency bound.
-
-Additional passing checks: server/UI typechecks, server build (including UI),
-real-component browser selector gestures, ownership/proxy/route/cache suites,
-session projection/request-authority suites, family evacuation/rollback suites,
-and `git diff --check`.
-
-### Installed-build recovery (2026-09-17)
-
-The first installed native-catalogue build stalled while opening `D:\CodeNomad`.
-This preceded the user's upgrade to OpenCode 2.0.7. The real repository contains
-162 worktrees: serial Git annotations took about 21 seconds for one inventory.
-Concurrent ownership misses also discarded pending cache loads and triggered
-overlapping inventories; the installed UI showed permission/Form requests hitting
-their 10-second timeout while the session list remained loading.
-
-Recovery combines bounded parallel Git annotations (about 3 seconds for the same
-inventory), manager-level sharing of in-flight catalogue requests, snapshot-aware
-ownership refreshes, cached negative resolutions, and a physical-path fast path
-for the opened root. The ownership regression exercises 40 concurrent misses,
-one shared refresh, negative caching and explicit invalidation.
-
-OpenCode 2.0.7 introduced a separate startup failure: `/api/status` and `/api/health`
-returned 404, while authenticated `/api/info` worked. Lifecycle discovery now tries
-that read after the two 404s, preserving credentials, the absolute deadline and
-response validation. Contract negotiation recognizes the actual OpenAPI structure;
-no 2.0.7 version exception was added. The isolated native worktree/family suite
-also passed on 2.0.7 after exercising production lifecycle discovery.
-
-After installing the corrected server modules, Developer Mode inspection and a
-rendered capture confirmed the project session list, this conversation's messages,
-and its worktree badge. A subsequent full application restart restored the same
-session automatically. A fresh comparison of all 132 generated client HTTP
-method/path pairs against the installed 2.0.7 OpenAPI document found 131 unchanged
-pairs and only the `/api/status` to `/api/info` mismatch handled above. Experimental
-routes were already supported by the merged adapter; they are not an outstanding
-route migration. Real reads through the production shared-service adapter passed
-for canonical `client.server.status()` and session instruction entries. These are
-route-presence and targeted runtime checks, not complete payload/behavior parity
-or complete UI/agent/Git-panel workflow coverage for #649.
-
-- [Official V2 API](https://opencode.ai/v2/docs/api/): native session moves, instructions and locations.
-- [V2 plugin context](https://opencode.ai/v2/docs/build/plugins/): location-scoped plugin context and session APIs.
-- Native source inspected at `f91c6d8b25a040cc952db0c43fc5352bcab7f42d`:
-  `packages/core/src/tool/plugin/opencode.ts`, `session/move.ts`,
-  `session/instruction-entry.ts`, and `project.ts`. This is a source reference,
-  not an assertion that every supported runtime has identical internals.
-- Client contract: the declarations pinned by this branch (`@opencode/client@2.0.4`).
-- `session-actions.test.ts`: command/shell ordering, voice-mode changes during
-  synchronization, and delayed placement failures before prompt/command/shell.
-- `session-send-lifecycle.test.ts`: prompt ordering, repair on existing sessions,
-  preservation of other named entries and a new native attachment, optimistic sends.
-- Existing native-move, restored-session and worktree-family tests continue to
-  cover reconciliation and transactional movement; model obedience is not a test assertion.

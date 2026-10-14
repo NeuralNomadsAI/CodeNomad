@@ -55,6 +55,7 @@ export function adaptSdkGitStatusEntries(
       stagedDeletions: detail?.stagedDeletions ?? 0,
       unstagedAdditions: detail?.unstagedAdditions ?? 0,
       unstagedDeletions: detail?.unstagedDeletions ?? 0,
+      ...(detail?.unstagedWhitespaceOnly ? { unstagedWhitespaceOnly: true } : {}),
     })
   }
 
@@ -73,10 +74,23 @@ export function adaptSdkGitStatusEntries(
       stagedDeletions: detail.stagedDeletions,
       unstagedAdditions: detail.unstagedAdditions,
       unstagedDeletions: detail.unstagedDeletions,
+      ...(detail.unstagedWhitespaceOnly ? { unstagedWhitespaceOnly: true } : {}),
     })
   }
 
   return Array.from(adaptedByPath.values()).filter((entry) => entry.path.length > 0)
+}
+
+/**
+ * Omits worktree changes Git reports as whitespace/line-ending only. Staged rows
+ * always stay visible so a commit never includes changes the list does not show.
+ */
+export function hideWhitespaceOnlyChanges(entries: GitChangeEntry[] | null, hide: boolean): GitChangeEntry[] | null {
+  if (!entries || !hide) return entries
+  return entries.flatMap((entry) => {
+    if (!entry.unstagedWhitespaceOnly) return [entry]
+    return entry.stagedStatus ? [{ ...entry, unstagedStatus: null, unstagedAdditions: 0, unstagedDeletions: 0 }] : []
+  })
 }
 
 function buildGitChangeListItemId(section: GitChangeSection, path: string): string {

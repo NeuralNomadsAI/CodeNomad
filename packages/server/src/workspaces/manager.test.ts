@@ -15,7 +15,7 @@ import {
   isWindowsHostPath,
 } from "./manager"
 import { startupEnvironmentHash } from "./host-opencode-service"
-import type { OpenCodeServiceLifecycle, OpenCodeSharedServiceOptions } from "./opencode-service"
+import type { OpenCodeServiceLifecycle, OpenCodeSharedServiceOptions, ServiceConnection } from "./opencode-service"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -28,6 +28,7 @@ function deferred<T>() {
 }
 
 class ControlledSharedService {
+  existingConnection?: () => ServiceConnection | undefined
   readonly validationStarted = deferred<void>()
   validationGate?: ReturnType<typeof deferred<void>>
   ignoreValidationAbort = false
@@ -123,13 +124,69 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
+  it("observes existing connections only for published workspaces without acquisition or ownership expansion", async () => {
+    let peeks = 0
+    let acquisitions = 0
+    let current: ServiceConnection | undefined
+    const connection: ServiceConnection = {
+      endpoint: { url: "http://127.0.0.1:4321", auth: { type: "basic", username: "user", password: "pass" } },
+      client: {} as OpenCodeClient,
+      fetch: globalThis.fetch,
+      profile: async () => { throw new Error("unexpected negotiation") },
+      assertCurrent: () => { assert.equal(current, connection) },
+      invalidate: () => { current = undefined },
+    }
+    const service = Object.assign(new ControlledSharedService(), {
+      existingConnection: () => { peeks++; return current },
+      acquire: async () => { acquisitions++; return connection },
+      invalidate: connection.invalidate,
+    })
+    const { manager } = createHarness(service)
+    manager.getWorktrees = async () => { throw new Error("unexpected ownership expansion") }
+    assert.equal(manager.getExistingSharedServiceConnection("missing"), undefined)
+    assert.equal(peeks, 0)
+    service.validationGate = deferred<void>()
+    const creation = manager.create(process.cwd())
+    await service.validationStarted.promise
+    const record = [...(manager as any).workspaces.values()][0]
+    current = connection
+    assert.equal(manager.getExistingSharedServiceConnection(record.id), undefined)
+    assert.equal(peeks, 0)
+    service.validationGate.resolve()
+    const { workspace } = await creation
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), connection)
+    connection.assertCurrent()
+    manager.invalidateSharedServiceConnection()
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), undefined)
+    assert.throws(connection.assertCurrent)
+    assert.equal(acquisitions, 0)
+    // Ordinary acquisition retains its existing semantics.
+    assert.equal(await manager.getSharedServiceConnection(workspace.id), connection)
+    assert.equal(acquisitions, 1)
+    await manager.delete(workspace.id)
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), undefined)
+    assert.equal(peeks, 2)
+  })
+
+  it("does not acquire when the shared-service fixture has no observation method", async () => {
+    let acquisitions = 0
+    const service = Object.assign(new ControlledSharedService(), {
+      acquire: async () => { acquisitions++; throw new Error("unexpected acquisition") },
+    })
+    const { manager } = createHarness(service)
+    const { workspace } = await manager.create(process.cwd())
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), undefined)
+    assert.equal(acquisitions, 0)
+    await manager.shutdown()
+  })
+
   it("rejects another clone before scanning the native worktree inventory", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-foreign-owner-"))
     const repo = path.join(root, "repo")
     const clone = path.join(root, "clone")
     const linked = path.join(root, "linked")
     const git = (...args: string[]) => execFileSync("git", args, { stdio: "pipe", windowsHide: true })
-    const { manager } = createHarness()
+    const { manager, service } = createHarness()
     try {
       git("init", repo)
       git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
@@ -145,6 +202,28 @@ describe("workspace manager shared service lifecycle", () => {
       assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }), false)
       assert.equal(scans, 0)
       assert.equal(await manager.ownsDirectory(workspace.id, linked), true)
+      assert.equal(scans, 1)
+      let registered = [repo, linked]
+      let refreshes = 0
+      const client = {
+        location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+        worktree: {
+          refresh: async () => { refreshes++; throw new Error("unexpected native discovery") },
+          list: async () => registered.map(directory => ({ directory })),
+        },
+      } as unknown as OpenCodeClient
+      const connection: ServiceConnection = {
+        endpoint: await service.endpoint(), client, fetch: globalThis.fetch,
+        profile: async () => "modern", assertCurrent: () => {}, invalidate: () => {},
+      }
+      service.existingConnection = () => connection
+      service.client = async () => { throw new Error("unexpected service acquisition") }
+      assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), canonicalWorktreeIdentity(linked))
+      assert.equal(scans, 1, "event identity must not acquire the discovery inventory")
+      registered = [repo]
+      manager.invalidateWorktrees("blocking")
+      assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), undefined)
+      assert.equal(refreshes, 0, "event identity must remain registered-only after invalidation")
       assert.equal(scans, 1)
     } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
   })

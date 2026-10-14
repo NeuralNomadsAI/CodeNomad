@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "פלט שגיאה",
   "app.launchError.openAdvancedSettings": "פתח הגדרות OpenCode",
   "app.launchError.close": "סגור",
-  "app.launchError.closeTitle": "סגור (Esc)",
+  "app.launchError.closeTitle": "סגור",
   "app.launchError.fallbackMessage": "הפעלת סביבת העבודה נכשלה",
   "app.launchError.invalidConfig": "תצורת OpenCode אינה תקינה",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "ניתן לפתוח מספר מופעים של אותה תיקייה",
 
   "releases.upgradeRequired.title": "נדרש שדרוג",
+  "releases.desktop.checking": "בודק עדכון עבור CodeNomad…",
+  "releases.desktop.current": "CodeNomad מעודכן.",
+  "releases.desktop.available": "CodeNomad {version} זמין. ההתקנה תפעיל מחדש את היישום.",
+  "releases.desktop.install": "התקנה והפעלה מחדש",
+  "releases.desktop.downloading": "מוריד ומאמת את העדכון…",
+  "releases.desktop.restarting": "שומר חלונות ומתקין את העדכון…",
+  "releases.desktop.failed": "לא ניתן להשלים את העדכון. אפשר לנסות שוב או להוריד אותו מדף הגרסאות.",
+  "releases.desktop.busy": "חלון אחר של CodeNomad כבר בודק או מתקין עדכון.",
   "releases.upgradeRequired.message.withVersion": "שדרג ל-CodeNomad {version} כדי להשתמש בממשק המעודכן.",
   "releases.upgradeRequired.message.noVersion": "שדרג את CodeNomad כדי להשתמש בממשק המעודכן.",
   "releases.upgradeRequired.action.getUpdate": "קבל עדכון",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "הממשק עודכן",
   "releases.uiUpdated.message": "הממשק עודכן לגרסה {version}.",
 
-  "releases.devUpdateAvailable.title": "גרסת פיתוח זמינה",
-  "releases.devUpdateAvailable.message": "גרסת פיתוח חדשה זמינה: {version}.",
+  "releases.devUpdateAvailable.title": "עדכון זמין",
+  "releases.devUpdateAvailable.message": "גרסה חדשה יותר זמינה: {version}.",
   "releases.devUpdateAvailable.action": "צפה בגרסה",
 
   "theme.mode.system": "מערכת",

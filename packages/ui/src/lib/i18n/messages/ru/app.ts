@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Вывод ошибки",
   "app.launchError.openAdvancedSettings": "Открыть настройки OpenCode",
   "app.launchError.close": "Закрыть",
-  "app.launchError.closeTitle": "Закрыть (Esc)",
+  "app.launchError.closeTitle": "Закрыть",
   "app.launchError.fallbackMessage": "Не удалось запустить рабочее пространство",
   "app.launchError.invalidConfig": "Конфигурация OpenCode недействительна",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "Можно иметь несколько экземпляров одной и той же папки",
 
   "releases.upgradeRequired.title": "Требуется обновление",
+  "releases.desktop.checking": "Проверка обновлений CodeNomad…",
+  "releases.desktop.current": "Установлена последняя версия CodeNomad.",
+  "releases.desktop.available": "Доступна версия CodeNomad {version}. Установка перезапустит приложение.",
+  "releases.desktop.install": "Установить и перезапустить",
+  "releases.desktop.downloading": "Загрузка и проверка обновления…",
+  "releases.desktop.restarting": "Сохранение окон и установка обновления…",
+  "releases.desktop.failed": "Не удалось завершить обновление. Повторите попытку или скачайте его со страницы выпусков.",
+  "releases.desktop.busy": "Другое окно CodeNomad уже проверяет или устанавливает обновление.",
   "releases.upgradeRequired.message.withVersion": "Обновите CodeNomad до версии {version}, чтобы использовать последний UI.",
   "releases.upgradeRequired.message.noVersion": "Обновите CodeNomad, чтобы использовать последний UI.",
   "releases.upgradeRequired.action.getUpdate": "Получить обновление",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI обновлён",
   "releases.uiUpdated.message": "UI теперь обновлён до {version}.",
 
-  "releases.devUpdateAvailable.title": "Доступна dev-сборка",
-  "releases.devUpdateAvailable.message": "Доступна новая dev-сборка: {version}.",
+  "releases.devUpdateAvailable.title": "Доступно обновление",
+  "releases.devUpdateAvailable.message": "Доступен более новый релиз: {version}.",
   "releases.devUpdateAvailable.action": "Открыть релиз",
 
   "theme.mode.system": "Системная",

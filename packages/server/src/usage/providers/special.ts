@@ -1,5 +1,6 @@
-import type { UsageProvider } from "../types"
-import { fetchJson, getString, notConfigured, result, safeFetch, toNumber, toTimestamp, toUsageWindow } from "../shared"
+import type { AuthFile, UsageProvider } from "../types"
+import { fetchJson, getAuthEntry, getString, notConfigured, oauthTokenNeedsRefresh, result, safeFetch, toNumber, toTimestamp, toUsageWindow } from "../shared"
+import { fetchOpenCodeGoQuota, type OpenCodeGoAuth } from "../opencode-go-quota"
 
 function decodeJwtExpiration(token: string): number | null {
   try {
@@ -114,13 +115,38 @@ function parseOpenCodeGoUsage(html: string, now = Date.now()) {
   return windows
 }
 
+// The selected native Go key or OpenCode Console credential, without refreshing
+// tokens. Self-hosted Console credentials (keys or tokens) are never sent to opencode.ai.
+export function openCodeGoAuth(auth: AuthFile): OpenCodeGoAuth | null {
+  const entry = getAuthEntry(auth, ["opencode-go", "opencode"])
+  if (!entry) return null
+  if (entry.server !== undefined) {
+    const server = getString(entry.server)
+    try { if (!server || new URL(server).origin !== "https://opencode.ai") return null } catch { return null }
+  }
+  const orgID = getString(entry.orgId)
+  const scope = orgID ? { orgID } : {}
+  if (entry.type === "api") {
+    const key = getString(entry.key)
+    return key ? { token: key, ...scope } : null
+  }
+  if (entry.type !== "oauth" || oauthTokenNeedsRefresh(entry)) return null
+  const access = getString(entry.access)
+  return access ? { token: access, ...scope } : null
+}
+
 const openCodeGo: UsageProvider = {
   id: "opencode-go",
   name: "OpenCode Go",
   aliases: ["opencode-go", "opencode"],
-  async fetchQuota() {
+  async fetchQuota(auth) {
     const workspaceId = getString(process.env.OPENCODE_GO_WORKSPACE_ID)
     const authCookie = getString(process.env.OPENCODE_GO_AUTH_COOKIE)
+    const native = openCodeGoAuth(auth)
+    if (native) {
+      const usage = await safeFetch(this.id, this.name, () => fetchOpenCodeGoQuota(native, AbortSignal.timeout(15_000)))
+      if (usage.ok || !workspaceId || !authCookie) return usage
+    }
     if (!workspaceId || !authCookie) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {
       const response = await fetch(`https://opencode.ai/workspace/${encodeURIComponent(workspaceId)}/go`, {

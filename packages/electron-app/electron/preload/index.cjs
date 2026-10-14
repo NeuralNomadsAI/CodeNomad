@@ -58,6 +58,7 @@ const localElectronAPI = {
   requestMicrophoneAccess: () => ipcRenderer.invoke("media:requestMicrophoneAccess"),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  setNotificationBadge: (count) => ipcRenderer.invoke("notifications:setBadge", count),
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
   openPreferences: (section, context, toggle, resume) => ipcRenderer.invoke("preferences:open", section, context, Boolean(toggle), Boolean(resume)),
   minimizeWindow: () => ipcRenderer.invoke("preferences:minimize"),
@@ -71,8 +72,11 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
+  listOtherDataProfiles: () => ipcRenderer.invoke("data-profiles:listOthers"),
+  deleteOtherDataProfiles: (ids) => ipcRenderer.invoke("data-profiles:deleteOthers", ids),
   registerBrowserTarget: (payload) => ipcRenderer.invoke("browser-target:register", payload),
   emulateBrowserTarget: (registrationId, preset) => ipcRenderer.invoke("browser-target:emulate", registrationId, preset),
+  browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
   claimBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:claimOpen", requestId),
   releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
@@ -87,6 +91,7 @@ const remoteElectronAPI = {
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
+  setNotificationBadge: localElectronAPI.setNotificationBadge,
 }
 
 const preferencesElectronAPI = {
@@ -102,6 +107,9 @@ const preferencesElectronAPI = {
   preferencesReady: () => ipcRenderer.invoke("preferences:ready"),
   acceptPreferencesRequest: (request) => ipcRenderer.invoke("preferences:acceptRequest", request),
   resolvePreferencesTransition: (id, approved) => ipcRenderer.invoke("preferences:resolveTransition", id, approved),
+  openerStartupState: (command, epoch) => ipcRenderer.invoke("preferences:openerStartupState", command, epoch),
+  listOtherDataProfiles: localElectronAPI.listOtherDataProfiles,
+  deleteOtherDataProfiles: localElectronAPI.deleteOtherDataProfiles,
   onPreferencesSection: (callback) => {
     const handler = (_event, section) => callback(section)
     ipcRenderer.on("preferences:section", handler)

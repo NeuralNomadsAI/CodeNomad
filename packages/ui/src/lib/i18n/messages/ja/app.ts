@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "エラー出力",
   "app.launchError.openAdvancedSettings": "OpenCode 設定を開く",
   "app.launchError.close": "閉じる",
-  "app.launchError.closeTitle": "閉じる (Esc)",
+  "app.launchError.closeTitle": "閉じる",
   "app.launchError.fallbackMessage": "ワークスペースの起動に失敗しました",
   "app.launchError.invalidConfig": "OpenCode の設定が無効です",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "同じフォルダのインスタンスを複数作成できます",
 
   "releases.upgradeRequired.title": "アップグレードが必要です",
+  "releases.desktop.checking": "CodeNomadの更新を確認しています…",
+  "releases.desktop.current": "CodeNomadは最新です。",
+  "releases.desktop.available": "CodeNomad {version}が利用可能です。インストールするとアプリが再起動します。",
+  "releases.desktop.install": "インストールして再起動",
+  "releases.desktop.downloading": "更新をダウンロードして検証しています…",
+  "releases.desktop.restarting": "ウィンドウを保存して更新をインストールしています…",
+  "releases.desktop.failed": "更新を完了できませんでした。再試行するか、リリースページからダウンロードしてください。",
+  "releases.desktop.busy": "別の CodeNomad ウィンドウが更新を確認またはインストールしています。",
   "releases.upgradeRequired.message.withVersion": "最新の UI を使うには CodeNomad {version} に更新してください。",
   "releases.upgradeRequired.message.noVersion": "最新の UI を使うには CodeNomad を更新してください。",
   "releases.upgradeRequired.action.getUpdate": "更新を取得",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI を更新しました",
   "releases.uiUpdated.message": "UI が {version} に更新されました。",
 
-  "releases.devUpdateAvailable.title": "開発版が利用可能",
-  "releases.devUpdateAvailable.message": "新しい開発版が利用可能です: {version}。",
+  "releases.devUpdateAvailable.title": "アップデートがあります",
+  "releases.devUpdateAvailable.message": "新しいリリースが利用可能です: {version}。",
   "releases.devUpdateAvailable.action": "リリースを見る",
 
   "theme.mode.system": "システム",

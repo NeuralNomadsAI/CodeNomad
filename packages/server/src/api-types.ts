@@ -7,7 +7,79 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
+export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
+
+export type {
+  MissionActor,
+  MissionActorActivity,
+  MissionActorActivityState,
+  MissionActorRuntimeStatus,
+  MissionActivityProjection,
+  MissionListAvailableResponse,
+  MissionListResponse,
+  MissionListUnavailableResponse,
+  MissionMap,
+  MissionBriefing,
+  MissionBriefingItem,
+  MissionReport,
+  MissionReportOutcome,
+  MissionSnapshot,
+  MissionStatus,
+  MissionTask,
+  MissionTaskStatus,
+  MissionTemplateId,
+} from "./missions/model"
+
+/** Deliberately excludes private config, authority receipts and native Job metadata. */
+export interface MissionRecurrenceSnapshot {
+  version: 1
+  projectID: string
+  schedules: Array<{
+    id: string
+    revision: number
+    title: string
+    state: "running" | "paused" | "interrupted" | "stopped"
+    clock: { time: string; zone: string }
+    nextDueAt: number | null
+    interruptionReason?: "service-restart" | "error"
+    /** Non-blocking display warning: the latest wake failed and is being retried. */
+    lastError?: { code: "wake-failed" | "admission-failed" | "settlement-failed"; at: number }
+    pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
+      trigger?: "daily" | "manual"; reason?: "not-observed" | "admission-failing"
+      missionID?: string; conversationID?: string } | null
+    actions: Array<"play" | "pause" | "stop" | "resume" | "run-now" | "check">
+    controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
+    latestResult: MissionRecurrenceReceipt | null
+    history: MissionRecurrenceReceipt[]
+  }>
+}
+
+export interface MissionRecurrenceCurrent {
+  version: 1
+  projectID: string
+  scheduleID: string
+  passageID: string | null
+  mission?: import("./missions/model").MissionMap
+  activity?: import("./missions/model").MissionActivityProjection
+}
+export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
+
+/** Bounded native reference receipts only; never the standing instructions, native transcript or authority. */
+export interface MissionRecurrenceReceipt {
+  passageID: string
+  dueAt: number
+  settledAt: number
+  outcome: "completed" | "failed" | "ended-without-report"
+  /** `interrupted`: a service restart cut the passage and nothing resumed it.
+   * `not-started`: its start message was never admitted and cannot be. */
+  reason?: "interrupted" | "not-started"
+  /** Daily schedule or an explicit Run now. */
+  trigger?: "daily" | "manual"
+  missionID?: string
+  conversationID?: string
+}
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -45,6 +117,8 @@ export interface WorkspaceDescriptor {
   updatedAt: string
   /** Present when `status` is "error". */
   error?: string
+  /** The folder is a CodeNomad-managed temporary folder that discarding deletes. */
+  temporary?: boolean
 }
 
 export interface WorkspaceCreateRequest {
@@ -83,7 +157,9 @@ export type WorkspacePendingRequestsResponse = { supported: false } | {
     directory: string
     status: "ok"
     locations: WorkspacePendingRequestLocation[]
-  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }>
+  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }
+    // An optional historical hint is outside current ownership; never empty queue authority.
+    | { directory: string; status: "excluded"; locations?: never }>
 }
 
 export interface WorkspaceDeleteResponse {
@@ -182,6 +258,13 @@ export interface WorktreeGitStatusEntry {
   unstagedStatus: GitChangeKind | null
   unstagedAdditions: number
   unstagedDeletions: number
+  /**
+   * Present only when requested with `hideWhitespace`: Git omits the worktree
+   * change of this tracked text file from `git diff --ignore-all-space`
+   * (indentation, inner spacing, line endings or the final newline, with an
+   * unchanged mode). Staged and unmerged changes are never flagged.
+   */
+  unstagedWhitespaceOnly?: boolean
 }
 
 export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]
@@ -338,6 +421,14 @@ export type PluginConfigScope = PluginControlScope | "other" | "virtual"
 export interface PluginControlLocation {
   directory: string
   workspaceID?: string
+}
+
+export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
+export interface SubagentDepthSnapshot {
+  location: PluginControlLocation
+  capability: SubagentDepthCapability | null
+  effectiveDepth: number | null
+  project: { path: string; depth: number | null; expectation: string } | null
 }
 
 export type PluginRuntimeSource =
@@ -497,6 +588,7 @@ export interface BinaryUpdateRequest {
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
 export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
 export const PENDING_RECONCILIATION_HEADER = "x-codenomad-pending-reconciliation" as const
+export const PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS = 30_000
 
 export interface BinaryValidationResult {
   valid: boolean
@@ -514,7 +606,7 @@ export interface OpenCodeUpdateStatus {
   minimumVersion: string
   recommendedVersion: string
   versionAssessment: "tested" | "untested" | "incompatible"
-  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
+  incompatibilityReason?: "plugin_runtime" | "step_timestamp" | "canonical_api" | "session_environment"
   state: "missing" | "update_required" | "ready" | "error"
   binaryPath: string
   installationSource?: "path" | "user"
@@ -610,6 +702,37 @@ export interface RemoteProxySessionCreateResponse {
   windowUrl: string
 }
 
+export interface RemoteControlStatus {
+  /** False for requests arriving through Remote Control: only the host manages it. */
+  manageable: boolean
+  enabled: boolean
+  /** The user started Remote Control and has not stopped it: it reconnects at launch. */
+  startsOnLaunch: boolean
+  state: "stopped" | "connecting" | "connected" | "reconnecting" | "error"
+  /** Public HTTPS origin while the tunnel is connected. */
+  remoteUrl?: string
+  pairedDevices: number
+  lastConnectedAt?: string
+  error?: string
+}
+
+export interface RemoteControlPairing {
+  url: string
+  expiresAt: string
+}
+
+export interface RemoteControlDevice {
+  id: string
+  name: string
+  createdAt: string
+  lastSeenAt: string
+}
+
+export interface RemoteControlStartResponse {
+  status: RemoteControlStatus
+  pairing: RemoteControlPairing
+}
+
 export type WorkspaceEventType =
   | "workspace.created"
   | "workspace.started"
@@ -617,6 +740,7 @@ export type WorkspaceEventType =
   | "workspace.stopped"
   | "workspace.log"
   | "workspace.worktreesChanged"
+  | "workspace.temporaryChanged"
   | "sidecar.updated"
   | "sidecar.removed"
   | "storage.configChanged"
@@ -653,6 +777,8 @@ export type WorkspaceEventPayload =
   | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "workspace.worktreesChanged"; workspaceId: string }
+  /** Every folder still registered as temporary, after a create, keep or discard. */
+  | { type: "workspace.temporaryChanged"; folders: string[] }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
@@ -676,10 +802,13 @@ export interface LatestReleaseInfo {
   version: string
   tag: string
   url: string
-  channel: "stable" | "dev"
+  channel: "stable" | "preview"
   publishedAt?: string
   notes?: string
 }
+
+/** Which releases are offered; never selects desktop data or OpenCode state. */
+export type UpdateFeed = "stable" | "preview"
 
 export interface UiMeta {
   version?: string
@@ -697,7 +826,7 @@ export interface SupportMeta {
 export interface ServerMeta {
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
-  /** URL remote clients should use (prefers HTTPS when enabled). */
+  /** URL direct remote clients should use (prefers HTTPS when enabled). */
   remoteUrl?: string
   /** SSE endpoint advertised to clients (`/api/events` by default). */
   eventsUrl: string
@@ -707,21 +836,25 @@ export interface ServerMeta {
   listeningMode: "local" | "all"
   /** Actual local port in use after binding. */
   localPort: number
-  /** Actual remote port in use after binding (when remoteUrl is set). */
+  /** Actual direct remote port in use after binding (when remoteUrl is set). */
   remotePort?: number
   /** Display label for the host (e.g., hostname or friendly name). */
   hostLabel: string
   /** Absolute path of the filesystem root exposed to clients. */
   workspaceRoot: string
-  /** Reachable addresses for this server, external first. */
+  /** Reachable direct-access addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
   /** CodeNomad backend OS and Node runtime architecture, never the UI or OpenCode host. */
   system?: { platform: string; arch: string }
   ui?: UiMeta
   support?: SupportMeta
-  /** Optional update info (dev channel only). */
+  /** Effective update feed (saved `server.updateFeed`, else derived from the installed build label). */
+  updateFeed?: UpdateFeed
+  /** Newest release offered by the preview feed; stable updates use `support`. */
   update?: LatestReleaseInfo | null
+  /** Explicit desktop data profile of the launching host; omitted for the default profile. */
+  desktopProfile?: string
 }
 
 export type {

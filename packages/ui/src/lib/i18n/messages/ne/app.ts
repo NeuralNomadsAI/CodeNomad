@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "त्रुटि आउटपुट (Error output)",
   "app.launchError.openAdvancedSettings": "OpenCode सेटिङहरू खोल्नुहोस्",
   "app.launchError.close": "बन्द गर्नुहोस्",
-  "app.launchError.closeTitle": "बन्द गर्नुहोस् (Esc)",
+  "app.launchError.closeTitle": "बन्द गर्नुहोस्",
   "app.launchError.fallbackMessage": "कार्यस्थान सुरु गर्न असफल",
   "app.launchError.invalidConfig": "OpenCode कन्फिगरेसन अमान्य छ",
 
@@ -39,6 +39,14 @@ export const appMessages = {
   "emptyState.multipleInstances": "तपाईंसँग एउटै फोल्डरका धेरै उदाहरणहरू हुन सक्छन्",
 
   "releases.upgradeRequired.title": "अपग्रेड आवश्यक छ",
+  "releases.desktop.checking": "CodeNomad को अद्यावधिक जाँच गर्दै…",
+  "releases.desktop.current": "CodeNomad अद्यावधिक छ।",
+  "releases.desktop.available": "CodeNomad {version} उपलब्ध छ। स्थापना गर्दा अनुप्रयोग पुनः सुरु हुनेछ।",
+  "releases.desktop.install": "स्थापना गरी पुनः सुरु गर्नुहोस्",
+  "releases.desktop.downloading": "अद्यावधिक डाउनलोड र प्रमाणीकरण गर्दै…",
+  "releases.desktop.restarting": "सञ्झ्यालहरू सुरक्षित गरी अद्यावधिक स्थापना गर्दै…",
+  "releases.desktop.failed": "अद्यावधिक पूरा हुन सकेन। फेरि प्रयास गर्नुहोस् वा संस्करण पृष्ठबाट डाउनलोड गर्नुहोस्।",
+  "releases.desktop.busy": "अर्को CodeNomad सञ्झ्यालले पहिले नै अद्यावधिक जाँच वा स्थापना गर्दैछ।",
   "releases.upgradeRequired.message.withVersion": "नयाँ UI प्रयोग गर्न CodeNomad {version} मा अपडेट गर्नुहोस्।",
   "releases.upgradeRequired.message.noVersion": "नयाँ UI प्रयोग गर्न CodeNomad अपडेट गर्नुहोस्।",
   "releases.upgradeRequired.action.getUpdate": "अपडेट प्राप्त गर्नुहोस्",
@@ -46,8 +54,8 @@ export const appMessages = {
   "releases.uiUpdated.title": "UI अपडेट गरियो",
   "releases.uiUpdated.message": "UI अब {version} मा अपडेट गरिएको छ।",
 
-  "releases.devUpdateAvailable.title": "देव निर्माण (Dev build) उपलब्ध छ",
-  "releases.devUpdateAvailable.message": "नयाँ देव निर्माण उपलब्ध छ: {version}।",
+  "releases.devUpdateAvailable.title": "अपडेट उपलब्ध छ",
+  "releases.devUpdateAvailable.message": "नयाँ रिलिज उपलब्ध छ: {version}।",
   "releases.devUpdateAvailable.action": "रिलिज हेर्नुहोस्",
 
   "theme.mode.system": "प्रणाली (System)",

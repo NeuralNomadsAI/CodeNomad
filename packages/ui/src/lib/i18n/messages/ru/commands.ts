@@ -14,6 +14,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Новый экземпляр",
   "commands.newInstance.description": "Открыть выбор папки для создания нового экземпляра",
   "commands.newInstance.keywords": "папка, проект, рабочее пространство",
+  "commands.newTemporaryInstance.label": "Новый временный экземпляр",
+  "commands.newTemporaryInstance.description": "Открыть пустой временный экземпляр без выбора папки",
+  "commands.newTemporaryInstance.keywords": "временный, черновик, быстро, пустой, проект, temporary",
   "commands.openWorkspace.folder.label": "Открыть папку проекта",
   "commands.openWorkspace.folder.description": "Открыть папку текущего проекта в файловом менеджере",
   "commands.openWorkspace.folder.keywords": "папка, проводник, файлы",
@@ -113,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "Очистить поле prompt",
   "commands.clearInput.keywords": "очистить, сброс",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Новая строка, Cmd/Ctrl+Enter: Отправить промпт",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Отправить промпт, Cmd/Ctrl+Enter: Новая строка",
-  "commands.promptSubmitShortcut.description": "Поменять местами Enter и Cmd/Ctrl+Enter в поле ввода промпта",
-  "commands.promptSubmitShortcut.keywords": "enter, отправить, новая строка, сочетание, cmd, ctrl, промпт",
 
   "commands.thinkingBlocks.label.show": "Показать размышления",
   "commands.thinkingBlocks.label.hide": "Скрыть размышления",

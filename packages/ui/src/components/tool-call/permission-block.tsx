@@ -131,14 +131,6 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   {t("toolCall.permission.actions.deny")}
                 </button>
               </div>
-              <Show when={props.active() && !approvalBlocked()}>
-                <div class="tool-call-permission-shortcuts">
-                  <kbd class="kbd">Enter</kbd>
-                  <span>{t("toolCall.permission.shortcuts.allowOnce")}</span>
-                  <kbd class="kbd">A</kbd>
-                  <span>{t("toolCall.permission.shortcuts.alwaysAllow")}</span>
-                </div>
-              </Show>
             </div>
             <Show when={props.error()}>
               <div class="tool-call-permission-error">{props.error()}</div>

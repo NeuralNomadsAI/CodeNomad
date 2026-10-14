@@ -114,7 +114,7 @@ outside the transcript store and reports partial cleanup and skipped messages.
   Local configuration must target the **directory**, not `plugin.ts`.
 - An automatically provisioned entry in the global OpenCode `plugins` directory is
   discovered for all projects. Its small lifecycle module remains loaded; pruning
-  RPCs exist only while CodeNomad is present. See [deployment](SESSION_PRUNING_DEPLOYMENT.md). No daemon upgrade or
+  RPCs exist only while CodeNomad is present. No daemon upgrade or
   restart is performed by pruning commands.
 
 ## Coordination and remaining validation

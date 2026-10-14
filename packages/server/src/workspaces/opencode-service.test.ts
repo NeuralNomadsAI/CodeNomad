@@ -17,6 +17,49 @@ const endpoint: Endpoint = {
 }
 
 describe("OpenCodeSharedService", () => {
+  it("observes only the registered connection without discovery, negotiation or provisioning", async (context) => {
+    let now = 0
+    let discoveries = 0
+    let starts = 0
+    let preparations = 0
+    let release!: () => void
+    const service = createService({ now: () => now })
+    assert.equal(service.existingConnection(), undefined)
+    const pending = service.client({
+      ...lifecycleOptions("host:observation", {
+        discover: async () => { discoveries++; return endpoint },
+        ensure: async () => { starts++; return endpoint },
+      }),
+      prepareDesktopPlugins: async () => {
+        preparations++
+        await new Promise<void>(resolve => { release = resolve })
+        return true
+      },
+    })
+    // Discovery is still pending; observing it must not start a second acquisition.
+    assert.equal(service.existingConnection(), undefined)
+    await new Promise(resolve => setImmediate(resolve))
+    const connection = service.existingConnection()!
+    assert.equal(connection.endpoint, endpoint)
+    connection.assertCurrent()
+    const profile = context.mock.method(connection, "profile")
+    now += 30_000
+    assert.equal(service.existingConnection(), connection)
+    assert.equal(profile.mock.callCount(), 0)
+    assert.deepEqual([discoveries, starts, preparations], [1, 0, 1])
+    release()
+    await pending
+    assert.equal(await service.acquire(), connection)
+    const calls = [discoveries, starts, preparations, profile.mock.callCount()]
+    service.invalidate()
+    assert.equal(service.existingConnection(), undefined)
+    assert.throws(connection.assertCurrent, /connection changed/)
+    assert.throws(() => connection.fetch(`${endpoint.url}/api/info`), /connection changed/)
+    assert.deepEqual([discoveries, starts, preparations, profile.mock.callCount()], calls)
+    await service.shutdown()
+    assert.equal(service.existingConnection(), undefined)
+  })
+
   it("binds event provenance to its actual connection without serializing credentials", async () => {
     const event = { type: "permission.replied", data: { sessionID: "s", requestID: "p", reply: "once" } }
     const service = createService({ makeClient: () => ({ event: { subscribe: async function* () { yield event } } }) as unknown as OpenCodeClient })

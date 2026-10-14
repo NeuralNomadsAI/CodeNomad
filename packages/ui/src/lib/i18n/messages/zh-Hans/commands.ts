@@ -14,6 +14,9 @@ export const commandMessages = {
   "commands.newInstance.label": "新建实例",
   "commands.newInstance.description": "打开文件夹选择器以创建新实例",
   "commands.newInstance.keywords": "folder, project, workspace, 文件夹, 项目, 工作区",
+  "commands.newTemporaryInstance.label": "新建临时实例",
+  "commands.newTemporaryInstance.description": "无需选择文件夹即可打开一个空的临时实例",
+  "commands.newTemporaryInstance.keywords": "临时, 草稿, 快速, 空, 项目, temporary",
   "commands.openWorkspace.folder.label": "打开项目文件夹",
   "commands.openWorkspace.folder.description": "在文件管理器中打开当前项目文件夹",
   "commands.openWorkspace.folder.keywords": "文件夹, 资源管理器, 文件",
@@ -113,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "清空 prompt 输入框",
   "commands.clearInput.keywords": "clear, reset, 清空, 重置",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: 换行, Cmd/Ctrl+Enter: 提交提示词",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: 提交提示词, Cmd/Ctrl+Enter: 换行",
-  "commands.promptSubmitShortcut.description": "在提示词输入框中交换 Enter 与 Cmd/Ctrl+Enter 的行为",
-  "commands.promptSubmitShortcut.keywords": "enter, 换行, 提交, 发送, 快捷键, cmd, ctrl, 提示词",
 
   "commands.thinkingBlocks.label.show": "显示思考",
   "commands.thinkingBlocks.label.hide": "隐藏思考",

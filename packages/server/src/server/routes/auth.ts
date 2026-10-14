@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
-import { isLoopbackAddress } from "../../auth/http-auth"
+import { isRemoteRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
   authManager: AuthManager
@@ -74,7 +74,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (!deps.authManager.isLoopbackRequest(request)) {
       reply.code(404).send({ error: "Not found" })
       return
     }
@@ -90,7 +90,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/auth/status", async (request, reply) => {
     const session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
-      reply.send({ authenticated: false })
+      // Remote Control devices recover by pairing again; password login is host-only.
+      reply.send(isRemoteRequest(request) ? { authenticated: false, pairingRequired: true } : { authenticated: false })
       return
     }
     reply.send({ authenticated: true, ...deps.authManager.getStatus() })
@@ -115,7 +116,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (!deps.authManager.isLoopbackRequest(request)) {
       reply.code(404).send({ error: "Not found" })
       return
     }

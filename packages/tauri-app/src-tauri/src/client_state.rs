@@ -5,6 +5,8 @@ mod envelope;
 mod navigation;
 mod partitions;
 mod process;
+mod restorable;
+mod startup_command;
 mod window;
 mod window_flush;
 mod window_updates;
@@ -15,13 +17,29 @@ pub use commands::{
     __cmd__client_state_commit_partitions, __cmd__client_state_load,
     __cmd__client_state_load_partition, __cmd__client_state_navigation_flushed,
     __cmd__client_state_renderer_flushed, __cmd__client_state_save,
-    __cmd__client_state_set_restore_enabled,
+    __cmd__client_state_set_restore_enabled, __cmd__client_state_startup_command_result,
 };
 pub use commands::{
     client_state_claim_access, client_state_clear, client_state_commit_partitions,
     client_state_load, client_state_load_partition, client_state_navigation_flushed,
     client_state_renderer_flushed, client_state_save, client_state_set_restore_enabled,
+    client_state_startup_command_result,
 };
+pub(crate) use startup_command::{
+    command_name as startup_state_command, run_in_local_window as run_startup_state_command,
+    StartupStateSnapshot,
+};
+pub(crate) use restorable::{default_state_files, restorable_state_modified};
+pub(crate) use cross_host::pid_is_alive;
+
+/// `~/.codenomad/client-state`: the default profile's shared state (`v2/`) and its legacy file.
+pub(crate) fn home_client_state_directory() -> Option<PathBuf> {
+    cross_host::state_path()
+        .ok()?
+        .parent()?
+        .parent()
+        .map(Path::to_path_buf)
+}
 pub(crate) use navigation::{
     before_window_navigation, before_window_navigation_if, NavigationKind,
 };
@@ -78,6 +96,7 @@ pub struct ClientState {
     renderer_access: access::RendererAccess,
     ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
+    startup_commands: startup_command::StartupCommands,
     write_state: StateWriter,
 }
 
@@ -212,6 +231,7 @@ impl ClientState {
             renderer_access: access::RendererAccess::default(),
             ephemeral_windows: Mutex::new(HashSet::new()),
             renderer_flush: RendererFlush::default(),
+            startup_commands: startup_command::StartupCommands::default(),
             write_state,
         }
     }

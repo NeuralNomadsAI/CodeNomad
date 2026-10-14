@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -44,6 +43,7 @@ pub(crate) struct BrowserTargetAction {
     action: String,
     url: Option<String>,
     preset: Option<String>,
+    entry_id: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -93,6 +93,10 @@ pub(crate) struct BrowserController {
 }
 
 impl BrowserController {
+    fn storage_directory(&self) -> std::path::PathBuf {
+        self.profile.join("shared-v1")
+    }
+
     pub(crate) fn new(profile: std::path::PathBuf) -> Self {
         Self {
             emulation_lock: Arc::new(Mutex::new(())),
@@ -126,9 +130,9 @@ impl BrowserController {
         let navigation_registration_id = registration_id.clone();
         let policy_controller = self.clone();
         let policy_registration_id = registration_id.clone();
-        let profile = self
-            .profile
-            .join(format!("{:x}", Sha256::digest(input.session_id.as_bytes())));
+        // Every preview is a tab in the same browser profile. Its navigation
+        // history and automation attachment remain owned by its session.
+        let profile = self.storage_directory();
         let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(blank))
             .data_directory(profile)
             .on_navigation(move |url| {
@@ -160,6 +164,8 @@ impl BrowserController {
                 PhysicalSize::new(input.bounds.width, input.bounds.height),
             )
             .map_err(|error| format!("failed to create browser preview: {error}"))?;
+        #[cfg(windows)]
+        crate::windows_browser_accelerators::bind(&webview);
         if let Err(error) = install_webview2_handlers(
             &webview,
             self.clone(),
@@ -298,11 +304,41 @@ impl BrowserController {
         app: &AppHandle,
         window_label: &str,
         input: BrowserTargetAction,
-    ) -> Result<(), String> {
+    ) -> Result<Value, String> {
         let registration = self.owned_registration(window_label, &input.registration_id)?;
         let webview = app
             .get_webview(&registration.webview_label)
             .ok_or_else(|| "Browser preview is no longer available".to_string())?;
+        if input.action == "history" || input.action == "history-go" {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let result = cdp(&webview, "Page.getNavigationHistory", json!({}), deadline)?;
+            if input.action == "history-go" {
+                let id = input.entry_id.ok_or("Browser history entry is required")?;
+                let entry = result["entries"]
+                    .as_array()
+                    .and_then(|entries| {
+                        entries
+                            .iter()
+                            .find(|entry| entry["id"].as_i64() == Some(id))
+                    })
+                    .ok_or("Invalid browser history entry")?;
+                allowed_url(entry["url"].as_str().ok_or("Invalid browser history URL")?)?;
+                if self
+                    .owned_registration(window_label, &input.registration_id)?
+                    .generation
+                    != registration.generation
+                {
+                    return Err("Browser target changed before history navigation".to_string());
+                }
+                return cdp(
+                    &webview,
+                    "Page.navigateToHistoryEntry",
+                    json!({ "entryId": id }),
+                    deadline,
+                );
+            }
+            return bounded_history(result);
+        }
         match input.action.as_str() {
             "emulate" => self.emulate(app, window_label, &input),
             "back" => webview
@@ -316,6 +352,7 @@ impl BrowserController {
                 .map_err(|error| error.to_string()),
             _ => Err("Unsupported browser target action".to_string()),
         }
+        .map(|()| Value::Null)
     }
 
     #[cfg(not(windows))]
@@ -324,7 +361,7 @@ impl BrowserController {
         _app: &AppHandle,
         _window_label: &str,
         _input: BrowserTargetAction,
-    ) -> Result<(), String> {
+    ) -> Result<Value, String> {
         Err(unsupported())
     }
 
@@ -1131,6 +1168,34 @@ impl BrowserController {
     }
 }
 
+fn bounded_history(result: Value) -> Result<Value, String> {
+    let index = result["currentIndex"]
+        .as_u64()
+        .ok_or("Invalid browser history cursor")? as usize;
+    let source = result["entries"]
+        .as_array()
+        .ok_or("Invalid browser history entries")?;
+    let current_id = source.get(index).and_then(|entry| entry["id"].as_i64());
+    let entries = source
+        .iter()
+        .skip(index.saturating_sub(16))
+        .take(32)
+        .filter_map(|entry| {
+            let url = entry["url"].as_str()?;
+            if url.len() > 2048 || allowed_url(url).is_err() {
+                return None;
+            }
+            Some(json!({ "id": entry["id"].as_i64()?, "url": url }))
+        })
+        .collect::<Vec<_>>();
+    let index = entries
+        .iter()
+        .position(|entry| entry["id"].as_i64() == current_id)
+        .map(|index| index as i64)
+        .unwrap_or(-1);
+    Ok(json!({ "entries": entries, "index": index }))
+}
+
 fn validate_id(value: &str, max: usize) -> Result<(), String> {
     if value.is_empty()
         || value.len() > max
@@ -1290,8 +1355,10 @@ fn install_webview2_handlers(
 
                 let completed_controller = controller.clone();
                 let completed_registration_id = registration_id.clone();
+                let completed_app = app.clone();
+                let completed_window_label = window_label.clone();
                 let completed =
-                    NavigationCompletedEventHandler::create(Box::new(move |_, args| {
+                    NavigationCompletedEventHandler::create(Box::new(move |core, args| {
                         let Some(args) = args else {
                             return Ok(());
                         };
@@ -1312,6 +1379,23 @@ fn install_webview2_handlers(
                             navigation_id,
                             error,
                         );
+                        if succeeded.as_bool() {
+                            if let Some(core) = core {
+                                let mut raw = Default::default();
+                                unsafe { core.Source(&mut raw)? };
+                                if let Some(webview) =
+                                    completed_app.get_webview(&completed_window_label)
+                                {
+                                    let _ = webview.emit(
+                                        "browser-target:navigated",
+                                        json!({
+                                            "registrationId": completed_registration_id,
+                                            "url": CoTaskMemPWSTR::from(raw).to_string(),
+                                        }),
+                                    );
+                                }
+                            }
+                        }
                         Ok(())
                     }));
                 let mut completed_token = 0;

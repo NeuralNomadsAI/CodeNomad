@@ -157,7 +157,7 @@ test("Settings snapshots disclose only fallback logins and preserve aliases", as
     const raw = JSON.stringify(snapshot)
     for (const forbidden of ["secret", "private-", "access", "refresh", "expires"]) assert.equal(raw.includes(forbidden), false)
     f.state.calls = []
-    assert.deepEqual(await f.service.snapshot(f.connection, "/project", "anthropic", AbortSignal.timeout(3000)),
+    assert.deepEqual(await f.service.snapshot(f.connection, "/project", "deepinfra", AbortSignal.timeout(3000)),
       { supported: false, enabled: false, logins: {} })
     assert.equal(f.state.calls.length, 0)
     f.state.provider = "anthropic"; f.service.setEnabled(true); await f.send()

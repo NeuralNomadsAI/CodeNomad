@@ -1,0 +1,74 @@
+/* Fixed panel toggles at the shell's outer header corners. They never move:
+ * whichever header lies beneath (docked/floating panel or conversation)
+ * reserves their footprint instead. */
+.session-shell-frame {
+  --shell-panel-toggle-size: var(--icon-button-size);
+  /* Hug the window edge; keep the usual header gap before adjacent content. */
+  --shell-panel-toggle-inset: var(--space-xs);
+  --shell-panel-toggle-reserve: calc(var(--shell-panel-toggle-inset) + var(--shell-panel-toggle-size) + var(--space-sm));
+  position: relative;
+  /* Contain the toggles' z-index: above in-frame floating drawers, below
+   * body-portaled dialogs, scrims and utility windows. */
+  isolation: isolate;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.shell-panel-toggle {
+  --icon-size: 16px;
+  --touch-target-size: var(--touch-target-size-compact);
+  position: absolute;
+  /* One fixed centre: every header's action row shares this line. */
+  top: var(--panel-header-action-center);
+  transform: translateY(-50%);
+  /* Above floating drawers (z-index 60) within the frame's stacking context. */
+  z-index: 70;
+}
+
+.shell-panel-toggle--left {
+  inset-inline-start: var(--shell-panel-toggle-inset);
+}
+
+.shell-panel-toggle--right {
+  inset-inline-end: var(--shell-panel-toggle-inset);
+}
+
+@media (pointer: coarse) {
+  .session-shell-frame {
+    --shell-panel-toggle-size: var(--touch-target-size-compact);
+  }
+}
+
+/* Physical panel and history glyphs follow the reading direction. */
+[dir="rtl"] .shell-panel-toggle svg,
+[dir="rtl"] .session-history-button svg {
+  transform: scaleX(-1);
+}
+
+/* The session sidebar always starts at the leading edge, the right panel
+ * always ends at the trailing edge; floating drawers span the whole shell. */
+.session-shell-frame .session-sidebar-header {
+  padding-inline-start: var(--shell-panel-toggle-reserve);
+}
+
+.session-shell-frame .right-panel-tab-bar .tab-container {
+  padding-inline-end: var(--shell-panel-toggle-reserve);
+}
+
+.session-shell-frame .session-floating-drawer .session-sidebar-header {
+  padding-inline-end: var(--shell-panel-toggle-reserve);
+}
+
+.session-shell-frame .session-floating-drawer .right-panel-tab-bar .tab-container {
+  padding-inline-start: var(--shell-panel-toggle-reserve);
+}
+
+.session-center-column[data-left-toggle-reserve="true"] .session-toolbar-left {
+  padding-inline-start: var(--shell-panel-toggle-reserve);
+}
+
+.session-center-column[data-right-toggle-reserve="true"] .session-toolbar-right {
+  padding-inline-end: var(--shell-panel-toggle-reserve);
+}

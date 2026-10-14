@@ -2,10 +2,12 @@ import { render } from "solid-js/web"
 import { createSignal } from "solid-js"
 import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
+import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
 import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import AlertDialog from "../../../src/components/alert-dialog"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -13,7 +15,7 @@ import { runtimeEnv } from "../../../src/lib/runtime-env"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { getFormQueue } from "../../../src/stores/forms"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
-import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
+import { addInstance, addPendingForm, addPermissionToQueue, instances, setActiveInstanceId } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, clearActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
@@ -23,6 +25,8 @@ import "../../../src/index.css"
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
 bootStage("imports-complete")
 if (new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
+// Model optional app registrations without reintroducing inline shortcut hints.
+if (new URLSearchParams(location.search).has("shortcutHints")) registerNavigationShortcuts()
 const id = "header-windows", sessionId = "session"
 let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },
@@ -30,18 +34,24 @@ const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fi
   time: { created: 1, updated: 1 }, agent: "build", status: "idle", model: { providerId: "fixture", modelId: "fixture" } }
 const fixtureSessions = new Map([[sessionId, session]])
 const replies: any[] = []
+const deletedSessions: string[] = []
 let eventTime = 100
 const emit = (type: string, data: unknown) => (sseManager as any).handleEvent(id, {
   id: `fixture-event-${++eventTime}`, type, created: eventTime, location: { directory: "/repo" }, data,
 })
 const client: any = {
   session: { list: async () => ({ data: [...fixtureSessions.values()], cursor: {} }), active: async () => ({}),
+    remove: async ({ sessionID }: any) => { deletedSessions.push(sessionID); fixtureSessions.delete(sessionID) },
     get: async ({ sessionID }: any) => fixtureSessions.get(sessionID), inbox: { list: async () => ({ data: [] }) }, interrupt: async () => { interrupts++ },
     form: { reply: async (input: any) => { replies.push(input); emit("form.replied", { sessionID: input.sessionID, id: input.formID, answer: input.answer }) } },
   },
   form: { list: async () => ({ data: getFormQueue(id) }) },
   permission: { reply: async (input: any) => { replies.push(input) } },
-  message: { list: async () => ({ data: [{ id: "hello", type: "user", text: "Fixture message", time: { created: 1 } }], cursor: {} }) },
+  message: { list: async () => ({ data: [{ id: "hello", type: "user", text: "Fixture message", time: { created: 1 } },
+    // Opt-in assistant card (muted message surface) for toggle-colour checks.
+    ...(new URLSearchParams(location.search).has("assistant") ? [{ id: "reply", type: "assistant", agent: "build",
+      model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "Fixture reply" }], time: { created: 2, completed: 3 } }] : []),
+  ], cursor: {} }) },
   model: { default: async () => ({ data: { providerID: "fixture", id: "fixture" } }) },
   file: { status: async () => ({ data: [] }) },
 }
@@ -58,6 +68,7 @@ serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
 })
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
+setActiveInstanceId(id)
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))
 setProviders(previous => new Map(previous).set(id, [{ id: "fixture", name: "Fixture", models: [] }]))
 setActiveSession(id, sessionId)
@@ -86,6 +97,7 @@ function Fixture() {
   return (
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
+    <AlertDialog />
     <InstanceShell instance={instances().get(id)!} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
@@ -101,10 +113,15 @@ bootStage("preferences-before")
 await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
-  runtimeEnv, replies, setImmersive, setActive,
+  runtimeEnv, replies, deletedSessions, setImmersive, setActive,
   readLayout: readClientLayoutValue,
   addSession: (sid: string, parentId: string | null = null) => {
     fixtureSessions.set(sid, { ...session, id: sid, parentId, title: `Fixture ${sid}` })
+    setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
+    setSessionPage(id, [...fixtureSessions.keys()], false, true)
+  },
+  removeSession: (sid: string) => {
+    fixtureSessions.delete(sid)
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
     setSessionPage(id, [...fixtureSessions.keys()], false, true)
   },
@@ -139,6 +156,6 @@ bootStage("preferences-after")
   setIdle: () => setSessionStatus(id, sessionId, "idle", { force: true }),
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,
-  promptHeight: promptInputHeight,
+  promptHeight: () => promptInputHeight(id),
 }
 bootStage("published")

@@ -4,12 +4,16 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
 
 before(async () => {
+  cache = await createFixtureCache()
   server = await createServer({
     configFile: false,
+    cacheDir: cache.cacheDir,
     root: fileURLToPath(new URL("../..", import.meta.url)),
     logLevel: "error",
     plugins: [solid(), {
@@ -31,7 +35,13 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
 
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => {
+  try { await browser?.close() }
+  finally {
+    try { await server?.close() }
+    finally { await cache?.dispose() }
+  }
+})
 
 test("a question retains its draft while a different conversation receives a permission", async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })

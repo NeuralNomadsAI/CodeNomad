@@ -106,6 +106,61 @@ test("provider manager keeps per-account drafts across dropdown and external swi
   } finally { await page.close() }
 })
 
+test("external provider auth preserves failed form drafts and never falls back or replays", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?parent&external`)
+    await page.getByRole("button", { name: "Add account", exact: true }).click()
+    const panel = page.locator(".providers-connect-panel")
+    await panel.getByLabel("Resource").fill("fixture-resource")
+    await page.evaluate(() => (window as any).fixture.fail())
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await page.getByRole("alert").waitFor()
+    assert.equal(await panel.getByLabel("Resource").inputValue(), "fixture-resource")
+    const expected = { action: "external", integrationID: "provider", methodID: "fixture-source", answer: { resource: "fixture-resource" }, location: { directory: "/a" } }
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [expected])
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await panel.waitFor({ state: "detached" })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [expected, expected])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("server-supported subscription integrations beyond OpenAI offer automatic selection", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const requests: Array<{ method: string; path: string; body: unknown }> = []
+  let enabled = false
+  await page.route("**/api/**", route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (!path.includes("/provider-accounts/")) return route.fulfill({ contentType: "application/json", body: "{}" })
+    const body = request.postDataJSON()
+    requests.push({ method: request.method(), path, body })
+    if (request.method() === "PUT") enabled = body.enabled
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({ supported: true, enabled, logins: {} }) })
+  })
+  try {
+    await page.goto(`${url}?integration=opencode-go`)
+    const toggle = page.getByRole("checkbox", { name: "Auto-select account" })
+    await toggle.waitFor()
+    assert.match(await page.locator(".provider-account-auto").getAttribute("title") ?? "", /subscription account's quota/)
+    assert.doesNotMatch(await page.locator(".provider-account-auto").getAttribute("title") ?? "", /Codex|OAuth/)
+    await toggle.click() // The control stays unchecked until the server confirms the write.
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".provider-account-auto input")?.checked === true)
+    assert.deepEqual(requests.map(item => [item.method, item.path]), [
+      ["GET", "/api/workspaces/accounts/provider-accounts/opencode-go"],
+      ["PUT", "/api/workspaces/accounts/provider-accounts/opencode-go"],
+      ["GET", "/api/workspaces/accounts/provider-accounts/opencode-go"],
+    ])
+    assert.deepEqual(requests[1].body, { directory: "/a", enabled: true })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("dropdown design simulates opt-in rotation and hides the option for one account", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   const errors: string[] = []

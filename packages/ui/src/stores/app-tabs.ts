@@ -252,7 +252,9 @@ function ensureActiveAppTab(preferredTabId?: string | null) {
     return
   }
 
-  selectAppTab(tabs[0]?.id ?? null)
+  // Waiting for setup with no tabs is not a new user selection. Otherwise
+  // every workspace discovery would fence the saved active tab's recovery.
+  if (current !== null || tabs.length > 0) selectAppTab(tabs[0]?.id ?? null)
 }
 
 export {

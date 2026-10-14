@@ -19,7 +19,10 @@ export function codexCredential(entry: CredentialEntry, now = Date.now()) {
   ])).digest("hex")
   const email = getString(value.metadata?.email)
     ?? getString(claims?.["https://api.openai.com/profile"]?.email) ?? getString(claims?.email)
-  // Display only, not authentication or authorization. Do not return arbitrary claims.
-  const login = email && email.length <= 254 && /^[^\s@\x00-\x1f\x7f]+@[^\s@\x00-\x1f\x7f]+\.[^\s@\x00-\x1f\x7f]+$/.test(email) ? email : undefined
-  return { identity, access: value.access, accountID, login }
+  return { identity, access: value.access, accountID, login: displayLogin(email) }
+}
+
+// Display only, not authentication or authorization. Do not return arbitrary claims.
+export function displayLogin(email: string | null | undefined) {
+  return email && email.length <= 254 && /^[^\s@\x00-\x1f\x7f]+@[^\s@\x00-\x1f\x7f]+\.[^\s@\x00-\x1f\x7f]+$/.test(email) ? email : undefined
 }

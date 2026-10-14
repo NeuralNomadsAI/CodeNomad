@@ -2,8 +2,10 @@ import { createSignal } from "solid-js"
 
 export type AlertVariant = "info" | "warning" | "error"
 
+export type AlertDialogChoice = { value: string; label: string; tone?: "primary" | "danger" }
+
 export type AlertDialogState = {
-  type?: "alert" | "confirm" | "prompt"
+  type?: "alert" | "confirm" | "prompt" | "choice"
   title?: string
   message: string
   detail?: string
@@ -25,6 +27,10 @@ export type AlertDialogState = {
 
   // prompt-only
   resolvePrompt?: (value: string | null) => void
+
+  // choice-only: buttons after Cancel; the last one receives initial focus.
+  choices?: AlertDialogChoice[]
+  resolveChoice?: (value: string | null) => void
 }
 
 const [alertDialogState, setAlertDialogState] = createSignal<AlertDialogState | null>(null)
@@ -36,6 +42,7 @@ function replaceAlertDialog(next: AlertDialogState) {
   // invoking action callbacks or leaving their local controls locked forever.
   if (previous?.type === "confirm") previous.resolve?.(false)
   if (previous?.type === "prompt") previous.resolvePrompt?.(null)
+  if (previous?.type === "choice") previous.resolveChoice?.(null)
 }
 
 export function showAlertDialog(message: string, options?: Omit<AlertDialogState, "message">) {
@@ -73,6 +80,26 @@ export function showPromptDialog(
       message,
       ...options,
       resolvePrompt,
+    })
+  })
+}
+
+/** Resolves the chosen value, or null when cancelled or dismissed. */
+export function showChoiceDialog(
+  message: string,
+  choices: AlertDialogChoice[],
+  options?: Omit<AlertDialogState, "message" | "type" | "choices" | "resolve" | "resolvePrompt" | "resolveChoice">,
+): Promise<string | null> {
+  const activeElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null
+  activeElement?.blur()
+
+  return new Promise<string | null>((resolveChoice) => {
+    replaceAlertDialog({
+      type: "choice",
+      message,
+      ...options,
+      choices,
+      resolveChoice,
     })
   })
 }

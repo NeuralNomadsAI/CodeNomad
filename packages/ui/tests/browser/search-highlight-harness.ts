@@ -2,8 +2,10 @@ import { fileURLToPath } from "node:url"
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { build, preview, createServer, type InlineConfig } from "vite"
+import { build, preview, createServer, type InlineConfig, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 
 export const baselineCommit = "6f6edbbcb91227fdd1d5863f6c21fad2691de679"
 
@@ -42,7 +44,22 @@ export async function startHighlightHarness() {
     } },
       url: `http://127.0.0.1:${(server.httpServer.address() as { port: number }).port}/fixture` }
   }
-  const server = await createServer(config)
-  await server.listen()
-  return { server, url: `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture` }
+  // The default cacheDir is the shared (often junctioned) node_modules/.vite, whose
+  // root-dependent hash lets concurrent checkouts evict these optimized deps mid-run.
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  let server: ViteDevServer | undefined
+  try {
+    server = await createServer({ ...config, cacheDir: cache.cacheDir, plugins: [shutdown.plugin, ...config.plugins!] })
+    shutdown.own(server)
+    await server.listen()
+    return { server, url: `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture` }
+  } catch (error) {
+    try {
+      if (server) await server.close()
+      else await cache.dispose()
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Highlight fixture setup and cleanup failed")
+    }
+    throw error
+  }
 }

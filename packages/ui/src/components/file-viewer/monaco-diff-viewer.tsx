@@ -15,6 +15,8 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
+  /** Display-only: compare lines without leading/trailing whitespace. */
+  ignoreTrimWhitespace?: boolean
   onRequestInsertContext?: (selection: { startLine: number; endLine: number }) => void
   insertContextLabel?: string
 }
@@ -143,6 +145,15 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
   const getModifiedEditor = () => diffEditor?.getModifiedEditor?.() ?? null
 
+  /** Version ids of a shown diff model; null once a cached model was disposed. */
+  const modelVersions = (model: any): number[] | null => {
+    try {
+      return model ? [model.original.getVersionId(), model.modified.getVersionId()] : null
+    } catch {
+      return null
+    }
+  }
+
   const getActiveInsertRange = () => {
     const selection = selectedRange()
     if (selection) return selection
@@ -208,6 +219,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         renderWhitespace: "selection",
         fontSize: 13,
         wordWrap: props.wordWrap === "on" ? "on" : "off",
+        ignoreTrimWhitespace: props.ignoreTrimWhitespace === true,
         glyphMargin: false,
         folding: false,
         // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
@@ -336,6 +348,8 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         contextMode === "collapsed"
           ? { enabled: true }
           : { enabled: false },
+      // Monaco defaults to true; whitespace changes stay visible unless hidden explicitly.
+      ignoreTrimWhitespace: props.ignoreTrimWhitespace === true,
       wordWrap,
     })
 
@@ -373,9 +387,16 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     const beforeKey = `${props.scopeKey}:diff:${props.path}:before`
     const afterKey = `${props.scopeKey}:diff:${props.path}:after`
 
+    const current = diffEditor.getModel?.()
+    const versionsBefore = modelVersions(current)
     const original = getOrCreateTextModel({ monaco, cacheKey: beforeKey, value: before, languageId })
     const modified = getOrCreateTextModel({ monaco, cacheKey: afterKey, value: after, languageId })
-    diffEditor.setModel({ original, modified })
+    // A reload of identical text keeps the current diff view model, and with it
+    // the regions the reader expanded. Changed text (setValue clears the
+    // decorations that track hidden regions) or other models need a fresh one.
+    const unchanged = current?.original === original && current?.modified === modified
+      && versionsBefore !== null && versionsBefore.join() === modelVersions(current)?.join()
+    if (!unchanged) diffEditor.setModel({ original, modified })
 
     void ensureMonacoLanguageLoaded(languageId).then(() => {
       try {

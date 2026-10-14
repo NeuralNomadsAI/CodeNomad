@@ -16,8 +16,7 @@ procedure. Tao 0.34.6 holds `KEY_EVENT_BUILDERS`, `LAYOUT_CACHE` or the IME wind
 state across peeking, causing same-thread mutex deadlocks. The upstream fix moves
 the peeks before those locks and passes the results into the handlers.
 
-The recorded CodeNomad dump matches this exact path. See
-`dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for diagnosis and validation. Do not
+The recorded CodeNomad dump matches this exact path. Do not
 replace non-reentrant mutexes with recursive locks or silently drop nested input.
 
 The Windows native regression uses a hidden Tao window and cross-thread sent
@@ -48,10 +47,27 @@ Run `node scripts/test-tauri-macos-window.mjs --baseline` in a graphical macOS
 session. The isolated native fixture checks that getters generate no geometry
 events, including reads during geometry capture, and exercises maximize/restore,
 fixed-size and decorated windows. Its original-crate negative control reproduces
-the feedback loop. See `dev-docs/TAURI_MACOS_STARTUP.md` for real application tests.
+the feedback loop.
 
 Remove the override only after both native backports are available in the
 resolved supported release and both native regressions pass.
 
 [tao#1215]: https://github.com/tauri-apps/tao/pull/1215
 [tao#1182]: https://github.com/tauri-apps/tao/pull/1182
+
+## Updater Windows launch handoff
+
+`tauri-plugin-updater-2.12.0/` is the published MIT/Apache-2.0 crate (licenses
+included), selected through the workspace's `[patch.crates-io]`.
+
+- Crate: https://static.crates.io/crates/tauri-plugin-updater/tauri-plugin-updater-2.12.0.crate
+- SHA-256: `7a5cad8ed5948d988e1018ecd31e27cacedbf72ce3fb972940c3e4bf51639e4b`
+- Local change: `src/updater.rs` runs `on_before_exit` only after a successful
+  `ShellExecuteW`. Upstream calls it before launching, irreversibly releasing
+  client-state ownership even when Windows refuses to start the installer.
+- Regression: `cargo test -p tauri-plugin-updater windows_launch_tests` from
+  `packages/tauri-app` checks failed and successful native launch result codes.
+
+Extraction, signature checks, NSIS arguments, installer restart and Unix install
+paths remain upstream. Remove this override when a published plugin provides the
+same success-only handoff; rerun the regression and signed installer trial first.

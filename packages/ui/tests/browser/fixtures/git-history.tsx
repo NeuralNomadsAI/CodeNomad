@@ -10,6 +10,7 @@ import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { createCoreRightPanelRuntime } from "../../../src/components/instance/shell/right-panel/core-runtime"
 import { FilesPreviewView } from "../../../src/components/files-preview-view"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { Toaster } from "solid-toast"
 import { closeFilePreview, getFilePreview } from "../../../src/stores/files-preview"
 import { parseRightPanelCustomization } from "../../../src/components/instance/shell/right-panel/registry"
 import { sessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
@@ -22,6 +23,8 @@ const imagesFixture = new URLSearchParams(location.search).has("images")
 const imageBytes = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6xUAAAAASUVORK5CYII="
 const SessionView = new URLSearchParams(location.search).has("session")
   ? (await import("../../../src/components/session/session-view")).default : undefined
+const AdvancedSettings = new URLSearchParams(location.search).has("advanced")
+  ? (await import("../../../src/components/settings/advanced-settings-section")).AdvancedSettingsSection : undefined
 const [selectedSession, setSelectedSession] = createSignal(sessionId)
 const calls: Array<{ kind: string; slug?: string; path?: string; message?: string }> = []
 const savedFiles = new Map<string, string>()
@@ -72,6 +75,10 @@ const model = { providerID: "fixture", id: "fixture" }
 const sessionInfo = (sessionID: string) => ({ id: sessionID, title: sessionID, agent: "build", model, projectID: "fixture", location: { directory: "/CodeNomad" },
   cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } })
 const client: any = { vcs: { status: async () => ({ data: [] }) },
+  location: { get: async () => {
+    calls.push({ kind: "project" })
+    return { directory: "/CodeNomad", project: { id: "fixture", directory: "/CodeNomad", canonical: "/CodeNomad" } }
+  } },
   session: {
     active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     list: async () => ({ data: [sessionInfo(sessionId), sessionInfo("other")], cursor: {} }),
@@ -80,11 +87,23 @@ const client: any = { vcs: { status: async () => ({ data: [] }) },
   }, model: { default: async () => model }, message: { list: async () => ({ data: [], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
-serverApi.fetchConfigOwner = async () => ({ settings: { locale: "fr" } }) as any
-serverApi.patchConfigOwner = async (_owner, patch) => patch as any
+let config = { settings: { locale: "fr" } }
+serverApi.fetchConfigOwner = async () => config as any
+serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.patchStateOwner = async (_owner, patch) => patch as any
-serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/CodeNomad/.codenomad/worktrees", worktrees: entries })
+// `?uninitialized` opens a plain folder; Initialize Git turns it into the repository.
+let repository = !new URLSearchParams(location.search).has("uninitialized")
+serverApi.fetchWorktrees = async () => {
+  calls.push({ kind: "worktrees" })
+  return repository ? { isGitRepo: true, defaultDirectory: "/CodeNomad/.codenomad/worktrees", worktrees: entries }
+    : { isGitRepo: false, worktrees: [{ slug: "root", directory: "/CodeNomad", kind: "root" as const }] }
+}
+serverApi.initializeWorkspaceGit = async (_id, directory) => {
+  calls.push({ kind: "git-init", path: directory })
+  repository = true
+  return { ok: true }
+}
 serverApi.fetchGitHistory = async (_id, slug) => {
   calls.push({ kind: "history", slug })
   return { branch: entries.find(entry => entry.slug === slug)!.branch, head: commits[0].id, commits: slug === "root" ? commits : commits.slice(3), hasMore: false }
@@ -133,7 +152,7 @@ function Prototype() {
     rightPanelTab: () => "files", expandedItems: () => [], onExpandedItemsChange() {},
     customization: () => parseRightPanelCustomization(null), onCustomizationChange() {}, extraStatusSections: () => [],
   })
-  const tab = runtime.create({ instanceId: id, t, activeSessionId: () => sessionId, isTabActive: () => true, openTab() {} }).tabs!.find(tab => tab.id === "files")!
+  const tab = runtime.tabs!.find(tab => tab.id === "files")!
   ;(window as any).fixture = { calls, setActive, close: () => closeFilePreview(id), target: () => getFilePreview(id),
     invalidate: () => invalidateFilesystemCaches(id),
     switchSession: (value: string) => { setSelectedSession(value); if (SessionView) setActiveSession(id, value) },
@@ -153,9 +172,11 @@ function Prototype() {
     } }
   return <div style={{ height: "100vh", display: "flex", "flex-direction": "column", background: "var(--surface-base)", color: "var(--text-primary)" }}>
     <AlertDialog />
+    <Toaster position="top-right" />
     <header class="window-header" style={{ padding: "12px 18px" }}><strong>CodeNomad</strong><span class="text-xs text-muted">Prototype Files · données de démonstration</span></header>
     <div style={{ display: "flex", flex: 1, "min-height": "0" }}>
       <main style={{ display: "flex", "flex-direction": "column", flex: 1, "min-width": "0" }}>
+        {AdvancedSettings ? <div class="advanced-settings-fixture" style={{ "max-height": "280px", overflow: "auto", padding: "12px", "border-bottom": "1px solid var(--border-base)" }}><AdvancedSettings /></div> : null}
         <Show when={!SessionView} fallback={SessionView ? <SessionView sessionId={selectedSession()} activeSessions={sessions().get(id)!} instanceId={id} instanceFolder="/CodeNomad" escapeInDebounce={false} isActive={active()} /> : undefined}>
         <Show when={getFilePreview(id)} fallback={<div style={{ flex: 1, padding: "32px", overflow: "auto" }}>
           <div class="text-xs text-muted">CONVERSATION</div>

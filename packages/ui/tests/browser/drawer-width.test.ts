@@ -4,13 +4,17 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
-  server = await createServer({
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  try {
+    server = await createServer({
     configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    cacheDir: "node_modules/.vite-drawer-width",
-    plugins: [solid(), { name: "drawer-width-fixture", configureServer(s) {
+    cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "drawer-width-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
@@ -18,9 +22,11 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture?drawerWidth=1`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    shutdown.own(server)
+    await server.listen()
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture?drawerWidth=1`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 })
 after(async () => { await browser?.close(); await server?.close() })
 
@@ -67,6 +73,73 @@ test("transient minimized viewport sizes do not overwrite the chosen drawer widt
       assert.equal(await savedWidth(page), 500)
     }
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+const pinned = (page: Page) => page.evaluate(() => ({
+  left: Boolean(document.querySelector(".session-sidebar-container")),
+  right: Boolean(document.querySelector(".session-right-panel")),
+  floating: document.querySelectorAll(".session-floating-drawer .MuiDrawer-paper").length,
+}))
+const waitForPinned = (page: Page, left: boolean, right: boolean) => page.waitForFunction(({ left, right }) =>
+  Boolean(document.querySelector(".session-sidebar-container")) === left
+  && Boolean(document.querySelector(".session-right-panel")) === right, { left, right })
+
+test("touch tablets remember drawers per orientation; portrait opens closed", async () => {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 1024 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), true)
+    await waitForPinned(page, true, true)
+
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await waitForPinned(page, false, false)
+    assert.deepEqual(await pinned(page), { left: false, right: false, floating: 0 }, "portrait leaves the conversation uncovered")
+
+    // Opening the sessions drawer in portrait is remembered for portrait only.
+    await page.locator(".shell-panel-toggle--left button").click()
+    await waitForPinned(page, true, false)
+    await page.setViewportSize({ width: 1366, height: 1024 })
+    await waitForPinned(page, true, true)
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await waitForPinned(page, true, false)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("a drawer closed by rotation hands keyboard focus to its toggle", async () => {
+  // Tablet sizes on both sides of the 1280 px desktop breakpoint.
+  for (const [width, height] of [[1180, 820], [1366, 1024]]) {
+    const context = await browser.newContext({ viewport: { width, height }, hasTouch: true, isMobile: true })
+    const page = await context.newPage()
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await waitForPinned(page, true, true)
+      await page.locator(".session-sidebar-container button").first().focus()
+      await page.setViewportSize({ width: height, height: width })
+      await waitForPinned(page, false, false)
+      await page.waitForFunction(() => document.activeElement?.closest(".shell-panel-toggle--left") !== null)
+    } finally { await context.close() }
+  }
+})
+
+test("pointer devices keep drawers open in a tall window", async () => {
+  const page = await browser.newPage({ viewport: { width: 1366, height: 1024 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, true, true)
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await page.waitForTimeout(300)
+    assert.deepEqual(await pinned(page), { left: true, right: true, floating: 0 })
   } finally { await page.close() }
 })
 

@@ -14,7 +14,7 @@ import {
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForInstance, clearRecordDisplayCacheForMessages, getRecordDisplayCacheEntries } from "./record-display-cache"
-import { estimateRetainedBytes, estimateRetainedBytesIncrementally } from "../../lib/retained-size"
+import { estimateRetainedBytesIncrementally } from "../../lib/retained-size"
 import { clearInstanceMessageRenderCaches, clearSessionMessageRenderCache, peekSessionMessageRenderCache } from "../../lib/message-render-cache"
 import type { MessageWindowState } from "./message-window"
 import { shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
@@ -23,8 +23,6 @@ import type {
   LatestTodoSnapshot,
   MessageRecord,
   MessageUpsertInput,
-  PartUpdateInput,
-  PendingPartEntry,
   PermissionEntry,
   ReplaceMessageIdOptions,
   ScrollSnapshot,
@@ -51,7 +49,6 @@ function createInitialState(instanceId: string): InstanceMessageState {
     messages: {},
     lastAssistantMessageIds: {},
     messageInfoVersion: {},
-    pendingParts: {},
     sessionRevisions: {},
     permissions: {
       queue: [],
@@ -78,62 +75,13 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
   return fallbackId
 }
 
-const PENDING_PART_MAX_AGE_MS = 30_000
-const PENDING_PARTS_PER_MESSAGE_LIMIT = 100
-const PENDING_PARTS_PER_SESSION_LIMIT = 100
-const PENDING_PARTS_GLOBAL_LIMIT = 500
-const PENDING_PART_MAX_RETAINED_BYTES = 1024 * 1024
-const PENDING_PARTS_PER_SESSION_BYTE_LIMIT = 4 * 1024 * 1024
-const PENDING_PARTS_GLOBAL_BYTE_LIMIT = 8 * 1024 * 1024
-const DROPPED_PENDING_MESSAGE_LIMIT = 500
 const MAX_TRANSCRIPT_MEASUREMENT_BYTES = 64 * 1024 * 1024
 const MAX_TRANSCRIPT_MEASUREMENT_NODES = 500_000
-const pendingPartRetainedBytes = Symbol("pendingPartRetainedBytes")
-const pendingPartBudgetId = Symbol("pendingPartBudgetId")
-let nextPendingPartBudgetId = 0
-const pendingPartBudgetEntries = new Map<number, {
-  instanceId: string
-  bytes: number
-  receivedAt: number
-  isRetained: () => boolean
-  remove: () => void
-}>()
-type SizedPendingPartEntry = PendingPartEntry & { [pendingPartRetainedBytes]?: number; [pendingPartBudgetId]?: number }
-
-function getPendingPartRetainedBytes(entry: PendingPartEntry): number {
-  return (entry as SizedPendingPartEntry)[pendingPartRetainedBytes]
-    ?? estimateRetainedBytes(entry, PENDING_PART_MAX_RETAINED_BYTES)
-}
-
-function forgetPendingPartBudgetEntry(entry: PendingPartEntry): void {
-  const id = (entry as SizedPendingPartEntry)[pendingPartBudgetId]
-  if (id !== undefined) pendingPartBudgetEntries.delete(id)
-}
-
-function enforceGlobalPendingPartBudget(): void {
-  for (const [id, entry] of pendingPartBudgetEntries) if (!entry.isRetained()) pendingPartBudgetEntries.delete(id)
-  let bytes = 0
-  for (const entry of pendingPartBudgetEntries.values()) bytes += entry.bytes
-  if (bytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) return
-  const oldest = [...pendingPartBudgetEntries.entries()].sort((left, right) =>
-    left[1].receivedAt - right[1].receivedAt || left[0] - right[0])
-  for (const [id, entry] of oldest) {
-    if (bytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) break
-    pendingPartBudgetEntries.delete(id)
-    bytes -= entry.bytes
-    entry.remove()
-  }
-}
 
 function clonePart(part: ClientPart): ClientPart {
   // Cloning is intentionally disabled; message parts
   // are stored as received from the backend.
   return part
-}
-
-function cloneStructuredValue<T>(value: T): T {
-  // Legacy helper kept as a no-op to avoid deep copies.
-  return value
 }
 
 function areMessageIdListsEqual(a: string[], b: string[]): boolean {
@@ -265,24 +213,12 @@ export interface InstanceMessageStore {
   reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
   acceptSend: (messageId: string) => void
-  confirmServerMessage: (messageId: string, options?: { clearOptimisticParts?: boolean }) => void
   failSend: (messageId: string) => void
   failPendingSends: (sessionId: string) => void
   retirePendingSends: (sessionId: string) => void
   upsertMessage: (input: MessageUpsertInput) => void
-  applyPartUpdate: (input: PartUpdateInput) => void
-  applyPartDelta: (input: {
-    messageId: string
-    partId: string
-    field: string
-    delta: string
-    bumpRevision?: boolean
-    bumpSessionRevision: boolean
-  }) => void
   removeMessage: (messageId: string, fallbackSessionId?: string) => void
   removeMessagePart: (messageId: string, partId: string, fallbackSessionId?: string) => void
-  bufferPendingPart: (entry: PendingPartEntry) => void
-  flushPendingParts: (messageId: string) => void
   replaceMessageId: (options: ReplaceMessageIdOptions) => void
   setMessageInfo: (messageId: string, info: MessageInfo) => void
   getMessageInfo: (messageId: string) => MessageInfo | undefined
@@ -325,12 +261,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
-  const droppedPendingMessageIds = new Set<string>()
-  const optimisticPartIdsByMessage = new Map<string, Set<string>>()
 
   function forgetPendingSend(messageId: string): void {
     pendingSendIds.delete(messageId)
-    optimisticPartIdsByMessage.delete(messageId)
   }
 
   function preservePendingSendOnOmission(messageId: string): boolean {
@@ -491,14 +424,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const renderCache = peekSessionMessageRenderCache(instanceId, sessionId)
     const globalCacheEntries = [...getCacheRetainedEntriesForSession(instanceId, sessionId)]
     const globalCacheKeyBytes = globalCacheEntries.reduce((total, entry) => total + entry.keyBytes, 0)
-    let hasPendingParts = false
-    for (const messageId in state.pendingParts) {
-      if (state.pendingParts[messageId]?.some((entry) => entry.sessionId === sessionId)) {
-        hasPendingParts = true
-        break
-      }
-    }
-    if ((!session || (session.messageIds.length === 0 && !session.revert)) && !renderCache && !hasPendingParts && globalCacheEntries.length === 0) {
+    if ((!session || (session.messageIds.length === 0 && !session.revert)) && !renderCache && globalCacheEntries.length === 0) {
       return Promise.resolve(0)
     }
     function* retainedValues(): Generator<unknown> {
@@ -507,11 +433,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         yield state.messages[messageId]
         yield messageInfoCache.get(messageId)
         yield state.messageInfoVersion[messageId]
-        yield state.pendingParts[messageId]
-      }
-      for (const messageId in state.pendingParts) {
-        const entries = state.pendingParts[messageId]
-        if (entries?.some((entry) => entry.sessionId === sessionId) && !state.messages[messageId]) yield entries
       }
       for (const entry of state.permissions.queue) if (entry.permission.sessionID === sessionId) yield entry
       if (session) {
@@ -633,11 +554,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       seenInputIds.add(input.id)
       return true
     })
-    for (const input of dedupedInputs) droppedPendingMessageIds.delete(input.id)
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
-    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts !== undefined).map((item) => item.id))
 
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
@@ -708,7 +627,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
-    const nextPendingParts: Record<string, PendingPartEntry[]> = { ...state.pendingParts }
     const nextPermissionsByMessage: Record<string, Record<string, PermissionEntry>> = {
       ...state.permissions.byMessage,
     }
@@ -724,10 +642,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         messageInfoCache.delete(id)
         forgetPendingSend(id)
         clearPromptDisplayOverride(instanceId, sessionId, id)
-        nextPendingParts[id]?.forEach(forgetPendingPartBudgetEntry)
         delete nextMessages[id]
         delete nextMessageInfoVersion[id]
-        delete nextPendingParts[id]
         delete nextPermissionsByMessage[id]
       })
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
@@ -739,7 +655,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (options?.confirmPending !== false) {
       serverIds.forEach((id) => {
         pendingSendIds.delete(id)
-        if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
       })
     }
 
@@ -764,7 +679,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     batch(() => {
       setState("messages", () => nextMessages)
       setState("messageInfoVersion", () => nextMessageInfoVersion)
-      setState("pendingParts", () => nextPendingParts)
       setState("permissions", "byMessage", () => nextPermissionsByMessage)
 
       // Solid store object updates merge, so omitted keys are deleted explicitly.
@@ -779,14 +693,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         )
         setState(
           "messageInfoVersion",
-          produce((draft) => {
-            omittedIds.forEach((id) => {
-              delete draft[id]
-            })
-          }),
-        )
-        setState(
-          "pendingParts",
           produce((draft) => {
             omittedIds.forEach((id) => {
               delete draft[id]
@@ -864,8 +770,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function markSendPending(messageId: string) {
     if (!messageId) return
     pendingSendIds.add(messageId)
-    const record = state.messages[messageId]
-    optimisticPartIdsByMessage.set(messageId, new Set(record?.partIds ?? []))
   }
 
   function updateSendRecord(messageId: string, status: "sent" | "error") {
@@ -888,39 +792,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // REST or SSE confirms persistence under the same messageID.
   function acceptSend(messageId: string) {
     updateSendRecord(messageId, "sent")
-  }
-
-  function confirmServerMessage(messageId: string, options?: { clearOptimisticParts?: boolean }) {
-    const clientPartIds = optimisticPartIdsByMessage.get(messageId)
-    pendingSendIds.delete(messageId)
-    if (options?.clearOptimisticParts) optimisticPartIdsByMessage.delete(messageId)
-    const record = state.messages[messageId]
-    if (record) hooks?.onSessionChanged?.(instanceId, record.sessionId)
-    if (!record) return
-    const optimisticPartIds = options?.clearOptimisticParts && record.role === "user"
-      ? record.partIds.filter((id) => clientPartIds?.has(id))
-      : []
-    const shouldSettleUser = record.role === "user" && (record.status === "sending" || record.status === "error")
-    const changed = Boolean(record.isEphemeral || optimisticPartIds.length > 0 || shouldSettleUser)
-    if (!changed) return
-    setState(
-      "messages",
-      messageId,
-      produce((draft) => {
-        draft.isEphemeral = false
-        if (shouldSettleUser) draft.status = "sent"
-        if (optimisticPartIds.length > 0) {
-          const optimisticIds = new Set(optimisticPartIds)
-          draft.partIds = draft.partIds.filter((id) => !optimisticIds.has(id))
-          optimisticPartIds.forEach((id) => {
-            delete draft.parts[id]
-          })
-        }
-        draft.updatedAt = Date.now()
-        draft.revision += 1
-      }),
-    )
-    bumpSessionRevision(record.sessionId)
   }
 
   // Request preparation or prompt submission failed. Keep an error bubble
@@ -973,7 +844,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       messageInfoCache.delete(id)
       forgetPendingSend(id)
       clearPromptDisplayOverride(instanceId, sessionId, id)
-      state.pendingParts[id]?.forEach(forgetPendingPartBudgetEntry)
     })
     clearRecordDisplayCacheForMessages(instanceId, droppedIds)
     hooks?.onMessagesRemoved?.(instanceId, sessionId, droppedIds)
@@ -989,14 +859,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       )
       setState(
         "messageInfoVersion",
-        produce((draft) => {
-          droppedIds.forEach((id) => {
-            delete draft[id]
-          })
-        }),
-      )
-      setState(
-        "pendingParts",
         produce((draft) => {
           droppedIds.forEach((id) => {
             delete draft[id]
@@ -1064,7 +926,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function upsertMessage(input: MessageUpsertInput) {
-    const pendingDropRequiresReload = droppedPendingMessageIds.delete(input.id)
     const normalizedParts = normalizeParts(input.id, input.parts)
     const shouldBump = Boolean(input.bumpRevision || normalizedParts)
     const now = Date.now()
@@ -1105,248 +966,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     insertMessageIntoSession(input.sessionId, input.id)
-    flushPendingParts(input.id)
     recomputeLastAssistantMessageId(input.sessionId)
     bumpSessionRevision(input.sessionId)
-    if (pendingDropRequiresReload) hooks?.onSessionCleared?.(instanceId, input.sessionId)
-  }
-
-  function markPendingPartDropped(messageId: string, sessionId?: string): void {
-    if (sessionId) {
-      hooks?.onSessionCleared?.(instanceId, sessionId)
-      hooks?.onSessionChanged?.(instanceId, sessionId)
-      return
-    }
-    droppedPendingMessageIds.delete(messageId)
-    droppedPendingMessageIds.add(messageId)
-    while (droppedPendingMessageIds.size > DROPPED_PENDING_MESSAGE_LIMIT) {
-      const oldest = droppedPendingMessageIds.values().next().value
-      if (oldest === undefined) break
-      droppedPendingMessageIds.delete(oldest)
-    }
-  }
-
-  function bufferPendingPart(entry: PendingPartEntry) {
-    const sessionId = entry.sessionId ?? (typeof (entry.part as any).sessionID === "string" ? (entry.part as any).sessionID : undefined)
-    const nextEntry = { ...entry, sessionId } as SizedPendingPartEntry
-    const retainedBytes = estimateRetainedBytes(nextEntry, PENDING_PART_MAX_RETAINED_BYTES)
-    if (retainedBytes > PENDING_PART_MAX_RETAINED_BYTES) {
-      markPendingPartDropped(entry.messageId, sessionId)
-      return
-    }
-    const budgetId = ++nextPendingPartBudgetId
-    Object.defineProperty(nextEntry, pendingPartRetainedBytes, { value: retainedBytes })
-    Object.defineProperty(nextEntry, pendingPartBudgetId, { value: budgetId })
-    const changedSessions = new Set<string>()
-    const droppedMessages = new Map<string, string | undefined>()
-    if (sessionId) changedSessions.add(sessionId)
-    setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
-      const messageEntries = [...(draft[entry.messageId] ?? []), nextEntry]
-      for (const dropped of messageEntries.slice(0, Math.max(0, messageEntries.length - PENDING_PARTS_PER_MESSAGE_LIMIT))) {
-        droppedMessages.set(entry.messageId, dropped.sessionId)
-      }
-      draft[entry.messageId] = messageEntries.slice(-PENDING_PARTS_PER_MESSAGE_LIMIT)
-
-      const pending: { messageId: string; entry: PendingPartEntry; bytes: number }[] = []
-      for (const messageId in draft) {
-        for (const value of draft[messageId] ?? []) pending.push({ messageId, entry: value, bytes: getPendingPartRetainedBytes(value) })
-      }
-      pending.sort((left, right) => left.entry.receivedAt - right.entry.receivedAt)
-
-      const sessionEntries = pending.filter((value) => value.entry.sessionId === sessionId)
-      const remove = new Set(pending.slice(0, Math.max(0, pending.length - PENDING_PARTS_GLOBAL_LIMIT)))
-      for (const value of sessionEntries.slice(0, Math.max(0, sessionEntries.length - PENDING_PARTS_PER_SESSION_LIMIT))) remove.add(value)
-      let sessionBytes = sessionEntries.reduce((total, value) => total + value.bytes, 0)
-      for (const value of sessionEntries) {
-        if (sessionBytes <= PENDING_PARTS_PER_SESSION_BYTE_LIMIT) break
-        remove.add(value)
-        sessionBytes -= value.bytes
-      }
-      let globalBytes = pending.reduce((total, value) => total + value.bytes, 0)
-      for (const value of pending) {
-        if (globalBytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) break
-        remove.add(value)
-        globalBytes -= value.bytes
-      }
-      for (const value of remove) {
-        forgetPendingPartBudgetEntry(value.entry)
-        droppedMessages.set(value.messageId, value.entry.sessionId)
-        if (value.entry.sessionId) changedSessions.add(value.entry.sessionId)
-        const list = draft[value.messageId]
-        const index = list?.indexOf(value.entry) ?? -1
-        if (index >= 0) list.splice(index, 1)
-        if (list?.length === 0) delete draft[value.messageId]
-      }
-    }))
-    const isRetained = () => state.pendingParts[entry.messageId]?.some((value) => (value as SizedPendingPartEntry)[pendingPartBudgetId] === budgetId) ?? false
-    if (isRetained()) {
-      pendingPartBudgetEntries.set(budgetId, {
-        instanceId,
-        bytes: retainedBytes,
-        receivedAt: entry.receivedAt,
-        isRetained,
-        remove: () => {
-          setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
-            const list = draft[entry.messageId]
-            const index = list?.findIndex((value) => (value as SizedPendingPartEntry)[pendingPartBudgetId] === budgetId) ?? -1
-            if (index >= 0) list.splice(index, 1)
-            if (list?.length === 0) delete draft[entry.messageId]
-          }))
-          markPendingPartDropped(entry.messageId, sessionId)
-        },
-      })
-      enforceGlobalPendingPartBudget()
-    }
-    for (const [messageId, droppedSessionId] of droppedMessages) markPendingPartDropped(messageId, droppedSessionId)
-    for (const changedSessionId of changedSessions) hooks?.onSessionChanged?.(instanceId, changedSessionId)
-  }
-
-  function clearPendingPartsForMessage(messageId: string) {
-    const entries = state.pendingParts[messageId]
-    if (!entries) return
-    entries.forEach(forgetPendingPartBudgetEntry)
-    setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
-      delete draft[messageId]
-    }))
-  }
-
-  function rebindPermissionForPart(messageId: string, partId: string, part: ClientPart) {
-    if (!messageId || !partId || part.type !== "tool") {
-      return
-    }
-
-    const toolCallId =
-      (part as any).callID ??
-      (part as any).callId ??
-      (part as any).toolCallID ??
-      (part as any).toolCallId ??
-      (part as any).id ??
-      undefined
-    if (!toolCallId) {
-      return
-    }
-
-    setState(
-      "permissions",
-      "byMessage",
-      messageId,
-      produce((draft) => {
-        if (!draft) return
-        const existing = draft[partId]
-        for (const [key, entry] of Object.entries(draft)) {
-          if (!entry || entry.partId) continue
-          const permissionCallId =
-            (entry.permission as any).tool?.callID ??
-            (entry.permission as any).tool?.callId ??
-            (entry.permission as any).callID ??
-            (entry.permission as any).callId ??
-            (entry.permission as any).toolCallID ??
-            (entry.permission as any).toolCallId ??
-            (entry.permission as any).metadata?.callID ??
-            (entry.permission as any).metadata?.callId ??
-            undefined
-          if (permissionCallId !== toolCallId) continue
-          if (!existing || existing.permission.id === entry.permission.id) {
-            entry.partId = partId
-            draft[partId] = entry
-            delete draft[key]
-          }
-          break
-        }
-      }),
-    )
-  }
-
-  function applyPartUpdate(input: PartUpdateInput) {
-    const message = state.messages[input.messageId]
-    if (!message) {
-      bufferPendingPart({ messageId: input.messageId, sessionId: typeof (input.part as any).sessionID === "string" ? (input.part as any).sessionID : undefined, part: input.part, receivedAt: Date.now() })
-      return
-    }
-
-    const partId = ensurePartId(input.messageId, input.part, message.partIds.length)
-    const cloned = clonePart(input.part)
-
-    setState(
-      "messages",
-      input.messageId,
-      produce((draft: MessageRecord) => {
-        if (!draft.partIds.includes(partId)) {
-          draft.partIds = [...draft.partIds, partId]
-        }
-        const existing = draft.parts[partId]
-        const nextRevision = existing ? existing.revision + 1 : (cloned as any).version ?? 0
-        draft.parts[partId] = {
-          id: partId,
-          data: cloned,
-          revision: nextRevision,
-        }
-        draft.updatedAt = Date.now()
-        if (input.bumpRevision ?? true) {
-          draft.revision += 1
-        }
-      }),
-    )
-
-    rebindPermissionForPart(input.messageId, partId, cloned)
-
-    if (isCompletedTodoPart(cloned)) {
-      recordLatestTodoSnapshot(message.sessionId, {
-        messageId: input.messageId,
-        partId,
-        timestamp: Date.now(),
-      })
-    }
-  
-    // Any part update can change the rendered height of the message
-    // list, so we treat it as a session revision for scroll purposes.
-    bumpSessionRevision(message.sessionId)
-  }
-
-  function applyPartDelta(input: {
-    messageId: string
-    partId: string
-    field: string
-    delta: string
-    bumpRevision?: boolean
-    bumpSessionRevision?: boolean
-  }) {
-    if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
-      return
-    }
-
-    const message = state.messages[input.messageId]
-    if (!message) {
-      // Best-effort: drop deltas for unknown messages.
-      return
-    }
-
-    let applied = false
-
-    setState(
-      "messages",
-      input.messageId,
-      produce((draft: MessageRecord) => {
-        const entry = draft.parts[input.partId]
-        if (!entry?.data) return
-        const part = entry.data as any
-        const currentValue = part?.[input.field]
-        if (typeof currentValue === "string" || currentValue === undefined || currentValue === null) {
-          part[input.field] = `${currentValue ?? ""}${input.delta}`
-          applied = true
-        }
-        if (!applied) return
-        entry.revision += 1
-        draft.updatedAt = Date.now()
-        if (input.bumpRevision ?? true) {
-          draft.revision += 1
-        }
-      }),
-    )
-
-    if (applied && (input.bumpSessionRevision ?? true)) {
-      bumpSessionRevision(message.sessionId)
-    }
   }
 
   function removeMessage(messageId: string, fallbackSessionId?: string) {
@@ -1374,7 +995,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
     sessionIds.forEach((sessionId) => hooks?.onMessagesRemoved?.(instanceId, sessionId, [messageId]))
-    state.pendingParts[messageId]?.forEach(forgetPendingPartBudgetEntry)
 
     batch(() => {
       sessionIds.forEach((sessionId) => {
@@ -1390,10 +1010,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }))
 
       messageInfoCache.delete(messageId)
-
-      setState("pendingParts", produce((draft) => {
-        delete draft[messageId]
-      }))
 
       setState("permissions", "byMessage", produce((draft) => {
         delete draft[messageId]
@@ -1444,22 +1060,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
   }
 
-
-  function flushPendingParts(messageId: string) {
-    const pending = state.pendingParts[messageId]
-    if (!pending || pending.length === 0) {
-      return
-    }
-    const now = Date.now()
-    const validEntries = pending.filter((entry) => now - entry.receivedAt <= PENDING_PART_MAX_AGE_MS)
-    if (validEntries.length === 0) {
-      clearPendingPartsForMessage(messageId)
-      return
-    }
-    validEntries.forEach((entry) => applyPartUpdate({ messageId, part: entry.part }))
-    clearPendingPartsForMessage(messageId)
-  }
-
   function replaceMessageId(options: ReplaceMessageIdOptions) {
     if (options.oldId === options.newId) return
     const existing = state.messages[options.oldId]
@@ -1470,10 +1070,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // The optimistic send is now confirmed under its real id; retire the
     // pending marker (carry it to the new id only if still mid-flight).
     if (pendingSendIds.has(options.oldId) && existing.isEphemeral && existing.status === "sending") {
-      const optimisticParts = optimisticPartIdsByMessage.get(options.oldId)
       forgetPendingSend(options.oldId)
       pendingSendIds.add(options.newId)
-      if (optimisticParts) optimisticPartIdsByMessage.set(options.newId, optimisticParts)
     }
 
     const cloned: MessageRecord = {
@@ -1533,11 +1131,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       })
     }
 
-    const pending = state.pendingParts[options.oldId]
-    if (pending) {
-      setState("pendingParts", options.newId, pending)
-    }
-    clearPendingPartsForMessage(options.oldId)
     maybeUpdateLatestTodoFromRecord(cloned)
   }
 
@@ -1727,11 +1320,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       .filter((record) => record.sessionId === sessionId)
       .map((record) => record.id)
     const messageIdSet = new Set(messageIds)
-    for (const [messageId, entries] of Object.entries(state.pendingParts)) {
-      for (const entry of entries) {
-        if (messageIdSet.has(messageId) || entry.sessionId === sessionId) forgetPendingPartBudgetEntry(entry)
-      }
-    }
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
@@ -1750,11 +1338,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }))
 
       messageIds.forEach((id) => messageInfoCache.delete(id))
-
-      setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
-        for (const id of messageIds) delete draft[id]
-        for (const id in draft) if (draft[id]?.some((entry) => entry.sessionId === sessionId)) delete draft[id]
-      }))
 
       const belongsToSession = (entry: PermissionEntry) => entry.permission.sessionID === sessionId
         || Boolean(entry.messageId && messageIdSet.has(entry.messageId))
@@ -1806,14 +1389,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
  
    function clearInstance() {
-     for (const [id, entry] of pendingPartBudgetEntries) if (entry.instanceId === instanceId) pendingPartBudgetEntries.delete(id)
-     droppedPendingMessageIds.clear()
      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
      clearRecordDisplayCacheForInstance(instanceId)
      clearInstanceMessageRenderCaches(instanceId)
      messageInfoCache.clear()
      pendingSendIds.clear()
-     optimisticPartIdsByMessage.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
 
@@ -1832,17 +1412,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       reconcileAuthoritativeMessageIds,
       markSendPending,
       acceptSend,
-      confirmServerMessage,
       failSend,
       failPendingSends,
       retirePendingSends,
       upsertMessage,
-      applyPartUpdate,
-      applyPartDelta,
       removeMessage,
       removeMessagePart,
-      bufferPendingPart,
-      flushPendingParts,
      replaceMessageId,
      setMessageInfo,
      getMessageInfo,

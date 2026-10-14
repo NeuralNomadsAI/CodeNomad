@@ -49,10 +49,31 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   const [imageCount, setImageCount] = createSignal(0)
   const device = useDeviceAttachments({ ...options, inferMime: inferMimeTypeFromPath })
 
+  // Placeholder-backed attachments removed with their token, by draft and token.
+  // Undo/redo or moving the token brings the same token back, and its attachment
+  // with it; a new attachment for that token supersedes the detached one.
+  const detached = new Map<string, Map<string, Attachment>>()
+  const draftKey = () => `${options.instanceId()}\u0000${options.sessionId()}`
+
+  function placeholderToken(attachment: Attachment): { kind: "pasted" | "image"; counter: string } | null {
+    if (attachment.source.type === "text") {
+      const counter = attachment.display.match(pastedDisplayCounterRegex)?.[1]
+      return counter ? { kind: "pasted", counter } : null
+    }
+    if (attachment.source.type === "file" && attachment.mediaType.startsWith("image/")) {
+      const counter = (attachment.display.match(bracketedImageDisplayCounterRegex)
+        || attachment.display.match(imageDisplayCounterRegex))?.[1]
+      return counter ? { kind: "image", counter } : null
+    }
+    return null
+  }
+
   function syncAttachmentCounters(currentPrompt: string) {
     const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
     setPasteCount(highestPaste)
     setImageCount(highestImage)
+    // An empty sync resets the draft (send, draft switch): forget detached tokens.
+    if (!currentPrompt) detached.delete(draftKey())
   }
 
   function removeTokenFromPrompt(currentPrompt: string, tokenRegex: RegExp) {
@@ -67,38 +88,42 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   }
 
   // Keep placeholder-backed attachments in sync with prompt text.
-  // If the placeholder token disappears from the prompt, the attachment should disappear too.
+  // If the placeholder token disappears from the prompt, the attachment disappears
+  // too, and returns if the same token comes back.
   createEffect(() => {
     const currentPrompt = options.prompt()
     const currentAttachments = attachments()
+    const key = draftKey()
+    const draftDetached = detached.get(key) ?? new Map<string, Attachment>()
+    const hasToken = (kind: "pasted" | "image", counter: string) =>
+      createAttachmentPlaceholderRegex(kind, counter, { global: false }).test(currentPrompt)
 
-    const toRemove: string[] = []
-
+    const attached = new Set<string>()
+    const toRemove: Attachment[] = []
     for (const attachment of currentAttachments) {
-      if (attachment.source.type === "text") {
-        const match = attachment.display.match(pastedDisplayCounterRegex)
-        if (!match) continue
-        const counter = match[1]
-        if (!createAttachmentPlaceholderRegex("pasted", counter, { global: false }).test(currentPrompt)) {
-          toRemove.push(attachment.id)
-        }
-        continue
-      }
-
-      if (attachment.source.type === "file" && attachment.mediaType.startsWith("image/")) {
-        const match =
-          attachment.display.match(bracketedImageDisplayCounterRegex) || attachment.display.match(imageDisplayCounterRegex)
-        if (!match) continue
-        const counter = match[1]
-        if (!createAttachmentPlaceholderRegex("image", counter, { global: false }).test(currentPrompt)) {
-          toRemove.push(attachment.id)
-        }
-      }
+      const token = placeholderToken(attachment)
+      if (!token) continue
+      const tokenKey = `${token.kind}:${token.counter}`
+      attached.add(tokenKey)
+      draftDetached.delete(tokenKey)
+      if (!hasToken(token.kind, token.counter)) toRemove.push(attachment)
     }
+    const toRestore = [...draftDetached].filter(([tokenKey]) => {
+      const [kind, counter] = tokenKey.split(":") as ["pasted" | "image", string]
+      return !attached.has(tokenKey) && hasToken(kind, counter)
+    })
 
-    for (const attachmentId of toRemove) {
-      removeAttachment(options.instanceId(), options.sessionId(), attachmentId)
+    for (const attachment of toRemove) {
+      const token = placeholderToken(attachment)!
+      draftDetached.set(`${token.kind}:${token.counter}`, attachment)
+      removeAttachment(options.instanceId(), options.sessionId(), attachment.id)
     }
+    for (const [tokenKey, attachment] of toRestore) {
+      draftDetached.delete(tokenKey)
+      addAttachment(options.instanceId(), options.sessionId(), attachment)
+    }
+    if (draftDetached.size) detached.set(key, draftDetached)
+    else detached.delete(key)
   })
 
   function handleRemoveAttachment(attachmentId: string) {
@@ -182,8 +207,9 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       }
     }
 
-    options.setPrompt(nextText)
+    // Remove first: an expanded attachment is not detached for its token's return.
     removeAttachment(options.instanceId(), options.sessionId(), attachment.id)
+    options.setPrompt(nextText)
 
     if (textarea) {
       const owner = device.capture()
@@ -222,8 +248,13 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     if (isLongPaste) {
       e.preventDefault()
 
+      // Number above detached tokens too: a new placeholder lands before its
+      // attachment and must never revive an undone paste with the same number.
       const { highestPaste } = findHighestAttachmentCounters(options.prompt())
-      const count = highestPaste + 1
+      const detachedPastes = [...(detached.get(draftKey())?.keys() ?? [])]
+        .filter((tokenKey) => tokenKey.startsWith("pasted:"))
+        .map((tokenKey) => Number(tokenKey.slice("pasted:".length)))
+      const count = Math.max(highestPaste, ...detachedPastes) + 1
       setPasteCount(count)
 
       const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
@@ -234,7 +265,11 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       const owner = device.capture()
       const placeholder = formatPastedPlaceholder(count)
       const textarea = options.getTextarea()
-      if (textarea) {
+      // A native insertion keeps the caret and the browser's undo history; the
+      // resulting input event updates the prompt like typing.
+      const insertedNatively = textarea !== null && document.activeElement === textarea
+        && document.execCommand("insertText", false, placeholder)
+      if (!insertedNatively && textarea) {
         const start = textarea.selectionStart
         const end = textarea.selectionEnd
         const currentText = options.prompt()
@@ -247,7 +282,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
           textarea.setSelectionRange(newCursorPos, newCursorPos)
           textarea.focus()
         }, 0)
-      } else {
+      } else if (!insertedNatively) {
         options.setPrompt(options.prompt() + placeholder)
       }
 
