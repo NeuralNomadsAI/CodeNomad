@@ -12,7 +12,7 @@ Kararlı akış en son nihai sürümü seçer. Geliştirme derlemeleri aynı tem
 
 ## Masaüstü kurulumunu güncelleme {#desktop-update}
 
-1. **Help → Get Updates...** öğesini veya güncelleme bildirimini kullanın.
+1. **Help → Get Updates...** öğesini, güncelleme bildirimini veya **Ayarlar → Bilgi → Güncellemeler** içindeki düğmeyi kullanın.
 2. Electron'de sürüm sayfasını takip edin ve kullandığınız ana bilgisayar/platformun arşivini/paketini edinin.
 3. Uygun yerel Tauri kurulumlarında yerel teklifi inceleyin ve açıkça **Yükle ve yeniden başlat** öğesini seçin.
 4. Kurulumdan/yeniden başlatmadan önce her pencerede önemli çalışmaları kaydedin ve yeniden başlattıktan sonra **Bilgi** öğesini doğrulayın.
@@ -23,7 +23,10 @@ Kararlı akış en son nihai sürümü seçer. Geliştirme derlemeleri aynı tem
 | macOS x64 / arm64 uygulaması | Yerleşik güncelleyici anahtarı ve imzalı bir `.app.tar.gz` verisi ile desteklenir. |
 | Linux x64 AppImage | AppImage paket işaretçisi ve boş olmayan bir `APPIMAGE` yolunun yanı sıra imzalı güncelleme desteği gerektirir. `APPRUN` tek başına yetersizdir. |
 | Debian/RPM, bağımsız Windows yürütülebilir dosyası, imzasız/anahtarsız derleme | Uygulama içi yükleme yerine sürüm sayfasını açar. |
-| Tercihler, uzak pencereler, oturum açma/eşleştirme ekranları | Sürüm sayfası geri dönüşü, yerel güncelleyici yetkilisi değil. |
+
+Tauri uygulama pencerelerinde ve yerel **Tercihler** pencerelerinde, bir sürüm sunulduğunda Güncellemeler kartı **Güncellemeyi yükle** düğmesini gösterir. Seçilen akışı kontrol eder ve uygulama içi güncelleme mevcutsa **Yükle ve yeniden başlat** seçeneğini sunar; aksi halde kartta gösterilen sürüm sayfasını açar. Electron, web ve uzak pencereler ise yerel güncelleyici kontrolü olmadan **Güncellemeyi indir** bağlantısını gösterir.
+
+Tauri'nin **Help → Get Updates...** menüsü güncelleme akışını odaktaki uygulama penceresinde çalıştırır. Tercihler veya uzak bir pencereden kullanıldığında, kontrolü çalıştırmak için en son kullanılan uygulama penceresini öne getirir; uzak pencere üzerinden kurulum yapmaz. Hedeflenen pencerenin yükleme, oturum açma veya eşleştirme ekranı göstermesi dahil, eylemi alabilecek bir uygulama penceresi yoksa menü bunun yerine sürüm sayfasını açar.
 
 Tauri yalnızca seçilen feed/hedef için yayınlanmış bir güncelleme bildirimine sahip sürümleri sunar. Yeni duyurulan bir sürüm henüz yüklenemeyebilir; bildirim bunun yerine yayın sayfasını açabilir. Kurulumdan önce yerel imza doğrulaması gereklidir. Güncelleyici imzaları, işletim sistemi noter onayı/kod imzalama güvencelerinden farklıdır.
 

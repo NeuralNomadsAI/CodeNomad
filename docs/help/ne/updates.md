@@ -12,7 +12,7 @@ Stable ले नवीनतम final release चयन गर्छ। Preview
 
 ## desktop स्थापना update {#desktop-update}
 
-1. **Help → Get Updates...** वा update notification प्रयोग गर्नुहोस्।
+1. **Help → Get Updates...**, update notification वा **सेटिङहरू → जानकारी → अपडेटहरू** को बटन प्रयोग गर्नुहोस्।
 2. Electron मा release page बाट आफ्नो host/platform को archive/package लिनुहोस्।
 3. योग्य local Tauri installation मा native offer समीक्षा गरी **स्थापना गरी पुनः सुरु गर्नुहोस्** स्पष्ट रोज्नुहोस्।
 4. installation/restart अघि हरेक window को महत्त्वपूर्ण काम बचत गरी relaunch पछि **जानकारी** जाँच्नुहोस्।
@@ -23,7 +23,10 @@ Stable ले नवीनतम final release चयन गर्छ। Preview
 | macOS x64 / arm64 application | embedded updater key र signed `.app.tar.gz` payload सहित समर्थित। |
 | Linux x64 AppImage | AppImage bundle marker र nonempty `APPIMAGE` path, साथै signed update समर्थन चाहिन्छ। `APPRUN` मात्र पुग्दैन। |
 | Debian/RPM, loose Windows executable, unsigned/keyless build | in-app install को सट्टा release page खोल्छ। |
-| Preferences, remote window, login/pairing screen | release-page fallback, local updater authority होइन। |
+
+Tauri application र native **प्राथमिकताहरू** window मा release प्रस्ताव हुँदा अपडेटहरू card ले **अपडेट स्थापना गर्नुहोस्** देखाउँछ। यसले चयनित feed जाँच्छ र in-app update उपलब्ध हुँदा **स्थापना गरी पुनः सुरु गर्नुहोस्** प्रस्ताव गर्छ; अन्यथा card मा देखाइएको release page खोल्छ। Electron, web र remote window ले यसको सट्टा **अपडेट डाउनलोड गर्नुहोस्** link देखाउँछन्, native updater check गर्दैनन्।
+
+Tauri को **Help → Get Updates...** menu ले focus भएको application window मा update flow चलाउँछ। प्राथमिकताहरू वा remote window बाट प्रयोग गर्दा, यसले सबैभन्दा हाल प्रयोग गरिएको application window अगाडि ल्याएर check चलाउँछ; remote window मार्फत install गर्दैन। लक्षित loading, login वा pairing screen लगायत कुनै application window ले कार्य ग्रहण गर्न नसके menu ले यसको सट्टा release page खोल्छ।
 
 Tauri ले chosen feed/target को published update manifest भएका release मात्र दिन्छ। भर्खर घोषित release अझै install योग्य नहुन सक्छ; notification ले release page खोल्न सक्छ। installation अघि native signature verification आवश्यक छ। updater signature OS notarization/code-signing आश्वासनभन्दा फरक हुन्।
 
