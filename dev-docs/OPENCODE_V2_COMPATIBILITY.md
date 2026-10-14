@@ -14,8 +14,9 @@ compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
-The current technical minimum and recommended target are **2.0.27**: shipped
-native plugins consume the stable Effect 4.0.1/Schema host contract. Isolated
+The current technical minimum is **2.0.27** and the recommended/qualified target
+is **2.0.29**: shipped native plugins consume the stable Effect 4.0.1/Schema host
+contract. Isolated
 2.0.26 loading fails at that boundary; see the transition evidence below.
 PR #696's previous timestamp-based floor was 2.0.7. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
@@ -441,6 +442,32 @@ reports `plugin_runtime`, with localized setup diagnostics, before functional
 calls or plugin provisioning. Newer/custom labels retain bounded authenticated
 contract recognition, not a tested-version allowlist. This source change does
 not upgrade or restart an installed CLI/daemon or deploy the running desktop.
+
+### 2.0.29 qualification (2026-10-14)
+
+2.0.28/2.0.29 keep Effect **4.0.1**, so the 2.0.27 plugin-runtime floor is
+unchanged. The published OpenAPI keeps the same 118 paths; schema changes are
+additive (config `policies`, provider/model `compatibility`, `encoding`). The
+private LocationServiceMap, Form, Permission and queue contracts used by the
+pending snapshot are unchanged. Client/plugin pins and the recommendation move to
+2.0.29, which joins 2.0.27 as a reviewed contract; 2.0.28 is untested and keeps
+authenticated negotiation.
+
+Upstream behavior relevant to CodeNomad, each covered by an isolated fixture:
+bounded continuation after an output-length stop settles failed/idle with a
+single user prompt (`scripts/test-output-limit-native.mjs`); rejected Promise
+tools settle `error` without crashing and a native denial prevents their side
+effect (`scripts/test-promise-tool-failure-native.mjs`); system-managed settings
+discovery leaves the authenticated global plugin root first. The 2.0.29 Promise
+adapter eagerly reads the `credential` plugin domain, so test hosts must declare
+it explicitly when the context is spread.
+
+Isolated plugin-runtime, automation, pruning/history/proxy, Missions
+(contract, family control, full journey), session environment, fork, aside,
+prompt skills, Git-degraded/init, provider usage/accounts, temporary workspaces,
+blank-session cleanup and the 2.0.15→2.0.29 native upgrade pass. The permission
+receipt recovery fixture times out identically on 2.0.27 with the previous pins;
+it is a pre-existing issue, not a 2.0.29 incompatibility.
 
 ### Capability-checked loaded-only pending recovery
 

@@ -256,7 +256,8 @@ export class RecurringDayFixture {
     const unsupported = (name: string): unknown => new Proxy(() => Effect.die(new Error(`Unimplemented native fixture API: ${name}`)), {
       get: (_target, key) => key === "then" ? undefined : unsupported(`${name}.${String(key)}`),
     })
-    const unusedDomains = Object.fromEntries(["agent", "aisdk", "command", "experimental", "generate", "model", "provider",
+    // Explicit keys: the managed owner spreads ctx, so the Proxy fallback below does not survive.
+    const unusedDomains = Object.fromEntries(["agent", "aisdk", "command", "credential", "experimental", "generate", "model", "provider",
       "integration", "mcp", "plugin", "permission", "reference", "skill", "vcs", "websearch", "worktree", "shell"]
       .map(name => [name, unsupported(name)]))
     const host = new Proxy({ ...unusedDomains, location, storage, rpc, session: { ...native,
