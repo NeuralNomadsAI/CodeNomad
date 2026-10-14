@@ -3,7 +3,7 @@
 ## Pencereler, sekmeler ve paylaşılan hizmet {#windows-tabs}
 
 1. Geçerli pencerede başka bir proje/ana sayfa sekmesi açmak için **Yeni instance** öğesini kullanın.
-2. Ayrı bir uygulama penceresi için yerel **Window → New Window** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
+2. Ayrı bir uygulama penceresi için yerel **Pencere → Yeni pencere** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
 3. **Ayarlar → Gelişmiş** bölümünde, başka bir başlatmanın yeni bir pencere açmak yerine en son kullanılan pencereye odaklanması gerekiyorsa **İkinci başlatmada mevcut pencereye odaklan** öğesini etkinleştirin.
 
 Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Bir pencereyi veya uygulama sekmesini kapatmak o hizmeti durdurmaz. **Workspace'i Durdur** ayrı bir paylaşılan eylemdir; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
@@ -56,7 +56,7 @@ macOS Tauri'nin ortak WebKit deposu korunur; silinmesi diğer profilleri etkiler
 
 ## Yakınlaştırma ve panel geometrisi {#zoom-panels}
 
-1. Yerel **View → Zoom In**, **Zoom Out** veya **Actual Size** kullanın; klavye/tekerlek girişi de ana bilgisayar desteğini takip eder.
+1. Yerel **Görünüm → Yakınlaştır**, **Uzaklaştır** veya **Gerçek boyut** kullanın; klavye/tekerlek girişi de ana bilgisayar desteğini takip eder.
 2. Paneller arasında geçiş yapmak için sabit dış başlık köşelerinde **Sol panel** ve **Sağ panel** öğesini kullanın. Bu düzen izin verdiğinde çekmeceleri sabitleyin/sabitlemeyi kaldırın.
 3. Kontroller artık sığmıyorsa yakınlaştırmayı azaltın veya pencereyi genişletin; dar düzenler kontrolleri menülere ve panelleri kaplamalara taşır.
 

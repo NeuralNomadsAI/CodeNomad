@@ -10,7 +10,7 @@ CodeNomad verbindet Ihren Arbeitsbereich mit einem gemeinsam genutzten OpenCode-
 2. [Öffnen Sie ein Projekt](projects.md) und wählen Sie dann Agent, Modell und Denkaufwand der Unterhaltung.
 3. Prüfen Sie vor Änderungen an Zugangsdaten, Dienstneustarts oder dem Löschen von Verlauf den betroffenen Geltungsbereich. Andere Clients können denselben nativen Dienst verwenden.
 
-Die öffentliche Hilfe funktioniert ohne CodeNomad, dessen Backend oder Anmeldung. **Help → CodeNomad Help** auf dem Desktop und **Hilfe öffnen** in der Befehlspalette öffnen sie separat in der aktuellen Oberflächensprache. Sprachänderungen übersetzen keine gespeicherten Unterhaltungen.
+Die öffentliche Hilfe funktioniert ohne CodeNomad, dessen Backend oder Anmeldung. **Hilfe → CodeNomad-Hilfe** auf dem Desktop und **Hilfe öffnen** in der Befehlspalette öffnen sie separat in der aktuellen Oberflächensprache. Sprachänderungen übersetzen keine gespeicherten Unterhaltungen.
 
 **Einstellungen** öffnet in einem lokalen Desktop-Client das native Fenster **Einstellungen**; Browser- und Remote-Clients verwenden eingebettete Einstellungen. Pfade wie **Einstellungen → Anbieter** bezeichnen auf beiden Oberflächen denselben Einstellungsbereich.
 

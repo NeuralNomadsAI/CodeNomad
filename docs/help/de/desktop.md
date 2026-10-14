@@ -3,7 +3,7 @@
 ## Fenster, Tabs und gemeinsamer Dienst {#windows-tabs}
 
 1. Verwenden Sie **Neue Instanz**, um einen weiteren Projekt-/Startseiten-Tab im aktuellen Fenster zu öffnen.
-2. Verwenden Sie das native **Window → New Window** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
+2. Verwenden Sie das native **Fenster → Neues Fenster** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
 3. Aktivieren Sie unter **Einstellungen → Erweitert** die Option **Vorhandenes Fenster beim zweiten Start fokussieren**, wenn ein weiterer Start das zuletzt verwendete Fenster fokussieren statt ein neues öffnen soll.
 
 Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenCode-Sitzungen/-Nachrichten gehören zum gemeinsamen nativen OpenCode-Dienst: Andere Fenster können dieselbe Unterhaltung sehen. Fenster- oder App-Tab-Schließen stoppt diesen Dienst nicht. **Arbeitsbereich stoppen** ist eine separate gemeinsame Aktion; siehe [Projekte](projects.md). Verwenden Sie geschlossene Fenster nicht als Beweis, dass Agent oder geplante Mission gestoppt wurde.
@@ -56,7 +56,7 @@ Der gemeinsame WebKit-Speicher von macOS-Tauri bleibt erhalten, da dessen Lösch
 
 ## Zoom und Panel-Geometrie {#zoom-panels}
 
-1. Verwenden Sie nativ **View → Zoom In**, **Zoom Out** oder **Actual Size**; Tastatur/Mausrad folgen ebenfalls der Host-Unterstützung.
+1. Verwenden Sie nativ **Ansicht → Vergrößern**, **Verkleinern** oder **Originalgröße**; Tastatur/Mausrad folgen ebenfalls der Host-Unterstützung.
 2. Verwenden Sie **Linke Seitenleiste** und **Rechte Seitenleiste** an den festen äußeren Kopfecken zum Umschalten. Heften/lösen Sie Schubladen, soweit das Layout dies erlaubt.
 3. Passen Bedienelemente nicht mehr, verringern Sie den Zoom oder verbreitern das Fenster; schmale Layouts verschieben Bedienelemente in Menüs und Panels in Überlagerungen.
 

@@ -14,6 +14,7 @@ mod launch;
 mod linux_tls;
 mod local_windows;
 mod managed_node;
+mod menu_labels;
 mod native_request;
 mod native_service_start;
 mod notification_badge;
@@ -46,7 +47,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::menu::{
-    AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
+    MenuBuilder, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{NewWindowResponse, PageLoadEvent, Webview};
@@ -90,6 +91,7 @@ pub struct AppState {
     pub remote_tls_handlers: Mutex<HashMap<String, u64>>,
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
+    menu_labels: menu_labels::MenuLabels,
     native_menu_popup_active: AtomicBool,
     native_menu_popup_pending: Arc<AtomicBool>,
     pub webview_data_directory: std::path::PathBuf,
@@ -194,6 +196,9 @@ fn update_workspace_menu_state_on_main(app: &AppHandle) {
         .state::<local_windows::LocalWindows>()
         .menu_state(window.as_ref().map(tauri::Webview::label));
     view_menu::update(app, view_state.as_ref());
+    state
+        .menu_labels
+        .apply(view_state.as_ref().and_then(view_menu::ViewMenuState::menu_labels));
     let items = state
         .workspace_menu_items
         .lock()
@@ -1869,6 +1874,7 @@ fn main() {
             remote_tls_handlers: Mutex::new(HashMap::new()),
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
+            menu_labels: Default::default(),
             native_menu_popup_active: AtomicBool::new(false),
             native_menu_popup_pending: Arc::new(AtomicBool::new(false)),
             webview_data_directory,
@@ -2095,6 +2101,19 @@ fn main() {
                         }
                     }
                 }
+                "open-about" | "help_open_about" => {
+                    // About opens Settings → Info → About from the most recently used
+                    // application window, which brings the Preferences window forward.
+                    let delivered = local_windows::update_flow_window(app_handle)
+                        .is_some_and(|window| emit_menu_action_to(app_handle, &window, "open-about"));
+                    if !delivered {
+                        rfd::MessageDialog::new()
+                            .set_title("About CodeNomad")
+                            .set_description(about_fallback_text(&app_handle.package_info().version.to_string()))
+                            .set_level(rfd::MessageLevel::Info)
+                            .show();
+                    }
+                }
                 "get_updates" | "help_get_updates" => {
                     // Preferences and remote windows have no update flow: the most
                     // recently used application window runs it and comes forward.
@@ -2283,67 +2302,46 @@ fn main() {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<()> {
+    use menu_labels::label;
     let is_mac = cfg!(target_os = "macos");
     let is_linux = cfg!(target_os = "linux");
 
-    // Create submenus
+    // Every translatable element is kept so renderer locale reports can retitle it.
+    let mut labelled: Vec<(&'static str, MenuItemKind<Wry>)> = Vec::new();
+    let item = |id: &str, key: &'static str, accelerator: Option<&str>| {
+        MenuItem::with_id(app, id, label(key), true, accelerator)
+    };
     let mut submenus = Vec::new();
-    let about_item = PredefinedMenuItem::about(
-        app,
-        Some("About CodeNomad"),
-        Some(build_about_metadata(
-            &app.package_info().version.to_string(),
-            cfg!(target_os = "linux"),
-        )),
-    )?;
-    let get_updates_item =
-        MenuItem::with_id(app, "get_updates", "Get Updates...", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit CodeNomad", true, Some("CmdOrCtrl+Q"))?;
+    let about_item = item("open-about", "about", None)?;
+    let get_updates_item = item("get_updates", "getUpdates", None)?;
 
     // App menu (macOS only)
     if is_mac {
+        let hide_item = item("hide", "hide", None)?;
+        let hide_others_item = item("hide_others", "hideOthers", None)?;
+        let show_all_item = item("show_all", "showAll", None)?;
+        let quit_item = item("quit", "quit", Some("CmdOrCtrl+Q"))?;
         let app_menu = SubmenuBuilder::new(app, "CodeNomad")
             .item(&about_item)
             .item(&get_updates_item)
             .separator()
-            .text("hide", "Hide CodeNomad")
-            .text("hide_others", "Hide Others")
-            .text("show_all", "Show All")
+            .item(&hide_item)
+            .item(&hide_others_item)
+            .item(&show_all_item)
             .separator()
             .item(&quit_item)
             .build()?;
+        for (key, entry) in [("hide", hide_item), ("hideOthers", hide_others_item), ("showAll", show_all_item), ("quit", quit_item)] {
+            labelled.push((key, MenuItemKind::MenuItem(entry)));
+        }
         submenus.push(app_menu);
     }
 
-    let new_window_item = MenuItem::with_id(
-        app,
-        "new-window",
-        "New Window",
-        true,
-        Some("CmdOrCtrl+Shift+N"),
-    )?;
-    let new_instance_item = MenuItem::with_id(
-        app,
-        "new-instance",
-        "New Instance",
-        true,
-        Some("CmdOrCtrl+N"),
-    )?;
-    let open_folder_item = MenuItem::with_id(
-        app,
-        "open-workspace-folder",
-        "Open Project Folder",
-        true,
-        None::<&str>,
-    )?;
-    let open_terminal_item = MenuItem::with_id(
-        app,
-        "open-workspace-terminal",
-        "Open Terminal Here",
-        true,
-        None::<&str>,
-    )?;
-    let open_editor_menu = SubmenuBuilder::new(app, "Open Project In")
+    let new_window_item = item("new-window", "newWindow", Some("CmdOrCtrl+Shift+N"))?;
+    let new_instance_item = item("new-instance", "newInstance", Some("CmdOrCtrl+N"))?;
+    let open_folder_item = item("open-workspace-folder", "openFolder", None)?;
+    let open_terminal_item = item("open-workspace-terminal", "openTerminal", None)?;
+    let open_editor_menu = SubmenuBuilder::new(app, label("openIn"))
         .text("open-workspace-editor-vscode", "VS Code")
         .text("open-workspace-editor-cursor", "Cursor")
         .text("open-workspace-editor-zed", "Zed")
@@ -2361,91 +2359,70 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let file_menu = if is_mac {
-        SubmenuBuilder::with_id(app, "menu-file", "File")
+        let close_item = PredefinedMenuItem::close_window(app, Some(label("closeWindow")))?;
+        labelled.push(("closeWindow", MenuItemKind::Predefined(close_item.clone())));
+        SubmenuBuilder::with_id(app, "menu-file", label("file"))
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
             .separator()
-            .close_window()
+            .item(&close_item)
             .build()?
     } else {
-        SubmenuBuilder::with_id(app, "menu-file", "File")
+        let quit_item = item("quit", "quit", None)?;
+        labelled.push(("quit", MenuItemKind::MenuItem(quit_item.clone())));
+        SubmenuBuilder::with_id(app, "menu-file", label("file"))
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
             .separator()
-            .text("quit", "Quit")
+            .item(&quit_item)
             .build()?
     };
-    submenus.push(file_menu);
 
-    let reload_item = MenuItem::with_id(app, "reload", "Reload", true, Some("CmdOrCtrl+R"))?;
-    let force_reload_item = MenuItem::with_id(
-        app,
-        "force_reload",
-        "Force Reload",
-        true,
-        Some("CmdOrCtrl+Shift+R"),
-    )?;
-    let toggle_devtools_item = MenuItem::with_id(
-        app,
-        "toggle_devtools",
-        "Toggle Developer Tools",
-        true,
-        Some("Alt+CmdOrCtrl+I"),
-    )?;
-    let reset_zoom_item =
-        MenuItem::with_id(app, "reset_zoom", "Actual Size", true, Some("CmdOrCtrl+0"))?;
-    let zoom_in_item = MenuItem::with_id(
-        app,
-        "zoom_in",
-        "Zoom In",
-        true,
-        None::<&str>,
-    )?;
-    let zoom_out_item = MenuItem::with_id(
-        app,
-        "zoom_out",
-        "Zoom Out",
-        true,
-        None::<&str>,
-    )?;
-    let toggle_fullscreen_item = MenuItem::with_id(
-        app,
+    let reload_item = item("reload", "reload", Some("CmdOrCtrl+R"))?;
+    let force_reload_item = item("force_reload", "forceReload", Some("CmdOrCtrl+Shift+R"))?;
+    let toggle_devtools_item = item("toggle_devtools", "devTools", Some("Alt+CmdOrCtrl+I"))?;
+    let reset_zoom_item = item("reset_zoom", "actualSize", Some("CmdOrCtrl+0"))?;
+    let zoom_in_item = item("zoom_in", "zoomIn", None)?;
+    let zoom_out_item = item("zoom_out", "zoomOut", None)?;
+    let toggle_fullscreen_item = item(
         "toggle_fullscreen",
-        "Toggle Full Screen",
-        true,
-        if is_mac {
-            Some("Ctrl+Cmd+F")
-        } else {
-            None::<&str>
-        },
+        "fullScreen",
+        if is_mac { Some("Ctrl+Cmd+F") } else { None },
     )?;
-    let close_window_item =
-        MenuItem::with_id(app, "close_window", "Close", true, Some("CmdOrCtrl+W"))?;
-    let command_palette_item = MenuItem::with_id(
-        app,
-        "open-command-palette",
-        "Command Palette",
-        true,
-        Some("CmdOrCtrl+Shift+P"),
-    )?;
+    let command_palette_item = item("open-command-palette", "commandPalette", Some("CmdOrCtrl+Shift+P"))?;
 
     // Edit menu with predefined items for standard functionality
-    let edit_menu = SubmenuBuilder::with_id(app, "menu-edit", "Edit")
-        .undo()
-        .redo()
+    let undo_item = PredefinedMenuItem::undo(app, Some(label("undo")))?;
+    let redo_item = PredefinedMenuItem::redo(app, Some(label("redo")))?;
+    let cut_item = PredefinedMenuItem::cut(app, Some(label("cut")))?;
+    let copy_item = PredefinedMenuItem::copy(app, Some(label("copy")))?;
+    let paste_item = PredefinedMenuItem::paste(app, Some(label("paste")))?;
+    let select_all_item = PredefinedMenuItem::select_all(app, Some(label("selectAll")))?;
+    let edit_menu = SubmenuBuilder::with_id(app, "menu-edit", label("edit"))
+        .item(&undo_item)
+        .item(&redo_item)
         .separator()
-        .cut()
-        .copy()
-        .paste()
+        .item(&cut_item)
+        .item(&copy_item)
+        .item(&paste_item)
         .separator()
-        .select_all()
+        .item(&select_all_item)
         .build()?;
-    submenus.push(edit_menu);
+    for (key, entry) in [
+        ("undo", undo_item),
+        ("redo", redo_item),
+        ("cut", cut_item),
+        ("copy", copy_item),
+        ("paste", paste_item),
+        ("selectAll", select_all_item),
+    ] {
+        labelled.push((key, MenuItemKind::Predefined(entry)));
+    }
 
     // View menu
-    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View").build()?;
+    let view_menu = SubmenuBuilder::with_id(app, "menu-view", label("view")).build()?;
     view_menu::append(app, &view_menu)?;
     view_menu.append_items(&[
         &reload_item,
@@ -2458,75 +2435,100 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         &PredefinedMenuItem::separator(app)?,
         &toggle_fullscreen_item,
     ])?;
-    submenus.push(view_menu);
 
     // Window menu
     let window_menu = if is_linux {
-        SubmenuBuilder::with_id(app, "menu-window", "Window")
+        let minimize_item = item("minimize", "minimize", None)?;
+        let zoom_item = item("zoom", "zoom", None)?;
+        let close_window_item = item("close_window", "closeWindow", Some("CmdOrCtrl+W"))?;
+        let menu = SubmenuBuilder::with_id(app, "menu-window", label("window"))
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
             .separator()
-            .text("minimize", "Minimize")
-            .text("zoom", "Zoom")
+            .item(&minimize_item)
+            .item(&zoom_item)
             .separator()
             .item(&close_window_item)
-            .build()?
-    } else if is_mac {
-        SubmenuBuilder::with_id(app, "menu-window", "Window")
-            .item(&new_window_item)
-            .item(&new_instance_item)
-            .item(&command_palette_item)
-            .separator()
-            .minimize()
-            .maximize()
-            .build()?
+            .build()?;
+        for (key, entry) in [("minimize", minimize_item), ("zoom", zoom_item), ("closeWindow", close_window_item)] {
+            labelled.push((key, MenuItemKind::MenuItem(entry)));
+        }
+        menu
     } else {
-        SubmenuBuilder::with_id(app, "menu-window", "Window")
+        let minimize_item = PredefinedMenuItem::minimize(app, Some(label("minimize")))?;
+        // macOS names the window maximize command "Zoom".
+        let maximize_key = if is_mac { "zoom" } else { "maximize" };
+        let maximize_item = PredefinedMenuItem::maximize(app, Some(label(maximize_key)))?;
+        let mut builder = SubmenuBuilder::with_id(app, "menu-window", label("window"))
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
             .separator()
-            .minimize()
-            .maximize()
-            .separator()
-            .close_window()
-            .build()?
+            .item(&minimize_item)
+            .item(&maximize_item);
+        if !is_mac {
+            let close_item = PredefinedMenuItem::close_window(app, Some(label("closeWindow")))?;
+            builder = builder.separator().item(&close_item);
+            labelled.push(("closeWindow", MenuItemKind::Predefined(close_item)));
+        }
+        labelled.push(("minimize", MenuItemKind::Predefined(minimize_item)));
+        labelled.push((maximize_key, MenuItemKind::Predefined(maximize_item)));
+        builder.build()?
     };
-    submenus.push(window_menu);
 
-    let help_item = MenuItem::with_id(app, "open-help", "CodeNomad Help", true, None::<&str>)?;
+    let help_item = item("open-help", "codenomadHelp", None)?;
     let help_menu = if is_mac {
-        let help_updates_item = MenuItem::with_id(
-            app,
-            "help_get_updates",
-            "Get Updates...",
-            true,
-            None::<&str>,
-        )?;
-        let help_about_item = PredefinedMenuItem::about(
-            app,
-            Some("About CodeNomad"),
-            Some(build_about_metadata(
-                &app.package_info().version.to_string(),
-                false,
-            )),
-        )?;
-        SubmenuBuilder::with_id(app, "menu-help", "Help")
+        let help_updates_item = item("help_get_updates", "getUpdates", None)?;
+        let help_about_item = item("help_open_about", "about", None)?;
+        let menu = SubmenuBuilder::with_id(app, "menu-help", label("help"))
             .item(&help_item)
             .item(&help_updates_item)
             .separator()
             .item(&help_about_item)
-            .build()?
+            .build()?;
+        labelled.push(("getUpdates", MenuItemKind::MenuItem(help_updates_item)));
+        labelled.push(("about", MenuItemKind::MenuItem(help_about_item)));
+        menu
     } else {
-        SubmenuBuilder::with_id(app, "menu-help", "Help")
+        SubmenuBuilder::with_id(app, "menu-help", label("help"))
             .item(&help_item)
             .item(&get_updates_item)
             .separator()
             .item(&about_item)
             .build()?
     };
-    submenus.push(help_menu);
+
+    for (key, entry) in [
+        ("about", about_item),
+        ("getUpdates", get_updates_item),
+        ("newWindow", new_window_item),
+        ("newInstance", new_instance_item),
+        ("openFolder", open_folder_item),
+        ("openTerminal", open_terminal_item),
+        ("reload", reload_item),
+        ("forceReload", force_reload_item),
+        ("devTools", toggle_devtools_item),
+        ("actualSize", reset_zoom_item),
+        ("zoomIn", zoom_in_item),
+        ("zoomOut", zoom_out_item),
+        ("fullScreen", toggle_fullscreen_item),
+        ("commandPalette", command_palette_item),
+        ("codenomadHelp", help_item),
+    ] {
+        labelled.push((key, MenuItemKind::MenuItem(entry)));
+    }
+    for (key, entry) in [
+        ("openIn", &open_editor_menu),
+        ("file", &file_menu),
+        ("edit", &edit_menu),
+        ("view", &view_menu),
+        ("window", &window_menu),
+        ("help", &help_menu),
+    ] {
+        labelled.push((key, MenuItemKind::Submenu(entry.clone())));
+    }
+    submenus.extend([file_menu, edit_menu, view_menu, window_menu, help_menu]);
 
     // Build the main menu with all submenus
     let submenu_refs: Vec<&dyn tauri::menu::IsMenuItem<_>> = submenus
@@ -2536,6 +2538,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app).items(&submenu_refs).build()?;
 
     app.set_menu(menu)?;
+    app.state::<AppState>().menu_labels.replace_targets(labelled);
     Ok(())
 }
 
@@ -2576,23 +2579,15 @@ fn open_releases_page(app_handle: &AppHandle) {
     }
 }
 
-fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetadata<'static> {
-    AboutMetadata {
-        name: Some("CodeNomad".to_string()),
-        version: Some(version.to_string()),
-        authors: Some(vec!["Neural Nomads AI".to_string()]),
-        comments: Some("A desktop workspace for OpenCode.".to_string()),
-        license: Some("MIT".to_string()),
-        website: include_update_link.then(|| releases_page(version).to_string()),
-        website_label: include_update_link.then(|| "Get updates".to_string()),
-        ..Default::default()
-    }
+/// Text of the native fallback when no application window can open Settings → Info.
+fn about_fallback_text(version: &str) -> String {
+    format!("CodeNomad {version}\nA desktop workspace for OpenCode.")
 }
 
 #[cfg(test)]
 mod menu_tests {
     use super::{
-        build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
+        about_fallback_text, claim_unowned_remote_proxy_session, releases_page, clear_remote_tls_handler,
         is_allowed_local_origin, is_final_application_window, local_close_event_action,
         require_http_url, rollback_remote_window_metadata, open_remote_external_url,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
@@ -2689,24 +2684,15 @@ mod menu_tests {
     }
 
     #[test]
-    fn about_metadata_includes_version_and_supported_update_link() {
-        let metadata = build_about_metadata("1.2.3", true);
-
-        assert_eq!(metadata.name.as_deref(), Some("CodeNomad"));
-        assert_eq!(metadata.version.as_deref(), Some("1.2.3"));
-        assert_eq!(metadata.website.as_deref(), Some(RELEASES_URL));
-        assert_eq!(metadata.website_label.as_deref(), Some("Get updates"));
-        // Preview builds link to the full list, which includes prereleases.
-        let preview = build_about_metadata("0.20.1-dev-20261013-031eb843", true);
-        assert_eq!(preview.website.as_deref(), Some("https://github.com/NeuralNomadsAI/CodeNomad/releases"));
+    fn about_fallback_names_the_installed_version() {
+        assert!(about_fallback_text("1.2.3").starts_with("CodeNomad 1.2.3\n"));
     }
 
     #[test]
-    fn about_metadata_omits_unsupported_update_link() {
-        let metadata = build_about_metadata("1.2.3", false);
-
-        assert_eq!(metadata.website, None);
-        assert_eq!(metadata.website_label, None);
+    fn release_fallbacks_follow_the_installed_build_label() {
+        assert_eq!(releases_page("1.2.3"), RELEASES_URL);
+        // Preview builds link to the full list, which includes prereleases.
+        assert_eq!(releases_page("0.20.1-dev-20261013-031eb843"), "https://github.com/NeuralNomadsAI/CodeNomad/releases");
     }
 
     #[test]

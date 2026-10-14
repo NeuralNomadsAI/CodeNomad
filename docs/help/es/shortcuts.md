@@ -4,7 +4,7 @@
 
 1. Abre **Paleta de comandos** con `Ctrl+Shift+P` en Windows/Linux o `Cmd+Shift+P` en macOS, o usa su botón/opción de menú visible.
 2. Escribe el nombre de una acción. La paleta incluye acciones de la aplicación y los comandos personalizados de la Location actual; la disponibilidad depende de la vista activa.
-3. Ejecuta **Abrir ayuda** para abrir esta guía en el idioma actual de la interfaz en un contexto de navegador externo. **Help → CodeNomad Help** nativo abre la misma guía.
+3. Ejecuta **Abrir ayuda** para abrir esta guía en el idioma actual de la interfaz en un contexto de navegador externo. **Ayuda → Ayuda de CodeNomad** nativo abre la misma guía.
 
 La ayuda deja intactos la vista de la aplicación y el borrador. Si no se abre, visita directamente [Ayuda de CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Que un comando se pueda descubrir no significa que tenga un atajo personalizable: el gestor de atajos cubre un catálogo fijo de 49 comandos del renderer, no todas las acciones de la paleta o del menú nativo.
 

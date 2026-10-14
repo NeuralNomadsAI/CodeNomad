@@ -176,6 +176,9 @@ export const commandMessages = {
   "commands.openHelp.label": "मद्दत खोल्नुहोस्",
   "commands.openHelp.description": "आफ्नो ब्राउजरमा CodeNomad प्रयोगकर्ता मार्गदर्शिका खोल्नुहोस्",
   "commands.openHelp.keywords": "मद्दत, मार्गदर्शिका, दस्तावेज",
+  "commands.openAbout.label": "CodeNomad बारे",
+  "commands.openAbout.description": "सेटिङहरूमा संस्करण, अपडेटहरू र निदान देखाउनुहोस्",
+  "commands.openAbout.keywords": "बारे, संस्करण, अपडेट, निदान",
 
   "commands.custom.argumentsPrompt.message": "/{name} को लागि तर्कहरू (Arguments)",
   "commands.custom.argumentsPrompt.title": "अनुकूल कमाण्ड",

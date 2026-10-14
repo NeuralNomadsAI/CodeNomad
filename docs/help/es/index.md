@@ -10,7 +10,7 @@ CodeNomad conecta tu espacio de trabajo a un servicio compartido de OpenCode en 
 2. [Abre un proyecto](projects.md) y elige los controles Agente, Modelo y Razonamiento de la conversación.
 3. Comprueba el ámbito afectado antes de cambiar credenciales, reiniciar un servicio o eliminar el historial. Otros clientes pueden usar el mismo servicio nativo.
 
-El sitio público de ayuda funciona sin CodeNomad, sin su backend y sin iniciar sesión. **Help → CodeNomad Help** en escritorio y **Abrir ayuda** en la paleta de comandos lo abren por separado en el idioma actual de la interfaz. Los cambios de idioma no traducen las conversaciones almacenadas.
+El sitio público de ayuda funciona sin CodeNomad, sin su backend y sin iniciar sesión. **Ayuda → Ayuda de CodeNomad** en escritorio y **Abrir ayuda** en la paleta de comandos lo abren por separado en el idioma actual de la interfaz. Los cambios de idioma no traducen las conversaciones almacenadas.
 
 **Configuración** abre la ventana nativa de **Preferencias** en un cliente de escritorio local; los clientes de navegador y remotos usan la configuración integrada. Las rutas como **Configuración → Proveedores** identifican la misma sección de configuración en ambas superficies.
 

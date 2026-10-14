@@ -12,7 +12,7 @@ Estable selecciona la última versión final. Preliminar sigue el orden de publi
 
 ## Actualizar una instalación de escritorio {#desktop-update}
 
-1. Usa **Help → Get Updates...**, la notificación de actualización o el botón en **Configuración → Info → Actualizaciones**.
+1. Usa **Ayuda → Buscar actualizaciones…**, la notificación de actualización o el botón en **Configuración → Info → Actualizaciones**.
 2. En Electron, sigue la página de la versión y obtén el archivo/paquete para el anfitrión/plataforma que uses.
 3. En instalaciones locales Tauri elegibles, revisa la oferta nativa y elige explícitamente **Instalar y reiniciar**.
 4. Guarda el trabajo importante de todas las ventanas antes de instalar/reiniciar y verifica **Info** tras volver a iniciar.
@@ -26,7 +26,7 @@ Estable selecciona la última versión final. Preliminar sigue el orden de publi
 
 En las ventanas de la aplicación Tauri y las ventanas nativas de **Preferencias**, la sección Actualizaciones muestra **Instalar actualización** cuando se ofrece una versión. Comprueba el canal seleccionado y ofrece **Instalar y reiniciar** cuando hay una actualización disponible desde la aplicación; de lo contrario, abre la página de la versión indicada en esa sección. Las ventanas Electron, web y remotas muestran en su lugar el enlace **Descargar actualización**, sin una comprobación del actualizador nativo.
 
-El menú de Tauri **Help → Get Updates...** ejecuta el proceso de actualización en la ventana de la aplicación que tiene el foco. Desde Preferencias o una ventana remota, trae al frente la ventana de la aplicación utilizada más recientemente para ejecutar la comprobación; no instala a través de la ventana remota. Si ninguna ventana de la aplicación puede recibir la acción, incluso cuando la ventana de destino muestra una pantalla de carga, inicio de sesión o emparejamiento, el menú abre la página de la versión en su lugar.
+El menú de Tauri **Ayuda → Buscar actualizaciones…** ejecuta el proceso de actualización en la ventana de la aplicación que tiene el foco. Desde Preferencias o una ventana remota, trae al frente la ventana de la aplicación utilizada más recientemente para ejecutar la comprobación; no instala a través de la ventana remota. Si ninguna ventana de la aplicación puede recibir la acción, incluso cuando la ventana de destino muestra una pantalla de carga, inicio de sesión o emparejamiento, el menú abre la página de la versión en su lugar.
 
 Tauri solo ofrece versiones con un manifiesto de actualización publicado para el canal/destino elegido. Una versión recién anunciada puede no ser instalable aún; la notificación puede abrir su página en su lugar. Se requiere verificación nativa de firma antes de instalar. Las firmas del actualizador son distintas de las garantías de notarización/firma de código del sistema operativo.
 

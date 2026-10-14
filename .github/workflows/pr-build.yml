@@ -291,6 +291,7 @@ jobs:
           packages/ui/src/components/tool-call/render-memory.test.ts
           packages/ui/src/components/settings/info-settings-diagnostics.test.ts
           packages/ui/src/components/settings/client-os.test.ts
+          packages/ui/src/lib/native/menu-labels.test.ts
           packages/ui/src/lib/bug-report.test.ts
           packages/ui/src/components/tool-call/tool-presentation.test.ts
           packages/ui/src/components/transcript-visibility.test.ts

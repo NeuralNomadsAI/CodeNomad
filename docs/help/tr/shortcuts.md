@@ -4,7 +4,7 @@
 
 1. Windows/Linux'ta `Ctrl+Shift+P`'yi veya macOS'ta `Cmd+Shift+P`'yi kullanarak **Komut Paleti** öğesini açın veya görünür düğmesini/menü öğesini kullanın.
 2. Bir eylem adı yazın. Palet, uygulama eylemlerini ve mevcut Location bağlamının özel komutlarını içerir; Kullanılabilirlik aktif görünüme bağlıdır.
-3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Help → CodeNomad Help** aynı kılavuzu açar.
+3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Yardım → CodeNomad Yardımı** aynı kılavuzu açar.
 
 Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa doğrudan [CodeNomad Yardımı](https://neuralnomadsai.github.io/CodeNomad/) adresini ziyaret edin. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, arayüzün sabit 49 komutluk kataloğunu kapsar.
 

@@ -4,7 +4,7 @@
 
 1. Ouvrez **Palette de commandes** avec `Ctrl+Shift+P` sous Windows/Linux ou `Cmd+Shift+P` sous macOS, ou utilisez son bouton/entrée de menu visible.
 2. Tapez un nom d’action. La palette inclut les actions de l’application et les commandes personnalisées de la Location actuelle ; leur disponibilité dépend de la vue active.
-3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Help → CodeNomad Help** ouvre le même guide.
+3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide.
 
 L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 49 commandes du moteur de rendu, pas toutes les actions de palette ou de menu natif.
 

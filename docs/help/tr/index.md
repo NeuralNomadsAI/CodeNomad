@@ -10,7 +10,7 @@ CodeNomad çalışma alanınızı tek, paylaşılan OpenCode arka plan hizmetine
 2. [Bir proje açın](projects.md), ardından görüşmenin Aracı, Model ve Düşünme kontrollerini seçin.
 3. Kimlik bilgilerini değiştirmeden, bir hizmeti yeniden başlatmadan veya geçmişi silmeden önce etkilenen kapsamı kontrol edin. Diğer istemciler aynı yerel hizmeti kullanabilir.
 
-Kamu yardım sitesi CodeNomad, arka ucu veya oturum açma bilgileri olmadan çalışır. Masaüstündeki **Help → CodeNomad Help** ve komut paletindeki **Yardımı aç**, onu geçerli kullanıcı arayüzü dilinde ayrı ayrı açar. Dil değişiklikleri saklanan konuşmaları çevirmez.
+Kamu yardım sitesi CodeNomad, arka ucu veya oturum açma bilgileri olmadan çalışır. Masaüstündeki **Yardım → CodeNomad Yardımı** ve komut paletindeki **Yardımı aç**, onu geçerli kullanıcı arayüzü dilinde ayrı ayrı açar. Dil değişiklikleri saklanan konuşmaları çevirmez.
 
 **Ayarlar**, yerel **Preferences** penceresini yerel bir masaüstü istemcisinde açar; tarayıcı ve uzak istemciler yerleşik ayarları kullanır. **Ayarlar → Provider'lar** gibi yollar her iki yüzeyde de aynı ayarlar bölümünü tanımlar.
 

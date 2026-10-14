@@ -4,7 +4,7 @@
 
 1. Öffnen Sie die **Befehlspalette** mit `Ctrl+Shift+P` unter Windows/Linux oder `Cmd+Shift+P` unter macOS oder über deren sichtbare Schaltfläche/Menüpunkt.
 2. Geben Sie einen Aktionsnamen ein. Die Palette enthält Anwendungsaktionen und benutzerdefinierte Befehle der aktuellen Location; Verfügbarkeit hängt von der aktiven Ansicht ab.
-3. Führen Sie **Hilfe öffnen** aus, um diese Anleitung in der aktuellen Oberflächensprache in einem externen Browserkontext zu öffnen. Natives **Help → CodeNomad Help** öffnet dieselbe Anleitung.
+3. Führen Sie **Hilfe öffnen** aus, um diese Anleitung in der aktuellen Oberflächensprache in einem externen Browserkontext zu öffnen. Natives **Hilfe → CodeNomad-Hilfe** öffnet dieselbe Anleitung.
 
 Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, besuchen Sie [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) direkt. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Renderer-Katalog mit 49 Befehlen, nicht jede Palette- oder native Menüaktion.
 

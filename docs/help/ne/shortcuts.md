@@ -4,7 +4,7 @@
 
 1. Windows/Linux मा `Ctrl+Shift+P` वा macOS मा `Cmd+Shift+P` बाट **कमाण्ड प्यालेट** खोल्नुहोस्, वा देखिने button/menu item प्रयोग गर्नुहोस्।
 2. कार्य नाम लेख्नुहोस्। प्यालेटमा application कार्य र हालको Location का custom command छन्; उपलब्धता सक्रिय दृश्यमा निर्भर हुन्छ।
-3. हालको UI भाषामा बाह्य browser सन्दर्भमा यो गाइड खोल्न **मद्दत खोल्नुहोस्** चलाउनुहोस्। नेटिभ **Help → CodeNomad Help** ले उही गाइड खोल्छ।
+3. हालको UI भाषामा बाह्य browser सन्दर्भमा यो गाइड खोल्न **मद्दत खोल्नुहोस्** चलाउनुहोस्। नेटिभ **मद्दत → CodeNomad मद्दत** ले उही गाइड खोल्छ।
 
 मद्दतले एप दृश्य र मस्यौदा छुँदैन। खोल्न असफल भए सोझै [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) जानुहोस्। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले निश्चित 49-command renderer catalogue समेट्छ, सबै palette वा native-menu कार्य होइन।
 

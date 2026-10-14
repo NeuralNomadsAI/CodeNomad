@@ -176,6 +176,9 @@ export const commandMessages = {
   "commands.openHelp.label": "打开帮助",
   "commands.openHelp.description": "在浏览器中打开 CodeNomad 用户指南",
   "commands.openHelp.keywords": "帮助, 指南, 文档",
+  "commands.openAbout.label": "关于 CodeNomad",
+  "commands.openAbout.description": "在设置中显示版本、更新和诊断信息",
+  "commands.openAbout.keywords": "关于, 版本, 更新, 诊断",
 
   "commands.custom.argumentsPrompt.message": "/{name} 的参数",
   "commands.custom.argumentsPrompt.title": "自定义命令",

@@ -176,6 +176,9 @@ export const commandMessages = {
   "commands.openHelp.label": "ヘルプを開く",
   "commands.openHelp.description": "CodeNomad のユーザーガイドをブラウザーで開く",
   "commands.openHelp.keywords": "ヘルプ, ガイド, ドキュメント",
+  "commands.openAbout.label": "CodeNomad について",
+  "commands.openAbout.description": "設定でバージョン、更新、診断を表示",
+  "commands.openAbout.keywords": "について, バージョン, 更新, 診断",
 
   "commands.custom.argumentsPrompt.message": "/{name} の引数",
   "commands.custom.argumentsPrompt.title": "カスタムコマンド",

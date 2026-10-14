@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use tauri::{
     menu::{CheckMenuItem, Submenu},
     AppHandle, Wry,
@@ -18,6 +19,9 @@ pub(crate) struct ViewMenuState {
     right_panel: ItemState,
     timeline: ItemState,
     timeline_tools: ItemState,
+    /// Labels for the rest of the native menu (see `menu_labels`).
+    #[serde(default)]
+    menu_labels: Option<BTreeMap<String, String>>,
 }
 
 const IDS: [&str; 4] = [
@@ -41,7 +45,14 @@ impl ViewMenuState {
         if self.items().iter().any(|item| item.label.len() > 200) {
             return Err("Invalid view menu label".into());
         }
+        if let Some(labels) = &self.menu_labels {
+            crate::menu_labels::validate(labels)?;
+        }
         Ok(())
+    }
+
+    pub(crate) fn menu_labels(&self) -> Option<&BTreeMap<String, String>> {
+        self.menu_labels.as_ref()
     }
 }
 

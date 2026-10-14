@@ -3,7 +3,7 @@
 ## Ventanas, pestañas y servicio compartido {#windows-tabs}
 
 1. Usa **Nueva instancia** para abrir otra pestaña de proyecto/inicio en la ventana actual.
-2. Usa **Window → New Window** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
+2. Usa **Ventana → Nueva ventana** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
 3. En **Configuración → Avanzado**, activa **Enfocar la ventana existente en el segundo inicio** si otro inicio debe enfocar la ventana usada más recientemente en lugar de abrir una nueva.
 
 Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenecen a una ventana. Las sesiones/mensajes OpenCode pertenecen al servicio nativo compartido de OpenCode: otra ventana puede ver la misma conversación. Cerrar una ventana o pestaña de la aplicación no detiene ese servicio. **Detener espacio de trabajo** es una acción compartida independiente; consulta [Proyectos](projects.md). No uses el cierre de ventanas como prueba de que se ha detenido un agente o una Misión programada.
@@ -56,7 +56,7 @@ El almacén WebKit compartido de Tauri en macOS se conserva porque borrarlo afec
 
 ## Zoom y geometría de paneles {#zoom-panels}
 
-1. Usa **View → Zoom In**, **Zoom Out** o **Actual Size** nativos; la entrada de teclado/rueda también depende del anfitrión.
+1. Usa **Ver → Acercar**, **Alejar** o **Tamaño real** nativos; la entrada de teclado/rueda también depende del anfitrión.
 2. Usa **Panel izquierdo** y **Panel derecho** en las esquinas fijas de la cabecera exterior para alternar paneles. Fija/desfija los cajones cuando la disposición lo permita.
 3. Si los controles ya no caben, reduce el zoom o ensancha la ventana; las disposiciones estrechas trasladan controles a menús y paneles a superposiciones.
 

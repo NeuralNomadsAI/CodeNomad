@@ -21,6 +21,7 @@ import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal, useI18n } from "../i18n"
 import { helpUrl } from "../help-url"
 import { openExternalUrl } from "../external-url"
+import { openSettings } from "../../stores/settings-screen"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
@@ -616,6 +617,16 @@ export function useCommands(options: UseCommandsOptions) {
           title: tGlobal("commands.openHelp.label"), variant: "error",
         })
       },
+    })
+
+    // Also the native About menu item: Settings → Info, not the bare native panel.
+    commandRegistry.register({
+      id: "open-about",
+      label: () => tGlobal("commands.openAbout.label"),
+      description: () => tGlobal("commands.openAbout.description"),
+      category: "System",
+      keywords: () => splitKeywords("commands.openAbout.keywords"),
+      action: () => openSettings("info"),
     })
   }
 

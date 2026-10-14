@@ -39,7 +39,9 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
     window.open = (...args) => { window.opened.push(args); return null }
      window.failOpen = false
      window.open = (...args) => { if(window.failOpen) throw new Error('opener failure'); window.opened.push(args); return null }
-     if (host === "electron") window.electronAPI = { onMenuAction: handler => { window.deliverMenu = handler; return () => {} } }
+     window.preferences = []
+     if (host === "electron") window.electronAPI = { onMenuAction: handler => { window.deliverMenu = handler; return () => {} },
+       openPreferences: async (...args) => { window.preferences.push(args[0]) } }
      if (host === "tauri") {
        let callback, handler
        window.__TAURI_INTERNALS__ = {
@@ -48,6 +50,7 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
          invoke: async (command, args) => {
            if (command === 'plugin:event|listen') { handler = args.handler; window.deliverMenu = payload => callback({payload}); return handler }
            if (command === 'plugin:opener|open_url') { if(window.failOpen) throw new Error('opener failure'); window.opened.push([command, args]) }
+           if (command === 'open_preferences_window') window.preferences.push(args.request.section)
          },
        }
      }
@@ -91,6 +94,18 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
      assert.ok((await page.getByRole("dialog").innerText()).includes("https://neuralnomadsai.github.io/CodeNomad/"))
      assert.equal(await page.evaluate(() => (window as any).opened.length), 2, "failed opening never replays")
      assert.equal(await page.locator('textarea[aria-label="Draft"]').inputValue(), "Preserved unsent draft")
+     // About opens Settings → Info: native Preferences locally, the embedded screen remotely.
+     await page.keyboard.press("Escape")
+     if (context === "local") {
+       await page.evaluate(() => (window as any).deliverMenu("open-about"))
+       await page.waitForFunction(() => (window as any).preferences.length === 1)
+       assert.deepEqual(await page.evaluate(() => (window as any).preferences), ["info"])
+     } else {
+       await page.getByRole("button", { name: "Palette" }).click()
+       await page.getByText("אודות CodeNomad", { exact: true }).click()
+       await page.waitForFunction(() => (window as any).helpFixture.settings().open)
+       assert.deepEqual(await page.evaluate(() => (window as any).helpFixture.settings()), { open: true, section: "info" })
+     }
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

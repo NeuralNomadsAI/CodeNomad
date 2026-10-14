@@ -7,6 +7,7 @@ import { serverApi } from "../../../src/lib/api-client"
 import CommandPalette from "../../../src/components/command-palette"
 import { listenMenuActions } from "../../../src/lib/native/menu-actions"
 import AlertDialog from "../../../src/components/alert-dialog"
+import { activeSettingsSection, settingsOpen } from "../../../src/stores/settings-screen"
 import "../../../src/index.css"
 
 let config = { settings: { locale: "en" } }
@@ -27,7 +28,8 @@ function HelpCommand() {
   const [open, setOpen] = createSignal(false)
   onMount(() => {
     onCleanup(listenMenuActions((action) => { if (typeof action === "string") commands.executeMenuCommand(action) }))
-    ;(window as any).helpFixture = { setLocale: (value: string) => updatePreferences({ locale: value }), locale }
+    ;(window as any).helpFixture = { setLocale: (value: string) => updatePreferences({ locale: value }), locale,
+      settings: () => ({ open: settingsOpen(), section: activeSettingsSection() }) }
   })
   return <><button onClick={() => setOpen(true)}>Palette</button><textarea aria-label="Draft">Unsent draft</textarea><CommandPalette id="help-test-palette" open={open()} focusRequest={1} onClose={() => setOpen(false)} commands={commands.commands()} onExecute={commands.executeCommand} /><AlertDialog /></>
 }

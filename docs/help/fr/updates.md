@@ -12,7 +12,7 @@ Stable sélectionne la dernière version finale. Préversion suit l’ordre de p
 
 ## Mettre à jour une installation de bureau {#desktop-update}
 
-1. Utilisez **Help → Get Updates...**, la notification de mise à jour ou le bouton dans **Paramètres → Info → Mises à jour**.
+1. Utilisez **Aide → Rechercher des mises à jour…**, la notification de mise à jour ou le bouton dans **Paramètres → Info → Mises à jour**.
 2. Sur Electron, suivez la page de version et obtenez l’archive/le paquet correspondant à votre hôte/plateforme.
 3. Sur les installations Tauri locales admissibles, examinez la proposition native et choisissez explicitement **Installer et redémarrer**.
 4. Enregistrez le travail important de chaque fenêtre avant installation/redémarrage, puis vérifiez **Info** après relancement.
@@ -26,7 +26,7 @@ Stable sélectionne la dernière version finale. Préversion suit l’ordre de p
 
 Dans les fenêtres d’application Tauri et les fenêtres natives de **Préférences**, la section Mises à jour affiche **Installer la mise à jour** lorsqu’une version est proposée. Elle vérifie le flux sélectionné et propose **Installer et redémarrer** lorsqu’une mise à jour dans l’application est disponible ; sinon, elle ouvre la page de version qu'elle indique. Les fenêtres Electron, web et distantes affichent à la place le lien **Télécharger la mise à jour**, sans vérification par le mécanisme natif de mise à jour.
 
-Le menu Tauri **Help → Get Updates...** lance la procédure de mise à jour dans la fenêtre d’application qui a le focus. Depuis les Préférences ou une fenêtre distante, il ramène au premier plan la fenêtre d’application utilisée le plus récemment pour lancer la vérification ; il n’installe pas via la fenêtre distante. Si aucune fenêtre d’application ne peut recevoir l’action, notamment lorsque la fenêtre ciblée affiche un écran de chargement, de connexion ou d’appairage, le menu ouvre la page de version à la place.
+Le menu Tauri **Aide → Rechercher des mises à jour…** lance la procédure de mise à jour dans la fenêtre d’application qui a le focus. Depuis les Préférences ou une fenêtre distante, il ramène au premier plan la fenêtre d’application utilisée le plus récemment pour lancer la vérification ; il n’installe pas via la fenêtre distante. Si aucune fenêtre d’application ne peut recevoir l’action, notamment lorsque la fenêtre ciblée affiche un écran de chargement, de connexion ou d’appairage, le menu ouvre la page de version à la place.
 
 Tauri ne propose que les versions ayant un manifeste de mise à jour publié pour le flux/la cible choisis. Une version juste annoncée peut ne pas encore être installable ; la notification peut ouvrir sa page à la place. La vérification native de signature est requise avant installation. Les signatures de mise à jour sont distinctes des garanties de notarisation/signature de code du système.
 

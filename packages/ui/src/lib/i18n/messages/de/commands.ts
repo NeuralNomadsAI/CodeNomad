@@ -176,6 +176,9 @@ export const commandMessages = {
   "commands.openHelp.label": "Hilfe öffnen",
   "commands.openHelp.description": "Das CodeNomad-Benutzerhandbuch im Browser öffnen",
   "commands.openHelp.keywords": "hilfe, handbuch, dokumentation",
+  "commands.openAbout.label": "Über CodeNomad",
+  "commands.openAbout.description": "Version, Updates und Diagnose in den Einstellungen anzeigen",
+  "commands.openAbout.keywords": "über, version, updates, diagnose",
 
   "commands.custom.argumentsPrompt.message": "Argumente für /{name}",
   "commands.custom.argumentsPrompt.title": "Benutzerdefinierter Befehl",

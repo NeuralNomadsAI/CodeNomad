@@ -181,6 +181,8 @@
 
 Tauri remote help opening stays in the owned native new-window/navigation policy: only credential-free HTTPS URLs under `https://neuralnomadsai.github.io/CodeNomad/` on port 443 reach the system browser; no remote opener IPC/native capability or native guest. Electron's host external opener reports asynchronous failures visibly, without replay. Public search hides the native cancel affordance and keeps one labelled 44px Clear control.
 
+Native Electron/Tauri application menus follow the UI locale: renderers translate `NATIVE_MENU_LABEL_KEYS` (`lib/native/menu-labels.ts`) and send them with the View menu state; older hosts ignore the field. Hosts keep English until a renderer reports labels, keep the last locale for windows without one, and escape `&` outside macOS. Electron takes its defaults from `lib/native/menu-labels-en.ts`; Tauri's `menu_labels.rs` defaults are checked against the English messages by `menu-labels.test.ts`. Tauri retitles retained items in place; Electron rebuilds its menu on a label change. About CodeNomad runs the `open-about` command (Settings → Info), falling back to a native panel only when no application window can receive it.
+
 The UI uses a small custom i18n layer (no ICU/messageformat). When building features, never hardcode user-visible strings.
 
 - **Runtime API:** use `useI18n()` in components (`const { t } = useI18n();`) and `tGlobal(...)` in stores/non-component code.

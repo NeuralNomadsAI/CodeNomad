@@ -10,7 +10,7 @@ CodeNomad relie votre espace de travail à un service OpenCode partagé en arri�
 2. [Ouvrez un projet](projects.md), puis choisissez les réglages Agent, Modèle et Réflexion de la conversation.
 3. Vérifiez la portée concernée avant de modifier des identifiants, de redémarrer un service ou de supprimer l’historique. D’autres clients peuvent utiliser le même service natif.
 
-Le site d’aide public fonctionne sans CodeNomad, son backend ni connexion. **Help → CodeNomad Help** sur ordinateur et **Ouvrir l’aide** dans la palette de commandes l’ouvrent séparément dans la langue actuelle de l’interface. Changer de langue ne traduit pas les conversations enregistrées.
+Le site d’aide public fonctionne sans CodeNomad, son backend ni connexion. **Aide → Aide de CodeNomad** sur ordinateur et **Ouvrir l’aide** dans la palette de commandes l’ouvrent séparément dans la langue actuelle de l’interface. Changer de langue ne traduit pas les conversations enregistrées.
 
 **Paramètres** ouvre la fenêtre native **Préférences** dans un client de bureau local ; les clients navigateur et distants utilisent les paramètres intégrés. Les chemins tels que **Paramètres → Fournisseurs** désignent la même section dans les deux interfaces.
 
