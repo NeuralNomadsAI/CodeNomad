@@ -303,7 +303,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or NomadWorks mission.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or product delivery mission.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -440,7 +440,7 @@ const inspectSchema = {
       type: "object",
       properties: {
         objective: { type: "string", minLength: 1, maxLength: 20_000 },
-        template: { type: "string", enum: ["custom", "debug", "wayfinder", "nomadworks"] },
+        template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery"] },
         notes: { type: "string", maxLength: 20_000 },
         profiles: missionProfilesSchema,
         taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omitted defaults to native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
@@ -726,7 +726,7 @@ function delivery(value: unknown): "queue" | "steer" {
 }
 
 function isTemplate(value: string): value is MissionTemplateId {
-  return value === "custom" || value === "debug" || value === "wayfinder" || value === "nomadworks"
+  return value === "custom" || value === "debug" || value === "wayfinder" || value === "delivery"
 }
 
 function optionalJson(value: unknown): MissionJsonValue | undefined {

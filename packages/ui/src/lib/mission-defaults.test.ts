@@ -8,7 +8,7 @@ const templateRoles = {
   custom: ["specialist"],
   debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
-  nomadworks: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
+  delivery: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
 } as const
 
 describe("mission profile default normalization", () => {
@@ -85,7 +85,7 @@ describe("mission defaults for future creation", () => {
 
   it("expands the custom specialist fallback to every role of the selected playbook only", () => {
     const defaults: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator, roles: { specialist } } }]
-    for (const template of ["custom", "debug", "wayfinder", "nomadworks"] as const) {
+    for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
       const resolved = missionDefaultsFor(defaults, template)!
       assert.deepEqual(resolved.coordinator, coordinator)
       assert.deepEqual(resolved.roles, Object.fromEntries(templateRoles[template].map(role => [role, specialist])))
@@ -124,7 +124,7 @@ describe("mission defaults for future creation", () => {
     const migrated = normalizeMissionDefaults(legacy)
     assert.deepEqual(migrated, [{ ...legacy[0], template: "all" }])
     assert.equal(legacy[0].template, "custom", "reading never mutates the saved document")
-    for (const template of ["custom", "debug", "wayfinder", "nomadworks"] as const) {
+    for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
       assert.deepEqual(missionDefaultsFor(migrated, template)!.coordinator, coordinator)
       assert.equal(missionTaskModeFor(migrated, template), "independent")
     }

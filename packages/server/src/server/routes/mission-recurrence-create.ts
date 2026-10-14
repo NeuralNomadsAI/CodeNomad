@@ -31,7 +31,7 @@ const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   // historical 120-character bound in recurrenceConfigSchema.
   title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(),
   notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "debug", "wayfinder", "nomadworks"]),
+  template: z.enum(["custom", "debug", "wayfinder", "delivery"]),
   directory: z.string().min(1).max(4096).optional(),
   watchedConversationIDs: z.array(z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)).max(32)
     .refine(ids => new Set(ids).size === ids.length),

@@ -13,7 +13,7 @@ export const missionProfileRoles = {
   custom: ["specialist"],
   debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
-  nomadworks: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
+  delivery: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
 } as const satisfies Record<MissionTemplateId, readonly string[]>
 const allowedRoles: readonly string[] = [...new Set(Object.values(missionProfileRoles).flat())]
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)

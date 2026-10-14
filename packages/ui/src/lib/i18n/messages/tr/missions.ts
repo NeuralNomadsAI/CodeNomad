@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "Esnek görev",
   "missions.control.template.debug": "Hata ayıklama",
   "missions.control.template.wayfinder": "Keşif",
-  "missions.control.template.nomadworks": "NomadWorks ekibi",
+  "missions.control.template.delivery": "Ürün teslimi",
   "missions.control.status.active": "Etkin",
   "missions.control.status.completed": "Tamamlandı",
   "missions.control.status.failed": "Başarısız",

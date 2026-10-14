@@ -26,7 +26,7 @@ export function parseMissionModel(input: unknown): UserMissionModel {
     || typeof value.name !== "string" || !value.name.trim() || value.name.length > 80
     || typeof value.objective !== "string" || !value.objective.trim() || value.objective.length > 20_000
     || typeof value.notes !== "string" || value.notes.length > 20_000
-    || !["custom", "debug", "wayfinder", "nomadworks"].includes(value.template as string)
+    || !["custom", "debug", "wayfinder", "delivery"].includes(value.template as string)
     || (value.taskMode !== undefined && !["native", "independent"].includes(value.taskMode as string))) throw new Error("Invalid mission model")
   const template = value.template as MissionTemplateId
   const profiles = parseMissionProfiles(value.profiles)

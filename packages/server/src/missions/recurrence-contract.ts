@@ -26,7 +26,7 @@ export const recurrenceConfigSchema = z.object({
   title: z.string().trim().min(1).max(120),
   consigne: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
   notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "debug", "wayfinder", "nomadworks"]),
+  template: z.enum(["custom", "debug", "wayfinder", "delivery"]),
   profileID: id, executionHost: id,
   profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema,

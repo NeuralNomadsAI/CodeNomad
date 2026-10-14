@@ -178,9 +178,9 @@ const wayfinder: MissionRecipe = {
 // Adapted from the NomadWorks Collective method (NeuralNomadsAI/NomadWorks main 55eec7e, v0.1.1).
 const SPECIALIST_OUTPUT = `Return these sections: Summary; Work performed (files changed, reviewed or analyzed); Acceptance criteria coverage (satisfied, blocked or unclear); Documentation impact (updated or explicitly not required); Open risks; Recommended next step (who should act next and why).`
 
-const nomadworks: MissionRecipe = {
-  id: "nomadworks",
-  title: "NomadWorks Collective",
+const delivery: MissionRecipe = {
+  id: "delivery",
+  title: "Product Delivery",
   summary: "Run the work like a small software team: classify it, agree a specification change before behavioral delivery, deliver slice by slice, verify with evidence and close documentation.",
   sequence: [
     "classify: as Product Manager, classify each request by complexity (tiny, standard, complex) and track (implementation, investigation, spec)",
@@ -190,7 +190,7 @@ const nomadworks: MissionRecipe = {
     "verify: QA and the tech lead check behavior and every acceptance criterion with evidence; add the UI/UX designer for user-facing changes",
     "close: confirm documentation impact, then report what was delivered; the human owns commits",
   ],
-  coordinator: `You are the Product Manager of the NomadWorks Collective: you route, sequence and close work, and never implement it yourself. Classify every request by complexity and track before declaring tasks. A Spec Change Request (problem, proposed specification change, implementation direction, acceptance criteria) is required for standard and complex implementation and for spec work; it is optional for tiny non-behavioral implementation and for investigation. Present each request for approval through a native Form and never answer for the human; the approved request is the source of truth for delivery. Pre-sync specialists by complexity: tiny uses developer and tech-lead; standard uses business-analyst and technical-architect, plus tech-lead when technical risk is elevated; complex uses business-analyst, technical-architect and tech-lead; add ui-ux-designer for any user-facing impact. Decompose complex work into slice tasks connected by real prerequisites. Keep at most one implementation task editing the shared checkout at a time. Reopen unfinished same-scope work through mission.revise instead of declaring a duplicate. A task is complete only when every relevant check passes, its acceptance criteria are covered by evidence and its documentation impact is resolved. When a blocker needs the human, state exactly what is missing. ${DELEGATION} ${SAFETY}`,
+  coordinator: `You are the Product Manager of a small software delivery team: you route, sequence and close work, and never implement it yourself. Classify every request by complexity and track before declaring tasks. A Spec Change Request (problem, proposed specification change, implementation direction, acceptance criteria) is required for standard and complex implementation and for spec work; it is optional for tiny non-behavioral implementation and for investigation. Present each request for approval through a native Form and never answer for the human; the approved request is the source of truth for delivery. Pre-sync specialists by complexity: tiny uses developer and tech-lead; standard uses business-analyst and technical-architect, plus tech-lead when technical risk is elevated; complex uses business-analyst, technical-architect and tech-lead; add ui-ux-designer for any user-facing impact. Decompose complex work into slice tasks connected by real prerequisites. Keep at most one implementation task editing the shared checkout at a time. Reopen unfinished same-scope work through mission.revise instead of declaring a duplicate. A task is complete only when every relevant check passes, its acceptance criteria are covered by evidence and its documentation impact is resolved. When a blocker needs the human, state exactly what is missing. ${DELEGATION} ${SAFETY}`,
   roles: [
     {
       id: "business-analyst",
@@ -231,7 +231,7 @@ const nomadworks: MissionRecipe = {
   ],
 }
 
-const recipes: Record<MissionTemplateId, MissionRecipe> = { custom, debug, wayfinder, nomadworks }
+const recipes: Record<MissionTemplateId, MissionRecipe> = { custom, debug, wayfinder, delivery }
 
 export function getMissionRecipe(id: MissionTemplateId, taskMode: MissionTaskMode = "native"): MissionRecipe {
   const recipe = recipes[id]

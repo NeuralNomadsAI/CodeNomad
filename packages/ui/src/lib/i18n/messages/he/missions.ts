@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "משימה גמישה",
   "missions.control.template.debug": "ניפוי באגים",
   "missions.control.template.wayfinder": "מסע חקר",
-  "missions.control.template.nomadworks": "צוות NomadWorks",
+  "missions.control.template.delivery": "אספקת מוצר",
   "missions.control.status.active": "פעילה",
   "missions.control.status.completed": "הושלמה",
   "missions.control.status.failed": "נכשלה",

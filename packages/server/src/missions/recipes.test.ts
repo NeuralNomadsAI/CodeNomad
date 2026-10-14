@@ -41,7 +41,7 @@ test("coordinator preserves explicit native reuse and additive frontier planning
 
 test("optional working notes stay verbatim in the map and are quoted as untrusted actor context for every playbook", () => {
   const notes = "  Optional <working notes> & technical context\n  "
-  for (const template of ["custom", "debug", "wayfinder", "nomadworks"] as const) {
+  for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
     const map = { ...mission, template, notes }
     const context = buildActorContext(map, "ses_coordinator")
     assert.ok(context.includes("<mission-notes>  Optional &lt;working notes&gt; &amp; technical context\n  </mission-notes>"))
@@ -50,7 +50,7 @@ test("optional working notes stay verbatim in the map and are quoted as untruste
 })
 
 test("every coordinator plans all requested workstreams and launches independent work before waiting", () => {
-  for (const template of ["custom", "debug", "wayfinder", "nomadworks"] satisfies MissionTemplateId[]) {
+  for (const template of ["custom", "debug", "wayfinder", "delivery"] satisfies MissionTemplateId[]) {
     const context = buildActorContext({ ...mission, template }, "ses_coordinator")
     assert.match(context, /Cover every explicitly requested workstream/)
     assert.match(context, /Before waiting for one result, launch the other independent ready tasks/)
@@ -64,7 +64,7 @@ test("every coordinator plans all requested workstreams and launches independent
 })
 
 test("every coordinator writes plain-language summaries and publishes automatic briefings", () => {
-  for (const template of ["custom", "debug", "wayfinder", "nomadworks"] satisfies MissionTemplateId[]) {
+  for (const template of ["custom", "debug", "wayfinder", "delivery"] satisfies MissionTemplateId[]) {
     for (const taskMode of ["native", "independent"] as const) {
       const context = buildActorContext({ ...mission, template, taskMode }, "ses_coordinator")
       assert.ok(context.includes(USER_FACING_TEXT) && context.includes(AUTOMATIC_BRIEFINGS))
@@ -116,7 +116,7 @@ function assertNativeWorkPolicy(text: string) {
   assert.doesNotMatch(text, /subagent_depth|depth\s*[:=]\s*\d|reach (?:depth|level) \d/)
 }
 
-for (const template of ["custom", "debug", "wayfinder", "nomadworks"] satisfies MissionTemplateId[]) {
+for (const template of ["custom", "debug", "wayfinder", "delivery"] satisfies MissionTemplateId[]) {
   test(`${template} propagates bounded native policy while retaining every role's constraints`, () => {
     const map = { ...mission, template }
     const recipe = getMissionRecipe(template)

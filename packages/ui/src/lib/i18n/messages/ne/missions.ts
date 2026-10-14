@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "लचिलो मिसन",
   "missions.control.template.debug": "डिबगिङ",
   "missions.control.template.wayfinder": "खोज",
-  "missions.control.template.nomadworks": "NomadWorks टोली",
+  "missions.control.template.delivery": "उत्पादन डेलिभरी",
   "missions.control.status.active": "सक्रिय",
   "missions.control.status.completed": "पूरा",
   "missions.control.status.failed": "असफल",

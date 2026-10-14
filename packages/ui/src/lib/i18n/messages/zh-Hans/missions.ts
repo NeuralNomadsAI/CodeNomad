@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "灵活任务",
   "missions.control.template.debug": "调试",
   "missions.control.template.wayfinder": "探索",
-  "missions.control.template.nomadworks": "NomadWorks 团队",
+  "missions.control.template.delivery": "产品交付",
   "missions.control.status.active": "进行中",
   "missions.control.status.completed": "已完成",
   "missions.control.status.failed": "失败",

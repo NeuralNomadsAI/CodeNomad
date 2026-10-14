@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "Misión flexible",
   "missions.control.template.debug": "Depuración",
   "missions.control.template.wayfinder": "Exploración",
-  "missions.control.template.nomadworks": "Equipo NomadWorks",
+  "missions.control.template.delivery": "Entrega de producto",
   "missions.control.status.active": "Activa",
   "missions.control.status.completed": "Completada",
   "missions.control.status.failed": "Fallida",

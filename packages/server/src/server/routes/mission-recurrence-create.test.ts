@@ -280,7 +280,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       }
     })
     await t.test("exact 16384-character start payload is accepted; 16385 is rejected before native write", async () => {
-      for (const template of ["custom", "debug", "wayfinder", "nomadworks"] as const) {
+      for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
         const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, { ...profile, agent: "child" }])) }
         const full = { ...payload, template, profiles, requestID: `boundary_${template}`, instructions: "x".repeat(MISSION_LIFECYCLE_TEXT_LIMIT) }
         const before = writes

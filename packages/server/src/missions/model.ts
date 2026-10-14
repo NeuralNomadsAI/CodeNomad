@@ -20,7 +20,7 @@ export type MissionJsonValue = null | boolean | number | string | readonly Missi
   readonly [key: string]: MissionJsonValue
 }
 
-export type MissionTemplateId = "custom" | "debug" | "wayfinder" | "nomadworks"
+export type MissionTemplateId = "custom" | "debug" | "wayfinder" | "delivery"
 export type MissionStatus = "active" | "completed" | "failed" | "stopped"
 export type MissionTaskStatus =
   | "blocked"
