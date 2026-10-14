@@ -1,4 +1,5 @@
 @import "./components/buttons.css";
+@import "./components/alert-dialog.css";
 @import "./components/switches.css";
 @import "./components/window.css";
 @import "./components/auth-recovery.css";
