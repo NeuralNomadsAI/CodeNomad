@@ -1,4 +1,5 @@
 import type { NetworkAddress, ServerMeta } from "../../../../server/src/api-types"
+import type { BugReportEnvironment } from "../../lib/bug-report"
 
 export interface DiagnosticRuntime {
   host: string
@@ -60,6 +61,37 @@ function isWildcardBindHost(host: string): boolean {
 function normalizeBindHost(host: string): string {
   const value = host.trim().toLowerCase()
   return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value
+}
+
+export interface BugReportVersions {
+  opencodeInstalled?: string | null
+  opencodeDaemon?: string | null
+  userAgent?: string
+}
+
+/** Environment values for the issue form, in the form's own (English) terms.
+ * Never includes listeners, addresses, paths, credentials or conversation data. */
+export function buildBugReportEnvironment(
+  meta: ServerMeta | null,
+  osDisplay: string,
+  runtime: DiagnosticRuntime,
+  versions: BugReportVersions,
+): BugReportEnvironment {
+  const server = meta?.serverVersion
+  const ui = meta?.ui?.version
+  const codenomadVersion = server && ui && ui !== server ? `${server} (UI ${ui})` : server ?? ui ?? ""
+  const { opencodeInstalled: installed, opencodeDaemon: daemon } = versions
+  const opencodeVersion = daemon && installed && daemon !== installed
+    ? `${installed} (running daemon ${daemon})`
+    : daemon ?? installed ?? ""
+  const variant = runtime.host === "electron" ? "Electron" : runtime.host === "tauri" ? "Tauri" : "Web browser"
+  const context = [
+    `- Client: ${variant} (${runtime.platform}, ${runtime.windowContext} window)`,
+    `- UI source: ${meta?.ui?.source ?? "—"}`,
+    `- Server OS: ${getServerOperatingSystem(meta)} ${meta?.system?.arch ?? ""}`.trimEnd(),
+  ]
+  if (runtime.host === "web" && versions.userAgent) context.push(`- Browser: ${versions.userAgent}`)
+  return { codenomadVersion, opencodeVersion, operatingSystem: osDisplay, additionalContext: context.join("\n") }
 }
 
 export function buildDiagnosticReport(

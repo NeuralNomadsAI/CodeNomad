@@ -700,6 +700,7 @@ export const settingsMessages = {
   "settings.info.diagnostics.subtitle": "Hata bildirimleri için sistem ve sürüm bilgisi toplayın.",
   "settings.info.diagnostics.copy": "Panoya kopyala",
   "settings.info.diagnostics.download": ".txt indir",
+  "settings.info.diagnostics.reportBug": "Hata bildir",
   "settings.info.diagnostics.copied": "Tanılama bilgisi panoya kopyalandı.",
 
   "settings.behavior.followUpBehavior.option.queue": "Kuyruk",

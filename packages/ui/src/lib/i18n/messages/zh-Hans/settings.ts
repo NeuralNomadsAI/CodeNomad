@@ -724,6 +724,7 @@ export const settingsMessages = {
   "settings.info.diagnostics.subtitle": "收集系统和版本信息，用于错误报告。",
   "settings.info.diagnostics.copy": "复制到剪贴板",
   "settings.info.diagnostics.download": "下载 .txt",
+  "settings.info.diagnostics.reportBug": "报告错误",
   "settings.info.diagnostics.copied": "诊断信息已复制到剪贴板。",
   "providerUsage.nativeCredentialApiUnavailable": "用量显示需要 OpenCode {version} 或更新版本。请更新 OpenCode，然后从设置中重启其服务。",
 } as const

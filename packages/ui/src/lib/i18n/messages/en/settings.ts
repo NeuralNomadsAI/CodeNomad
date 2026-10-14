@@ -726,5 +726,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.subtitle": "Collect system and version info for bug reports.",
   "settings.info.diagnostics.copy": "Copy to clipboard",
   "settings.info.diagnostics.download": "Download .txt",
+  "settings.info.diagnostics.reportBug": "Report a bug",
   "settings.info.diagnostics.copied": "Diagnostic info copied to clipboard.",
 } as const

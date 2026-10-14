@@ -29,8 +29,13 @@ const baseMeta = {
   workspaceRoot: "/fixture", addresses: [], serverVersion: "0.20.0", ui: { version: "0.20.0", source: "bundled" },
 }
 
-async function setup(page: Page, host: "web" | "tauri" | "electron") {
+const issueTemplate = readFile(fileURLToPath(new URL("../../../../.github/ISSUE_TEMPLATE/bug_report.yml", import.meta.url)), "utf8")
+
+async function setup(page: Page, host: "web" | "tauri" | "electron", template?: { status: number; body: string }) {
+  // The published issue form is a fixture too; tests never reach GitHub.
+  await page.route("https://raw.githubusercontent.com/**", async route => route.fulfill(template ?? { status: 200, body: await issueTemplate }))
   await page.addInitScript({ content: `{
+    window.open = (url) => { (window.openedUrls ??= []).push(url); return null }
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: ${JSON.stringify(host)}, __CODENOMAD_WINDOW_CONTEXT__: "remote" })
     Object.defineProperty(navigator, "platform", { value: "Win32" })
     Object.defineProperty(navigator, "userAgentData", { value: { platform: "Windows" } })
@@ -147,6 +152,41 @@ test("the data profile row appears only for an explicit non-default profile", as
     await page.getByRole("button", { name: "Refresh", exact: true }).click()
     await page.getByTestId("settings-data-profile").waitFor()
     assert.equal(await rowValue(page, "Data profile").innerText(), "dev-v2")
+  } finally { await page.close() }
+})
+
+for (const published of ["current", "renamed"] as const) test(`Report a bug opens the ${published === "current" ? "prefilled issue form" : "blank issue fallback"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
+  const body = (await issueTemplate).replace("id: os-version", "id: operating-system")
+  await setup(page, "web", published === "renamed" ? { status: 200, body } : undefined)
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(path === "/api/meta"
+      ? { ...baseMeta, system: { platform: "linux", arch: "arm64" } }
+      : path === "/api/opencode/update" ? { state: "ready", currentVersion: "2.0.29", daemonVersion: "2.0.29" } : {}) })
+  })
+  try {
+    await page.goto(url)
+    await rowValue(page, "Server operating system").waitFor()
+    await page.getByRole("button", { name: "Report a bug", exact: true }).click()
+    await page.waitForFunction(() => (window as any).openedUrls?.length === 1)
+    const opened = new URL(await page.evaluate(() => (window as any).openedUrls[0] as string))
+    assert.equal(opened.origin + opened.pathname, "https://github.com/NeuralNomadsAI/CodeNomad/issues/new")
+    const environment = published === "current" ? opened.searchParams.get("extra")! : opened.searchParams.get("body")!
+    if (published === "current") {
+      assert.equal(opened.searchParams.get("template"), "bug_report.yml")
+      assert.equal(opened.searchParams.get("codenomad-version"), "0.20.0")
+      assert.equal(opened.searchParams.get("opencode-version"), "2.0.29")
+      assert.equal(opened.searchParams.get("os-version"), "Windows x64")
+    } else {
+      assert.equal(opened.searchParams.has("template"), false)
+      assert.match(environment, /CodeNomad Version: 0\.20\.0/)
+      assert.match(environment, /OpenCode Version: 2\.0\.29/)
+    }
+    assert.match(environment, /Client: Web browser/)
+    assert.match(environment, /Server OS: Linux arm64/)
+    assert.match(environment, /Browser: Mozilla\/5\.0 \(Windows NT 10\.0; Win64; x64\)/)
+    assert.doesNotMatch(opened.href, /192\.0\.2\.1|127\.0\.0\.1|fixture/)
   } finally { await page.close() }
 })
 

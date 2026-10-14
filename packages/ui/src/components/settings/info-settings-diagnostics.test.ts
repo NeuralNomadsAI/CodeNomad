@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { ServerMeta } from "../../../../server/src/api-types"
-import { buildDiagnosticReport, getServerOperatingSystem } from "./info-settings-diagnostics"
+import { buildBugReportEnvironment, buildDiagnosticReport, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 const labels = {
   reportTitle: "CodeNomad Diagnostic Report",
@@ -192,5 +192,29 @@ describe("buildDiagnosticReport", () => {
     assert.match(loopback, /Listening mode: local/)
     assert.match(loopback, /ipv6\/loopback: https:\/\/\[::1\]:9898/)
     assert.doesNotMatch(loopback, /https:\/\/127\.0\.0\.1:9898/)
+  })
+})
+
+describe("buildBugReportEnvironment", () => {
+  it("reports differing versions and the web browser without network or path details", () => {
+    const environment = buildBugReportEnvironment({ ...meta, ui: { version: "1.2.4-dev", source: "downloaded" } }, "Windows x64",
+      { host: "web", platform: "mobile", windowContext: "remote" },
+      { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.28", userAgent: "Mozilla/5.0 Test" })
+    assert.deepEqual(environment, {
+      codenomadVersion: "1.2.3 (UI 1.2.4-dev)",
+      opencodeVersion: "2.0.29 (running daemon 2.0.28)",
+      operatingSystem: "Windows x64",
+      additionalContext: "- Client: Web browser (mobile, remote window)\n- UI source: downloaded\n- Server OS: Linux arm64\n- Browser: Mozilla/5.0 Test",
+    })
+    assert.doesNotMatch(JSON.stringify(environment), /192\.168|127\.0\.0\.1|\/home\/user/)
+  })
+
+  it("keeps a single version and omits the browser agent on desktop hosts", () => {
+    const environment = buildBugReportEnvironment(meta, "macOS arm64", { host: "electron", platform: "desktop", windowContext: "local" },
+      { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.29", userAgent: "Electron UA" })
+    assert.equal(environment.codenomadVersion, "1.2.3")
+    assert.equal(environment.opencodeVersion, "2.0.29")
+    assert.doesNotMatch(environment.additionalContext, /Electron UA/)
+    assert.equal(buildBugReportEnvironment(null, "Unknown", { host: "tauri", platform: "desktop", windowContext: "local" }, {}).opencodeVersion, "")
   })
 })

@@ -723,6 +723,7 @@ export const settingsMessages = {
   "settings.info.diagnostics.subtitle": "त्रुटि रिपोर्टहरूको लागि प्रणाली र संस्करण जानकारी संकलन गर्नुहोस्।",
   "settings.info.diagnostics.copy": "क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्",
   "settings.info.diagnostics.download": ".txt डाउनलोड गर्नुहोस्",
+  "settings.info.diagnostics.reportBug": "बग रिपोर्ट गर्नुहोस्",
   "settings.info.diagnostics.copied": "निदान जानकारी क्लिपबोर्डमा प्रतिलिपि गरियो।",
   "providerUsage.nativeCredentialApiUnavailable": "प्रयोग विवरणका लागि OpenCode {version} वा नयाँ संस्करण चाहिन्छ। OpenCode अद्यावधिक गर्नुहोस्, त्यसपछि सेटिङबाट यसको सेवा पुनः सुरु गर्नुहोस्।",
 } as const

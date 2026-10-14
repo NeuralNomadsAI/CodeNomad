@@ -724,6 +724,7 @@ export const settingsMessages = {
   "settings.info.diagnostics.subtitle": "Collectez les informations système et de version pour les rapports de bug.",
   "settings.info.diagnostics.copy": "Copier dans le presse-papiers",
   "settings.info.diagnostics.download": "Télécharger .txt",
+  "settings.info.diagnostics.reportBug": "Signaler un bug",
   "settings.info.diagnostics.copied": "Informations de diagnostic copiées dans le presse-papiers.",
   "providerUsage.nativeCredentialApiUnavailable": "L’usage nécessite OpenCode {version} ou plus récent. Mettez OpenCode à jour, puis redémarrez son service depuis les paramètres.",
 } as const
