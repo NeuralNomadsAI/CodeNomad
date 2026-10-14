@@ -180,10 +180,15 @@ pub(crate) fn record_failure() {
     *locked(&FAILURE_OWNER) = Some(owner);
 }
 
-/// A document that kept its page instead of reloading (Preferences declining to
-/// discard edits) cannot claim a recorded failure on mount; notify it live.
-pub(crate) fn notify_pending_failure(app: &AppHandle) {
-    if locked(&FAILURE_OWNER).is_some() {
+/// Preferences can decline the reload that would let it claim a recorded failure
+/// on mount (to keep unsaved edits); notify it live, but only for its own install,
+/// since the event also resets other windows' progress.
+fn kept_page_owns_failure(pending: Option<&str>) -> bool {
+    pending == Some(crate::preferences_window::LABEL)
+}
+
+pub(crate) fn notify_preferences_failure(app: &AppHandle) {
+    if kept_page_owns_failure(locked(&FAILURE_OWNER).as_deref()) {
         let _ = app.emit("desktop-update:failed", ());
     }
 }
@@ -232,5 +237,12 @@ mod tests {
         assert!(!claim_failure(&mut pending, "local-a", |_| true), "a failure is reported once");
         pending = Some("local-a".to_string());
         assert!(claim_failure(&mut pending, "local-b", |_| false), "a closed owner leaves it to any window");
+    }
+
+    #[test]
+    fn declined_preferences_reload_reports_only_its_own_failure() {
+        assert!(kept_page_owns_failure(Some(crate::preferences_window::LABEL)));
+        assert!(!kept_page_owns_failure(Some("local-a")), "another window's install keeps its progress");
+        assert!(!kept_page_owns_failure(None));
     }
 }
