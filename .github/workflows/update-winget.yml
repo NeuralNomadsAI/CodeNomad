@@ -82,7 +82,7 @@ jobs:
     env:
       WINGET_PACKAGE_IDENTIFIER: ${{ vars.WINGET_PACKAGE_IDENTIFIER || 'NeuralNomadsAI.CodeNomad' }}
       WINGET_FORK_OWNER: ${{ vars.WINGET_FORK_OWNER || 'pascalandr' }}
-      WINGET_WINDOWS_ASSET_NAME_TEMPLATE: ${{ vars.WINGET_WINDOWS_ASSET_NAME_TEMPLATE || 'CodeNomad-Tauri-windows-x64-{version}.zip' }}
+      WINGET_WINDOWS_ASSET_NAME_TEMPLATE: ${{ vars.WINGET_WINDOWS_ASSET_NAME_TEMPLATE || 'CodeNomad-Tauri-windows-x64-{version}.exe' }}
       WINGET_ASSET_WAIT_TIMEOUT_SECONDS: ${{ vars.WINGET_ASSET_WAIT_TIMEOUT_SECONDS || '900' }}
       WINGET_ASSET_POLL_INTERVAL_SECONDS: ${{ vars.WINGET_ASSET_POLL_INTERVAL_SECONDS || '15' }}
     steps:

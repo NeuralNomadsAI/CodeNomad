@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto"
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { mergeUpdater, stageUpdater, targets, verifyArtifact } from "./updater-artifacts.mjs"
@@ -54,13 +54,15 @@ test("stages all native artifact formats and publishes only a complete verified 
     const entry = stageUpdater({ platform, version: "1.2.3", bundleRoot, output, publicKey: encodedKey, ...release })
     assert.deepEqual(readFileSync(join(output, entry.asset)), bytes)
     assert.equal(JSON.parse(readFileSync(join(output, `${platform}.json`))).signature, signature(bytes))
+    // The signature is published inside latest.json, not as a separate asset.
+    assert.equal(existsSync(join(output, `${entry.asset}.sig`)), false)
     fragments.push(entry)
     assets.push({ name: entry.asset, digest: `sha256:${digest(bytes)}` })
-    assets.push({ name: `${entry.asset}.sig`, digest: `sha256:${digest(`${entry.signature}\n`)}` })
   }
   const result = mergeUpdater(fragments, assets, release)
   assert.equal(result.version, "1.2.3")
   assert.deepEqual(Object.keys(result.platforms).sort(), Object.keys(targets).sort())
+  for (const entry of fragments) assert.equal(result.platforms[entry.platform].signature, entry.signature)
   assert.match(result.platforms["windows-x86_64"].url, /\.exe$/)
   assert.match(result.platforms["darwin-aarch64"].url, /\.app\.tar\.gz$/)
   assert.throws(() => mergeUpdater(fragments.slice(1), assets, release), /Missing/)

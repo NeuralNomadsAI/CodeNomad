@@ -132,12 +132,19 @@
       "executableName": "CodeNomad",
       "target": [
         {
-          "target": "tar.gz"
+          "target": "deb"
         }
       ],
       "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",
       "category": "Development",
       "icon": "electron/resources/icon.png"
+    },
+    "deb": {
+      "packageName": "codenomad",
+      "fpm": [
+        "--conflicts=code-nomad",
+        "--replaces=code-nomad"
+      ]
     }
   },
   "private": true

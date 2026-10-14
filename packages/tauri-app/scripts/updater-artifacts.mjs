@@ -61,7 +61,7 @@ export function stageUpdater({ platform, version, bundleRoot, output, publicKey,
     }
     const asset = `CodeNomad-Tauri-${target.name}-${version}${target.extension}`
     copyFileSync(source, join(output, asset))
-    writeFileSync(join(output, `${asset}.sig`), `${signature}\n`)
+    // The signature travels inside latest.json; no separate .sig asset is published.
     Object.assign(fragment, {
       asset, sha256: sha256(bytes), signature,
       publicKeyHash: sha256(publicKey.trim()),
@@ -90,9 +90,7 @@ export function mergeUpdater(fragments, assets, { repository, tag }) {
     const url = `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(expectedName)}`
     if (entry.asset !== expectedName || entry.url !== url || !entry.signature) throw new Error("Invalid updater asset identity")
     const artifact = assets.find((asset) => asset.name === entry.asset)
-    const signature = assets.find((asset) => asset.name === `${entry.asset}.sig`)
-    if (artifact?.digest !== `sha256:${entry.sha256}`
-        || signature?.digest !== `sha256:${sha256(`${entry.signature}\n`)}`) {
+    if (artifact?.digest !== `sha256:${entry.sha256}`) {
       throw new Error(`Release artifact missing or different from signed build: ${entry.platform}`)
     }
     platforms[entry.platform] = { url, signature: entry.signature }
@@ -115,14 +113,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     })
     if (fragment.signed && process.env.UPDATER_UPLOAD === "true") {
       // A rebuilt tag must not keep a manifest that pairs the replaced payloads
-      // with their previous signatures; publication writes a fresh one.
+      // with their previous signatures; publication writes a fresh one. Releases
+      // built before signatures moved into the manifest also carried .sig assets.
       const release = JSON.parse(execFileSync("gh", ["api", `repos/${repository}/releases/tags/${encodeURIComponent(tag)}`], { encoding: "utf8" }))
-      if (release.assets.some((asset) => asset.name === "latest.json")) {
-        execFileSync("gh", ["release", "delete-asset", tag, "latest.json", "--repo", repository, "--yes"], { stdio: "inherit" })
+      for (const stale of ["latest.json", `${fragment.asset}.sig`]) {
+        if (release.assets.some((asset) => asset.name === stale)) {
+          execFileSync("gh", ["release", "delete-asset", tag, stale, "--repo", repository, "--yes"], { stdio: "inherit" })
+        }
       }
-      for (const asset of [fragment.asset, `${fragment.asset}.sig`]) {
-        execFileSync("gh", ["release", "upload", tag, join(packageRoot, "release-updater", asset), "--repo", repository, "--clobber"], { stdio: "inherit" })
-      }
+      execFileSync("gh", ["release", "upload", tag, join(packageRoot, "release-updater", fragment.asset), "--repo", repository, "--clobber"], { stdio: "inherit" })
     }
     console.log(`${argument}: ${fragment.signed ? "signature verified; updater artifact staged" : "unsigned build; updater disabled"}`)
   } else if (mode === "publish") {

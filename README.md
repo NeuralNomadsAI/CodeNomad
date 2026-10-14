@@ -38,10 +38,10 @@ Download the archive or package for your platform from [Releases](https://github
 | Platform | Electron | Tauri |
 |----------|----------|-------|
 | macOS | ZIP, separate Intel and Apple Silicon builds | ZIP, separate Intel and Apple Silicon builds |
-| Windows | ZIP (x64) | ZIP containing the Windows installer (x64) |
-| Linux | Portable tar.gz (x64) | deb (x64), AppImage (x64) |
+| Windows | ZIP (x64) | Installer (x64) |
+| Linux | deb (x64) | AppImage (x64) |
 
-The Tauri deb and AppImage are currently built and tested on Ubuntu 24.04. Compatibility with older distributions is not yet guaranteed. The Electron tar.gz needs a one-time sandbox setup after each extraction; see [Troubleshooting](#troubleshooting).
+The Linux builds are currently built and tested on Ubuntu 24.04. Compatibility with older distributions is not yet guaranteed. The Electron deb sets up Chromium's sandbox during installation and replaces a previously installed Tauri deb. The Tauri installer, macOS app and AppImage update themselves from within the app.
 
 Desktop builds bundle Node.js and npm; **you do not need to install Node.js separately**. On first launch, select an existing compatible OpenCode executable or install OpenCode through the setup screen. You can manage the executable, updates, and service later in **Preferences → OpenCode**.
 
@@ -207,17 +207,6 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad-tauri
 This applies to the Tauri WebKitGTK build. Electron uses Chromium and can be used as an alternative on the same machine.
 </details>
 
-<details>
-<summary><strong>Linux (Electron tar.gz): "The SUID sandbox helper binary was found, but is not configured correctly"</strong></summary>
-
-Chromium's sandbox helper must be owned by root with mode 4755, which an archive extracted by a regular user cannot provide. From the extracted CodeNomad folder, run once after each extraction or update:
-
-```bash
-sudo chown root:root chrome-sandbox && sudo chmod 4755 chrome-sandbox
-```
-
-Do not start CodeNomad with `--no-sandbox`: it disables Chromium's process isolation. The Tauri deb and AppImage do not use this helper.
-</details>
 
 ---
 

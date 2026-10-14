@@ -120,12 +120,15 @@ production release.
 `updater-artifacts.mjs stage` finds exactly one native updater payload, verifies
 its minisign data and trusted-comment signatures, requires the trusted comment
 to record the release version, copies it to the final release asset name, and
-writes a per-platform receipt. The receipt contains public signature/key
-fingerprints and the payload digest, never private key material.
+writes a per-platform receipt. The receipt contains the verified signature, the
+public key fingerprint and the payload digest, never private key material. The
+signature is published only inside `latest.json`, which is where the updater
+reads it; releases carry no separate `.sig` assets, and staging removes any left
+on a rebuilt tag by older builds.
 
 The final publication job waits for all four platform jobs, merges their receipts
 and checks the uploaded GitHub asset digests. Missing/duplicate targets, mixed
-versions or keys, partial signing, changed signatures and missing payloads fail
+versions or keys, partial signing and missing or changed payloads fail
 publication. Only then does it generate and upload that release's `latest.json`;
 stable releases and dev prereleases each carry their own manifest. Receipt
 artifacts and the publication job run only for tagged upload builds. PR builds
@@ -140,7 +143,9 @@ so slow connections can still fetch large installers.
 `tauri build` is not expected to generate that manifest. Fully unsigned builds
 produce no update manifest. Linux arm64 remains outside the existing release matrix.
 
-The Linux build requests `deb,appimage` with verbose linuxdeploy diagnostics.
+The Linux build requests only `appimage`, with verbose linuxdeploy diagnostics;
+the Linux deb is the Electron build. The Windows NSIS installer is published
+directly as the download and updater payload, without a ZIP wrapper.
 The CLI minimum is 2.11.5, the first release that records the app version in
 updater signatures' trusted comments; `requireSignedVersion` and publication's
 signed-version gate depend on it. Packaging alone needs 2.10.0: 2.9.4 searches
