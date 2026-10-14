@@ -156,8 +156,8 @@ pub(crate) async fn install_desktop_update(
     let bytes = match update.download(|_, _| {}, || {}).await {
         Ok(bytes) => bytes,
         Err(error) => {
-            // The caller may have reloaded or closed during the download.
-            record_failure();
+            // The caller may have reloaded or closed during a long download.
+            report_failure(&app);
             return Err(error.to_string());
         }
     };

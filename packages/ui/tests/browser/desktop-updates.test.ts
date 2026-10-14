@@ -52,6 +52,13 @@ async function fixture(scenario: string, host = "tauri", context = "local", meta
         }
         if (command === "install_desktop_update") {
           if (scenario === "signature-error") throw new Error("invalid signature")
+          if (scenario.startsWith("download-error")) {
+            // Native records the failure before rejecting; only event delivery may lag.
+            w.failurePending = true
+            if (scenario === "download-error-event-first") { w.deliverFailure(); await new Promise(r => setTimeout(r, 50)) }
+            else setTimeout(() => w.deliverFailure(), 50)
+            throw new Error("download stalled")
+          }
           await new Promise<void>(resolve => { w.finishDownload = resolve })
         }
         if (command === "take_desktop_update_failure") {
@@ -63,9 +70,10 @@ async function fixture(scenario: string, host = "tauri", context = "local", meta
       },
     }
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (event: string) => listeners.delete(event) }
+    w.deliverFailure = () => callbacks.get(listeners.get("desktop-update:failed")!)?.({ payload: null })
     w.emitFailure = (owner: true | "other" = true) => {
       w.failurePending = owner
-      callbacks.get(listeners.get("desktop-update:failed")!)?.({ payload: null })
+      w.deliverFailure()
     }
     w.open = (url: string) => { w.calls.push({ command: "web-open", args: { url } }); return {} }
   }, { scenario, host, context })
@@ -233,6 +241,22 @@ test("an install offer retained in notification history re-checks instead of ins
     await page.waitForFunction(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update").length === 3)
     assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_desktop_update").length), 0)
   } finally { await page.close() }
+})
+
+test("a download failure that is both emitted and rejected is reported once", async () => {
+  for (const scenario of ["download-error-event-first", "download-error-reject-first"]) {
+    const page = await fixture(scenario)
+    try {
+      await page.getByRole("button", { name: "Check updates" }).click()
+      await page.getByRole("button", { name: "Install and restart" }).click()
+      await page.getByText(/The update could not be completed/).waitFor()
+      await page.waitForTimeout(300)
+      const reports = await page.evaluate(() => (window as any).fixture.history()
+        .filter((message: string) => /could not be completed/.test(message)).length)
+      assert.equal(reports, 1, scenario)
+      assert.equal(await page.evaluate(() => (window as any).failurePending), false)
+    } finally { await page.close() }
+  }
 })
 
 test("a document that is only checking leaves another window's install failure alone", async () => {

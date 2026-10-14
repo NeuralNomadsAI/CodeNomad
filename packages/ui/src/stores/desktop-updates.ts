@@ -89,9 +89,10 @@ async function install(version: string, checked: number) {
     // success all windows close and the installed application relaunches.
     if (busy) showProgress(tGlobal("releases.desktop.restarting"))
   } catch (error) {
-    // This live caller reports the error itself; clear what native recorded for it.
-    await takeDesktopUpdateFailure().catch(() => false)
-    failed(error)
+    // A recorded download failure also arrives as an event: whichever comes
+    // first reports it. Unrecorded errors are reported while still installing.
+    const claimed = await takeDesktopUpdateFailure().catch(() => false)
+    if (claimed || installing) failed(error)
   }
 }
 

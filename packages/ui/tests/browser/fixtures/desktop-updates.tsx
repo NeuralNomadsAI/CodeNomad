@@ -9,4 +9,5 @@ render(() => <><button onClick={() => void requestDesktopUpdate()}>Check updates
 const dispose = observeDesktopUpdates()
 // Runs the oldest retained action with this label, as the notification history panel would.
 const runHistoryAction = (label: string) => runToastAction(getToastHistory().filter((item) => item.action?.label === label).at(-1)!.action!)
-;(window as any).fixture = { check: requestDesktopUpdate, releases: initReleaseNotifications, observe: observeDesktopUpdates, runHistoryAction, dispose }
+const history = () => getToastHistory().map((item) => item.message)
+;(window as any).fixture = { check: requestDesktopUpdate, releases: initReleaseNotifications, observe: observeDesktopUpdates, runHistoryAction, history, dispose }

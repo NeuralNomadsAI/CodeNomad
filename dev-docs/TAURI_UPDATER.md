@@ -75,7 +75,9 @@ error, the application restores its owned backend without replaying installation
 That recovery reloads every window, so failures are recorded natively with the
 webview whose install was accepted. That webview's document takes and reports
 it, including after a reload; once that webview is closed, any local document
-takes it. Download failures are recorded too, in case the caller reloaded.
+takes it. Download failures are recorded and emitted too, since the caller may
+reload or close during a long download; the live caller reports each failure
+once, whether its rejected request or the event arrives first.
 Failures without a reload (flush timeout, cleanup failure, refused backend
 recovery) are also emitted to live documents; another document merely checking
 cannot take them.
@@ -124,8 +126,9 @@ and checks the uploaded GitHub asset digests. Missing/duplicate targets, mixed
 versions or keys, partial signing, changed signatures and missing payloads fail
 publication. Only then does it generate and upload that release's `latest.json`;
 stable releases and dev prereleases each carry their own manifest. Receipt
-artifacts and the publication job run only for tagged upload builds; PR runs
-stage and verify locally without retaining receipts. Before a
+artifacts and the publication job run only for tagged upload builds. PR builds
+are unsigned: staging only records an unsigned receipt, and signature/manifest
+logic is covered there by the script tests. Before a
 platform replaces its signed payload on a rebuilt tag, staging deletes any
 existing `latest.json`, so no published manifest pairs new bytes with an old
 signature; until publication succeeds, the release is simply not installable.
