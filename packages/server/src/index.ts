@@ -138,7 +138,14 @@ export function installShutdownStdinHandler(
   source.on("data", onData)
 }
 
-function parseCliOptions(argv: string[]): CliOptions {
+export function parseBooleanSwitchEnv(name: string, value: string | undefined = process.env[name]): boolean {
+  const normalized = (value ?? "").trim().toLowerCase()
+  if (["1", "true", "yes", "on"].includes(normalized)) return true
+  if (["0", "false", "no", "off", ""].includes(normalized)) return false
+  throw new InvalidArgumentError(`${name} must be 1, true, yes, on, 0, false, no, off, or empty (case-insensitive)`)
+}
+
+export function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()
     .name("codenomad")
     .description("CodeNomad CLI server")
@@ -156,7 +163,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       new Option("--workspace-root <path>", "Restricts root path where workspaces can be opened").env("CLI_WORKSPACE_ROOT").default(process.cwd()),
     )
     .addOption(new Option("--root <path>").env("CLI_ROOT").hideHelp(true))
-    .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem").env("CLI_UNRESTRICTED_ROOT").default(false))
+    .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem (env: CLI_UNRESTRICTED_ROOT)").default(false))
     .addOption(new Option("--config <path>", "Path to the config file").env("CLI_CONFIG").default(DEFAULT_CONFIG_PATH))
     .addOption(new Option("--log-level <level>", "Log level (trace|debug|info|warn|error)").env("CLI_LOG_LEVEL"))
     .addOption(new Option("--log-destination <path>", "Log destination file (defaults to stdout)").env("CLI_LOG_DESTINATION"))
@@ -164,10 +171,10 @@ function parseCliOptions(argv: string[]): CliOptions {
       new Option("--ui-dir <path>", "Directory containing the built UI bundle").env("CLI_UI_DIR").default(DEFAULT_UI_STATIC_DIR),
     )
     .addOption(new Option("--ui-dev-server <url>", "Proxy UI requests to a running dev server").env("CLI_UI_DEV_SERVER"))
-    .addOption(new Option("--ui-no-update", "Disable remote UI updates").env("CLI_UI_NO_UPDATE").default(false))
+    .addOption(new Option("--ui-no-update", "Disable remote UI updates (env: CLI_UI_NO_UPDATE)").default(false))
     .addOption(new Option("--ui-auto-update <enabled>", "Enable remote UI updates (true|false)").env("CLI_UI_AUTO_UPDATE").default("true"))
     .addOption(new Option("--ui-manifest-url <url>", "Remote UI manifest URL").env("CLI_UI_MANIFEST_URL"))
-    .addOption(new Option("--launch", "Launch the UI in a browser after start").env("CLI_LAUNCH").default(false))
+    .addOption(new Option("--launch", "Launch the UI in a browser after start (env: CLI_LAUNCH)").default(false))
     .addOption(
       new Option("--username <username>", "Username for server authentication")
         .env("CODENOMAD_SERVER_USERNAME")
@@ -180,19 +187,18 @@ function parseCliOptions(argv: string[]): CliOptions {
         .default(DEFAULT_AUTH_COOKIE_NAME),
     )
     .addOption(
-      new Option("--generate-token", "Emit a one-time bootstrap token for desktop")
-        .env("CODENOMAD_GENERATE_TOKEN")
+      new Option("--generate-token", "Emit a one-time bootstrap token for desktop (env: CODENOMAD_GENERATE_TOKEN)")
         .default(false),
     )
     .addOption(
       new Option(
         "--dangerously-skip-auth",
-        "Disable CodeNomad's internal auth. Use only behind a trusted perimeter (SSO/VPN/etc).",
+        "Disable CodeNomad's internal auth. Use only behind a trusted perimeter (SSO/VPN/etc). (env: CODENOMAD_SKIP_AUTH)",
       )
-        .env("CODENOMAD_SKIP_AUTH")
         .default(false),
     )
     .addOption(new Option("--upgrade [version]", "Upgrade the global CodeNomad CLI server package and exit"))
+    .addHelpText("after", "\nArgument-less switch env values: 1/true/yes/on enable; 0/false/no/off/empty disable (case-insensitive, trimmed; unset defaults off). Other values are errors; CLI flags override valid off values.")
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -257,20 +263,20 @@ function parseCliOptions(argv: string[]): CliOptions {
     tlsSANs: parsed.tlsSANs,
     rootDir: resolvedRoot,
     configPath: parsed.config,
-    unrestrictedRoot: Boolean(parsed.unrestrictedRoot),
+    unrestrictedRoot: parseBooleanSwitchEnv("CLI_UNRESTRICTED_ROOT") || Boolean(parsed.unrestrictedRoot),
     logLevel: parsed.logLevel,
     logDestination: parsed.logDestination,
     uiStaticDir: parsed.uiDir,
     uiDevServer: parsed.uiDevServer,
     uiAutoUpdate,
-    uiNoUpdate: Boolean(parsed.uiNoUpdate),
+    uiNoUpdate: parseBooleanSwitchEnv("CLI_UI_NO_UPDATE") || Boolean(parsed.uiNoUpdate),
     uiManifestUrl: parsed.uiManifestUrl,
-    launch: Boolean(parsed.launch),
+    launch: parseBooleanSwitchEnv("CLI_LAUNCH") || Boolean(parsed.launch),
     authUsername: parsed.username,
     authPassword: parsed.password,
     authCookieName: parsed.authCookieName,
-    generateToken: Boolean(parsed.generateToken),
-    dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
+    generateToken: parseBooleanSwitchEnv("CODENOMAD_GENERATE_TOKEN") || Boolean(parsed.generateToken),
+    dangerouslySkipAuth: parseBooleanSwitchEnv("CODENOMAD_SKIP_AUTH") || Boolean(parsed.dangerouslySkipAuth),
     upgrade,
   }
 }

@@ -87,20 +87,24 @@ You can configure the server using flags or environment variables:
 | `--tlsSANs <list>` | `CLI_TLS_SANS` | Additional TLS SANs (comma-separated) |
 | `--host <addr>` | `CLI_HOST` | Interface to bind (default 127.0.0.1) |
 | `--workspace-root <path>` | `CLI_WORKSPACE_ROOT` | Restricts the root path where new workspaces can be opened. Git worktrees are created in `.codenomad/worktrees` inside the project folder. |
-| `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | Allow full-filesystem browsing |
+| `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | Allow full-filesystem browsing (strict boolean, default off) |
 | `--config <path>` | `CLI_CONFIG` | Config file location |
-| `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser |
+| `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser (strict boolean, default off) |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | Logging level (trace, debug, info, warn, error) |
 | `--log-destination <path>` | `CLI_LOG_DESTINATION` | Log destination file (defaults to stdout) |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | Username for CodeNomad's internal auth (default `codenomad`) |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Password for CodeNomad's internal auth |
-| `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows |
-| `--dangerously-skip-auth` | `CODENOMAD_SKIP_AUTH` | Disable CodeNomad's internal auth (use only behind a trusted perimeter) |
+| `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows (strict boolean, default off) |
+| `--dangerously-skip-auth` | `CODENOMAD_SKIP_AUTH` | Disable CodeNomad's internal auth (strict boolean, default off; use only behind a trusted perimeter) |
 | `--ui-dir <path>` | `CLI_UI_DIR` | Directory containing the built UI bundle |
 | `--ui-dev-server <url>` | `CLI_UI_DEV_SERVER` | Proxy UI requests to a running dev server (requires `--https=false --http=true`) |
-| `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates |
+| `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates (strict boolean, default off) |
 | `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true`) |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
+
+The five **strict boolean** environment variables above enable their switch only with `1`, `true`, `yes`, or `on`, ignoring case and surrounding whitespace. `0`, `false`, `no`, `off`, empty/whitespace-only values, and unset variables leave the switch off. Any other value refuses startup with an error naming the variable and accepted values (even when its CLI flag is present). Passing the argument-less CLI flag always enables the switch over a valid off environment value. Other value-taking options are unchanged.
+
+In particular, `CODENOMAD_SKIP_AUTH=false` or `=0` keeps authentication enabled: provide a password or use the local bootstrap setup. A merely defined variable no longer disables authentication.
 
 ### Dev Releases (Advanced)
 
