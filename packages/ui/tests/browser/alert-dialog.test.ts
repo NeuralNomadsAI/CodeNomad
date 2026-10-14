@@ -37,7 +37,7 @@ async function expectPaint(page: Page, expected: Paint) {
     probe.remove()
     const buttons = [...document.querySelectorAll('[role="dialog"] button')].map(button => {
       const style = getComputedStyle(button)
-      return { label: button.textContent?.trim() ?? "", filled: style.backgroundColor === primary, ring: style.outlineStyle !== "none" && style.outlineWidth !== "0px" }
+      return { label: button.textContent?.trim() ?? "", filled: style.backgroundColor === primary, ring: style.outlineStyle !== "none" && style.outlineWidth !== "0px" && style.boxShadow !== "none" }
     })
     const active = document.activeElement
     const paint: Paint = {
@@ -52,7 +52,7 @@ async function expectPaint(page: Page, expected: Paint) {
 }
 
 /** Opens a dialog right after a mouse click, where :focus-visible would hide the initial focus. */
-async function open(page: Page, kind: "confirm" | "prompt" | "alert") {
+async function open(page: Page, kind: "confirm" | "prompt" | "choice" | "alert") {
   await page.getByRole("button", { name: "Delete session" }).click()
   await page.evaluate(kind => (window as any).fixture[kind](), kind)
   await page.getByRole("dialog").waitFor()
@@ -92,11 +92,20 @@ test("alert dialogs show the focus ring on the button Enter acts on, from the in
     await page.keyboard.press("Enter")
     assert.equal(await result(page), true)
 
-    // Prompts focus their input; alerts focus their single OK.
+    // Prompts focus their input, where Enter submits; choices ring their last, non-destructive choice.
     await open(page, "prompt")
     await expectPaint(page, { focused: "input", filled: ["Rename"], ring: [] })
     await page.keyboard.press("Escape")
     assert.equal(await result(page), null)
+
+    await open(page, "choice")
+    await expectPaint(page, { focused: "Save", filled: ["Save"], ring: ["Save"] })
+    await page.keyboard.press("Shift+Tab")
+    await expectPaint(page, { focused: "Discard", filled: ["Save"], ring: ["Discard"] })
+    await page.keyboard.press("Escape")
+    assert.equal(await result(page), null)
+
+    // Alerts focus their single OK.
 
     await open(page, "alert")
     await expectPaint(page, { focused: "OK", filled: ["OK"], ring: ["OK"] })

@@ -1,5 +1,5 @@
-/* Alert dialogs: Enter acts on the focused button, which is not always the
-   filled primary one (confirms focus Cancel). Show the keyboard focus ring on
+/* Alert dialogs: Enter acts on the focused button (prompts: the input
+   submits), which is not always the filled primary one (confirms focus Cancel). Show the keyboard focus ring on
    any focus, including the initial focus of a mouse-opened dialog, which
    :focus-visible would hide. Same ring as buttons.css / utilities.css. */
 .alert-dialog button:focus {
