@@ -74,10 +74,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -115,7 +115,7 @@ jobs:
           node scripts/run-session-pruning-native.mjs $cli --ui
       - name: Upload isolated native failure diagnostics
         if: ${{ failure() && env.PRUNING_NATIVE_FIXTURES != '' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: session-pruning-failure-${{ matrix.os }}
           path: |
@@ -129,7 +129,7 @@ jobs:
           retention-days: 7
       - name: Upload opt-in plugin package
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: session-pruning-plugin-${{ matrix.os }}
           path: ${{ runner.temp }}/pruning-native-install/*.tgz
@@ -146,10 +146,10 @@ jobs:
         runtime: [minimum, latest]
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -221,12 +221,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -265,7 +265,7 @@ jobs:
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs
 
       - name: Test Electron client state
         env:
@@ -478,12 +478,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -528,12 +528,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -601,12 +601,12 @@ jobs:
     runs-on: macos-26
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm

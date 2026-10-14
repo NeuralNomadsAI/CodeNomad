@@ -79,6 +79,7 @@ test("C. Crash boundaries: pending CAS, native create and admission reconcile un
         await f.create(); await f.control("play")
         f.crash = point
         await f.advance(DUE)
+        await f.until(() => f.crashHits === 1, `${point} failpoint reached after asynchronous admission I/O`)
         assert.equal(f.crashHits, 1, "failpoint must actually run")
         const before = await f.document()
         assert(before?.pending, "write-ahead pending survives failure")
