@@ -8,7 +8,7 @@ import { openSettings } from "../../stores/settings-screen"
 import { setUpdateFeed } from "../../stores/preferences"
 import type { UpdateFeed } from "../../../../server/src/api-types"
 import { openExternalUrl } from "../../lib/external-url"
-import { buildBugReportUrl, readBugReportTemplateStatus } from "../../lib/bug-report"
+import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
 import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
 import { buildBugReportEnvironment, buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
 
@@ -229,22 +229,15 @@ export const InfoSettingsSection: Component = () => {
     else setCopyFeedback("error")
   }
 
-  // Warm both reads so the click opens GitHub within the browser's user-activation window.
+  // Warm both reads: the click opens GitHub at once, within the browser's user activation.
   void readBugReportTemplateStatus()
   if (!openCodeSetupStatus()) void refreshOpenCodeSetup()
-  const [reportOpening, setReportOpening] = createSignal(false)
-  const handleReportBug = async () => {
-    setReportOpening(true)
-    try {
-      const templateStatus = await readBugReportTemplateStatus()
-      const opencode = openCodeSetupStatus()
-      const environment = buildBugReportEnvironment(meta() ?? null, osDisplay(), runtimeEnv, {
-        opencodeInstalled: opencode?.currentVersion, opencodeDaemon: opencode?.daemonVersion, userAgent: navigator.userAgent,
-      })
-      void openExternalUrl(buildBugReportUrl(environment, templateStatus), "bug-report")
-    } finally {
-      setReportOpening(false)
-    }
+  const handleReportBug = () => {
+    const opencode = openCodeSetupStatus()
+    const environment = buildBugReportEnvironment(meta() ?? null, osDisplay(), runtimeEnv, {
+      opencodeInstalled: opencode?.currentVersion, opencodeDaemon: opencode?.daemonVersion, userAgent: navigator.userAgent,
+    })
+    void openExternalUrl(buildBugReportUrl(environment, currentBugReportTemplateStatus()), "bug-report")
   }
 
   const handleDownload = () => {
@@ -489,8 +482,7 @@ export const InfoSettingsSection: Component = () => {
           <button
             type="button"
             class="settings-pill-button"
-            onClick={() => void handleReportBug()}
-            disabled={reportOpening()}
+            onClick={handleReportBug}
           >
             {t("settings.info.diagnostics.reportBug")}
           </button>

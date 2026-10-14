@@ -165,9 +165,12 @@ for (const published of ["current", "renamed"] as const) test(`Report a bug open
       ? { ...baseMeta, system: { platform: "linux", arch: "arm64" } }
       : path === "/api/opencode/update" ? { state: "ready", currentVersion: "2.0.29", daemonVersion: "2.0.29" } : {}) })
   })
+  const templateRead = page.waitForResponse(response => response.url().startsWith("https://raw.githubusercontent.com/"))
   try {
     await page.goto(url)
     await rowValue(page, "Server operating system").waitFor()
+    // The section's warm read settles before the click, which never waits for it.
+    await templateRead
     await page.getByRole("button", { name: "Report a bug", exact: true }).click()
     await page.waitForFunction(() => (window as any).openedUrls?.length === 1)
     const opened = new URL(await page.evaluate(() => (window as any).openedUrls[0] as string))
@@ -188,6 +191,29 @@ for (const published of ["current", "renamed"] as const) test(`Report a bug open
     assert.match(environment, /Browser: Mozilla\/5\.0 \(Windows NT 10\.0; Win64; x64\)/)
     assert.doesNotMatch(opened.href, /192\.0\.2\.1|127\.0\.0\.1|fixture/)
   } finally { await page.close() }
+})
+
+test("Report a bug opens the form at once while the published form cannot be read", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  await setup(page, "web")
+  // Later routes take precedence: hold every template read without answering.
+  const held: Array<() => Promise<void>> = []
+  await page.route("https://raw.githubusercontent.com/**", route => { held.push(() => route.abort()) })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? baseMeta : {}) }))
+  try {
+    await page.goto(url)
+    await rowValue(page, "Server operating system").waitFor()
+    await page.waitForFunction(() => document.readyState === "complete")
+    const button = page.getByRole("button", { name: "Report a bug", exact: true })
+    for (const clicks of [1, 2]) {
+      await button.click()
+      await page.waitForFunction(count => (window as any).openedUrls?.length === count, clicks, { timeout: 500 })
+    }
+    const opened = await page.evaluate(() => (window as any).openedUrls.map((href: string) => new URL(href).searchParams.get("template")))
+    assert.deepEqual(opened, ["bug_report.yml", "bug_report.yml"])
+    assert.equal(held.length, 1, "the pending read is shared, not restarted per click")
+  } finally { for (const abort of held) await abort().catch(() => {}); await page.close() }
 })
 
 test("older or unreachable servers never borrow the client platform", async () => {

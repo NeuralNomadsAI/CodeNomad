@@ -31,28 +31,36 @@ export function assessBugReportTemplate(source: string): Exclude<BugReportTempla
   return Object.values(BUG_REPORT_FIELDS).every((id) => textFields.has(id)) ? "compatible" : "incompatible"
 }
 
-let templateStatus: Promise<BugReportTemplateStatus> | undefined
+let settledStatus: Exclude<BugReportTemplateStatus, "unknown"> | undefined
+let pendingRead: Promise<BugReportTemplateStatus> | undefined
 
-/** Read the published template once per renderer, bounded in time. */
+/** Read the published template, bounded in time. A settled assessment is kept
+ * for the renderer; an unknown result (network, server error) is retried. */
 export function readBugReportTemplateStatus(fetchImpl: typeof fetch = fetch): Promise<BugReportTemplateStatus> {
-  templateStatus ??= (async () => {
+  if (settledStatus) return Promise.resolve(settledStatus)
+  pendingRead ??= (async (): Promise<BugReportTemplateStatus> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), TEMPLATE_READ_TIMEOUT_MS)
     try {
       const response = await fetchImpl(TEMPLATE_SOURCE_URL, { signal: controller.signal, credentials: "omit" })
-      if (response.status === 404) return "incompatible"
+      if (response.status === 404) return settledStatus = "incompatible"
       if (!response.ok) return "unknown"
-      return assessBugReportTemplate(await response.text())
+      return settledStatus = assessBugReportTemplate(await response.text())
     } catch {
       return "unknown"
     } finally {
       clearTimeout(timer)
     }
-  })()
-  const current = templateStatus
-  // A transient failure may be retried on the next report.
-  void current.then((status) => { if (status === "unknown" && templateStatus === current) templateStatus = undefined })
-  return current
+  })().finally(() => { pendingRead = undefined })
+  return pendingRead
+}
+
+/** For the click itself, which must open GitHub within the browser's user
+ * activation (about 1 s on WebKit): never wait for a read. Use the settled
+ * assessment, else keep the form and refresh in the background. */
+export function currentBugReportTemplateStatus(fetchImpl: typeof fetch = fetch): BugReportTemplateStatus {
+  if (!settledStatus) void readBugReportTemplateStatus(fetchImpl)
+  return settledStatus ?? "unknown"
 }
 
 /** Report text stays in English, the language of the issue form. */

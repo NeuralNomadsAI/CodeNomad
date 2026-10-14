@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
-import { assessBugReportTemplate, BUG_REPORT_FIELDS, BUG_REPORT_TEMPLATE, buildBugReportUrl, readBugReportTemplateStatus } from "./bug-report"
+import { assessBugReportTemplate, BUG_REPORT_FIELDS, BUG_REPORT_TEMPLATE, buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "./bug-report"
 
 const template = readFileSync(new URL(`../../../../.github/ISSUE_TEMPLATE/${BUG_REPORT_TEMPLATE}`, import.meta.url), "utf8")
 const environment = {
@@ -45,14 +45,21 @@ describe("bug report issue form", () => {
     assert.match(body, /### Steps to Reproduce/)
   })
 
-  it("falls back only when the published form is proven incompatible, and retries unknown reads", async () => {
+  it("never makes the click wait, falls back only on a proven incompatible form and retries unknown reads", async () => {
     const urls: string[] = []
     const failing = (async (url: string) => { urls.push(url); throw new TypeError("offline") }) as unknown as typeof fetch
     assert.equal(await readBugReportTemplateStatus(failing), "unknown")
-    const removed = (async (url: string) => { urls.push(url); return new Response("", { status: 404 }) }) as unknown as typeof fetch
-    await new Promise((resolve) => setTimeout(resolve))
-    assert.equal(await readBugReportTemplateStatus(removed), "incompatible")
-    assert.equal(await readBugReportTemplateStatus(failing), "incompatible", "a settled assessment is reused")
+
+    // The click keeps the form at once while its background read is still pending.
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const removed = (async (url: string) => { urls.push(url); await held; return new Response("", { status: 404 }) }) as unknown as typeof fetch
+    assert.equal(currentBugReportTemplateStatus(removed), "unknown")
+    assert.equal(currentBugReportTemplateStatus(removed), "unknown")
+    assert.equal(urls.length, 2, "a pending read is shared, not restarted")
+    release()
+    assert.equal(await readBugReportTemplateStatus(failing), "incompatible")
+    assert.equal(currentBugReportTemplateStatus(failing), "incompatible", "a settled assessment is reused")
     assert.equal(urls.length, 2)
     assert.equal(urls[0], `https://raw.githubusercontent.com/NeuralNomadsAI/CodeNomad/dev/.github/ISSUE_TEMPLATE/${BUG_REPORT_TEMPLATE}`)
   })
