@@ -18,6 +18,11 @@ export async function withProductRuntime(cli, prepare, run) {
   const root = await mkdtemp(path.join(parent, "product-native-"))
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_)/i.test(key)))
   for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
+  // 2.0.29+ reads system-managed settings from %ProgramData%\opencode on Windows.
+  if (process.platform === "win32") {
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "programdata") delete env[key]
+    env.ProgramData = path.join(root, "ProgramData")
+  }
   const password = randomUUID()
   Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),

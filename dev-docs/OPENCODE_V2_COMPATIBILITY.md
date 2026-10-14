@@ -453,12 +453,16 @@ pending snapshot are unchanged. Client/plugin pins and the recommendation move t
 2.0.29, which joins 2.0.27 as a reviewed contract; 2.0.28 is untested and keeps
 authenticated negotiation.
 
-Upstream behavior relevant to CodeNomad, each covered by an isolated fixture:
-bounded continuation after an output-length stop settles failed/idle with a
-single user prompt (`scripts/test-output-limit-native.mjs`); rejected Promise
-tools settle `error` without crashing and a native denial prevents their side
-effect (`scripts/test-promise-tool-failure-native.mjs`); system-managed settings
-discovery leaves the authenticated global plugin root first. The 2.0.29 Promise
+Upstream behavior relevant to CodeNomad: bounded continuation after an
+output-length stop settles failed/idle with a single user prompt
+(`scripts/test-output-limit-native.mjs`); rejected Promise tools settle `error`
+while the execution completes, and a native denial (`permission.rejected`)
+prevents their side effect (`scripts/test-promise-tool-failure-native.mjs`).
+System-managed settings (`%ProgramData%\opencode` on Windows) are discovered
+after, not before, the global plugin root that `config.get` consumers take first;
+this was verified by an ad hoc isolated probe, not a retained fixture. The shared
+native product fixture redirects `ProgramData` on Windows so a machine-wide
+configuration cannot leak into isolated runs. The 2.0.29 Promise
 adapter eagerly reads the `credential` plugin domain, so test hosts must declare
 it explicitly when the context is spread.
 

@@ -50,6 +50,7 @@ export default { id: "promise-failure-fixture", async setup(ctx) {
     assert.equal(tools[0].name, name)
     assert.equal(tools[0].state.status, "error")
     if (mode === "throw") assert(JSON.stringify(tools[0].state).includes("FIXTURE_THROW"))
+    if (mode === "deny") assert.equal(tools[0].state.error.type, "permission.rejected")
     if (mode === "malformed") {
       assert.equal(tools[0].state.error.type, "tool.input-json")
       assert(tools[0].state.error.message.includes("{ invalid json"))
@@ -60,5 +61,5 @@ export default { id: "promise-failure-fixture", async setup(ctx) {
     assert.equal((await client.permission.list({ sessionID: session.id })).length, 0)
   }
   await assert.rejects(access(path.join(root, "must-not-exist")), { code: "ENOENT" })
-  console.log("PASS: rejected Promise tools settle failed without crashing; native denial prevents their side effect")
+  console.log("PASS: rejected Promise tools settle error while the execution completes; native denial prevents their side effect")
 })
