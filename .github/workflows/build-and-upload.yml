@@ -326,9 +326,21 @@ jobs:
           if [ "${debs[0]}" != "$artifact" ]; then
             mv "${debs[0]}" "$artifact"
           fi
+          # electron-builder writes prerelease dashes as "~", which dpkg sorts before
+          # the release. Dev builds (<stable>-dev-<date>-<sha>) follow their stable
+          # base, so they become <stable>+dev.<date>.<sha> to install as upgrades.
+          case "$VERSION_TO_USE" in
+            *-dev-*) debian_version="${VERSION_TO_USE%%-dev-*}+dev.$(printf '%s' "${VERSION_TO_USE#*-dev-}" | tr - .)" ;;
+            *) debian_version=$(printf '%s' "$VERSION_TO_USE" | tr - '~') ;;
+          esac
+          if [ "$(dpkg-deb --field "$artifact" Version)" != "$debian_version" ]; then
+            repack_dir=$(mktemp -d)
+            dpkg-deb --raw-extract "$artifact" "$repack_dir"
+            sed -i "s/^Version: .*/Version: $debian_version/" "$repack_dir/DEBIAN/control"
+            dpkg-deb --root-owner-group -Zxz --build "$repack_dir" "$artifact"
+            rm -rf "$repack_dir"
+          fi
           dpkg-deb --info "$artifact"
-          # electron-builder writes prerelease dashes as "~", which dpkg sorts before the release.
-          debian_version=$(printf '%s' "$VERSION_TO_USE" | tr - '~')
           for field in Package:codenomad Conflicts:code-nomad Replaces:code-nomad "Version:$debian_version"; do
             if [ "$(dpkg-deb --field "$artifact" "${field%%:*}")" != "${field#*:}" ]; then
               echo "Electron deb ${field%%:*} must be ${field#*:}" >&2
@@ -426,7 +438,8 @@ jobs:
               dpkg -i /tmp/previous.deb >/dev/null
 
               apt-get update >/dev/null
-              apt-get install -y /tmp/codenomad.deb >/dev/null
+              # Without recommends, ldd below proves the declared Depends suffice.
+              apt-get install -y --no-install-recommends /tmp/codenomad.deb >/dev/null
               if dpkg-query -W -f "\${Status}" code-nomad 2>/dev/null | grep -q "install ok installed"; then
                 echo "The Electron deb did not replace the previous Tauri deb" >&2
                 exit 1
@@ -779,9 +792,12 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "Upload failed: $($_.Name)" }
             }
           }
-          gh release view $env:TAG --json assets --jq '.assets[].name' | Where-Object { $_ -like "CodeNomad-Tauri-windows-*.zip" } | ForEach-Object {
+          $assets = gh release view $env:TAG --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -ne 0) { throw "Could not list release assets" }
+          $assets | Where-Object { $_ -like "CodeNomad-Tauri-windows-*.zip" } | ForEach-Object {
             Write-Host "Deleting obsolete Windows asset $_"
             gh release delete-asset $env:TAG $_ --yes
+            if ($LASTEXITCODE -ne 0) { throw "Could not delete obsolete asset: $_" }
           }
 
   build-tauri-linux:

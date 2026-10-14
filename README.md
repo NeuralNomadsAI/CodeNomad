@@ -214,12 +214,11 @@ On Intel Macs, also check **System Settings → Privacy & Security** on first la
 WebKitGTK DMA-BUF/GBM issue. Run with:
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad-tauri
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./CodeNomad-Tauri-linux-x64-*.AppImage
 ```
 
 This applies to the Tauri WebKitGTK build. Electron uses Chromium and can be used as an alternative on the same machine.
 </details>
-
 
 ---
 
