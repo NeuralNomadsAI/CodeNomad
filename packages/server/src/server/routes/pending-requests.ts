@@ -103,13 +103,13 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       const optional = new Set(typeof query.data.optionalDirectories === "string" ? [query.data.optionalDirectories] : query.data.optionalDirectories ?? [])
       if ([...optional].some((directory) => !submitted.includes(directory))) return reply.code(400).send({ error: "Invalid optional pending request directories" })
       const result: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
-      const resolved: Array<{ submitted: string; directory: string; identity: string }> = []
+      const resolved: Array<{ submitted: string; directory: string; identity: string; common?: string }> = []
       // Optional history whose host directory is absent: authorized by its own owned
       // identity or by an existing, canonically owned ancestor, and revalidated after RPC.
       const missing: Array<{ submitted: string; directory?: string; identity: string; host: string; ancestor?: string }> = []
       // Negative scope evidence only: these hints never authorize a native read
       // or an empty queue. Preserve errors when membership is merely unknown.
-      const outside: Array<{ submitted: string; directory?: string; identity?: string; proof: string }> = []
+      const outside: Array<{ submitted: string; proof: string }> = []
       // A candidate whose ownership cannot be (re)established reports its own
       // non-authoritative error; it neither fails the batch nor counts as empty.
       const failed = new Set<string>()
@@ -196,16 +196,12 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
             if (directory !== root && optional.has(candidate) && await missingHost(host)) {
               return { candidate, status: "excluded" as const, missing: { submitted: candidate, directory, identity, host } }
             }
-            // Containment alone cannot authorize a nested independent clone.
-            const sameRepository = directory === root || await Promise.all([workspaceCommon(), readCommon(host)])
-              .then(([left, right]) => left === right, () => false)
-            if (!sameRepository) {
-              const proof = optional.has(candidate) ? await outsideHistory(candidate, workspaceCommon) : undefined
-              return proof
-                ? { candidate, status: "excluded" as const, outside: { submitted: candidate, directory, identity, proof } }
-                : { candidate, status: "error" as const }
-            }
-            return { candidate, status: "ok" as const, owned: { submitted: candidate, directory, identity } }
+            // Ownership is the workspace manager's, as for prompts and live events, so a
+            // nested checkout of another repository inside the opened folder recovers too.
+            // Its own repository is recorded: a change during RPC still fences it.
+            const common = directory === root ? undefined : await readCommon(host).catch(() => undefined)
+            if (directory !== root && !common) return { candidate, status: "error" as const }
+            return { candidate, status: "ok" as const, owned: { submitted: candidate, directory, identity, common } }
           } catch (error) {
             isolate(error)
             return { candidate, status: "error" as const }
@@ -240,7 +236,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         assertCurrent()
       }
       const revalidateCandidates = async () => {
-        const currentCommon = resolved.some((candidate) => candidate.directory !== root) || missing.some((entry) => entry.ancestor) || outside.length > 0
+        const currentCommon = missing.some((entry) => entry.ancestor) || outside.length > 0
           ? await readCommon(workspace.path) : undefined
         for (let offset = 0; offset < resolved.length; offset += 8) {
           await drainOwnershipReads(resolved.slice(offset, offset + 8).map(async (candidate) => {
@@ -250,7 +246,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
               const owned = !deps.worktreeDeletionFence.isBlocked(candidate.identity)
                 && await manager.getServiceDirectoryForPath(id, candidate.submitted) === candidate.directory
                 && (candidate.directory === root || (await manager.getWorktreeIdentityForPath(id, candidate.directory) === candidate.identity
-                  && Boolean(host) && await readCommon(host!) === currentCommon))
+                  && Boolean(host) && await readCommon(host!) === candidate.common))
               if (!owned) failed.add(candidate.submitted)
             } catch (error) {
               isolate(error)
@@ -278,15 +274,13 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         }
         for (const entry of outside) {
           try {
-            if (await manager.getServiceDirectoryForPath(id, entry.submitted) !== entry.directory
-              || (entry.identity && (deps.worktreeDeletionFence.isBlocked(entry.identity)
-                || await manager.getWorktreeIdentityForPath(id, entry.directory!) !== entry.identity))
+            // Still unowned: a path the workspace manager now owns can no longer be excluded.
+            if (await manager.getServiceDirectoryForPath(id, entry.submitted) !== undefined
               || await outsideHistory(entry.submitted, async () => currentCommon!) !== entry.proof) failed.add(entry.submitted)
           } catch (error) { isolate(error); failed.add(entry.submitted) }
         }
         // A deletion that began during the awaits above still fences publication.
         for (const candidate of [...resolved, ...missing]) if (deps.worktreeDeletionFence.isBlocked(candidate.identity)) failed.add(candidate.submitted)
-        for (const candidate of outside) if (candidate.identity && deps.worktreeDeletionFence.isBlocked(candidate.identity)) failed.add(candidate.submitted)
         assertCurrent()
       }
       assertCurrent()

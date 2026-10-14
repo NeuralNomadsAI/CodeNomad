@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import os from "node:os"
 import path from "node:path"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
 import { describe, it } from "node:test"
 import { execFileSync } from "node:child_process"
 import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
@@ -225,6 +225,40 @@ describe("workspace manager shared service lifecycle", () => {
       assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), undefined)
       assert.equal(refreshes, 0, "event identity must remain registered-only after invalidation")
       assert.equal(scans, 1)
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+  })
+
+  it("owns a checkout of another repository nested inside the opened folder, under the root's identity", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-nested-foreign-"))
+    const repo = path.join(root, "repo")
+    const clone = path.join(root, "clone")
+    // A worktree of an independent clone placed in the workspace's own worktree folder.
+    const nested = path.join(repo, ".codenomad", "worktrees", "foreign")
+    const git = (...args: string[]) => execFileSync("git", args, { stdio: "pipe", windowsHide: true })
+    const { manager, service } = createHarness()
+    try {
+      git("init", repo)
+      git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
+      git("clone", repo, clone)
+      git("-C", clone, "worktree", "add", "-b", "foreign", nested)
+      const { workspace } = await manager.create(repo)
+      // The native inventory lists only this repository's checkouts.
+      const client = {
+        location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+        worktree: { refresh: async () => {}, list: async () => [{ directory: repo }] },
+      } as unknown as OpenCodeClient
+      const connection: ServiceConnection = {
+        endpoint: await service.endpoint(), client, fetch: globalThis.fetch,
+        profile: async () => "modern", assertCurrent: () => {}, invalidate: () => {},
+      }
+      service.existingConnection = () => connection
+      service.client = async () => client
+      // Pending recovery follows this ownership; it must match prompts and live events.
+      for (const purpose of ["request", "event"] as const) {
+        assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, undefined, purpose), true)
+        assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, purpose), await realpath(nested))
+        assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, nested, purpose), canonicalWorktreeIdentity(await realpath(repo)))
+      }
     } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
   })
 
