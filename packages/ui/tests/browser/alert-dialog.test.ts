@@ -105,8 +105,8 @@ test("alert dialogs show the focus ring on the button Enter acts on, from the in
     await page.keyboard.press("Escape")
     assert.equal(await result(page), null)
 
-    // Alerts focus their single OK.
 
+    // Alerts focus their single OK.
     await open(page, "alert")
     await expectPaint(page, { focused: "OK", filled: ["OK"], ring: ["OK"] })
     await page.keyboard.press("Enter")
