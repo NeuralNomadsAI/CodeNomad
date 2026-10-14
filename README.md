@@ -47,11 +47,11 @@ On Linux, from the download folder:
 
 ```bash
 # Electron deb
-sudo apt install ./CodeNomad-Electron-linux-x64-*.deb
+sudo apt install ./CodeNomad-Electron-linux-x64-<version>.deb
 
 # Tauri AppImage
-chmod +x CodeNomad-Tauri-linux-x64-*.AppImage
-./CodeNomad-Tauri-linux-x64-*.AppImage
+chmod +x CodeNomad-Tauri-linux-x64-<version>.AppImage
+./CodeNomad-Tauri-linux-x64-<version>.AppImage
 ```
 
 Without FUSE (for example in a container), start the AppImage with `--appimage-extract-and-run`.
@@ -214,7 +214,7 @@ On Intel Macs, also check **System Settings → Privacy & Security** on first la
 WebKitGTK DMA-BUF/GBM issue. Run with:
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./CodeNomad-Tauri-linux-x64-*.AppImage
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./CodeNomad-Tauri-linux-x64-<version>.AppImage
 ```
 
 This applies to the Tauri WebKitGTK build. Electron uses Chromium and can be used as an alternative on the same machine.

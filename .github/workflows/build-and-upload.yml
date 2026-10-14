@@ -328,25 +328,51 @@ jobs:
           fi
           # electron-builder writes prerelease dashes as "~", which dpkg sorts before
           # the release. Dev builds (<stable>-dev-<date>-<sha>) follow their stable
-          # base, so they become <stable>+dev.<date>.<sha> to install as upgrades.
+          # base, so they become <stable>+dev.<date>.<commit time>.<sha> to install
+          # as upgrades, in order even for several builds on the same day.
           case "$VERSION_TO_USE" in
-            *-dev-*) debian_version="${VERSION_TO_USE%%-dev-*}+dev.$(printf '%s' "${VERSION_TO_USE#*-dev-}" | tr - .)" ;;
+            *-dev-*)
+              dev_suffix="${VERSION_TO_USE#*-dev-}"
+              commit_time=$(TZ=UTC git show -s --format=%cd --date=format-local:%H%M%S HEAD)
+              debian_version="${VERSION_TO_USE%%-dev-*}+dev.${dev_suffix%%-*}.${commit_time}.${dev_suffix#*-}"
+              ;;
             *) debian_version=$(printf '%s' "$VERSION_TO_USE" | tr - '~') ;;
           esac
-          if [ "$(dpkg-deb --field "$artifact" Version)" != "$debian_version" ]; then
+          set_deb_version() {
+            local repack_dir
             repack_dir=$(mktemp -d)
-            dpkg-deb --raw-extract "$artifact" "$repack_dir"
-            sed -i "s/^Version: .*/Version: $debian_version/" "$repack_dir/DEBIAN/control"
-            dpkg-deb --root-owner-group -Zxz --build "$repack_dir" "$artifact"
+            dpkg-deb --raw-extract "$1" "$repack_dir"
+            chmod 0755 "$repack_dir"
+            sed -i "s/^Version: .*/Version: $2/" "$repack_dir/DEBIAN/control"
+            dpkg-deb --root-owner-group -Zxz --build "$repack_dir" "$1" >/dev/null
             rm -rf "$repack_dir"
+          }
+          check_deb_fields() {
+            local field
+            for field in Package:codenomad Conflicts:code-nomad Replaces:code-nomad "Version:$2"; do
+              if [ "$(dpkg-deb --field "$1" "${field%%:*}")" != "${field#*:}" ]; then
+                echo "Electron deb ${field%%:*} must be ${field#*:}" >&2
+                exit 1
+              fi
+            done
+          }
+          if [ "$(dpkg-deb --field "$artifact" Version)" != "$debian_version" ]; then
+            set_deb_version "$artifact" "$debian_version"
+          else
+            # PR and stable builds keep electron-builder's version; exercise the dev
+            # rewrite on a copy so it is proven before a dev release depends on it.
+            probe=$(mktemp --suffix=.deb)
+            cp "$artifact" "$probe"
+            set_deb_version "$probe" "0.0.0+dev.20000101.000000.deadbeef"
+            check_deb_fields "$probe" "0.0.0+dev.20000101.000000.deadbeef"
+            # Same files, modes and owners (the archive root's own mode aside).
+            diff <(dpkg-deb --contents "$artifact" | awk '$6 != "./" {print $1, $2, $6}') \
+              <(dpkg-deb --contents "$probe" | awk '$6 != "./" {print $1, $2, $6}')
+            diff <(dpkg-deb --ctrl-tarfile "$artifact" | tar -t | sort) <(dpkg-deb --ctrl-tarfile "$probe" | tar -t | sort)
+            rm -f "$probe"
           fi
           dpkg-deb --info "$artifact"
-          for field in Package:codenomad Conflicts:code-nomad Replaces:code-nomad "Version:$debian_version"; do
-            if [ "$(dpkg-deb --field "$artifact" "${field%%:*}")" != "${field#*:}" ]; then
-              echo "Electron deb ${field%%:*} must be ${field#*:}" >&2
-              exit 1
-            fi
-          done
+          check_deb_fields "$artifact" "$debian_version"
 
           extract_dir=$(mktemp -d)
           trap 'rm -rf "$extract_dir"' EXIT
