@@ -35,8 +35,8 @@ import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { observeDesktopUpdates, requestDesktopUpdate } from "./stores/desktop-updates"
-import { isLocalWindow, isTauriHost, runtimeEnv } from "./lib/runtime-env"
-import { getCurrentWebview } from "@tauri-apps/api/webview"
+import { runtimeEnv } from "./lib/runtime-env"
+import { listenMenuActions } from "./lib/native/menu-actions"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
 import { startNotificationIconBadge } from "./lib/notification-icon-badge"
@@ -46,7 +46,6 @@ import {
   releaseNativeBrowserOpen,
   selectBrowserOpenOwner,
 } from "./lib/native/browser"
-import { resolveResolvable } from "./lib/commands"
 import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
@@ -684,7 +683,7 @@ const App: Component = () => {
     await updateSessionModel(instanceId, sessionId, model)
   }
 
-  const { commands: paletteCommands, executeCommand } = useCommands({
+  const { commands: paletteCommands, executeCommand, executeMenuCommand } = useCommands({
     preferences,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
@@ -732,31 +731,10 @@ const App: Component = () => {
         if (instance) showCommandPalette(instance.id)
         return
       }
-      const command = paletteCommands().find((candidate) => candidate.id === action)
-      if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+      executeMenuCommand(action)
     }
 
-    if (isTauriHost()) {
-      // Untargeted listeners receive every window's events; the native menu
-      // addresses only the focused local window's own webview.
-      if (!isLocalWindow()) return
-      let unlistenMenu: (() => void) | null = null
-      getCurrentWebview().listen("menu:action", (event) => {
-        executeMenuAction(event.payload)
-      }).then((unlisten) => {
-        unlistenMenu = unlisten
-      }).catch((error) => {
-        log.error("Failed to listen for native menu actions", error)
-      })
-
-      onCleanup(() => {
-        unlistenMenu?.()
-      })
-      return
-    }
-
-    const unsubscribe = window.electronAPI?.onMenuAction?.(executeMenuAction)
-    onCleanup(() => unsubscribe?.())
+    onCleanup(listenMenuActions(executeMenuAction))
   })
 
   return (

@@ -5,20 +5,26 @@ on:
     branches: [dev]
     paths:
       - 'docs/help/**'
-      - 'docs/screenshots/workspace-0.20.png'
-      - 'images/CodeNomad-Icon.png'
-      - 'scripts/build-help.mjs'
-      - 'scripts/test-help.mjs'
+      - 'docs/screenshots/**'
+      - 'images/**'
+      - 'scripts/*help*.mjs'
+      - 'packages/ui/src/lib/help-url.ts'
+      - 'package.json'
+      - 'packages/**/package.json'
       - 'package-lock.json'
+      - '.node-version'
       - '.github/workflows/help-pages.yml'
   pull_request:
     paths:
       - 'docs/help/**'
-      - 'docs/screenshots/workspace-0.20.png'
-      - 'images/CodeNomad-Icon.png'
-      - 'scripts/build-help.mjs'
-      - 'scripts/test-help.mjs'
+      - 'docs/screenshots/**'
+      - 'images/**'
+      - 'scripts/*help*.mjs'
+      - 'packages/ui/src/lib/help-url.ts'
+      - 'package.json'
+      - 'packages/**/package.json'
       - 'package-lock.json'
+      - '.node-version'
       - '.github/workflows/help-pages.yml'
   workflow_dispatch:
 
@@ -35,7 +41,7 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: node --test scripts/test-help.mjs
+      - run: npm run test:help
       - run: node scripts/build-help.mjs
       - uses: actions/upload-pages-artifact@v3
         with:

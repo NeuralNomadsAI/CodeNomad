@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "לא ניתן לפתוח את העזרה בדפדפן. פתחו את https://neuralnomadsai.github.io/CodeNomad/ ידנית.",
   "commandPalette.title": "לוח פקודות",
   "commandPalette.description": "חיפוש והפעלה של פקודות",
   "commandPalette.searchPlaceholder": "הקלד פקודה או חיפוש...",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים",
   "commands.autoCleanupBlankSessions.keywords": "אוטומטי, ניקוי, ריק, סשנים",
 
-  "commands.showHelp.label": "הצג עזרה",
-  "commands.showHelp.description": "הצג קיצורי מקלדת ועזרה",
-  "commands.showHelp.keywords": "קיצורים, עזרה",
+  "commands.openHelp.label": "פתיחת עזרה",
+  "commands.openHelp.description": "פתיחת המדריך למשתמש של CodeNomad בדפדפן",
+  "commands.openHelp.keywords": "עזרה, מדריך, תיעוד",
 
   "commands.custom.argumentsPrompt.message": "ארגומנטים עבור /{name}",
   "commands.custom.argumentsPrompt.title": "פקודה מותאמת אישית",

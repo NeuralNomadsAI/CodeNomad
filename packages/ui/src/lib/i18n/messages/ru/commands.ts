@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Не удалось открыть справку в браузере. Откройте https://neuralnomadsai.github.io/CodeNomad/ вручную.",
   "commandPalette.title": "Палитра команд",
   "commandPalette.description": "Поиск и запуск команд",
   "commandPalette.searchPlaceholder": "Введите команду или начните поиск…",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Автоматически очищать пустые сессии при создании новых",
   "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, пустые, сессии, переключить",
 
-  "commands.showHelp.label": "Показать справку",
-  "commands.showHelp.description": "Показать горячие клавиши и справку",
-  "commands.showHelp.keywords": "горячие клавиши, справка",
+  "commands.openHelp.label": "Открыть справку",
+  "commands.openHelp.description": "Открыть руководство пользователя CodeNomad в браузере",
+  "commands.openHelp.keywords": "справка, руководство, документация",
 
   "commands.custom.argumentsPrompt.message": "Аргументы для /{name}",
   "commands.custom.argumentsPrompt.title": "Пользовательская команда",

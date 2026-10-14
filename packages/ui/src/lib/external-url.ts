@@ -12,12 +12,14 @@ export async function openExternalUrl(url: string, context = "ui"): Promise<bool
       return true
     } catch (error) {
       console.warn(`[${context}] unable to open via system opener`, error)
+      return false
     }
   }
 
   try {
-    const popup = window.open(url, "_blank", "noopener,noreferrer")
-    return popup !== null
+    // noopener deliberately returns null even when the browsing context opens.
+    window.open(url, "_blank", "noopener,noreferrer")
+    return true
   } catch (error) {
     console.warn(`[${context}] unable to open external url`, error)
     return false

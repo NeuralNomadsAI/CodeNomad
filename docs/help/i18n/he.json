@@ -1,0 +1,30 @@
+{
+  "language": "עברית",
+  "search": { "label": "חיפוש בעזרה", "clear": "ניקוי", "empty": "חיפוש במאמרים ובכותרות.", "noResults": "לא נמצאו תוצאות עבור '{query}'. נסו מונח אחר.", "failure": "לא ניתן לטעון את החיפוש. טענו מחדש את העמוד או השתמשו בנושאי העזרה.", "loading": "טעינת החיפוש…", "count": "{count} תוצאות" },
+  "siteTitle": "עזרה עבור CodeNomad",
+  "brand": "עזרה",
+  "tagline": "סביבת עבודה של OpenCode לפרויקטים, שיחות ועצי עבודה.",
+  "sections": {
+    "start": "מתחילים כאן",
+    "workflows": "תהליכי עבודה",
+    "opencode-setup": "הגדרת OpenCode",
+    "remote-access": "גישה מרחוק",
+    "customize": "התאמה אישית",
+    "extensions": "הרחבות",
+    "desktop": "יישום שולחן העבודה",
+    "help": "קבלת עזרה"
+  },
+  "onThisPage": "בעמוד הזה",
+  "skipToContent": "דילוג לתוכן",
+  "editPage": "עריכת העמוד הזה",
+  "translatePage": "תרגום העמוד הזה",
+  "reportProblem": "דיווח על בעיה",
+  "download": "הורדה",
+  "github": "GitHub",
+  "languageLabel": "שפה",
+  "projectLinks": "קישורי הפרויקט",
+  "helpTopics": "נושאי עזרה",
+  "scope": "CodeNomad הנוכחי · OpenCode V2",
+  "findHint": "חיפוש טקסט באמצעות {keys}.",
+  "untranslated": "העמוד הזה עדיין לא תורגם לעברית. הגרסה באנגלית מוצגת למטה."
+}

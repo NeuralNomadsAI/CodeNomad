@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.",
   "commandPalette.title": "Command Palette",
   "commandPalette.description": "Search and execute commands",
   "commandPalette.searchPlaceholder": "Type a command or search...",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Automatically clean up blank sessions when creating new ones",
   "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, blank, sessions, toggle",
 
-  "commands.showHelp.label": "Show Help",
-  "commands.showHelp.description": "Display keyboard shortcuts and help",
-  "commands.showHelp.keywords": "shortcuts, help",
+  "commands.openHelp.label": "Open help",
+  "commands.openHelp.description": "Open the CodeNomad user guide in your browser",
+  "commands.openHelp.keywords": "help, guide, documentation",
 
   "commands.custom.argumentsPrompt.message": "Arguments for /{name}",
   "commands.custom.argumentsPrompt.title": "Custom command",

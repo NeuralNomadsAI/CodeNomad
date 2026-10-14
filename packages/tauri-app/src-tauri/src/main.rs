@@ -49,7 +49,7 @@ use tauri::menu::{
     AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
-use tauri::webview::{PageLoadEvent, Webview};
+use tauri::webview::{NewWindowResponse, PageLoadEvent, Webview};
 use tauri::{
     AppHandle, Emitter, EventTarget, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
@@ -72,6 +72,7 @@ const ZOOM_STEP: f64 = 0.1;
 const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const RELEASES_LIST_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases";
+const HELP_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -783,6 +784,23 @@ fn should_open_external_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
 }
 
+// Remote documents have no opener IPC capability. Only this owned policy may
+// hand the public help site to the system browser; never create a native guest.
+fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
+    if url.scheme() != "https"
+        || url.host_str() != Some("neuralnomadsai.github.io")
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || !url.path().starts_with("/CodeNomad/")
+        || url.path().contains('%')
+    {
+        return false;
+    }
+    open(url);
+    true
+}
+
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
     let state = webview.app_handle().state::<AppState>();
@@ -796,7 +814,7 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
         return true;
     }
 
-    if should_open_external_url(url) {
+    let open = |url: &Url| {
         if let Err(err) = webview
             .app_handle()
             .opener()
@@ -804,6 +822,11 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
         {
             eprintln!("[tauri] failed to open external link {}: {}", url, err);
         }
+    };
+    if window_label.starts_with("remote-") {
+        open_remote_external_url(url, open);
+    } else if should_open_external_url(url) {
+        open(url);
     }
     false
 }
@@ -996,6 +1019,8 @@ fn open_remote_window_locked(
         .join("remote")
         .join(profile_hash);
     let badge_binding = notification_badge::prepare_window(&app, &label);
+    let external_app = app.clone();
+    let external_label = label.clone();
     let builder = WebviewWindowBuilder::new(
         &app,
         label.clone(),
@@ -1004,6 +1029,26 @@ fn open_remote_window_locked(
     .data_directory(data_directory)
     .incognito(requested_profile.proxy_session_id().is_some())
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
+    .on_new_window(move |url, _| {
+        let current = external_app
+            .state::<AppState>()
+            .remote_navigation
+            .lock()
+            .ok()
+            .and_then(|entries| entries.get(&external_label).map(|entry| entry.window_generation));
+        if current == Some(window_generation) {
+            open_remote_external_url(&url, |url| {
+                if let Err(error) = external_app.opener().open_url(url.as_str(), None::<&str>) {
+                    eprintln!("[tauri] failed to open help: {error}");
+                    tauri_plugin_dialog::DialogExt::dialog(&external_app)
+                        .message("Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.")
+                        .title("CodeNomad Help")
+                        .show(|_| {});
+                }
+            });
+        }
+        NewWindowResponse::Deny
+    })
     .on_page_load(move |window, payload| {
         if payload.event() == PageLoadEvent::Started {
             notification_badge::page_started(window.as_ref(), badge_binding);
@@ -2038,6 +2083,18 @@ fn main() {
                     }
                 }
 
+                "open-help" => {
+                    if !emit_menu_action(app_handle, "open-help") {
+                        if let Err(err) = app_handle.opener().open_url(HELP_URL, None::<&str>) {
+                            eprintln!("[tauri] failed to open CodeNomad help: {err}");
+                            rfd::MessageDialog::new()
+                                .set_title("CodeNomad Help")
+                                .set_description("Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.")
+                                .set_level(rfd::MessageLevel::Error)
+                                .show();
+                        }
+                    }
+                }
                 "get_updates" | "help_get_updates" => {
                     // Preferences and remote windows have no update flow.
                     if !emit_menu_action(app_handle, "get-updates") {
@@ -2430,6 +2487,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     };
     submenus.push(window_menu);
 
+    let help_item = MenuItem::with_id(app, "open-help", "CodeNomad Help", true, None::<&str>)?;
     let help_menu = if is_mac {
         let help_updates_item = MenuItem::with_id(
             app,
@@ -2447,12 +2505,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             )),
         )?;
         SubmenuBuilder::with_id(app, "menu-help", "Help")
+            .item(&help_item)
             .item(&help_updates_item)
             .separator()
             .item(&help_about_item)
             .build()?
     } else {
         SubmenuBuilder::with_id(app, "menu-help", "Help")
+            .item(&help_item)
             .item(&get_updates_item)
             .separator()
             .item(&about_item)
@@ -2476,7 +2536,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 /// Loading, sign-in and pairing documents have no menu listener, so they receive nothing.
 fn emit_menu_action(app_handle: &AppHandle, action: &str) -> bool {
     local_windows::focused_local_window(app_handle).is_some_and(|window| {
-        !window.url().is_ok_and(|url| is_listenerless_document(&url))
+        window.url().is_ok_and(|url| !is_listenerless_document(&url))
             && app_handle
                 .emit_to(EventTarget::webview(window.label()), "menu:action", action)
                 .is_ok()
@@ -2523,14 +2583,37 @@ mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
         is_allowed_local_origin, is_final_application_window, local_close_event_action,
-        require_http_url, rollback_remote_window_metadata,
+        require_http_url, rollback_remote_window_metadata, open_remote_external_url,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
         titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
-        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        HELP_URL, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use url::Url;
+
+    #[test]
+    fn remote_help_policy_opens_only_allowlisted_https_in_system_browser() {
+        let mut opened = Vec::new();
+        for value in [HELP_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete"] {
+            let url = Url::parse(value).unwrap();
+            assert!(open_remote_external_url(&url, |url| opened.push(url.to_string())));
+        }
+        assert_eq!(opened.len(), 2);
+        for value in [
+            "http://neuralnomadsai.github.io/CodeNomad/en/",
+            "https://example.com/CodeNomad/",
+            "https://neuralnomadsai.github.io.evil.example/CodeNomad/",
+            "https://neuralnomadsai.github.io/other/",
+            "https://neuralnomadsai.github.io/CodeNomad/../other/",
+            "https://neuralnomadsai.github.io/CodeNomad/%2f..%2fother/",
+            "https://neuralnomadsai.github.io:444/CodeNomad/",
+            "https://user@neuralnomadsai.github.io/CodeNomad/",
+            "mailto:help@example.com", "file:///CodeNomad/", "javascript:alert(1)",
+        ] {
+            assert!(!open_remote_external_url(&Url::parse(value).unwrap(), |_| panic!("denied URL reached the system opener: {value}")));
+        }
+    }
 
     #[test]
     fn preferences_does_not_keep_the_last_application_window_alive() {
@@ -2569,6 +2652,13 @@ mod menu_tests {
         assert_eq!(titlebar_menu_id("file"), Some("menu-file"));
         assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
         assert_eq!(titlebar_menu_id("preferences"), None);
+    }
+
+    #[test]
+    fn help_root_matches_the_shared_renderer_url() {
+        let shared = include_str!("../../../ui/src/lib/help-url.ts");
+        assert!(shared.contains(&format!("export const HELP_BASE_URL = \"{HELP_URL}\"")));
+        assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
     }
 
     #[test]

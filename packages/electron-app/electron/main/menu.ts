@@ -1,7 +1,9 @@
-import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron"
+import { app, BrowserWindow, Menu, shell, dialog, type MenuItemConstructorOptions } from "electron"
 import { NEW_WINDOW_ACCELERATOR } from "./menu-target"
 import { setWindowZoomLevel } from "./window-state"
 import { setViewMenuState, updateViewMenu, viewMenuItems } from "./view-menu"
+import { HELP_BASE_URL } from "../../../ui/src/lib/help-url"
+import { openExternalWithFeedback } from "./open-external"
 
 interface ApplicationMenuActions {
   getLocalTarget(): BrowserWindow | null
@@ -67,7 +69,16 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
 
 function buildApplicationMenu() {
   const isMac = process.platform === "darwin"
-  const sendCommand = (id: string) => () => target(true)?.webContents.send("menu:action", id)
+  const sendCommand = (id: string) => () => {
+    const window = target(true)
+    if (!window) return false
+    const url = window.webContents.getURL()
+    if (!url) return false
+    const path = new URL(url).pathname
+    if (path.endsWith("/loading.html") || ["/login", "/remote-pair"].includes(path) || path.startsWith("/auth/")) return false
+    window.webContents.send("menu:action", id)
+    return true
+  }
   const withTarget = (operation: (window: BrowserWindow) => void) => () => {
     const window = target(false)
     if (window) operation(window)
@@ -120,6 +131,9 @@ function buildApplicationMenu() {
       ...(isMac ? [{ role: "front" as const }] : [{ label: "Close", accelerator: "CmdOrCtrl+W", click: withTarget((window) => window.close()) }]),
     ] },
     { id: "menu-help", label: "Help", submenu: [
+      { id: "open-help", label: "CodeNomad Help", click: () => {
+        if (!sendCommand("open-help")()) void openExternalWithFeedback(HELP_BASE_URL)
+      } },
       { label: "Get Updates...", click: () => { void shell.openExternal("https://github.com/NeuralNomadsAI/CodeNomad/releases").catch(() => {}) } },
       { type: "separator" },
       { label: "About CodeNomad", click: () => app.showAboutPanel() },

@@ -21,6 +21,7 @@ Start with [README](../README.md) for installation and usage, then
 
 ## UI and extensions
 
+- [Public user help](USER_HELP.md): multilingual static site, stable anchors, local search, app entry points and Pages validation.
 - [Files panel](FILES_PANEL.md): workspace editing, Git changes/history and preview lifecycle.
 - [Native interruptions](NATIVE_INTERRUPTION_UX.md): permissions/Forms dock, drafts and pending-request recovery.
 - [Provider accounts](PROVIDER_ACCOUNTS_UX_PLAN.md): native account selection and bounded quota/rotation policy.

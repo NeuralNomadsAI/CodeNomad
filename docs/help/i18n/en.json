@@ -1,0 +1,30 @@
+{
+  "language": "English",
+  "search": { "label": "Search help", "clear": "Clear", "empty": "Search articles and headings.", "noResults": "No results for '{query}'. Try another term.", "failure": "Search could not load. Reload this page to retry, or use Help topics.", "loading": "Loading search…", "count": "{count} results" },
+  "siteTitle": "CodeNomad help",
+  "brand": "Help",
+  "tagline": "An OpenCode workspace, across projects, sessions, and worktrees.",
+  "sections": {
+    "start": "Start here",
+    "workflows": "Workflows",
+    "opencode-setup": "OpenCode setup",
+    "remote-access": "Remote access",
+    "customize": "Customize",
+    "extensions": "Extensions",
+    "desktop": "Desktop",
+    "help": "Get help"
+  },
+  "onThisPage": "On this page",
+  "skipToContent": "Skip to content",
+  "editPage": "Edit this page",
+  "translatePage": "Translate this page",
+  "reportProblem": "Report a problem",
+  "download": "Download",
+  "github": "GitHub",
+  "languageLabel": "Language",
+  "projectLinks": "Project links",
+  "helpTopics": "Help topics",
+  "scope": "Current CodeNomad · OpenCode V2",
+  "findHint": "Find text with {keys}.",
+  "untranslated": "This page is not yet translated. The English version is shown below."
+}

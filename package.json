@@ -26,7 +26,7 @@
     "bumpVersion": "node ./scripts/bump-version.js",
     "check:runtime": "node .github/scripts/runtime-maintenance.cjs",
     "build:help": "node scripts/build-help.mjs",
-    "test:help": "node --test scripts/test-help.mjs"
+    "test:help": "node scripts/test-help.mjs"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",

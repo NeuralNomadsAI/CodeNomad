@@ -1,0 +1,30 @@
+{
+  "language": "简体中文",
+  "search": { "label": "搜索帮助", "clear": "清除", "empty": "搜索文章和标题。", "noResults": "没有与“{query}”匹配的结果。请尝试其他词语。", "failure": "无法加载搜索。请重新加载此页面，或使用帮助主题导航。", "loading": "正在加载搜索…", "count": "{count} 条结果" },
+  "siteTitle": "CodeNomad 帮助",
+  "brand": "帮助",
+  "tagline": "连接项目、会话和工作树的 OpenCode 工作区。",
+  "sections": {
+    "start": "从这里开始",
+    "workflows": "工作流程",
+    "opencode-setup": "设置 OpenCode",
+    "remote-access": "远程访问",
+    "customize": "自定义",
+    "extensions": "扩展",
+    "desktop": "桌面应用",
+    "help": "获取帮助"
+  },
+  "onThisPage": "本页内容",
+  "skipToContent": "跳到正文",
+  "editPage": "编辑此页",
+  "translatePage": "翻译此页",
+  "reportProblem": "报告问题",
+  "download": "下载",
+  "github": "GitHub",
+  "languageLabel": "语言",
+  "projectLinks": "项目链接",
+  "helpTopics": "帮助主题",
+  "scope": "当前 CodeNomad · OpenCode V2",
+  "findHint": "使用 {keys} 查找文本。",
+  "untranslated": "此页尚未翻译成简体中文。下方显示的是英文版。"
+}

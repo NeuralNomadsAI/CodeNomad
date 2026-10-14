@@ -23,7 +23,7 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     onCleanupError: error => console.error("view-menu sandbox cleanup failed after the primary failure", error),
     run: async () => {
     const module = join(sandbox, "menu.cjs")
-    await build({ entryPoints: ["menu", "menu-target"].map(name => fileURLToPath(new URL(`../../../electron-app/electron/main/${name}.ts`, import.meta.url))),
+    await build({ entryPoints: ["menu", "menu-target", "open-external"].map(name => fileURLToPath(new URL(`../../../electron-app/electron/main/${name}.ts`, import.meta.url))),
       outdir: sandbox, outExtension: { ".js": ".cjs" }, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
     const env = { ...process.env, CODENOMAD_TEST_PROFILE: join(sandbox, "profile"), CODENOMAD_TEST_MENU_MODULE: module }
     delete env.ELECTRON_RUN_AS_NODE
@@ -56,7 +56,25 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     await app.evaluate(() => (globalThis as any).menuFixture.click("view-right-panel"))
     const delivery = await app.evaluate(() => { const f = (globalThis as any).menuFixture; return { actions: f.actions, id: f.ids[1] } })
     assert.deepEqual(delivery.actions, [[delivery.id, "menu:action", "view-right-panel"]])
+    const helpLabels = await app.evaluate(() => (globalThis as any).menuFixture.helpLabels())
+    assert.deepEqual(helpLabels.filter(Boolean), ["CodeNomad Help", "Get Updates...", "About CodeNomad"])
+    await app.evaluate(() => (globalThis as any).menuFixture.click("open-help"))
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.actions.at(-1)), [delivery.id, "menu:action", "open-help"])
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.externalUrls), [], "a primary renderer chooses its UI locale")
+    const titlebar = await app.evaluate(() => (globalThis as any).menuFixture.titlebarHelp())
+    assert.deepEqual(titlebar, [{ id: await app.evaluate(() => (globalThis as any).menuFixture.ids[0]), x: 5, y: 10 }], "the custom titlebar uses the same Help submenu")
     await app.evaluate(() => (globalThis as any).menuFixture.focus(null))
+    await app.evaluate(() => (globalThis as any).menuFixture.click("open-help"))
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.externalUrls), ["https://neuralnomadsai.github.io/CodeNomad/"], "preferences/remote windows use the language chooser")
+    for (const pathname of ["/loading.html", "/login", "/remote-pair", "/auth/callback"]) {
+      await app.evaluate((_electron, path) => { const f = (globalThis as any).menuFixture; f.focus(0); f.document(0, path); f.click('open-help') }, pathname)
+    }
+    assert.equal(await app.evaluate(() => (globalThis as any).menuFixture.externalUrls.length), 5, "listenerless documents open the host chooser, not a background renderer")
+    await app.evaluate(() => { const f = (globalThis as any).menuFixture; f.focus(null); f.failOpen(); f.click('open-help') })
+    assert.equal((await app.evaluate(() => (globalThis as any).menuFixture.failures))[0].title, 'CodeNomad', 'host opener failures are visible')
+    const rejected = await app.evaluate(async () => (globalThis as any).menuFixture.rejectExternal())
+    assert.deepEqual(rejected, { before: 1, after: 2, attempts: 1 }, 'asynchronous primary-renderer opener rejection is visible exactly once, without replay')
+    assert.equal(await app.evaluate(() => (globalThis as any).menuFixture.externalUrls.length), 5, 'failed opens are not replayed')
     assert.ok((await read()).every((item: any) => !item.enabled))
     assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.workspaceEnabled()), [false, false, false], "a focused non-local window must not target the background local window")
     await app.evaluate(() => { const f = (globalThis as any).menuFixture; f.focus(0); f.clear(0) })

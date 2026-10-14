@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "无法在浏览器中打开帮助。请手动访问 https://neuralnomadsai.github.io/CodeNomad/。",
   "commandPalette.title": "命令面板",
   "commandPalette.description": "搜索并执行命令",
   "commandPalette.searchPlaceholder": "输入命令或搜索...",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "在创建新会话时自动清理空白会话",
   "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, blank, sessions, toggle, 自动, 清理, 空白, 会话, 切换",
 
-  "commands.showHelp.label": "显示帮助",
-  "commands.showHelp.description": "显示键盘快捷键与帮助",
-  "commands.showHelp.keywords": "shortcuts, help, 快捷键, 帮助",
+  "commands.openHelp.label": "打开帮助",
+  "commands.openHelp.description": "在浏览器中打开 CodeNomad 用户指南",
+  "commands.openHelp.keywords": "帮助, 指南, 文档",
 
   "commands.custom.argumentsPrompt.message": "/{name} 的参数",
   "commands.custom.argumentsPrompt.title": "自定义命令",

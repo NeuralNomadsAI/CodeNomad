@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Yardım tarayıcıda açılamadı. https://neuralnomadsai.github.io/CodeNomad/ adresini elle açın.",
   "commandPalette.title": "Komut Paleti",
   "commandPalette.description": "Komutları ara ve çalıştır",
   "commandPalette.searchPlaceholder": "Komut yazın veya arayın...",
@@ -129,9 +130,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.label": "Boş Session'ları Otomatik Temizle · {state}",
   "commands.autoCleanupBlankSessions.description": "Yeni session oluşturulduğunda boş session'ları otomatik temizle",
   "commands.autoCleanupBlankSessions.keywords": "otomatik, temizlik, boş, session'lar, aç/kapat",
-  "commands.showHelp.label": "Yardımı Göster",
-  "commands.showHelp.description": "Klavye kısayollarını ve yardımı görüntüle",
-  "commands.showHelp.keywords": "kısayollar, yardım",
+  "commands.openHelp.label": "Yardımı aç",
+  "commands.openHelp.description": "CodeNomad kullanıcı kılavuzunu tarayıcınızda açın",
+  "commands.openHelp.keywords": "yardım, kılavuz, belgeler",
   "commands.custom.argumentsPrompt.message": "/{name} için argümanlar",
   "commands.custom.argumentsPrompt.title": "Özel komut",
   "commands.custom.argumentsPrompt.inputLabel": "Argümanlar",

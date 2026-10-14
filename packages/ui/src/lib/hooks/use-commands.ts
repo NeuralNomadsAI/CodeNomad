@@ -6,7 +6,7 @@ import type {
   ToolInputsVisibilityPreference,
   VisibilityPreference,
 } from "../../stores/preferences"
-import { createCommandRegistry, type Command } from "../commands"
+import { createCommandRegistry, resolveResolvable, type Command } from "../commands"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
@@ -18,7 +18,9 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
-import { tGlobal } from "../i18n"
+import { tGlobal, useI18n } from "../i18n"
+import { helpUrl } from "../help-url"
+import { openExternalUrl } from "../external-url"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
@@ -71,6 +73,7 @@ function extractUserTextFromRecord(record?: MessageRecord): string | null {
 }
 
 export function useCommands(options: UseCommandsOptions) {
+  const { locale } = useI18n()
   const commandRegistry = createCommandRegistry()
   const [commands, setCommands] = createSignal<Command[]>([])
 
@@ -603,13 +606,15 @@ export function useCommands(options: UseCommandsOptions) {
     })
  
     commandRegistry.register({
-      id: "help",
-      label: () => tGlobal("commands.showHelp.label"),
-      description: () => tGlobal("commands.showHelp.description"),
+      id: "open-help",
+      label: () => tGlobal("commands.openHelp.label"),
+      description: () => tGlobal("commands.openHelp.description"),
       category: "System",
-      keywords: () => ["/help", ...splitKeywords("commands.showHelp.keywords")],
-      action: () => {
-        log.info("Show help modal (not implemented)")
+      keywords: () => splitKeywords("commands.openHelp.keywords"),
+      action: async () => {
+        if (!await openExternalUrl(helpUrl(locale()), "help")) showAlertDialog(tGlobal("commands.openHelp.failed"), {
+          title: tGlobal("commands.openHelp.label"), variant: "error",
+        })
       },
     })
   }
@@ -627,6 +632,11 @@ export function useCommands(options: UseCommandsOptions) {
     }
   }
 
+  function executeMenuCommand(action: string) {
+    const command = commands().find((candidate) => candidate.id === action)
+    if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+  }
+
   onMount(() => {
     registerCommands()
     refreshCommands()
@@ -637,5 +647,6 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry,
     refreshCommands,
     executeCommand,
+    executeMenuCommand,
   }
 }

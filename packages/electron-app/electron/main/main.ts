@@ -1,5 +1,5 @@
 import "./process-output"
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { createHash } from "node:crypto"
@@ -37,6 +37,7 @@ import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-
 import { forwardOpenerStartupState, runStartupStateCommandInWindow } from "./opener-startup-state"
 import { resolveProfileRoots } from "./data-profile-cleanup"
 import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
+import { openExternalWithFeedback } from "./open-external"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -702,7 +703,7 @@ function setupNavigationGuards(
   allowedOrigins: (window: BrowserWindow) => string[],
   loadingUrl: () => string,
 ) {
-  const external = (url: string) => shell.openExternal(url).catch((error) => console.error("[cli] failed to open external URL", url, error))
+  const external = openExternalWithFeedback
   const decide = (url: string) => decideNavigation(url, allowedOrigins(window), loadingUrl())
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (decide(url) === "external") void external(url)

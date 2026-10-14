@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Die Hilfe konnte nicht im Browser geöffnet werden. Öffnen Sie https://neuralnomadsai.github.io/CodeNomad/ manuell.",
   "commandPalette.title": "Befehlspalette",
   "commandPalette.description": "Befehle suchen und ausführen",
   "commandPalette.searchPlaceholder": "Befehl eingeben oder suchen...",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Leere Sitzungen beim Erstellen neuer Sitzungen automatisch bereinigen",
   "commands.autoCleanupBlankSessions.keywords": "auto, bereinigen, leer, sitzungen, umschalten",
 
-  "commands.showHelp.label": "Hilfe anzeigen",
-  "commands.showHelp.description": "Tastenkombinationen und Hilfe anzeigen",
-  "commands.showHelp.keywords": "tastenkombinationen, hilfe",
+  "commands.openHelp.label": "Hilfe öffnen",
+  "commands.openHelp.description": "Das CodeNomad-Benutzerhandbuch im Browser öffnen",
+  "commands.openHelp.keywords": "hilfe, handbuch, dokumentation",
 
   "commands.custom.argumentsPrompt.message": "Argumente für /{name}",
   "commands.custom.argumentsPrompt.title": "Benutzerdefinierter Befehl",

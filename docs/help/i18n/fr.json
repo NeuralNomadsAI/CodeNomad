@@ -1,0 +1,30 @@
+{
+  "language": "Français",
+  "search": { "label": "Rechercher dans l’aide", "clear": "Effacer", "empty": "Recherchez des articles et des titres.", "noResults": "Aucun résultat pour « {query} ». Essayez un autre terme.", "failure": "La recherche n’a pas pu se charger. Rechargez cette page ou utilisez les rubriques d’aide.", "loading": "Chargement de la recherche…", "count": "{count} résultats" },
+  "siteTitle": "Aide CodeNomad",
+  "brand": "Aide",
+  "tagline": "Un espace de travail OpenCode, entre projets, sessions et worktrees.",
+  "sections": {
+    "start": "Commencer ici",
+    "workflows": "Méthodes de travail",
+    "opencode-setup": "Configurer OpenCode",
+    "remote-access": "Accès à distance",
+    "customize": "Personnaliser",
+    "extensions": "Extensions",
+    "desktop": "Application de bureau",
+    "help": "Obtenir de l’aide"
+  },
+  "onThisPage": "Sur cette page",
+  "skipToContent": "Aller au contenu",
+  "editPage": "Modifier cette page",
+  "translatePage": "Traduire cette page",
+  "reportProblem": "Signaler un problème",
+  "download": "Télécharger",
+  "github": "GitHub",
+  "languageLabel": "Langue",
+  "projectLinks": "Liens du projet",
+  "helpTopics": "Rubriques d’aide",
+  "scope": "CodeNomad actuel · OpenCode V2",
+  "findHint": "Rechercher du texte avec {keys}.",
+  "untranslated": "Cette page n’est pas encore traduite en français. La version anglaise est affichée ci-dessous."
+}

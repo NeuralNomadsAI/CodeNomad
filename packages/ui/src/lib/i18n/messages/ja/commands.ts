@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "ブラウザーでヘルプを開けませんでした。https://neuralnomadsai.github.io/CodeNomad/ を手動で開いてください。",
   "commandPalette.title": "コマンドパレット",
   "commandPalette.description": "コマンドを検索して実行",
   "commandPalette.searchPlaceholder": "コマンドを入力するか検索...",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "新しいセッション作成時に空のセッションを自動的に整理",
   "commands.autoCleanupBlankSessions.keywords": "自動, クリーンアップ, 空, セッション, 切り替え, auto, cleanup, blank, sessions, toggle",
 
-  "commands.showHelp.label": "ヘルプを表示",
-  "commands.showHelp.description": "キーボードショートカットとヘルプを表示",
-  "commands.showHelp.keywords": "ショートカット, ヘルプ, shortcuts, help",
+  "commands.openHelp.label": "ヘルプを開く",
+  "commands.openHelp.description": "CodeNomad のユーザーガイドをブラウザーで開く",
+  "commands.openHelp.keywords": "ヘルプ, ガイド, ドキュメント",
 
   "commands.custom.argumentsPrompt.message": "/{name} の引数",
   "commands.custom.argumentsPrompt.title": "カスタムコマンド",

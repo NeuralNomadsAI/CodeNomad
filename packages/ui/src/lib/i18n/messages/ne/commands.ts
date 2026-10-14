@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "ब्राउजरमा मद्दत खोल्न सकिएन। https://neuralnomadsai.github.io/CodeNomad/ आफैँ खोल्नुहोस्।",
   "commandPalette.title": "कमाण्ड प्यालेट (Command Palette)",
   "commandPalette.description": "कमाण्डहरू खोज्नुहोस् र कार्यान्वयन गर्नुहोस्",
   "commandPalette.searchPlaceholder": "कमाण्ड टाइप गर्नुहोस् वा खोज्नुहोस्...",
@@ -172,9 +173,9 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "नयाँ सत्रहरू सिर्जना गर्दा खाली सत्रहरू स्वतः सफा गर्नुहोस्",
   "commands.autoCleanupBlankSessions.keywords": "स्वतः, सफा, खाली, सत्र, टगल",
 
-  "commands.showHelp.label": "मद्दत देखाउनुहोस्",
-  "commands.showHelp.description": "किबोर्ड सर्टकट र मद्दत प्रदर्शन गर्नुहोस्",
-  "commands.showHelp.keywords": "सर्टकट, मद्दत",
+  "commands.openHelp.label": "मद्दत खोल्नुहोस्",
+  "commands.openHelp.description": "आफ्नो ब्राउजरमा CodeNomad प्रयोगकर्ता मार्गदर्शिका खोल्नुहोस्",
+  "commands.openHelp.keywords": "मद्दत, मार्गदर्शिका, दस्तावेज",
 
   "commands.custom.argumentsPrompt.message": "/{name} को लागि तर्कहरू (Arguments)",
   "commands.custom.argumentsPrompt.title": "अनुकूल कमाण्ड",
