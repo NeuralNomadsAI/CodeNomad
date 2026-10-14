@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import type { UpdateFeed } from "../../../../server/src/api-types"
-import { isLocalWindow, isTauriHost } from "../runtime-env"
+import { isNativeApplicationWindow, isTauriHost } from "../runtime-env"
 
 export type DesktopUpdateCheck =
   | { status: "unsupported" }
@@ -9,8 +9,9 @@ export type DesktopUpdateCheck =
   | { status: "available"; version: string }
   | { status: "busy" }
 
+/** Application windows and the Preferences window run updates; remote windows do not. */
 export function supportsDesktopUpdateChecks(): boolean {
-  return isTauriHost() && isLocalWindow()
+  return isTauriHost() && isNativeApplicationWindow()
 }
 
 /** Without a saved feed the native host derives it from the installed build. */

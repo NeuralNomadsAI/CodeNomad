@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
@@ -205,7 +206,12 @@ test("the Preferences update button installs in place, or opens the release it s
     addresses: [], serverVersion: "0.20.0", ui: { version: "0.20.0", source: "bundled" }, updateFeed: "preview",
     update: { version: "0.21.0-dev-20261020-aaaaaaaa", url: "https://example.com/preview" },
   }
-  const available = await fixture("available", "tauri", "local", meta, "?settings")
+  // Tauri shows this card in the separate Preferences window, which must be allowed to update.
+  const capability = JSON.parse(await readFile(fileURLToPath(new URL("../../../tauri-app/src-tauri/capabilities/preferences-window.json", import.meta.url)), "utf8"))
+  for (const permission of ["allow-check-desktop-update", "allow-install-desktop-update", "allow-take-desktop-update-failure"]) {
+    assert.ok(capability.permissions.includes(permission), permission)
+  }
+  const available = await fixture("available", "tauri", "preferences", meta, "?settings")
   try {
     await available.getByRole("button", { name: "Install update" }).click()
     await available.getByText(/CodeNomad 0.21.0 is available/).waitFor()
@@ -214,20 +220,23 @@ test("the Preferences update button installs in place, or opens the release it s
     assert.deepEqual(await openedUrls(available), [])
   } finally { await available.close() }
 
-  const unsigned = await fixture("unsigned", "tauri", "local", meta, "?settings")
+  const unsigned = await fixture("unsigned", "tauri", "preferences", meta, "?settings")
   try {
     await unsigned.getByRole("button", { name: "Install update" }).click()
     await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
     assert.deepEqual(await openedUrls(unsigned), ["https://example.com/preview"])
   } finally { await unsigned.close() }
 
-  // Without the native updater the card keeps its download link.
-  const electron = await fixture("available", "electron", "local", meta, "?settings")
-  try {
-    await electron.getByRole("link", { name: "Download update" }).waitFor()
-    assert.equal(await electron.getByRole("link", { name: "Download update" }).getAttribute("href"), "https://example.com/preview")
-    assert.equal(await electron.getByRole("button", { name: "Install update" }).count(), 0)
-  } finally { await electron.close() }
+  // Without the native updater (Electron, remote windows) the card keeps its download link.
+  for (const [host, context] of [["electron", "local"], ["tauri", "remote"]]) {
+    const page = await fixture("available", host, context, meta, "?settings")
+    try {
+      await page.getByRole("link", { name: "Download update" }).waitFor()
+      assert.equal(await page.getByRole("link", { name: "Download update" }).getAttribute("href"), "https://example.com/preview")
+      assert.equal(await page.getByRole("button", { name: "Install update" }).count(), 0)
+      assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update").length), 0)
+    } finally { await page.close() }
+  }
 })
 
 test("another window's update in progress is not reported as a failure", async () => {
