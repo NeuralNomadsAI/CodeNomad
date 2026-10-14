@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import Kbd from "./kbd"
+import { hotkeyLabel } from "../lib/hotkeys"
 import ContextMeter from "./context-meter"
 import { useI18n } from "../lib/i18n"
 
@@ -54,12 +54,10 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
             class="connection-status-button command-palette-button"
             onClick={props.onCommandPalette}
             aria-label={t("messageListHeader.commandPalette.ariaLabel")}
+            title={t("messageListHeader.commandPalette.ariaLabel") + (hotkeyLabel("open-command-palette") ? ` (${hotkeyLabel("open-command-palette")})` : "")}
           >
             {t("messageListHeader.commandPalette.button")}
           </button>
-          <span class="connection-status-shortcut-hint">
-            <Kbd shortcut="cmd+shift+p" class="kbd-hint" />
-          </span>
         </div>
       </div>
 

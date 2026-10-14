@@ -6,7 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Klasör yolunu yazın veya yapıştırın",
   "directoryBrowser.openCurrent": "Aç",
   "directoryBrowser.goTo": "Klasöre git",
-  "directoryBrowser.goToTypedPath": "Bu klasöre git (Enter)",
+  "directoryBrowser.goToTypedPath": "Bu klasöre git",
   "directoryBrowser.goToParent": "Üst klasör",
   "directoryBrowser.goToHome": "Ana Dizin",
   "directoryBrowser.goToRoot": "Çalışma alanı kökü",

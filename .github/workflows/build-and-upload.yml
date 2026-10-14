@@ -61,12 +61,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -217,7 +217,7 @@ jobs:
 
       - name: Upload Actions artifacts (Electron macOS)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-macos
           path: packages/electron-app/release/*.zip
@@ -232,12 +232,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -267,7 +267,7 @@ jobs:
 
       - name: Upload Actions artifacts (Electron Windows)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-windows
           path: packages/electron-app/release/*.zip
@@ -282,12 +282,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -401,7 +401,7 @@ jobs:
 
       - name: Upload Actions artifacts (Electron Linux)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux
           path: packages/electron-app/release/*.tar.gz
@@ -417,12 +417,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -488,7 +488,7 @@ jobs:
 
       - name: Upload Actions artifacts (Tauri macOS)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-macos
           path: packages/tauri-app/release-tauri/*.zip
@@ -515,12 +515,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -586,7 +586,7 @@ jobs:
 
       - name: Upload Actions artifacts (Tauri macOS arm64)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-macos-arm64
           path: packages/tauri-app/release-tauri/*.zip
@@ -613,12 +613,12 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -688,7 +688,7 @@ jobs:
 
       - name: Upload Actions artifacts (Tauri Windows)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-windows
           path: packages/tauri-app/release-tauri/*.zip
@@ -715,12 +715,12 @@ jobs:
       TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -956,7 +956,7 @@ jobs:
 
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-linux
           path: |
@@ -1026,7 +1026,7 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -1036,7 +1036,7 @@ jobs:
           platforms: linux/arm64
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm

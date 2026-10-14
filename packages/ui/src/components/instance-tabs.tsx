@@ -12,12 +12,11 @@ import {
 } from "@thisbeyond/solid-dnd"
 import InstanceTab from "./instance-tab"
 import TabScroll from "./tab-scroll"
-import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
 import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
-import { keyboardRegistry } from "../lib/keyboard-registry"
+import { hotkeyLabel } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
@@ -309,7 +308,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
             <button
               class="new-tab-button new-instance-button"
               {...newInstanceHandlers}
-              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title")}
+              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title") + (hotkeyLabel("new-instance") ? ` (${hotkeyLabel("new-instance")})` : "")}
               aria-label={t("instanceTabs.new.ariaLabel")}
               aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
               aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
@@ -318,16 +317,6 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
             </button>
           </div>
           <div class="tab-bar-actions">
-            <Show when={props.tabs.length > 1}>
-              <div class="tab-shortcuts">
-                <KeyboardHint
-                  shortcuts={[keyboardRegistry.get("instance-prev")!, keyboardRegistry.get("instance-next")!].filter(
-                    Boolean,
-                  )}
-                />
-              </div>
-            </Show>
-
             <button
               class="new-tab-button"
               onClick={() => toggleSettings()}

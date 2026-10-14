@@ -14,7 +14,7 @@ import { runtimeEnv } from "../../../src/lib/runtime-env"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { getFormQueue } from "../../../src/stores/forms"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
-import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
+import { addInstance, addPendingForm, addPermissionToQueue, instances, setActiveInstanceId } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, clearActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
@@ -24,8 +24,7 @@ import "../../../src/index.css"
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
 bootStage("imports-complete")
 if (new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
-// The app registers navigation shortcuts before any shell mounts; native
-// desktop hosts then render their hint row in the session list header.
+// Model optional app registrations without reintroducing inline shortcut hints.
 if (new URLSearchParams(location.search).has("shortcutHints")) registerNavigationShortcuts()
 const id = "header-windows", sessionId = "session"
 let interrupts = 0
@@ -66,6 +65,7 @@ serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
 })
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
+setActiveInstanceId(id)
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))
 setProviders(previous => new Map(previous).set(id, [{ id: "fixture", name: "Fixture", models: [] }]))
 setActiveSession(id, sessionId)

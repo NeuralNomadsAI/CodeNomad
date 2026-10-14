@@ -227,7 +227,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "שנה גובה תיבת הקלט",
 
-  "promptInput.placeholder.shell": "הפעל פקודת מעטפת (Esc ליציאה)...",
+  "promptInput.placeholder.shell": "הפעל פקודת מעטפת...",
   "promptInput.placeholder.default": "הקלד הודעה, @file, @agent, @skill, או הדבק תמונות וטקסט...",
   "promptInput.hints.shell.exit": "לצאת ממצב מעטפת",
   "promptInput.hints.shell.enable": "מצב מעטפת",
@@ -244,7 +244,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "שוב כדי לבטל את הסשן",
   "promptInput.stopSession.ariaLabel": "עצור סשן",
   "promptInput.stopSession.title": "עצור סשן",
-  "promptInput.background.title": "העבר כלים חוסמים לרקע (Cmd/Ctrl+B)",
+  "promptInput.background.title": "העבר כלים חוסמים לרקע",
   "promptInput.background.error.title": "העברה לרקע נכשלה",
   "promptInput.background.error.message": "לא ניתן להעביר את הכלים החוסמים לרקע",
   "promptInput.attachFiles.ariaLabel": "צרף קבצים",

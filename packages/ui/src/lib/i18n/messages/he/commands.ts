@@ -116,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "נקה את תיבת הטקסט של הפקודה",
   "commands.clearInput.keywords": "נקה, אפס",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: שורה חדשה, Cmd/Ctrl+Enter: שלח פקודה",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: שלח פקודה, Cmd/Ctrl+Enter: שורה חדשה",
-  "commands.promptSubmitShortcut.description": "החלף את התנהגות Enter ו-Cmd/Ctrl+Enter בקלט הפקודה",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, שלח, שורה חדשה, קיצור",
 
   "commands.thinkingBlocks.label.show": "הצג חשיבה",
   "commands.thinkingBlocks.label.hide": "הסתר חשיבה",

@@ -231,7 +231,7 @@ test("the Go button appears for a different typed path and navigates without ope
   const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
-    const go = page.getByRole("button", { name: "Aller à ce dossier (Entrée)", exact: true })
+    const go = page.getByRole("button", { name: "Aller à ce dossier", exact: true })
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws/start")
     assert.equal(await go.count(), 0, "nothing to go to before typing")
     await field(page).fill("/ws/start/")

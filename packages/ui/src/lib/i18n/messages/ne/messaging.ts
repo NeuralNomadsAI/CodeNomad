@@ -227,7 +227,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "च्याट इनपुट उचाइ टगल गर्नुहोस्",
 
-  "promptInput.placeholder.shell": "शेल कमाण्ड चलाउनुहोस् (निस्कन Esc)...",
+  "promptInput.placeholder.shell": "शेल कमाण्ड चलाउनुहोस्...",
   "promptInput.placeholder.default": "सन्देश, @file, @agent, @skill टाइप गर्नुहोस् वा फोटो र पाठ टाँस्नुहोस्...",
   "promptInput.hints.shell.exit": "शेल मोडबाट निस्कन",
   "promptInput.hints.shell.enable": "शेल मोड",
@@ -244,7 +244,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "सत्र रद्द गर्न फेरि",
   "promptInput.stopSession.ariaLabel": "सत्र रोक्नुहोस्",
   "promptInput.stopSession.title": "सत्र रोक्नुहोस्",
-  "promptInput.background.title": "अवरुद्ध गर्ने उपकरणहरू पृष्ठभूमिमा सार्नुहोस् (Cmd/Ctrl+B)",
+  "promptInput.background.title": "अवरुद्ध गर्ने उपकरणहरू पृष्ठभूमिमा सार्नुहोस्",
   "promptInput.background.error.title": "पृष्ठभूमि कार्य असफल भयो",
   "promptInput.background.error.message": "अवरुद्ध गर्ने उपकरणहरू पृष्ठभूमिमा सार्न सकिएन",
   "promptInput.attachFiles.ariaLabel": "फाइलहरू संलग्न गर्नुहोस्",

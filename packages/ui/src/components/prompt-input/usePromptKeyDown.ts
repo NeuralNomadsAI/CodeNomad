@@ -1,6 +1,7 @@
 import type { Accessor } from "solid-js"
 import type { Attachment } from "../../types/attachment"
 import type { PromptMode } from "./types"
+import { isHotkeyRecording, matchesHotkey } from "../../lib/hotkeys"
 import {
   createImagePlaceholderRegex,
   createMentionRegex,
@@ -28,28 +29,29 @@ export type UsePromptKeyDownOptions = {
   submitOnEnter: Accessor<boolean>
   onSend: (alternate?: boolean) => void
   onBackground?: () => boolean
+  /** The test seam keeps draft behavior independent of the persisted preferences. */
+  matchHotkey?: (id: string, event: KeyboardEvent) => boolean
 
   selectPreviousHistory: (force?: boolean) => boolean
   selectNextHistory: (force?: boolean) => boolean
 }
 
 export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
+  const matches = options.matchHotkey ?? matchesHotkey
   const insertNewlineAtCursor = () => {
     const textarea = options.getTextarea()
-    const current = options.prompt()
-    const start = textarea ? textarea.selectionStart : current.length
-    const end = textarea ? textarea.selectionEnd : current.length
-    options.setPrompt(current.substring(0, start) + "\n" + current.substring(end))
-
-    setTimeout(() => {
-      const nextTextarea = options.getTextarea()
-      if (!nextTextarea) return
-      nextTextarea.focus()
-      nextTextarea.setSelectionRange(start + 1, start + 1)
-    }, 0)
+    if (!textarea) return
+    // Like attachment insertion, native input publishes the draft and keeps undo.
+    if (typeof document !== "undefined" && document.activeElement === textarea
+      && typeof document.execCommand === "function" && document.execCommand("insertText", false, "\n")) return
+    // Change native value and caret atomically, then publish the same value.
+    // No deferred focus/selection can overwrite a later gesture or keystroke.
+    textarea.setRangeText("\n", textarea.selectionStart, textarea.selectionEnd, "end")
+    options.setPrompt(textarea.value)
   }
 
   return function handleKeyDown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || isHotkeyRecording()) return
     const textarea = options.getTextarea()
     if (!textarea) return
 
@@ -57,7 +59,7 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
     const cursorAtBufferStart = textarea.selectionStart === 0 && textarea.selectionEnd === 0
     const isShellMode = options.mode() === "shell"
 
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && options.onBackground?.()) {
+    if (matches("session-background", e) && options.onBackground?.()) {
       e.preventDefault()
       e.stopPropagation()
       return
@@ -77,7 +79,7 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
     }
 
     if (isShellMode) {
-      if (e.key === "Escape") {
+      if (matches("prompt-exit-shell", e)) {
         e.preventDefault()
         e.stopPropagation()
         options.setMode("normal")
@@ -239,54 +241,42 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
       }
     }
 
-    if (e.key === "Enter") {
-      // A picker listener may already have selected an item and closed itself
-      // before this delegated handler runs. Never submit the consumed key.
-      if (e.defaultPrevented) return
-      const isModified = e.metaKey || e.ctrlKey
-
-      // The picker owns Enter even when loading, empty or not yet mounted.
-      // Unmodified Enter (including Shift) bubbles to its selection handler;
-      // submit/queue modifiers are swallowed rather than sending the draft.
-      if (options.isPickerOpen()) {
+    // Picker selection stays local, including when it is loading or empty.
+    if (options.isPickerOpen()) {
+      if (e.key === "Enter") {
         e.preventDefault()
-        if (isModified) e.stopPropagation()
+        if (e.metaKey || e.ctrlKey) e.stopPropagation()
         return
       }
-
-      if (options.submitOnEnter()) {
-        if (isModified && e.shiftKey) {
-          e.preventDefault()
-          e.stopPropagation()
-          options.onSend(true)
-          return
-        }
-
-        if (isModified) {
-          e.preventDefault()
-          e.stopPropagation()
-          insertNewlineAtCursor()
-          return
-        }
-
-        if (e.shiftKey) {
-          return
-        }
-
+      if (["prompt-send", "prompt-alternate-send", "prompt-newline"].some(id => matches(id, e))) {
         e.preventDefault()
-        options.onSend(false)
-        return
-      }
-
-      // Default: Cmd/Ctrl+Enter submits.
-      if (isModified) {
-        e.preventDefault()
-        options.onSend(e.shiftKey)
+        e.stopPropagation()
         return
       }
     }
 
-    if (e.key === "ArrowUp") {
+    if (matches("prompt-alternate-send", e)) {
+      e.preventDefault()
+      e.stopPropagation()
+      options.onSend(true)
+      return
+    }
+    if (matches("prompt-newline", e)) {
+      e.stopPropagation()
+      // Enter/Shift+Enter already insert a newline with native undo and input.
+      if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey) return
+      e.preventDefault()
+      insertNewlineAtCursor()
+      return
+    }
+    if (matches("prompt-send", e)) {
+      e.preventDefault()
+      e.stopPropagation()
+      options.onSend(false)
+      return
+    }
+
+    if (matches("prompt-history-prev", e)) {
       const handled = options.selectPreviousHistory()
       if (handled) {
         e.preventDefault()
@@ -294,7 +284,7 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
       }
     }
 
-    if (e.key === "ArrowDown") {
+    if (matches("prompt-history-next", e)) {
       const handled = options.selectNextHistory()
       if (handled) {
         e.preventDefault()

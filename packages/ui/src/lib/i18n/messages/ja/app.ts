@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "エラー出力",
   "app.launchError.openAdvancedSettings": "OpenCode 設定を開く",
   "app.launchError.close": "閉じる",
-  "app.launchError.closeTitle": "閉じる (Esc)",
+  "app.launchError.closeTitle": "閉じる",
   "app.launchError.fallbackMessage": "ワークスペースの起動に失敗しました",
   "app.launchError.invalidConfig": "OpenCode の設定が無効です",
 

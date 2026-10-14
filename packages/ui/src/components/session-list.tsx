@@ -5,13 +5,11 @@ import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
-import KeyboardHint from "./keyboard-hint"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { useSessionRowOverflow } from "./session-row-overflow"
-import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
@@ -939,9 +937,6 @@ const SessionList: Component<SessionListProps> = (props) => {
               <h3 class="text-sm font-semibold text-primary notranslate" translate="no">
                 {t("sessionList.header.title")}
               </h3>
-              <KeyboardHint
-                shortcuts={[keyboardRegistry.get("session-prev")!, keyboardRegistry.get("session-next")!].filter(Boolean)}
-              />
             </div>
           )}
         </div>

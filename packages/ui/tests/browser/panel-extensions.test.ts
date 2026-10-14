@@ -39,6 +39,7 @@ before(async () => {
   }) as typeof fetch)
   registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
   registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+    desktopPluginsReady: async () => {},
     ownsLocation: async (id, location) => id === "first" && location.directory === "/first",
     // Asset reads are fenced to one current connection; this fixture's never changes.
     getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: { session: { get: async () => ({ location: { directory: "/first" } }) }, rpc: { call: async ({ method, input }: any) => {

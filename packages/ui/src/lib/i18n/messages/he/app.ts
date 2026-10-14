@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "פלט שגיאה",
   "app.launchError.openAdvancedSettings": "פתח הגדרות OpenCode",
   "app.launchError.close": "סגור",
-  "app.launchError.closeTitle": "סגור (Esc)",
+  "app.launchError.closeTitle": "סגור",
   "app.launchError.fallbackMessage": "הפעלת סביבת העבודה נכשלה",
   "app.launchError.invalidConfig": "תצורת OpenCode אינה תקינה",
 

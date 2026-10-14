@@ -790,6 +790,8 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     await panel.waitFor()
     await page.locator("#outside").click()
     assert.equal(await panel.isVisible(), true)
+    // The toggle's blur ripple must finish without replaying window autofocus.
+    await page.waitForFunction(id => !document.querySelector(`button[aria-controls="${id}"] .MuiTouchRipple-ripple`), id)
     assert.equal(await page.locator("#outside").evaluate(el => el === document.activeElement), true)
     await trigger.click()
     await panel.waitFor({ state: "hidden" })
@@ -804,6 +806,46 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
   } catch (error) {
     console.error({ errors, body: await page.locator("body").innerText() })
     throw error
+  } finally { await page.close() }
+})
+
+test("composer tooltips follow effective bindings without permanent key strips", async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const composer = page.locator("textarea.prompt-input:visible")
+    const send = page.locator(".send-button:visible"), stop = page.locator(".stop-button:visible")
+    const sendName = await send.getAttribute("aria-label"), stopName = await stop.getAttribute("aria-label")
+    assert.equal(await page.locator(".prompt-input-overlay, .keyboard-hints, .kbd-hint").count(), 0)
+    assert.equal(await composer.getAttribute("aria-describedby"), null)
+    await page.evaluate(() => (window as any).fixture.setPreferences({ hotkeyOverrides: {
+      "prompt-send": [{ key: "j", mod: true }], "session-abort": [{ key: "e", mod: true }],
+      "session-search": [{ key: "g", mod: true }],
+    } }))
+    assert.equal(await send.getAttribute("title"), `${sendName} (Ctrl+J)`)
+    assert.equal(await stop.getAttribute("title"), `${stopName} (Ctrl+E)`)
+    assert.equal(await send.getAttribute("aria-label"), sendName)
+    assert.equal(await stop.getAttribute("aria-label"), stopName)
+    await page.keyboard.press("Control+f")
+    assert.equal(await page.getByRole("searchbox").count(), 0)
+    await page.keyboard.press("Control+g")
+    await page.getByRole("searchbox").waitFor()
+    await page.getByRole("button", { name: "Close search", exact: true }).click()
+    await page.evaluate(() => (window as any).fixture.setPreferences({ hotkeyOverrides: {
+      "prompt-send": [], "session-abort": [{ key: "e", mod: true }], "session-search": [{ key: "g", mod: true }],
+    } }))
+    assert.equal(await send.getAttribute("title"), sendName, "disabled bindings leave no empty tooltip suffix")
+    await page.evaluate(() => (window as any).fixture.setWorking())
+    await composer.fill("A draft survives the first abort key")
+    await composer.press("Control+e")
+    const reminder = page.locator(".prompt-input-overlay:visible")
+    await reminder.waitFor()
+    assert.equal(await reminder.innerText(), "Press again to stop", "transient confirmation must not display a key combination")
+    assert.equal(await reminder.locator("kbd").count(), 0)
+    assert.equal(await composer.getAttribute("aria-describedby"), await reminder.getAttribute("id"))
+    assert.equal(await composer.inputValue(), "A draft survives the first abort key")
   } finally { await page.close() }
 })
 

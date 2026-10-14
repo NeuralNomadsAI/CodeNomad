@@ -1,7 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
-import Kbd from "./kbd"
+import { matchesHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
@@ -1159,9 +1159,8 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (typeof document === "undefined") return
     const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase()
-      const isModSearch = (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && key === "f"
-      if (isModSearch && isActive()) {
+      if (event.defaultPrevented) return
+      if (matchesHotkey("session-search", event) && isActive()) {
         const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
         if (!modalOpen) {
           event.preventDefault()
@@ -1331,7 +1330,6 @@ export default function MessageSection(props: MessageSectionProps) {
                       <ul>
                         <li>
                           <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                          <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                         </li>
                         <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                         <li>
@@ -1348,7 +1346,6 @@ export default function MessageSection(props: MessageSectionProps) {
                     <ul>
                       <li>
                         <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                        <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                       </li>
                       <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                       <li>
@@ -1457,9 +1454,11 @@ export default function MessageSection(props: MessageSectionProps) {
                           updateSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
-                          if (event.key === "Enter") {
+                          if (event.defaultPrevented || !isActive()) return
+                          const previous = matchesHotkey("search-prev-result", event)
+                          if (previous || matchesHotkey("search-next-result", event)) {
                             event.preventDefault()
-                            moveSearchMatch(event.shiftKey ? -1 : 1)
+                            moveSearchMatch(previous ? -1 : 1)
                             return
                           }
                         }}

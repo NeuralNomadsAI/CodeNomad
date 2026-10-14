@@ -524,7 +524,7 @@ export const settingsMessages = {
   "settings.behavior.promptVoiceInput.title": "Prompt ses girişi",
   "settings.behavior.promptVoiceInput.subtitle": "Konuşma yapılandırıldığında konuşmadan metne prompt girişi için mikrofon denetimini göster.",
   "settings.behavior.promptSubmit.title": "Enter ile gönder",
-  "settings.behavior.promptSubmit.subtitle": "Prompt'ları göndermek için Enter tuşunu kullanın; Cmd/Ctrl+Enter yeni satır ekler.",
+  "settings.behavior.promptSubmit.subtitle": "Gönderme davranışını Klavye kısayolları bölümünde ayarlayın.",
   "settings.speech.title": "Konuşma",
   "settings.speech.subtitle": "Konuşmadan metne dönüştürmeyi şimdi, metinden konuşma altyapısını ise gelecek özellikler için yapılandırın.",
   "settings.speech.provider.title": "Provider",
@@ -704,7 +704,7 @@ export const settingsMessages = {
 
   "settings.behavior.followUpBehavior.option.queue": "Kuyruk",
   "settings.behavior.followUpBehavior.option.steer": "Yönlendir",
-  "settings.behavior.followUpBehavior.subtitle": "Bir görev etkinken promptların nasıl iletileceğini seçin; Cmd/Ctrl+Shift+Enter diğer davranışı kullanır.",
+  "settings.behavior.followUpBehavior.subtitle": "Bir görev etkinken promptların nasıl iletileceğini seçin.",
   "settings.behavior.followUpBehavior.title": "Takip davranışı",
   "settings.behavior.providerUsageCreditBalance.subtitle": "Kullanım panelinde ek sağlayıcı kredi bakiyelerini göster.",
   "settings.behavior.providerUsageCreditBalance.title": "Sağlayıcı kredi bakiyesi",

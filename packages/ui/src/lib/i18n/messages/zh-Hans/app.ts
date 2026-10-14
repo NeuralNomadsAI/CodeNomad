@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "错误输出",
   "app.launchError.openAdvancedSettings": "打开 OpenCode 设置",
   "app.launchError.close": "关闭",
-  "app.launchError.closeTitle": "关闭 (Esc)",
+  "app.launchError.closeTitle": "关闭",
   "app.launchError.fallbackMessage": "启动工作区失败",
   "app.launchError.invalidConfig": "OpenCode 配置无效",
 

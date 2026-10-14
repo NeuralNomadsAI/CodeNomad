@@ -35,7 +35,7 @@ import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { observeDesktopUpdates, requestDesktopUpdate } from "./stores/desktop-updates"
-import { isLocalWindow, isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
+import { isLocalWindow, isTauriHost, runtimeEnv } from "./lib/runtime-env"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
@@ -140,12 +140,10 @@ const App: Component = () => {
     serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
-    toggleKeyboardShortcutHints,
     toggleShowMessageTimeline,
     toggleShowTimelineTools,
     toggleAutoCleanupBlankSessions,
     toggleUsageMetrics,
-    togglePromptSubmitOnEnter,
     toggleShowPromptVoiceInput,
     setDiffViewMode,
     setToolOutputExpansion,
@@ -195,13 +193,6 @@ const App: Component = () => {
     }
     setMobileFullscreenMode(false)
   }
-
-  createEffect(() => {
-    if (typeof document === "undefined") return
-    const shouldShow =
-      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? false)
-    document.documentElement.dataset.keyboardHints = shouldShow ? "show" : "hide"
-  })
 
   const updateInstanceTabBarHeight = () => {
     if (typeof document === "undefined") return
@@ -697,11 +688,9 @@ const App: Component = () => {
     preferences,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
-    toggleKeyboardShortcutHints,
     toggleShowMessageTimeline,
     toggleShowTimelineTools,
     toggleUsageMetrics,
-    togglePromptSubmitOnEnter,
     toggleShowPromptVoiceInput,
     setDiffViewMode,
     setToolOutputExpansion,

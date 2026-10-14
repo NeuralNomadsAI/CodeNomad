@@ -1,6 +1,7 @@
 import { advancedSettingsMessages } from "./advancedSettings"
 import { appMessages } from "./app"
 import { commandMessages } from "./commands"
+import { hotkeyMessages } from "./hotkeys"
 import { dialogMessages } from "./dialogs"
 import { filesystemMessages } from "./filesystem"
 import { folderSelectionMessages } from "./folderSelection"
@@ -45,4 +46,5 @@ export const esMessages = mergeMessageParts(
   remoteAccessMessages,
   remoteControlMessages,
   commandMessages,
+  hotkeyMessages,
 )

@@ -22,6 +22,7 @@ describe("Native Preferences section parity", () => {
     const expected = [...PREFERENCES_SECTIONS].sort()
     assert.ok(expected.includes(providersSection))
     assert.ok(expected.includes("missions") && renderer.includes("missions") && settings.includes("missions"), "Mission preferences are a Settings section")
+    assert.ok(expected.includes("hotkeys"), "Keyboard shortcuts are a native Preferences section")
     for (const [name, sections] of Object.entries({ renderer, tauri, settings })) {
       assert.equal(new Set(sections).size, sections.length, `${name} has no duplicate sections`)
       assert.deepEqual(sections.sort(), expected, `${name} matches Electron`)
@@ -61,6 +62,17 @@ describe("Native Preferences section parity", () => {
       assert.equal(normalizeNativePreferencesRequest(section), null)
       assert.equal(normalizeNativePreferencesRequest({ section }), null)
       assert.equal(readPreferencesRequestFromUrl(`https://localhost:3000/?preferences=${encodeURIComponent(section)}`), null)
+    }
+  })
+
+  it("round-trips Keyboard shortcuts in both hosts and rejects lookalike sections", () => {
+    const section: SettingsSectionId = "hotkeys"
+    assert.deepEqual(requirePreferencesRequest(section, undefined), { section })
+    assert.deepEqual(normalizeNativePreferencesRequest(section), { section })
+    assert.deepEqual(readPreferencesRequestFromUrl(createPreferencesUrl("https://localhost:3000/app", section).toString()), { section })
+    for (const invalid of ["Hotkeys", "hotkey", "hotkeys/admin"]) {
+      assert.throws(() => requirePreferencesSection(invalid), /Invalid preferences section/)
+      assert.equal(normalizeNativePreferencesRequest(invalid), null)
     }
   })
 })

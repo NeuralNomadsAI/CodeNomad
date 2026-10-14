@@ -267,30 +267,6 @@ details[open] > summary .disclosure-chevron {
   @apply w-1 h-1 rounded-full;
 }
 
-.kbd {
-  @apply inline-flex items-center gap-0.5 font-mono text-xs px-1.5 py-0.5;
-  background-color: var(--surface-secondary);
-  border: 1px solid var(--border-base);
-  color: var(--text-primary);
-}
-
-.kbd-separator {
-  @apply opacity-50;
-}
-
-/*
-  Shortcut hints are useful on desktop native apps, but are noisy/irrelevant on
-  touch-first devices and in WebUI where browser shortcuts often conflict.
-*/
-html[data-runtime-host="web"] .keyboard-hints,
-html[data-runtime-host="web"] .kbd-hint,
-html[data-runtime-platform="mobile"] .keyboard-hints,
-html[data-runtime-platform="mobile"] .kbd-hint,
-html[data-keyboard-hints="hide"] .keyboard-hints,
-html[data-keyboard-hints="hide"] .kbd-hint {
-  display: none !important;
-}
-
 /* Truncate from the start (keeps end visible; good for paths) */
 .truncate-start {
   overflow: hidden;

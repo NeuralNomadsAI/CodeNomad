@@ -229,7 +229,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "Basculer la hauteur de la zone de saisie",
 
-  "promptInput.placeholder.shell": "Exécuter une commande shell (Esc pour quitter)...",
+  "promptInput.placeholder.shell": "Exécuter une commande shell...",
   "promptInput.placeholder.default": "Tapez votre message, @fichier, @agent, @skill, ou collez des images et du texte...",
   "promptInput.hints.shell.exit": "pour quitter le mode shell",
   "promptInput.hints.shell.enable": "Mode shell",
@@ -247,7 +247,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "à nouveau pour interrompre la session",
   "promptInput.stopSession.ariaLabel": "Arrêter la session",
   "promptInput.stopSession.title": "Arrêter la session",
-  "promptInput.background.title": "Passer les outils bloquants en arrière-plan (Cmd/Ctrl+B)",
+  "promptInput.background.title": "Passer les outils bloquants en arrière-plan",
   "promptInput.background.error.title": "Échec du passage en arrière-plan",
   "promptInput.background.error.message": "Impossible de passer les outils bloquants en arrière-plan",
   "promptInput.attachFiles.ariaLabel": "Joindre des fichiers",

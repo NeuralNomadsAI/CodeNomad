@@ -2,7 +2,7 @@ import type { BrowserWindow, WebContents } from "electron"
 import { requireHttpUrl } from "./navigation-security"
 
 export const PREFERENCES_SECTIONS = [
-  "general", "chat", "notifications", "speech", "remote", "opencode",
+  "general", "chat", "hotkeys", "notifications", "speech", "remote", "opencode",
   "providers", "missions", "sidecars", "config-files", "advanced", "info",
 ] as const
 

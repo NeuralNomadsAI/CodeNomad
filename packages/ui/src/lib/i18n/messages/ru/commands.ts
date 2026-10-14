@@ -116,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "Очистить поле prompt",
   "commands.clearInput.keywords": "очистить, сброс",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Новая строка, Cmd/Ctrl+Enter: Отправить промпт",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Отправить промпт, Cmd/Ctrl+Enter: Новая строка",
-  "commands.promptSubmitShortcut.description": "Поменять местами Enter и Cmd/Ctrl+Enter в поле ввода промпта",
-  "commands.promptSubmitShortcut.keywords": "enter, отправить, новая строка, сочетание, cmd, ctrl, промпт",
 
   "commands.thinkingBlocks.label.show": "Показать размышления",
   "commands.thinkingBlocks.label.hide": "Скрыть размышления",

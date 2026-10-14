@@ -25,6 +25,7 @@
 @import "./components/form-request-options.css";
 @import "./components/toast-history.css";
 @import "./components/settings-screen.css";
+@import "./components/hotkeys-settings.css";
 @import "./components/theme-scheme-settings.css";
 @import "./components/theme-scheme-swatches.css";
 @import "./components/settings-info.css";

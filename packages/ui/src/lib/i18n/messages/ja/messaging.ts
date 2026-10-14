@@ -229,7 +229,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "チャット入力欄の高さを切り替え",
 
-  "promptInput.placeholder.shell": "シェルコマンドを実行 (Esc で終了)...",
+  "promptInput.placeholder.shell": "シェルコマンドを実行...",
   "promptInput.placeholder.default": "メッセージ、@file、@agent、@skill を入力、または画像/テキストを貼り付け...",
   "promptInput.hints.shell.exit": "でシェルモードを終了",
   "promptInput.hints.shell.enable": "シェルモード",
@@ -247,7 +247,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "もう一度押すとセッションを中断",
   "promptInput.stopSession.ariaLabel": "セッションを停止",
   "promptInput.stopSession.title": "セッションを停止",
-  "promptInput.background.title": "ブロック中のツールをバックグラウンドへ移動 (Cmd/Ctrl+B)",
+  "promptInput.background.title": "ブロック中のツールをバックグラウンドへ移動",
   "promptInput.background.error.title": "バックグラウンド移動に失敗しました",
   "promptInput.background.error.message": "ブロック中のツールをバックグラウンドへ移動できませんでした",
   "promptInput.attachFiles.ariaLabel": "ファイルを添付",

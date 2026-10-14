@@ -21,12 +21,10 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
   const generalSettings = createMemo(() =>
     getBehaviorSettings(config).filter(
       (setting) =>
-        setting.id === "behavior.keyboardShortcutHints" ||
         setting.id === "behavior.messageTimeline" ||
         setting.id === "behavior.timelineToolCalls" ||
         setting.id === "behavior.diffViewMode" ||
-        setting.id === "behavior.followUpBehavior" ||
-        setting.id === "behavior.promptSubmitOnEnter",
+        setting.id === "behavior.followUpBehavior",
     ),
   )
 

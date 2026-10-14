@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Fehlerausgabe",
   "app.launchError.openAdvancedSettings": "OpenCode-Einstellungen öffnen",
   "app.launchError.close": "Schließen",
-  "app.launchError.closeTitle": "Schließen (Esc)",
+  "app.launchError.closeTitle": "Schließen",
   "app.launchError.fallbackMessage": "Arbeitsbereich konnte nicht gestartet werden",
   "app.launchError.invalidConfig": "Die OpenCode-Konfiguration ist ungültig",
 

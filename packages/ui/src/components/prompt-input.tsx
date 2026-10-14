@@ -4,7 +4,7 @@ import { addAttachment, clearAttachments, removeAttachment } from "../stores/att
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
 import { focusConversationStream } from "./focus-conversation"
-import Kbd from "./kbd"
+import { hotkeyLabel } from "../lib/hotkeys"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
@@ -339,6 +339,7 @@ export default function PromptInput(props: PromptInputProps) {
     if (props.disabled) return
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
       const activeElement = document.activeElement as HTMLElement | null
       const targetElement = e.target instanceof HTMLElement ? e.target : null
 
@@ -753,12 +754,6 @@ export default function PromptInput(props: PromptInputProps) {
 
   const canClearPrompt = () => prompt().length > 0
 
-  const shellHint = () =>
-    mode() === "shell"
-      ? { key: "Esc", text: t("promptInput.hints.shell.exit") }
-      : { key: "!", text: t("promptInput.hints.shell.enable") }
-  const commandHint = () => ({ key: "/", text: t("promptInput.hints.commands") })
-
   const submitOnEnter = () => preferences().promptSubmitOnEnter
 
   const handleKeyDown = usePromptKeyDown({
@@ -782,7 +777,9 @@ export default function PromptInput(props: PromptInputProps) {
       selectNextHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
   })
 
-  const shouldShowOverlay = () => prompt().length === 0
+  const shouldShowAbortReminder = () => Boolean(props.escapeInDebounce && hotkeyLabel("session-abort"))
+  const shouldShowOverlay = () => shouldShowAbortReminder()
+    || (prompt().length === 0 && (attachments().length > 0 || mode() === "shell"))
   const voiceInput = usePromptVoiceInput({
     prompt,
     setPrompt,
@@ -972,52 +969,17 @@ export default function PromptInput(props: PromptInputProps) {
                 style={textareaHeightStyle()}
               />
               <Show when={shouldShowOverlay()}>
-                <div id={helpId} role="note" tabIndex={0} class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
-                  <Show
-                    when={props.escapeInDebounce}
-                    fallback={
-                      <>
-                        <span class="prompt-overlay-text">
-                          <Show
-                            when={submitOnEnter()}
-                            fallback={
-                              <>
-                                <Kbd>Enter</Kbd> {t("promptInput.overlay.newLine")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.send")}
-                              </>
-                            }
-                          >
-                            <>
-                              <Kbd>Enter</Kbd> {t("promptInput.overlay.send")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.newLine")}
-                            </>
-                          </Show>
-                          {" "}• <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
-                        </span>
-                        <Show when={attachments().length > 0}>
-                          <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
-                        </Show>
-                        <span class="prompt-overlay-text">
-                          • <Kbd>{shellHint().key}</Kbd> {shellHint().text}
-                        </span>
-                        <Show when={mode() !== "shell"}>
-                          <span class="prompt-overlay-text">• <Kbd>@</Kbd> {t("promptInput.hints.projectFiles")}</span>
-                          <span class="prompt-overlay-text">
-                            • <Kbd>{commandHint().key}</Kbd> {commandHint().text}
-                          </span>
-                        </Show>
-                        <Show when={mode() === "shell"}>
-                          <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>
-                        </Show>
-                      </>
-                    }
-                  >
-                    <>
-                      <span class="prompt-overlay-text prompt-overlay-warning">
-                        {t("promptInput.overlay.press")} <Kbd>Esc</Kbd> {t("promptInput.overlay.againToAbort")}
-                      </span>
-                      <Show when={mode() === "shell"}>
-                        <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>
-                      </Show>
-                    </>
+                <div id={helpId} role="note" class={`prompt-input-overlay ${mode() === "shell" ? "shell-mode" : ""}`}>
+                  <Show when={shouldShowAbortReminder()}>
+                    <span role="status" class="prompt-overlay-text prompt-overlay-warning">
+                      {t("promptInput.overlay.abortHint")}
+                    </span>
+                  </Show>
+                  <Show when={prompt().length === 0 && attachments().length > 0}>
+                    <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
+                  </Show>
+                  <Show when={mode() === "shell"}>
+                    <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>
                   </Show>
                 </div>
               </Show>
@@ -1049,7 +1011,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onClick={handleAbort}
                 disabled={!canStop()}
                 aria-label={t("promptInput.stopSession.ariaLabel")}
-                title={t("promptInput.stopSession.title")}
+                title={t("promptInput.stopSession.title") + (hotkeyLabel("session-abort") ? ` (${hotkeyLabel("session-abort")})` : "")}
               >
                 <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                   <rect x="4" y="4" width="12" height="12" />
@@ -1061,7 +1023,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onClick={() => void handleSend()}
                 disabled={!canSend()}
                 aria-label={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
-                title={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+                title={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel") + (hotkeyLabel("prompt-send") ? ` (${hotkeyLabel("prompt-send")})` : "")}
               >
                 <Show
                   when={mode() === "shell"}

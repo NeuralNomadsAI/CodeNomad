@@ -7,7 +7,7 @@ import { getLogger } from "../logger"
 import { normalizeOpenerStartupStateResult, type OpenerStartupStateResult, type StartupStateCommand } from "./startup-state-command"
 
 const sections = new Set<SettingsSectionId>([
-  "general", "chat", "notifications", "speech", "remote", "opencode",
+  "general", "chat", "hotkeys", "notifications", "speech", "remote", "opencode",
   "providers", "missions", "sidecars", "config-files", "advanced", "info",
 ])
 

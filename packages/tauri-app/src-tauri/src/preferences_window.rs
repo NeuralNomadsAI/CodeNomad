@@ -15,6 +15,7 @@ const CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; windo
 const SECTIONS: &[&str] = &[
     "general",
     "chat",
+    "hotkeys",
     "notifications",
     "speech",
     "remote",

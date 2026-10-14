@@ -307,14 +307,13 @@ async function captureComposer(page: Page, name: string, sessionId: string) {
     assert(measurement.overlay.height > 0 && measurement.overlayText?.trim(), "visible helper is nonempty")
     assert(measurement.overlay.y >= measurement.textContentBottom, "helper is outside the native text content area")
     assert(measurement.overlay.bottom <= measurement.textarea.bottom && measurement.overlay.bottom <= measurement.footer.y)
-    assert.equal(measurement.helperFocusIndex, 0, "overflow help remains keyboard accessible")
     assert(measurement.helperHitTesting, "actual helper receives pointer hits in its reserved strip")
     assert(measurement.helperDescription, "textarea retains a semantic reference to all helper content")
   }
   return measurement
 }
 
-test("desktop child/grandchild composer keeps the real visible help separate from native placeholder/text at zoom 1", { timeout: 60000 }, async () => {
+test("desktop child/grandchild composer has no permanent key strip at zoom 1", { timeout: 60000 }, async () => {
   const ctx = await setup("visual-desktop"), { page } = ctx
   try {
     await select(page, "A"); await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
@@ -324,7 +323,7 @@ test("desktop child/grandchild composer keeps the real visible help separate fro
       await page.locator(`.message-timeline-segment[data-message-id="msg_ses_${id}_1"]:visible`).waitFor()
       assert.equal(await page.getByText("Full timeline unavailable", { exact: true }).count(), 0)
       const empty = await captureComposer(page, `desktop-${id}-empty`, `ses_${id}`)
-      assert(empty.overlay, "desktop help must remain visibly present, not hidden to pass")
+      assert.equal(empty.overlay, null, "empty desktop composers do not mount permanent keyboard help")
       await composer(page).fill(`Visible draft ses_${id}`)
       const draft = await captureComposer(page, `desktop-${id}-draft`, `ses_${id}`)
       assert.equal(draft.value, `Visible draft ses_${id}`); assert.equal(draft.overlay, null)
@@ -355,7 +354,7 @@ test("390x600 RTL touch visual investigation retains exact child/grandchild draf
       await page.locator(".shell-panel-toggle--left button:visible").tap()
       await page.getByText(`Bounded native history ses_${id} 2`, { exact: true }).waitFor()
       const empty = await captureComposer(page, `rtl-touch-${id}-empty`, `ses_${id}`)
-      assert.equal(empty.overlay, null, "production coarse-pointer CSS suppresses keyboard-only help")
+       assert.equal(empty.overlay, null, "empty touch composers do not mount permanent keyboard help")
       assert.equal(empty.viewport.coarse, true)
       await composer(page).fill(`Visible draft ses_${id}`)
       const draft = await captureComposer(page, `rtl-touch-${id}-draft`, `ses_${id}`)
@@ -367,7 +366,7 @@ test("390x600 RTL touch visual investigation retains exact child/grandchild draf
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
-test("44px desktop floor keeps real helper content visible, scrollable and described without changing width/draft-independent limits", { timeout: 60000 }, async () => {
+test("44px desktop floor reserves overlay padding only for composer status", { timeout: 60000 }, async () => {
   const ctx = await setup("helper-44px-floor"), { page } = ctx
   try {
     await select(page, "A"); await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
@@ -376,14 +375,18 @@ test("44px desktop floor keeps real helper content visible, scrollable and descr
     await page.waitForFunction(() => [...document.querySelectorAll<HTMLTextAreaElement>("textarea.prompt-input")]
       .some(node => node.getBoundingClientRect().height === 44))
     const empty = await captureComposer(page, "desktop-grandchild-44px-empty", "ses_grandchild")
-    assert.equal(empty.textarea.height, 44); assert(empty.overlay); assert(empty.helperScrollable)
-    const help = page.locator(".prompt-input-overlay:visible")
-    assert.match(await help.innerText(), /Send/); assert.match(await help.innerText(), /Commands/)
-    assert.match(await help.innerText(), /Reference project files/)
-    assert.equal(await composer(page).getAttribute("aria-describedby"), await help.getAttribute("id"))
-    await help.focus(); for (let n = 0; n < 5; n++) await page.keyboard.press("ArrowRight")
-    await page.waitForFunction(() => [...document.querySelectorAll<HTMLElement>(".prompt-input-overlay")].some(node => node.scrollLeft > 0))
-    await page.screenshot({ path: path.join(output, "desktop-grandchild-44px-helper-scrolled.png"), fullPage: false })
+    assert.equal(empty.textarea.height, 44); assert.equal(empty.overlay, null)
+    assert.equal(await composer(page).getAttribute("aria-describedby"), null)
+    assert.equal(await composer(page).evaluate(node => getComputedStyle(node).paddingBottom), "12px")
+    await composer(page).press("!")
+    const status = page.locator(".prompt-input-overlay:visible")
+    await status.waitFor()
+    assert.match(await status.innerText(), /Shell mode active/)
+    assert.equal(await status.locator("kbd").count(), 0)
+    assert.equal(await composer(page).getAttribute("aria-describedby"), await status.getAttribute("id"))
+    assert.equal(await composer(page).evaluate(node => node.getBoundingClientRect().height), 44)
+    await composer(page).press("Escape")
+    await status.waitFor({ state: "hidden" })
     const resize = page.locator(".prompt-resize-handle:visible")
     assert.equal(Number(await resize.getAttribute("aria-valuemin")), 44)
     assert.equal(Number(await resize.getAttribute("aria-valuemax")), 234)
@@ -392,10 +395,9 @@ test("44px desktop floor keeps real helper content visible, scrollable and descr
     assert(await composer(page).evaluate(node => node.scrollHeight > node.clientHeight && getComputedStyle(node).overflowY === "auto"))
     await composer(page).fill("")
     await captureComposer(page, "desktop-grandchild-44px-restored", "ses_grandchild")
-    // The main captures positively require visible help. Separately preserve
-    // the shell's existing opt-out, which must not reserve an invisible strip.
+    // A legacy visibility preference cannot restore removed key strips.
     await page.evaluate(() => { document.documentElement.dataset.keyboardHints = "hide" })
-    assert.equal(await help.isVisible(), false)
+    assert.equal(await page.locator(".prompt-input-overlay").count(), 0)
     assert.equal(await composer(page).evaluate(node => getComputedStyle(node).paddingBottom), "12px")
     assert.equal(await composer(page).evaluate(node => node.getBoundingClientRect().height), 44)
     await page.evaluate(() => { delete document.documentElement.dataset.keyboardHints })

@@ -229,7 +229,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "Alternar altura de entrada del chat",
 
-  "promptInput.placeholder.shell": "Ejecuta un comando de shell (Esc para salir)...",
+  "promptInput.placeholder.shell": "Ejecuta un comando de shell...",
   "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, @skill, o pega imágenes y texto...",
   "promptInput.hints.shell.exit": "para salir del modo shell",
   "promptInput.hints.shell.enable": "Modo shell",
@@ -247,7 +247,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "otra vez para abortar la sesión",
   "promptInput.stopSession.ariaLabel": "Detener sesión",
   "promptInput.stopSession.title": "Detener sesión",
-  "promptInput.background.title": "Mover herramientas bloqueantes a segundo plano (Cmd/Ctrl+B)",
+  "promptInput.background.title": "Mover herramientas bloqueantes a segundo plano",
   "promptInput.background.error.title": "Error al mover a segundo plano",
   "promptInput.background.error.message": "No se pudieron mover las herramientas bloqueantes a segundo plano",
   "promptInput.attachFiles.ariaLabel": "Adjuntar archivos",

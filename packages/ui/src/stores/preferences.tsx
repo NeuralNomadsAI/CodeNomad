@@ -10,6 +10,7 @@ import {
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
+import { normalizeHotkeyOverrides, type HotkeyBinding, type HotkeyOverrides } from "../lib/hotkey-bindings"
 import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
 import { encodeMissionDefaults, normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
 import { normalizeMissionModels, validMissionModels, parseMissionModel, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../lib/mission-model-library"
@@ -109,12 +110,12 @@ export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "ha
 
 export interface UiSettings {
   showThinkingBlocks: boolean
-  showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
+  hotkeyOverrides: HotkeyOverrides
   followUpBehavior: FollowUpBehavior
   showPromptVoiceInput: boolean
   locale?: string
@@ -220,12 +221,12 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
-  showKeyboardShortcutHints: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
   showTimelineTools: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
+  hotkeyOverrides: {},
   followUpBehavior: "steer",
   showPromptVoiceInput: true,
   diffViewMode: "split",
@@ -322,13 +323,12 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       : "expanded"
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
-    showKeyboardShortcutHints:
-      sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
     followUpBehavior:
       sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
         ? sanitized.followUpBehavior
@@ -742,6 +742,14 @@ function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
       .then(() => true, () => false)
   }
   return updateUiSettings(updates)
+}
+
+// Preserve null deletion markers rather than passing resets through normalizers.
+export function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Record<string, HotkeyBinding[] | null> | null } }): Promise<boolean> {
+  return patchConfigOwner("ui", patch).then(() => true, error => {
+    log.error("Failed to patch hotkey settings", error)
+    return false
+  })
 }
 
 // Serialize local library edits and resolve the array only after preferences load.
@@ -1264,10 +1272,6 @@ function toggleShowThinkingBlocks(): void {
   updateUiSettings({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
-function toggleKeyboardShortcutHints(): void {
-  updatePreferences({ showKeyboardShortcutHints: !preferences().showKeyboardShortcutHints })
-}
-
 function toggleShowTimelineTools(): void {
   updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
@@ -1278,10 +1282,6 @@ function toggleShowMessageTimeline(): void {
 
 function toggleUsageMetrics(): void {
   updateUiSettings({ showUsageMetrics: !preferences().showUsageMetrics })
-}
-
-function togglePromptSubmitOnEnter(): void {
-  updateUiSettings({ promptSubmitOnEnter: !preferences().promptSubmitOnEnter })
 }
 
 function toggleShowPromptVoiceInput(): void {
@@ -1388,12 +1388,10 @@ interface ConfigContextValue {
 
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
-  toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
   toggleShowMessageTimeline: typeof toggleShowMessageTimeline
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
-  togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
   toggleShowPromptVoiceInput: typeof toggleShowPromptVoiceInput
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
@@ -1471,12 +1469,10 @@ const configContextValue: ConfigContextValue = {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
-  toggleKeyboardShortcutHints,
   toggleShowMessageTimeline,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
-  togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
   setToolOutputExpansion,
@@ -1573,11 +1569,9 @@ export {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
-  toggleKeyboardShortcutHints,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
-  togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
   setToolOutputExpansion,

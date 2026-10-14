@@ -1,7 +1,7 @@
-import { Component, createMemo, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
+import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil, Hourglass } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
-import Kbd from "./kbd"
+import { isHotkeyRecording, matchesHotkey } from "../lib/hotkeys"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -82,6 +82,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
 
   function handleKeyDown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.isComposing || isHotkeyRecording()) return
     let activeElement: HTMLElement | null = null
     if (typeof document !== "undefined") {
       activeElement = document.activeElement as HTMLElement | null
@@ -96,8 +97,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       return
     }
 
-    const normalizedKey = e.key.toLowerCase()
-    const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
+    const isBrowseShortcut = matchesHotkey("browse-folder", e)
     const blockedKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Enter"]
 
     if (isLoading()) {
@@ -568,7 +568,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                           <span class="font-mono truncate-start flex-1 min-w-0">{server.baseUrl}</span>
                                         </div>
                                       </div>
-                                      <Show when={connectingServerId() === server.id} fallback={<Show when={focusMode() === "recent" && selectedIndex() === index()}><kbd class="kbd">↵</kbd></Show>}>
+                                      <Show when={connectingServerId() === server.id}>
                                         <Loader2 class="w-4 h-4 animate-spin icon-muted" />
                                       </Show>
                                     </div>
@@ -693,9 +693,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         <span class="flex-shrink-0">{formatRelativeTime(t, folder.lastAccessed)}</span>
                                       </div>
                                     </div>
-                                    <Show when={focusMode() === "recent" && selectedIndex() === index()}>
-                                      <kbd class="kbd">↵</kbd>
-                                    </Show>
                                   </div>
                                 </div>
                                 <button
@@ -757,7 +754,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           : t("folderSelection.browse.button")}
                       </span>
                     </div>
-                    <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
                   </button>
 
                   <button
@@ -832,25 +828,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
             </div>
 
-            <div class="panel panel-footer shrink-0 hidden sm:block keyboard-hints">
-              <div class="panel-footer-hints">
-                <Show when={folders().length > 0}>
-                  <div class="flex items-center gap-1.5">
-                    <kbd class="kbd">↑</kbd>
-                    <kbd class="kbd">↓</kbd>
-                    <span>{t("folderSelection.hints.navigate")}</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <kbd class="kbd">Enter</kbd>
-                    <span>{t("folderSelection.hints.select")}</span>
-                  </div>
-                </Show>
-                <div class="flex items-center gap-1.5">
-                  <Kbd shortcut="cmd+n" class="kbd-hint" />
-                  <span>{t("folderSelection.hints.browse")}</span>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
         <Show when={isLoading()}>

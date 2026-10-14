@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Error output",
   "app.launchError.openAdvancedSettings": "Open OpenCode Settings",
   "app.launchError.close": "Close",
-  "app.launchError.closeTitle": "Close (Esc)",
+  "app.launchError.closeTitle": "Close",
   "app.launchError.fallbackMessage": "Failed to launch workspace",
   "app.launchError.invalidConfig": "OpenCode configuration is invalid",
 

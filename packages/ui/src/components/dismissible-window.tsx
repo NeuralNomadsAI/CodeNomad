@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Show, createEffect, onCleanup, type JSX } from "solid-js"
+import { Show, createEffect, onCleanup, untrack, type JSX } from "solid-js"
 
 /** Persistent non-modal utility window: outside interactions remain available
  * without dismissing it. Toggles identify it via aria-controls. */
@@ -107,7 +107,9 @@ export default function DismissibleWindow(props: {
         const target = props.initialFocus?.()
         if (!target) return
         event.preventDefault()
-        target.focus({ preventScroll: true })
+        // Focus emits blur/focus handlers; their reactive reads do not belong
+        // to Kobalte's focus effect (for example a SUID toggle's ripple state).
+        untrack(() => target.focus({ preventScroll: true }))
       }}
       onCloseAutoFocus={(event) => {
         event.preventDefault()
@@ -117,12 +119,12 @@ export default function DismissibleWindow(props: {
         if (active && active !== document.body && !document.getElementById(props.id)?.contains(active)) return
         const returnTarget = props.returnFocus?.()
         if (returnTarget?.getClientRects().length) {
-          returnTarget.focus({ preventScroll: true })
+          untrack(() => returnTarget.focus({ preventScroll: true }))
           return
         }
         const trigger = Array.from(document.querySelectorAll<HTMLElement>("[aria-controls]"))
           .find(element => element.getAttribute("aria-controls") === props.id && element.getClientRects().length > 0)
-        trigger?.focus({ preventScroll: true })
+        untrack(() => trigger?.focus({ preventScroll: true }))
       }}
     >
       <Dialog.Title class="sr-only">{props.title}</Dialog.Title>

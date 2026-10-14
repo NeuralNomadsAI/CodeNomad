@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Hata çıktısı",
   "app.launchError.openAdvancedSettings": "OpenCode Ayarlarını Aç",
   "app.launchError.close": "Kapat",
-  "app.launchError.closeTitle": "Kapat (Esc)",
+  "app.launchError.closeTitle": "Kapat",
   "app.launchError.fallbackMessage": "Workspace başlatılamadı",
   "app.launchError.invalidConfig": "OpenCode yapılandırması geçersiz",
   "app.stopInstance.confirmMessage": "OpenCode instance'ı durdurulsun mu? Bu işlem sunucuyu durdurur.",

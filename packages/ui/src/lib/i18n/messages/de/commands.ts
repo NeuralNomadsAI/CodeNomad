@@ -116,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "Den Textbereich des Prompts löschen",
   "commands.clearInput.keywords": "löschen, zurücksetzen",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Neue Zeile, Cmd/Ctrl+Enter: Prompt absenden",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Prompt absenden, Cmd/Ctrl+Enter: Neue Zeile",
-  "commands.promptSubmitShortcut.description": "Verhalten von Enter und Cmd/Ctrl+Enter bei der Prompt-Eingabe vertauschen",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, senden, neuezeile, tastenkombination, prompt",
 
   "commands.thinkingBlocks.label.show": "Denken anzeigen",
   "commands.thinkingBlocks.label.hide": "Denken ausblenden",

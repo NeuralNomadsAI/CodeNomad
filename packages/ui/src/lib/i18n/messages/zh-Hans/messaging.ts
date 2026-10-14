@@ -229,7 +229,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "切换聊天输入框高度",
 
-  "promptInput.placeholder.shell": "运行 shell 命令（Esc 退出）...",
+  "promptInput.placeholder.shell": "运行 shell 命令...",
   "promptInput.placeholder.default": "输入消息、@file、@agent、@skill，或粘贴图片与文本...",
   "promptInput.hints.shell.exit": "退出 shell 模式",
   "promptInput.hints.shell.enable": "Shell 模式",
@@ -246,7 +246,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "再次按下以中止会话",
   "promptInput.stopSession.ariaLabel": "停止会话",
   "promptInput.stopSession.title": "停止会话",
-  "promptInput.background.title": "将阻塞工具移至后台 (Cmd/Ctrl+B)",
+  "promptInput.background.title": "将阻塞工具移至后台",
   "promptInput.background.error.title": "后台操作失败",
   "promptInput.background.error.message": "无法将阻塞工具移至后台",
   "promptInput.attachFiles.ariaLabel": "附加文件",

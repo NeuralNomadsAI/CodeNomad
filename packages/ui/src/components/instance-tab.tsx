@@ -6,6 +6,7 @@ import { FolderCheck, FolderOpen, Hourglass, Pencil, ShieldAlert, X } from "luci
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { keepTemporaryInstance } from "../stores/temporary-instances"
+import { hotkeyLabel, matchesHotkey } from "../lib/hotkeys"
 
 interface InstanceTabProps {
   instance: Instance
@@ -76,8 +77,9 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             requestRename()
           }}
           onKeyDown={(event) => {
-            if (event.key !== "F2") return
+            if (event.target !== event.currentTarget || !matchesHotkey("instance-rename", event)) return
             event.preventDefault()
+            event.stopPropagation()
             requestRename()
           }}
           title={props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder}
@@ -127,7 +129,8 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             queueMicrotask(requestRename)
           }}
         >
-          <ContextMenu.Item class="action-overflow-item" onSelect={() => { renameSelected = true }}>
+          <ContextMenu.Item class="action-overflow-item" onSelect={() => { renameSelected = true }}
+            title={t("instanceTab.actions.rename") + (hotkeyLabel("instance-rename") ? ` (${hotkeyLabel("instance-rename")})` : "")}>
             <span class="action-overflow-item-icon" aria-hidden="true"><Pencil class="w-3.5 h-3.5" /></span>
             <span class="action-overflow-item-label">{t("instanceTab.actions.rename")}</span>
           </ContextMenu.Item>

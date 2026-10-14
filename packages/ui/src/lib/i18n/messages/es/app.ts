@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "Salida de error",
   "app.launchError.openAdvancedSettings": "Abrir Configuración de OpenCode",
   "app.launchError.close": "Cerrar",
-  "app.launchError.closeTitle": "Cerrar (Esc)",
+  "app.launchError.closeTitle": "Cerrar",
   "app.launchError.fallbackMessage": "No se pudo iniciar el workspace",
   "app.launchError.invalidConfig": "La configuración de OpenCode no es válida",
 

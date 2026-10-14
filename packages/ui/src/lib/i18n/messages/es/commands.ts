@@ -116,10 +116,6 @@ export const commandMessages = {
   "commands.clearInput.description": "Borrar el área de texto del prompt",
   "commands.clearInput.keywords": "limpiar, reiniciar",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Nueva linea, Cmd/Ctrl+Enter: Enviar prompt",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Enviar prompt, Cmd/Ctrl+Enter: Nueva linea",
-  "commands.promptSubmitShortcut.description": "Intercambiar el comportamiento de Enter y Cmd/Ctrl+Enter en la entrada de prompt",
-  "commands.promptSubmitShortcut.keywords": "enter, enviar, salto de linea, atajo, teclado, cmd, ctrl, prompt",
 
   "commands.thinkingBlocks.label.show": "Mostrar pensamiento",
   "commands.thinkingBlocks.label.hide": "Ocultar pensamiento",

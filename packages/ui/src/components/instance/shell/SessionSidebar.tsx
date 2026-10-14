@@ -1,13 +1,11 @@
 import { Show, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
-import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
 import { ArrowLeft, ArrowRight, Info, PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 
 import SessionList from "../../session-list"
-import KeyboardHint from "../../keyboard-hint"
 import { getLogger } from "../../../lib/logger"
 import { shouldMountSessionList } from "../../session-list-visibility"
 
@@ -22,7 +20,6 @@ interface SessionSidebarProps {
   showSearch: Accessor<boolean>
   onToggleSearch: () => void
 
-  keyboardShortcuts: Accessor<KeyboardShortcut[]>
   drawerState: Accessor<DrawerViewState>
 
   onSelectSession: (sessionId: string) => void
@@ -129,14 +126,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
       </div>
 
-      {/* Native desktop shortcut hints sit below the list, which scrolls above
-          them, so the header keeps a single action row level with the
-          conversation header and the fixed panel toggles. */}
-      <Show when={props.keyboardShortcuts().length}>
-        <div class="session-sidebar-shortcuts">
-          <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} class="session-sidebar-shortcuts-row" />
-        </div>
-      </Show>
     </div>
   )
 

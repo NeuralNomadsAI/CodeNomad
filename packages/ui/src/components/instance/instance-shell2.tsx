@@ -16,7 +16,6 @@ import Toolbar from "@suid/material/Toolbar"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
-import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
@@ -680,12 +679,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
   createEffect(() => { if (props.isActiveInstance === false) hideCommandPalette(props.instance.id) })
 
-  const keyboardShortcuts = createMemo(() =>
-    [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
-      (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
-    ),
-  )
-
   useSessionSidebarRequests({
     instanceId: () => props.instance.id,
     activeSessionId: activeSessionIdForInstance,
@@ -780,7 +773,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             activeSessionId={activeSessionIdForInstance}
             showSearch={showSessionSearch}
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
-            keyboardShortcuts={keyboardShortcuts}
             drawerState={leftDrawerState}
             onSelectSession={handleSidebarSessionSelect}
             onNewSession={props.onNewSession}
@@ -806,7 +798,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           activeSessionId={activeSessionIdForInstance}
           showSearch={showSessionSearch}
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
-          keyboardShortcuts={keyboardShortcuts}
           drawerState={leftDrawerState}
           onSelectSession={handleSidebarSessionSelect}
           onNewSession={props.onNewSession}

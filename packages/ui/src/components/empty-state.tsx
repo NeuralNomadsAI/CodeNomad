@@ -11,8 +11,6 @@ interface EmptyStateProps {
 
 const EmptyState: Component<EmptyStateProps> = (props) => {
   const { t } = useI18n()
-  const modifier = typeof navigator !== "undefined" && navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"
-  const shortcut = `${modifier}+N`
 
   return (
     <div class="flex h-full w-full items-center justify-center bg-surface-secondary">
@@ -39,10 +37,6 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
             t("emptyState.actions.selectFolder")
           )}
         </button>
-
-        <p class="text-sm text-muted">
-          {t("emptyState.keyboardShortcut", { shortcut })}
-        </p>
 
         <div class="mt-6 space-y-1 text-sm text-muted">
           <p>{t("emptyState.examples", { example: "~/projects/my-app" })}</p>

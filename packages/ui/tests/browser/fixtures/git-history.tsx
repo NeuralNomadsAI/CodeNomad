@@ -87,8 +87,9 @@ const client: any = { vcs: { status: async () => ({ data: [] }) },
   }, model: { default: async () => model }, message: { list: async () => ({ data: [], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
-serverApi.fetchConfigOwner = async () => ({ settings: { locale: "fr" } }) as any
-serverApi.patchConfigOwner = async (_owner, patch) => patch as any
+let config = { settings: { locale: "fr" } }
+serverApi.fetchConfigOwner = async () => config as any
+serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.patchStateOwner = async (_owner, patch) => patch as any
 // `?uninitialized` opens a plain folder; Initialize Git turns it into the repository.

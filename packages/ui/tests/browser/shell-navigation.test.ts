@@ -375,7 +375,7 @@ const ACTION_CENTER = 27
 
 const fixedLayouts = [
   { name: "desktop", options: { viewport: { width: 1600, height: 900 } }, nativeHints: false },
-  { name: "desktop with the native shortcut-hint row", options: { viewport: { width: 1600, height: 900 } }, nativeHints: true },
+  { name: "desktop with registered native shortcuts", options: { viewport: { width: 1600, height: 900 } }, nativeHints: true },
   { name: "narrow desktop overlays", options: { viewport: { width: 640, height: 760 } }, nativeHints: false },
   { name: "phone overlays", options: { viewport: { width: 390, height: 760 }, hasTouch: true, isMobile: true }, nativeHints: false },
 ]
@@ -383,7 +383,7 @@ for (const layout of fixedLayouts) test(`toggles stay strictly fixed on one head
   const context = await browser.newContext(layout.options)
   const { page, errors } = await open(context, { nativeHints: layout.nativeHints })
   try {
-    if (layout.nativeHints) await page.locator(".session-sidebar-shortcuts .keyboard-hints").waitFor()
+    assert.equal(await page.locator(".session-sidebar-shortcuts, .session-sidebar .keyboard-hints").count(), 0)
     let expected: Awaited<ReturnType<typeof togglePositions>> | undefined
     const seen = new Set<string>()
     // Visit all four open/closed combinations and come back.
@@ -412,37 +412,27 @@ for (const layout of fixedLayouts) test(`toggles stay strictly fixed on one head
   } finally { await context.close() }
 })
 
-test("native shortcut hints form a footer below the scrolling session list", async () => {
+test("registered native shortcuts do not add a permanent session-list hint footer", async () => {
   const context = await browser.newContext({ viewport: { width: 1600, height: 700 } })
   const { page, errors } = await open(context, { nativeHints: true })
   try {
     await page.evaluate(() => { for (let index = 0; index < 40; index += 1) (window as any).fixture.addSession(`many-${index}`) })
-    const footer = page.locator(".session-sidebar-shortcuts")
-    await footer.locator(".keyboard-hints").waitFor()
-    assert.equal(await page.locator(".session-sidebar-header .keyboard-hints").count(), 0, "the header keeps a single action row")
+    assert.equal(await page.locator(".session-sidebar-shortcuts, .session-sidebar .keyboard-hints").count(), 0)
     const geometry = await page.evaluate(() => {
       const panel = document.querySelector(".session-sidebar-container")!.getBoundingClientRect()
-      const foot = document.querySelector(".session-sidebar-shortcuts")!.getBoundingClientRect()
       const list = document.querySelector<HTMLElement>(".session-sidebar .session-list")!
       list.scrollTop = list.scrollHeight
-      return { panelBottom: panel.bottom, footTop: foot.top, footBottom: foot.bottom, footHeight: foot.height,
-        listBottom: list.getBoundingClientRect().bottom, scrollable: list.scrollHeight > list.clientHeight }
+      return { panelBottom: panel.bottom, listBottom: list.getBoundingClientRect().bottom,
+        scrollable: list.scrollHeight > list.clientHeight }
     })
-    assert.ok(geometry.footHeight > 0)
-    assert.ok(Math.abs(geometry.footBottom - geometry.panelBottom) <= 0.5, "footer sits at the panel bottom")
-    assert.ok(geometry.listBottom <= geometry.footTop + 0.5, "the list scrolls above the footer")
+    assert.ok(Math.abs(geometry.listBottom - geometry.panelBottom) <= 0.5, "the list uses the panel bottom")
     assert.ok(geometry.scrollable, "the fixture list overflows")
     await page.waitForFunction(() => {
       const rows = [...document.querySelectorAll(".session-sidebar [data-session-id]")]
       const last = rows[rows.length - 1]?.getBoundingClientRect()
-      const foot = document.querySelector(".session-sidebar-shortcuts")!.getBoundingClientRect()
-      return last !== undefined && last.bottom <= foot.top + 0.5
+      const list = document.querySelector(".session-sidebar .session-list")!.getBoundingClientRect()
+      return last !== undefined && last.bottom <= list.bottom + 0.5
     })
-    // Hits on the footer's centre land on the hint row, not on a list row underneath.
-    assert.equal(await footer.evaluate(el => {
-      const rect = el.getBoundingClientRect()
-      return el.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))
-    }), true)
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })

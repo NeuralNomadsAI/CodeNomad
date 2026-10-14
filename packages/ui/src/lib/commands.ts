@@ -1,11 +1,3 @@
-export interface KeyboardShortcut {
-  key: string
-  meta?: boolean
-  ctrl?: boolean
-  shift?: boolean
-  alt?: boolean
-}
-
 export type Resolvable<T> = T | (() => T)
 
 export function resolveResolvable<T>(value: Resolvable<T>): T {
@@ -17,7 +9,7 @@ export interface Command {
   label: Resolvable<string>
   description: Resolvable<string>
   keywords?: Resolvable<string[]>
-  shortcut?: KeyboardShortcut
+  shortcutId?: string
   disabled?: Resolvable<boolean>
   action: () => void | Promise<void>
   category?: Resolvable<string>

@@ -229,7 +229,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "Переключить высоту поля ввода",
 
-  "promptInput.placeholder.shell": "Выполнить команду shell (Esc для выхода)…",
+  "promptInput.placeholder.shell": "Выполнить команду shell…",
   "promptInput.placeholder.default": "Введите сообщение, @file, @agent, @skill или вставьте изображения и текст…",
   "promptInput.hints.shell.exit": "чтобы выйти из режима shell",
   "promptInput.hints.shell.enable": "Режим shell",
@@ -247,7 +247,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "еще раз, чтобы прервать сессию",
   "promptInput.stopSession.ariaLabel": "Остановить сессию",
   "promptInput.stopSession.title": "Остановить сессию",
-  "promptInput.background.title": "Переместить блокирующие инструменты в фон (Cmd/Ctrl+B)",
+  "promptInput.background.title": "Переместить блокирующие инструменты в фон",
   "promptInput.background.error.title": "Не удалось переместить в фон",
   "promptInput.background.error.message": "Не удалось переместить блокирующие инструменты в фоновый режим",
   "promptInput.attachFiles.ariaLabel": "Прикрепить файлы",

@@ -6,7 +6,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Введите или вставьте путь к папке",
   "directoryBrowser.openCurrent": "Открыть",
   "directoryBrowser.goTo": "Перейти к папке",
-  "directoryBrowser.goToTypedPath": "Перейти к этой папке (Enter)",
+  "directoryBrowser.goToTypedPath": "Перейти к этой папке",
   "directoryBrowser.goToParent": "Родительская папка",
   "directoryBrowser.goToHome": "Домашняя папка",
   "directoryBrowser.goToRoot": "Корень рабочего пространства",

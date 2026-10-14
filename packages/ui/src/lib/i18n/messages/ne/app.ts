@@ -19,7 +19,7 @@ export const appMessages = {
   "app.launchError.errorOutputLabel": "त्रुटि आउटपुट (Error output)",
   "app.launchError.openAdvancedSettings": "OpenCode सेटिङहरू खोल्नुहोस्",
   "app.launchError.close": "बन्द गर्नुहोस्",
-  "app.launchError.closeTitle": "बन्द गर्नुहोस् (Esc)",
+  "app.launchError.closeTitle": "बन्द गर्नुहोस्",
   "app.launchError.fallbackMessage": "कार्यस्थान सुरु गर्न असफल",
   "app.launchError.invalidConfig": "OpenCode कन्फिगरेसन अमान्य छ",
 

@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { LocationRef } from "@opencode/client"
-import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -14,6 +14,7 @@ import {
 } from "../stores/settings-screen"
 import { GeneralSettingsSection } from "./settings/general-settings-section"
 import { ChatSettingsSection } from "./settings/chat-settings-section"
+import { HotkeysSettingsSection } from "./settings/hotkeys-settings-section"
 import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
@@ -54,6 +55,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     const items: SettingsSectionOption[] = [
       { id: "general", icon: SlidersHorizontal, label: t("settings.nav.general") },
       { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
+      { id: "hotkeys", icon: Keyboard, label: t("settings.nav.hotkeys") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
       { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
@@ -64,7 +66,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "advanced", icon: Settings, label: t("settings.nav.advanced") },
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
-    items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
+    items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     return items
   })
 
@@ -74,6 +76,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     switch (activeSettingsSection()) {
       case "chat":
         return <ChatSettingsSection />
+      case "hotkeys":
+        return <HotkeysSettingsSection />
       case "notifications":
         return <NotificationsSettingsSection />
       case "speech":

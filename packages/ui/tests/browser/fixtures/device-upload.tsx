@@ -63,6 +63,7 @@ bootMark("preferences-updated")
   active: setActive,
   mounted: setMounted,
   submitOnEnter: (value: boolean) => updatePreferences({ promptSubmitOnEnter: value }),
+  hotkeys: (value: Parameters<typeof updatePreferences>[0]["hotkeyOverrides"]) => updatePreferences({ hotkeyOverrides: value }),
   move: (directory: string) => setSessions(previous => {
     const next = new Map(previous), list = new Map(next.get(instanceId))
     const id = activeSessionId().get(instanceId)!

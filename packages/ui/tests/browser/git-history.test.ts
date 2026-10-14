@@ -73,7 +73,7 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
   try {
     await page.goto(url)
     const eye = () => page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true })
-    const save = () => page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true })
+    const save = () => page.getByRole("button", { name: "Enregistrer", exact: true })
     await eye().click()
     await page.locator('.workspace-file-view .view-line').first().waitFor()
     await edit('{"edited": "écriture"}')
@@ -83,7 +83,7 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
     await page.locator('.workspace-file-view .view-line').filter({ hasText: 'écriture' }).waitFor()
     await save().click()
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save" && call.message.includes("écriture") && call.slug === "/CodeNomad"))
-    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer (Ctrl+S)"]')?.disabled)
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer"]')?.disabled)
     await edit('{"local": true}')
     await page.evaluate(async () => {
       const apiPath = "/src/lib/api-client.ts"
@@ -127,7 +127,7 @@ test("a reader reopened before save completion retains its undo through filesyst
       ;(window as any).originalText = editor.getValue()
       editor.setValue('{"saved": true}')
     })
-    await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).click()
+    await page.getByRole("button", { name: "Enregistrer", exact: true }).click()
     await page.waitForFunction(() => (window as any).writeStarted)
     await page.evaluate(() => {
       const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
@@ -136,10 +136,10 @@ test("a reader reopened before save completion retains its undo through filesyst
     await eye().click()
     await eye().click()
     await page.locator('.workspace-file-view .view-line').first().waitFor()
-    assert.equal(await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: "Enregistrer", exact: true }).isDisabled(), true)
     await page.evaluate(() => (window as any).releaseWrite())
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save"))
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer (Ctrl+S)"]')?.disabled)
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer"]')?.disabled)
     // Also exercise the authoritative reader reload after completion rather
     // than only checking its hook's dirty flag before invalidation has run.
     await page.evaluate(() => (window as any).fixture.invalidate())
@@ -148,7 +148,7 @@ test("a reader reopened before save completion retains its undo through filesyst
       const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
       return editor.getValue() === (window as any).originalText
     }), true)
-    assert.equal(await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).isEnabled(), true)
+    assert.equal(await page.getByRole("button", { name: "Enregistrer", exact: true }).isEnabled(), true)
   } finally { await page.close() }
 })
 
@@ -562,7 +562,7 @@ test("history and local changes open the central diff and preserve the conversat
 })
 
 test("whitespace-only changes leave the Changes list by default and follow the Advanced setting", async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   // Count modified lines Monaco marks once the visible model is the expected file.

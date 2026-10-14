@@ -227,7 +227,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "Toggle chat input height",
 
-  "promptInput.placeholder.shell": "Run a shell command (Esc to exit)...",
+  "promptInput.placeholder.shell": "Run a shell command...",
   "promptInput.placeholder.default": "Type your message, @file, @agent, @skill, or paste images and text...",
   "promptInput.hints.shell.exit": "to exit shell mode",
   "promptInput.hints.shell.enable": "Shell mode",
@@ -244,7 +244,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "again to abort session",
   "promptInput.stopSession.ariaLabel": "Stop session",
   "promptInput.stopSession.title": "Stop session",
-  "promptInput.background.title": "Move blocking tools to background (Cmd/Ctrl+B)",
+  "promptInput.background.title": "Move blocking tools to background",
   "promptInput.background.error.title": "Background action failed",
   "promptInput.background.error.message": "Unable to move blocking tools to the background",
   "promptInput.attachFiles.ariaLabel": "Attach files",

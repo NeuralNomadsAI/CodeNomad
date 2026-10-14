@@ -227,7 +227,7 @@ export const messagingMessages = {
 
   "expandButton.toggleAriaLabel": "Höhe der Chat-Eingabe umschalten",
 
-  "promptInput.placeholder.shell": "Einen Shell-Befehl ausführen (Esc zum Verlassen)...",
+  "promptInput.placeholder.shell": "Einen Shell-Befehl ausführen...",
   "promptInput.placeholder.default": "Nachricht eingeben, @datei, @agent, @skill, oder Bilder und Text einfügen...",
   "promptInput.hints.shell.exit": "um den Shell-Modus zu verlassen",
   "promptInput.hints.shell.enable": "Shell-Modus",
@@ -244,7 +244,7 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "erneut zum Abbrechen der Sitzung",
   "promptInput.stopSession.ariaLabel": "Sitzung stoppen",
   "promptInput.stopSession.title": "Sitzung stoppen",
-  "promptInput.background.title": "Blockierende Werkzeuge in den Hintergrund verschieben (Cmd/Ctrl+B)",
+  "promptInput.background.title": "Blockierende Werkzeuge in den Hintergrund verschieben",
   "promptInput.background.error.title": "Hintergrundaktion fehlgeschlagen",
   "promptInput.background.error.message": "Blockierende Werkzeuge konnten nicht in den Hintergrund verschoben werden",
   "promptInput.attachFiles.ariaLabel": "Dateien anhängen",
