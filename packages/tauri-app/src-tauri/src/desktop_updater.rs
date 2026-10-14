@@ -8,7 +8,14 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use crate::update_releases::UpdateFeed;
 
 static BUSY: AtomicBool = AtomicBool::new(false);
-static FAILURE_PENDING: AtomicBool = AtomicBool::new(false);
+/// Webview whose install the lease currently serves; one install runs at a time.
+static INSTALL_OWNER: Mutex<Option<String>> = Mutex::new(None);
+/// Unclaimed failure, owned by the webview whose install failed.
+static FAILURE_OWNER: Mutex<Option<String>> = Mutex::new(None);
+
+fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|error| error.into_inner())
+}
 
 struct UpdateLease;
 impl UpdateLease {
@@ -144,8 +151,16 @@ pub(crate) async fn install_desktop_update(
     let update = updates.checked.lock().map_err(|e| e.to_string())?.take()
         .filter(|update| update.version == version)
         .ok_or("The checked update has changed; check again before installing")?;
+    *locked(&INSTALL_OWNER) = Some(webview.label().to_string());
     // No install or shutdown occurs unless the plugin verifies the full download.
-    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    let bytes = match update.download(|_, _| {}, || {}).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            // The caller may have reloaded or closed during the download.
+            record_failure();
+            return Err(error.to_string());
+        }
+    };
     let failed_app = app.clone();
     crate::shutdown::request_update(app, PreparedUpdate::new(
         move || {
@@ -159,13 +174,22 @@ pub(crate) async fn install_desktop_update(
 /// Failures outlive the documents that started the update: a failed installer
 /// restarts the backend, which reloads every window before it can be shown.
 pub(crate) fn record_failure() {
-    FAILURE_PENDING.store(true, Ordering::Release);
+    let owner = locked(&INSTALL_OWNER).clone().unwrap_or_default();
+    *locked(&FAILURE_OWNER) = Some(owner);
 }
 
-/// Notify live documents; the one that started the update takes the failure.
+/// Notify live documents; the installing webview takes the failure.
 pub(crate) fn report_failure(app: &AppHandle) {
     record_failure();
     let _ = app.emit("desktop-update:failed", ());
+}
+
+/// The owning webview claims a failure, including after reloading; any caller
+/// claims it once that webview no longer exists.
+fn claim_failure(pending: &mut Option<String>, caller: &str, owner_exists: impl FnOnce(&str) -> bool) -> bool {
+    let claimable = pending.as_deref().is_some_and(|owner| owner == caller || !owner_exists(owner));
+    if claimable { *pending = None; }
+    claimable
 }
 
 #[tauri::command]
@@ -174,7 +198,8 @@ pub(crate) fn take_desktop_update_failure(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<bool, String> {
     crate::require_preferences_or_local_app_webview(&webview, &state)?;
-    Ok(FAILURE_PENDING.swap(false, Ordering::AcqRel))
+    let app = webview.app_handle();
+    Ok(claim_failure(&mut locked(&FAILURE_OWNER), webview.label(), |owner| app.get_webview(owner).is_some()))
 }
 
 #[cfg(test)]
@@ -187,5 +212,15 @@ mod tests {
         assert!(UpdateLease::acquire().is_err());
         drop(first);
         assert!(UpdateLease::acquire().is_ok());
+    }
+
+    #[test]
+    fn failures_belong_to_the_installing_webview_until_it_is_gone() {
+        let mut pending = Some("local-a".to_string());
+        assert!(!claim_failure(&mut pending, "local-b", |_| true), "a checking window cannot take it");
+        assert!(claim_failure(&mut pending, "local-a", |_| true), "the owner, even reloaded, takes it");
+        assert!(!claim_failure(&mut pending, "local-a", |_| true), "a failure is reported once");
+        pending = Some("local-a".to_string());
+        assert!(claim_failure(&mut pending, "local-b", |_| false), "a closed owner leaves it to any window");
     }
 }

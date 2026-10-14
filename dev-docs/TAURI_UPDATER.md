@@ -30,7 +30,8 @@ The native menu emits `menu:action` to the focused local webview only, and the
 renderer listens on its own webview: untargeted Tauri listeners receive every
 window's events. When Preferences or a remote window is focused, or no local
 window remains, Get Updates opens the release page. Renderer fallbacks use the
-saved feed (preview: the full releases list; stable: the latest release). The
+saved feed (stable: the latest release; preview, or a feed that could not be
+read: the full releases list, which contains every offered release). The
 native fallback and About link cannot read the saved feed and derive it from
 the installed build label.
 
@@ -71,10 +72,13 @@ Windows, the NSIS installer performs relaunch and the plugin exits. The vendored
 2.12.0 plugin moves its exit callback after successful `ShellExecuteW`: a refused
 launch must not release client-state persistence ownership. On an installation
 error, the application restores its owned backend without replaying installation.
-That recovery reloads every window, so the failure is recorded natively and the
-first reloaded document takes and reports it. Failures without a reload (flush
-timeout, cleanup failure, refused backend recovery) are reported by the document
-whose install was accepted; another document merely checking stays silent.
+That recovery reloads every window, so failures are recorded natively with the
+webview whose install was accepted. That webview's document takes and reports
+it, including after a reload; once that webview is closed, any local document
+takes it. Download failures are recorded too, in case the caller reloaded.
+Failures without a reload (flush timeout, cleanup failure, refused backend
+recovery) are also emitted to live documents; another document merely checking
+cannot take them.
 Notification history retains install actions, so an offer from an earlier check
 starts a fresh check instead of installing.
 
@@ -119,7 +123,9 @@ The final publication job waits for all four platform jobs, merges their receipt
 and checks the uploaded GitHub asset digests. Missing/duplicate targets, mixed
 versions or keys, partial signing, changed signatures and missing payloads fail
 publication. Only then does it generate and upload that release's `latest.json`;
-stable releases and dev prereleases each carry their own manifest. Before a
+stable releases and dev prereleases each carry their own manifest. Receipt
+artifacts and the publication job run only for tagged upload builds; PR runs
+stage and verify locally without retaining receipts. Before a
 platform replaces its signed payload on a rebuilt tag, staging deletes any
 existing `latest.json`, so no published manifest pairs new bytes with an old
 signature; until publication succeeds, the release is simply not installable.

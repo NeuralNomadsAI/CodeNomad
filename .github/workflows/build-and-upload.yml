@@ -476,6 +476,8 @@ jobs:
         run: node packages/tauri-app/scripts/updater-artifacts.mjs stage darwin-x86_64
 
       - name: Retain updater publication receipt (macOS x64)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: updater-${{ github.run_id }}-darwin-x86_64
@@ -572,6 +574,8 @@ jobs:
         run: node packages/tauri-app/scripts/updater-artifacts.mjs stage darwin-aarch64
 
       - name: Retain updater publication receipt (macOS arm64)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: updater-${{ github.run_id }}-darwin-aarch64
@@ -672,6 +676,8 @@ jobs:
         run: node packages/tauri-app/scripts/updater-artifacts.mjs stage windows-x86_64
 
       - name: Retain updater publication receipt (Windows)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: updater-${{ github.run_id }}-windows-x86_64
@@ -938,6 +944,8 @@ jobs:
         run: node packages/tauri-app/scripts/updater-artifacts.mjs stage linux-x86_64
 
       - name: Retain updater publication receipt (Linux)
+        # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
+        if: ${{ inputs.upload && inputs.tag != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: updater-${{ github.run_id }}-linux-x86_64
@@ -989,6 +997,7 @@ jobs:
 
   publish-tauri-updater:
     needs: [build-tauri-windows, build-tauri-macos, build-tauri-macos-arm64, build-tauri-linux]
+    if: ${{ inputs.upload && inputs.tag != '' }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

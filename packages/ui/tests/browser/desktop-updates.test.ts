@@ -55,15 +55,16 @@ async function fixture(scenario: string, host = "tauri", context = "local", meta
           await new Promise<void>(resolve => { w.finishDownload = resolve })
         }
         if (command === "take_desktop_update_failure") {
-          const pending = w.failurePending
+          // `true`: owned by this webview; "other": owned by another live window.
+          if (w.failurePending !== true) return false
           w.failurePending = false
-          return pending
+          return true
         }
       },
     }
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (event: string) => listeners.delete(event) }
-    w.emitFailure = () => {
-      w.failurePending = true
+    w.emitFailure = (owner: true | "other" = true) => {
+      w.failurePending = owner
       callbacks.get(listeners.get("desktop-update:failed")!)?.({ payload: null })
     }
     w.open = (url: string) => { w.calls.push({ command: "web-open", args: { url } }); return {} }
@@ -115,6 +116,9 @@ test("check and signature failures stay recoverable; current versions never offe
       await page.getByText(scenario === "current" ? "CodeNomad is up to date." : /The update could not be completed/).waitFor()
       await page.getByRole("button", { name: "Install and restart" }).waitFor({ state: "hidden" })
       assert.equal(await page.evaluate(() => (window as any).calls.filter((c: any) => c.command === "install_desktop_update").length), scenario === "signature-error" ? 1 : 0)
+      // Recoverable: the flow accepts a new check afterwards.
+      await page.getByRole("button", { name: "Check updates" }).click()
+      await page.waitForFunction(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update").length === 2)
     } finally { await page.close() }
   }
 })
@@ -194,8 +198,9 @@ test("a stalled backend does not hold the check; the native host derives the fee
 })
 
 test("release pages follow the feed: previews list every release", async () => {
-  const pages = { preview: "https://github.com/NeuralNomadsAI/CodeNomad/releases", stable: "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest" }
-  for (const [feed, url] of Object.entries(pages)) {
+  const list = "https://github.com/NeuralNomadsAI/CodeNomad/releases"
+  // An unknown feed uses the full list, which contains every offered release.
+  for (const [feed, url] of [["preview", list], ["stable", `${list}/latest`], [undefined, list]]) {
     const unsigned = await fixture("unsigned")
     try {
       await serveMeta(unsigned, { updateFeed: feed })
@@ -235,11 +240,11 @@ test("a document that is only checking leaves another window's install failure a
   try {
     await page.getByRole("button", { name: "Check updates" }).click()
     await page.waitForFunction(() => typeof (window as any).finishCheck === "function")
-    await page.evaluate(() => (window as any).emitFailure())
+    await page.evaluate(() => (window as any).emitFailure("other"))
     await page.evaluate(() => (window as any).finishCheck())
     await page.getByRole("button", { name: "Install and restart" }).waitFor()
     assert.equal(await page.getByText(/The update could not be completed/).count(), 0)
-    assert.equal(await page.evaluate(() => (window as any).failurePending), true)
+    assert.equal(await page.evaluate(() => (window as any).failurePending), "other")
   } finally { await page.close() }
 })
 
@@ -250,8 +255,9 @@ test("a failure recorded while windows reloaded is reported once after the reloa
     await page.evaluate(() => (window as any).fixture.observe())
     await page.waitForFunction(() => (window as any).calls.filter((c: any) => c.command === "take_desktop_update_failure").length === 2)
     assert.equal(await page.getByText(/The update could not be completed/).count(), 1)
-    // A failure event without an update in progress in this document stays silent.
-    await page.evaluate(() => (window as any).emitFailure())
-    assert.equal(await page.evaluate(() => (window as any).failurePending), true)
+    // A failure owned by another live window stays with it.
+    await page.evaluate(() => (window as any).emitFailure("other"))
+    assert.equal(await page.evaluate(() => (window as any).failurePending), "other")
+    assert.equal(await page.getByText(/The update could not be completed/).count(), 1)
   } finally { await page.close() }
 })

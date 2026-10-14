@@ -14,15 +14,16 @@ import {
 const releasesUrl = "https://github.com/NeuralNomadsAI/CodeNomad/releases"
 const log = getLogger("actions")
 let busy = false
-/** Only the document whose install was accepted reports live failures. */
+/** This document's install was accepted; its progress ends on a failure event. */
 let installing = false
 /** Toast history retains actions; an older offer re-checks instead of installing. */
 let offer = 0
 let notice: ToastHandle | undefined
 let feed: UpdateFeed | undefined
 
-/** Preview builds are prereleases, which the latest-release page omits. */
-const releasePage = () => feed === "preview" ? releasesUrl : `${releasesUrl}/latest`
+/** Preview builds are prereleases, which the latest-release page omits; an
+ * unknown feed uses the full list, which contains every offered release. */
+const releasePage = () => feed === "stable" ? `${releasesUrl}/latest` : releasesUrl
 
 function showProgress(message: string) {
   notice?.dismiss()
@@ -40,7 +41,8 @@ function failed(error?: unknown) {
   })
 }
 
-/** One document reports each native failure, including after a reload. */
+/** The native host hands each failure to the installing webview (including after
+ * a reload), or to any local document once that webview is gone. */
 async function claimFailure() {
   try {
     if (!await takeDesktopUpdateFailure()) return
@@ -54,12 +56,12 @@ export function observeDesktopUpdates(): () => void {
   let disposed = false
   let unlisten: (() => void) | undefined
   void listenForDesktopUpdateFailure(() => {
-    // Only the document that started the update reports it here.
-    if (!installing) return
-    busy = false
-    installing = false
-    notice?.dismiss()
-    notice = undefined
+    if (installing) {
+      busy = false
+      installing = false
+      notice?.dismiss()
+      notice = undefined
+    }
     void claimFailure()
   }).then((listener) => {
     if (disposed) listener()
@@ -86,7 +88,11 @@ async function install(version: string, checked: number) {
     // A failed renderer flush or installer is reported asynchronously. On
     // success all windows close and the installed application relaunches.
     if (busy) showProgress(tGlobal("releases.desktop.restarting"))
-  } catch (error) { failed(error) }
+  } catch (error) {
+    // This live caller reports the error itself; clear what native recorded for it.
+    await takeDesktopUpdateFailure().catch(() => false)
+    failed(error)
+  }
 }
 
 const FEED_READ_TIMEOUT_MS = 5000
@@ -114,7 +120,8 @@ export async function requestDesktopUpdate(announcedRelease?: string): Promise<v
   showProgress(tGlobal("releases.desktop.checking"))
   const checked = ++offer
   try {
-    feed = await readFeed()
+    // An unanswered read keeps the last known saved feed.
+    feed = (await readFeed()) ?? feed
     const result = await checkDesktopUpdate(feed)
     notice?.dismiss()
     notice = undefined
