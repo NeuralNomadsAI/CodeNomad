@@ -43,7 +43,7 @@ graph मा पूरा र retired काम पनि हुन्छन्�
 
 ### Briefing र update अनुरोध {#briefings}
 
-coordinator लाई प्रारम्भिक योजना, task settlement, मानव पर्खँदा र final report अघि project briefing प्रकाशित गर्न भनिन्छ। यो लेखिएको मूल्याङ्कन हो, live activity counter वा सुनिश्चित periodic heartbeat होइन। briefing पछि map बदलिए notice ले चिनाउँछ।
+coordinator लाई प्रारम्भिक योजनापछि, task settlement पछि, मानवको जवाफ पर्खँदा र final report अघि project briefing प्रकाशित गर्न भनिन्छ। यो लेखिएको मूल्याङ्कन हो, live activity counter वा सुनिश्चित periodic heartbeat होइन। briefing पछि map बदलिए notice ले चिनाउँछ।
 
 नयाँ coordinator मूल्याङ्कनका लागि toolbar मुनि **अद्यावधिक माग्नुहोस्** प्रयोग गरी **सारांश** पढ्नुहोस्। **अद्यावधिक मागियो…** भनेको pending हो, उत्तर आएको होइन। **पठाइएको पुष्टि भएन** ले automatic resend अनुमति दिँदैन: छुट्टै नयाँ अनुरोधअघि coordinator कुराकानी खोल्नुहोस्। यो सामान्य native input हो, read-only sandbox होइन; coordinator का सामान्य अधिकार रहन्छन्।
 

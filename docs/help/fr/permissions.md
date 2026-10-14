@@ -22,7 +22,7 @@ Les arrivées ne remplacent pas la demande en cours d’édition et ne vous font
 ## Répondre aux questions et Forms {#answer-questions-forms}
 
 1. Développez la demande voulue et remplissez ses champs ou sélectionnez les choix proposés.
-2. Pour les questions, utilisez **Réponse personnalisée** si disponible et répondez à chaque question obligatoire.
+2. Lorsqu’un champ de choix autorise les réponses personnalisées, un champ de texte supplémentaire s’affiche : saisissez-y votre propre réponse à la place d’un choix proposé (ou ajoutez des valeurs personnalisées pour un champ à choix multiples). Répondez à chaque question obligatoire.
 3. Choisissez **Envoyer** ; n’utilisez **Annuler** pour une question ou un Form que si vous souhaitez cette annulation native.
 
 Les réponses partielles et brouillons de refus survivent aux actualisations de file et à la navigation entre conversations dans le client actif. Ce ne sont ni une décision soumise ni une garantie de récupération après effacement des données du client. Une réponse échouée reste modifiable ; inspectez la demande en attente avant de réessayer. CodeNomad ne rejoue pas automatiquement une réponse.

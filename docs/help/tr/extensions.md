@@ -39,7 +39,7 @@ Etkinleştirilmiş bir panel seçildiğinde monte edilebilir; onu gizlemek geçi
 3. Yalnızca yeni sürüme güvenmeye karar verdikten sonra normal onay kutusunu kullanarak yeniden etkinleştirin.
 4. Kaldırmak için hedefi inceledikten sonra **Kaldır…** ve **Kaldırmayı onayla** öğesini kullanın.
 
-Her değişiklik, izin listesi değişmese bile tüm projelerdeki aktivasyonu iptal eder. Doğrulama/çatışma/depolama hatası yüklü paketi korur. Sessiz uzantı güncellemesi yok. Kaldırma işlemi, OpenCode oturumlarını veya proje dosyalarını değil, paketi ve etkinleştirme ayarlarını siler. İstenmeyen koddan kurtulmak için önce onu devre dışı bırakın; yalnızca doğrulanmış güvenilir bir paketi yeniden yükleyin.
+Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etkinleştirmeyi iptal eder. Doğrulama/çatışma/depolama hatası yüklü paketi korur. Sessiz uzantı güncellemesi yok. Kaldırma işlemi, OpenCode oturumlarını veya proje dosyalarını değil, paketi ve etkinleştirme ayarlarını siler. İstenmeyen koddan kurtulmak için önce onu devre dışı bırakın; yalnızca doğrulanmış güvenilir bir paketi yeniden yükleyin.
 
 ## Bağlam, varlık izni ve korumalı alan sınırları {#permissions-sandbox}
 

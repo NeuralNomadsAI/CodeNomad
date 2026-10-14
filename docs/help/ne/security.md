@@ -6,7 +6,7 @@ CodeNomad पहुँचले OpenCode मार्फत backend host मा 
 
 | विधि | आयु र दायरा |
 | --- | --- |
-| `--password` वा `CODENOMAD_SERVER_PASSWORD` | त्यस backend process को runtime override। हरेक start मा फेरि चाहिन्छ; सुरक्षित हुँदैन। managed password file override गर्छ। |
+| `--password` वा `CODENOMAD_SERVER_PASSWORD` | त्यस backend process को runtime override। हरेक start मा फेरि दिनुपर्छ; स्थायी रूपमा बचत हुँदैन। managed password file override गर्छ। |
 | Settings बाट password | सक्रिय configuration YAML छेउ `auth.json` मा salted scrypt hash बचत गर्छ। runtime override नभएका पछिल्ला start मा प्रयोग हुन्छ। |
 | `--generate-token` | local, one-time bootstrap सक्षम; छापिएको token 60 सेकेन्ड चल्छ। reusable API token वा Remote Control link होइन। |
 | Remote Control pairing | host बाट व्यवस्थित छुट्टै device-cookie authentication; [Remote Control](remote-control.md) हेर्नुहोस्। |

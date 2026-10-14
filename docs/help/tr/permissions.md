@@ -22,7 +22,7 @@ Yeni istekler düzenlediğiniz isteği değiştirmez veya başka yere yönlendir
 ## Soruları ve Formları yanıtlayın {#answer-questions-forms}
 
 1. Amaçlanan isteği genişletin ve alanlarını doldurun veya sunulan seçenekleri seçin.
-2. Sorularınız için mümkün olduğunda **Özel yanıt** öğesini kullanın ve gerekli tüm soruları yanıtlayın.
+2. Bir seçim alanı özel yanıtlara izin verdiğinde ek bir metin alanı gösterilir: sunulan bir seçenek yerine kendi yanıtınızı buraya yazın (veya çoklu seçim alanına özel değerler ekleyin). Gerekli tüm soruları yanıtlayın.
 3. **Gönder** öğesini seçin; **İptal** öğesini yalnızca yerel iptali istediğinizde bir soru veya Form için kullanın.
 
 Kısmi yanıtlar ve ret taslakları çalışan istemcide kuyruk yenilemeleri ve konuşma değişimleri boyunca korunur. Bunlar gönderilmiş karar veya istemci verileri temizlendikten sonra kurtarma garantisi değildir. Başarısız yanıt düzenlenebilir kalır; yeniden denemeden önce bekleyen isteği inceleyin. CodeNomad yanıtı otomatik yeniden göndermez.

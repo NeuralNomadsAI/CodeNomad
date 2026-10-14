@@ -37,7 +37,7 @@ Electron, Chromium'u kullanır ve aynı ana bilgisayardaki bir alternatiftir. FU
 
 Yalnızca dizin konuşmaları Git olmadan kullanılabilir durumda kalır; Worktree ve Git kontrolleri bunu yapmaz. Windows'ta, yalnızca WSL içine yüklenen Git, Windows arka ucu için yeterli değildir. Deposu olmayan bilinen bir klasör **Git'i başlat** öğesini açığa çıkarabilir; eksik bir Git yürütülebilir dosyası farklı bir durumdur ve öncelikle düzeltilmesi gerekir. Bkz. [gereksinimler](install.md#requirements) ve [Dosyalar](files.md).
 
-Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa, rastgele yolları denemek veya yerel depolamayı düzenlemek yerine fiziksel klasörünü açıkça açın. Hangi yerleşimin gerçekte mevcut olduğunu görmek için belirsiz bir taşıma/kaldırma işleminden sonra yenileyin. Bir çalışma ağacının zorla kaldırılması kaydedilmemiş dosyaları yok edebilir; bağlantı onarımı olarak kullanmayın.
+Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa, rastgele yolları denemek veya yerel depolamayı düzenlemek yerine fiziksel klasörünü açıkça açın. Hangi yerleşimin gerçekte mevcut olduğunu görmek için belirsiz bir taşıma/kaldırma işleminden sonra yenileyin. Bir çalışma ağacının zorla kaldırılması commit edilmemiş dosyaları yok edebilir; bağlantı onarımı olarak kullanmayın.
 
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
 

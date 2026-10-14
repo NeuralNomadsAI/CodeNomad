@@ -66,7 +66,7 @@ Si no es accesible, comprueba el proceso y el puerto en el backend. Si carga el 
 docker run -it --init -p 127.0.0.1:8000:3000 -v "${HOME}:${HOME}:cached" -e HOME=${HOME} gitpod/openvscode-server --server-base-path /sidecars/vscode
 ```
 
-2. Registra **Nombre** `VSCode`, **Puerto** `8000`, **Protocolo** `HTTP`, **Modo de prefijo** `Preserve prefix`.
+2. Registra **Nombre** `VSCode`, **Puerto** `8000`, **Protocolo** `HTTP`, **Modo de prefijo** **Conservar prefijo**.
 3. Verifica que la ruta base mostrada sea `/sidecars/vscode` y abre el SideCar.
 
 Este ejemplo de shell monta tu directorio personal en el contenedor; usa un montaje más limitado si el editor solo debe acceder a eso. El `--server-base-path` del servicio debe coincidir exactamente con el registro. Detén el contenedor por separado al terminar; eliminar el SideCar no lo elimina ni borra sus archivos.
@@ -79,7 +79,7 @@ Este ejemplo de shell monta tu directorio personal en el contenedor; usa un mont
 ttyd --interface 127.0.0.1 --writable zsh
 ```
 
-2. Registra **Nombre** `Terminal`, **Puerto** `7681`, **Protocolo** `HTTP`, **Modo de prefijo** `Strip prefix`.
+2. Registra **Nombre** `Terminal`, **Puerto** `7681`, **Protocolo** `HTTP`, **Modo de prefijo** **Quitar prefijo**.
 3. Abre el SideCar en su ruta base mostrada `/sidecars/terminal`.
 
 La terminal se ejecuta con los privilegios de la cuenta que inició ttyd. Elige otro shell si `zsh` no está disponible. Usa el puerto real si cambiaste el predeterminado de ttyd y detenlo por separado al terminar. Autentica y protege el acceso a CodeNomad; una terminal con escritura no es un entorno aislado.

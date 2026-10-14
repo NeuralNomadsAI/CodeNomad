@@ -52,7 +52,7 @@ Prüfen Sie bei fehlender Steuerung Schalter und STT-Konfiguration. Erlauben Sie
 
 Wiedergabe verwendet CodeNomads Textprojektion, keinen vorgelesenen Screenshot: Binär-/Bildbytes und Berechtigungsbelege sind kein Sprachinhalt. Sie führt keinen Prompt aus und ändert nicht das ausgewählte OpenCode-Modell. Browser-Audiounterstützung und Anbieterantworten können Wiedergabe auch bei auswählbarem Format verhindern.
 
-Verwenden Sie für automatische Unterhaltungssprache **Konversationsmodus aktivieren** in den Eingabeaktionen. Dies liest Assistententext, der mit einem abgeschlossenen eingezäunten `spoken`-Block in der aktiven Hauptsitzung beginnt; es ist kein automatisches Vorlesen jeder Antwort oder jedes Subagenten. Fordern Sie dieses Ausgabeformat bei Bedarf an. **Konversationsmodus deaktivieren** stoppt dessen Warteschlange. Mikrofonstart stoppt ebenfalls aktive Unterhaltungssprache. Der Schalter erscheint mit Spracheingabe oder bei bereits aktivem Konversationsmodus und benötigt zum Aktivieren funktionierendes TTS.
+Verwenden Sie für automatische Unterhaltungssprache **Konversationsmodus aktivieren** in den Eingabeaktionen. Dies liest Assistententext, der mit einem vollständig abgeschlossenen Markdown-Codeblock mit der Kennzeichnung `spoken` in der aktiven Hauptsitzung beginnt; es ist kein automatisches Vorlesen jeder Antwort oder jedes Subagenten. Fordern Sie dieses Ausgabeformat bei Bedarf an. **Konversationsmodus deaktivieren** stoppt dessen Warteschlange. Mikrofonstart stoppt ebenfalls aktive Unterhaltungssprache. Der Schalter erscheint mit Spracheingabe oder bei bereits aktivem Konversationsmodus und benötigt zum Aktivieren funktionierendes TTS.
 
 ## Datenfluss und Datenschutz {#privacy}
 

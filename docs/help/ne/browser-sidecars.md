@@ -66,7 +66,7 @@ Developer Mode toggle वा थप activation restart छैन। नेटि
 docker run -it --init -p 127.0.0.1:8000:3000 -v "${HOME}:${HOME}:cached" -e HOME=${HOME} gitpod/openvscode-server --server-base-path /sidecars/vscode
 ```
 
-2. **नाम** `VSCode`, **पोर्ट** `8000`, **प्रोटोकल** `HTTP`, **प्रिफिक्स मोड** `Preserve prefix` दर्ता गर्नुहोस्।
+2. **नाम** `VSCode`, **पोर्ट** `8000`, **प्रोटोकल** `HTTP`, **प्रिफिक्स मोड** **प्रिफिक्स राख्नुहोस्** दर्ता गर्नुहोस्।
 3. देखिएको base path `/sidecars/vscode` भएको जाँचेर SideCar खोल्नुहोस्।
 
 यो shell विधिले home directory container मा mount गर्छ; editor लाई कम पहुँच चाहिने भए साँघुरो mount प्रयोग गर्नुहोस्। सेवाको `--server-base-path` दर्तासँग ठ्याक्कै मिल्नुपर्छ। सकिएपछि container छुट्टै रोक्नुहोस्; SideCar मेटाउँदा container वा फाइल हट्दैनन्।
@@ -79,7 +79,7 @@ docker run -it --init -p 127.0.0.1:8000:3000 -v "${HOME}:${HOME}:cached" -e HOME
 ttyd --interface 127.0.0.1 --writable zsh
 ```
 
-2. **नाम** `Terminal`, **पोर्ट** `7681`, **प्रोटोकल** `HTTP`, **प्रिफिक्स मोड** `Strip prefix` दर्ता गर्नुहोस्।
+2. **नाम** `Terminal`, **पोर्ट** `7681`, **प्रोटोकल** `HTTP`, **प्रिफिक्स मोड** **प्रिफिक्स हटाउनुहोस्** दर्ता गर्नुहोस्।
 3. देखाइएको `/sidecars/terminal` base path मा SideCar खोल्नुहोस्।
 
 terminal ttyd सुरु गर्ने खाताको अधिकारमा चल्छ। `zsh` नभए अर्को shell रोज्नुहोस्। ttyd को default बदलेको भए वास्तविक port प्रयोग गर्नुहोस्, र सकिएपछि ttyd छुट्टै रोक्नुहोस्। CodeNomad पहुँच प्रमाणित र सुरक्षित गर्नुहोस्; writable terminal sandbox होइन।

@@ -27,7 +27,7 @@ AppImage של Tauri שיוצא מיד ב־Wayland/NVIDIA עשוי להיות מ�
 WEBKIT_DISABLE_DMABUF_RENDERER=1 ./CodeNomad-Tauri-linux-x64-<version>.AppImage
 ```
 
-Electron משתמש ב־Chromium ומהווה חלופה באותו מארח. אם במקום זאת ה־AppImage אינו מצליח להתחבר כי FUSE אינו זמין, השתמשו ב־`--appimage-extract-and-run`; ראו [התקנה ב־Linux](install.md#linux-install). תיקונים אלה אינם דורשים השבתת ארגז החול של Electron.
+Electron משתמש ב־Chromium ומהווה חלופה באותו מארח. אם במקום זאת לא ניתן לעגן את מערכת הקבצים של ה־AppImage משום ש־FUSE אינו זמין, השתמשו ב־`--appimage-extract-and-run`; ראו [התקנה ב־Linux](install.md#linux-install). תיקונים אלה אינם דורשים השבתת ארגז החול של Electron.
 
 ## זמינות Git וסביבת עבודה {#git-and-workspaces}
 

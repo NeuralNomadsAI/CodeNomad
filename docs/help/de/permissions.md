@@ -22,7 +22,7 @@ Neue Eingänge ersetzen weder die bearbeitete Anfrage noch navigieren sie weg. D
 ## Fragen und Forms beantworten {#answer-questions-forms}
 
 1. Klappen Sie die gewünschte Anfrage auf und füllen Sie die Felder aus oder wählen Sie angebotene Antworten.
-2. Verwenden Sie bei Fragen gegebenenfalls **Eigene Antwort** und beantworten Sie jede Pflichtfrage.
+2. Wenn ein Auswahlfeld eigene Antworten erlaubt, erscheint ein zusätzliches Textfeld: Geben Sie dort Ihre eigene Antwort statt einer angebotenen Auswahl ein (oder ergänzen Sie eigene Werte bei einem Mehrfachauswahlfeld). Beantworten Sie jede Pflichtfrage.
 3. Wählen Sie **Absenden**; verwenden Sie **Abbrechen** bei einer Frage oder einem Form nur, wenn Sie diesen nativen Abbruch beabsichtigen.
 
 Teilantworten und Ablehnungsentwürfe überstehen Warteschlangenaktualisierungen und Unterhaltungsnavigation im laufenden Client. Sie sind keine übermittelte Entscheidung und garantieren keine Wiederherstellung nach dem Löschen von Client-Daten. Eine fehlgeschlagene Antwort bleibt bearbeitbar; prüfen Sie vor dem Wiederholen die wartende Anfrage. CodeNomad wiederholt Antworten nicht automatisch.

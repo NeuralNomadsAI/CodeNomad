@@ -28,7 +28,7 @@ Desteklenen entegrasyonda birden fazla kayıtlı kimlik bilgisi varsa **Hesabı 
 | Uygun entegrasyon | Uygun hesap türü |
 | --- | --- |
 | OpenAI / Codex | OpenAI kullandıkça öde anahtarları değil, Codex OAuth abonelik hesapları. |
-| OpenCode Go | Go anahtarı veya Console girişi; **yalnızca Go sağlayıcısı** için kullanılır, OpenCode Zen kullandıkça öde kredileri için değil. |
+| OpenCode Go | Go anahtarı veya **yalnızca Go sağlayıcısı** için kullanılan OpenCode Console girişi/anahtarı; Zen kullandıkça öde kredileri için değil. |
 | Anthropic | OpenCode'un Claude Pro/Max OAuth girişi; Claude Code girişi **değil**. |
 | GitHub Copilot | Okunabilir premium istek kotasına sahip OAuth; kurumsal uç nokta kimlik bilgileri okunabilir aday değildir. |
 | Kodlama planları | Anahtar tabanlı `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |

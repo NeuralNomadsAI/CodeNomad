@@ -79,8 +79,8 @@ HTTPS предпочитает порт **9898**, HTTP — **9899**. Без пе
 | `--config <path>` | `CLI_CONFIG` | Итоговый активный путь по умолчанию: `~/.config/codenomad/config.yaml`. Принимает каталог или YAML-файл для явного размещения. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; документированные уровни: `trace`, `debug`, `info`, `warn`, `error`. |
 | `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; иначе писать в выбранный файл. |
-| `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; имя аутентификации времени выполнения. Сохранённый файл сохраняет своё имя при отсутствии переопределения паролем времени выполнения. |
-| `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Не задан; пароль только времени выполнения, приоритетнее управляемого файла аутентификации. |
+| `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; имя пользователя для аутентификации, переданное при запуске. Сохранённый файл аутентификации сохраняет своё имя пользователя, если при запуске не передан другой пароль. |
+| `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Не задан; пароль, действующий только в текущем процессе, имеет приоритет над управляемым файлом аутентификации. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; символы кроме букв, цифр, `_` и `-` заменяются на `_`. |
 | `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | `false`; напечатать одноразовый локальный токен настройки на 60 секунд. |
 | `--dangerously-skip-auth` | `CODENOMAD_SKIP_AUTH` | `false`; отключает аутентификацию прямых слушателей. Опасно: см. [безопасность](security.md). Удалённому управлению всё ещё нужно сопряжение. |

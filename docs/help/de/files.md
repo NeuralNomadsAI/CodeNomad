@@ -46,7 +46,7 @@ Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche
 | Text-Diff aus Änderungen/Commits | Schreibgeschützter Vergleich, kein Editor für eine der Seiten |
 | Git-Bild-Diff | Vorher-/Nachher-Bilder aus exakt den verglichenen Revisionen |
 
-Vorschaulesevorgänge sind begrenzt; große/nicht unterstützte Inhalte sind gegebenenfalls nicht verfügbar, statt unbegrenzt geladen zu werden. Historische Bilder ersetzen niemals die aktuelle Worktree-Datei. Ein Vorschaufehler bedeutet nicht, dass die zugrunde liegende Datei fehlt. Öffnen Sie die Datei gegebenenfalls mit einer geeigneten externen Anwendung, ohne nur für eine Vorschau ihre Revision zu ändern.
+Vorschaulesevorgänge sind begrenzt; große/nicht unterstützte Inhalte sind gegebenenfalls nicht verfügbar, statt unbegrenzt geladen zu werden. Für historische Bildvorschauen wird niemals ersatzweise die aktuelle Worktree-Datei verwendet. Ein Vorschaufehler bedeutet nicht, dass die zugrunde liegende Datei fehlt. Öffnen Sie die Datei gegebenenfalls mit einer geeigneten externen Anwendung, ohne nur für eine Vorschau ihre Revision zu ändern.
 
 ## Stagen, Unstagen und Committen {#stage-commit}
 

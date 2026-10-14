@@ -22,7 +22,7 @@ New arrivals do not replace the request you are editing or navigate away. Select
 ## Answer questions and Forms {#answer-questions-forms}
 
 1. Expand the intended request and complete its fields or select the offered choices.
-2. For questions, use **Custom answer** when available and answer every required question.
+2. When a choice field allows custom answers, an additional text field is shown: type your own answer there instead of an offered choice (or add custom values for a multiple-choice field). Answer every required question.
 3. Choose **Submit**; use **Cancel** for a question or Form only when you intend that native cancellation.
 
 Partial answers and rejection drafts survive queue refreshes and conversation navigation within the running client. They are not a submitted decision or a guarantee of recovery after client data is cleared. A failed reply remains editable; inspect the pending request before retrying. CodeNomad does not replay an answer automatically.

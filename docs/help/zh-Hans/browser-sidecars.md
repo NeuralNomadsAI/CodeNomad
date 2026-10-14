@@ -66,7 +66,7 @@
 docker run -it --init -p 127.0.0.1:8000:3000 -v "${HOME}:${HOME}:cached" -e HOME=${HOME} gitpod/openvscode-server --server-base-path /sidecars/vscode
 ```
 
-2. 注册**名称** `VSCode`、**端口** `8000`、**协议** `HTTP`、**前缀模式** `Preserve prefix`。
+2. 注册**名称** `VSCode`、**端口** `8000`、**协议** `HTTP`、**前缀模式** **保留前缀**。
 3. 验证显示基础路径为 `/sidecars/vscode`，然后打开 SideCar。
 
 此 Shell 示例将主目录挂载到容器中；如果编辑器只应访问更小范围，请缩小挂载。服务的 `--server-base-path` 必须与注册精确匹配。完成后单独停止容器；删除 SideCar 不会移除容器或其文件。
@@ -79,7 +79,7 @@ docker run -it --init -p 127.0.0.1:8000:3000 -v "${HOME}:${HOME}:cached" -e HOME
 ttyd --interface 127.0.0.1 --writable zsh
 ```
 
-2. 注册**名称** `Terminal`、**端口** `7681`、**协议** `HTTP`、**前缀模式** `Strip prefix`。
+2. 注册**名称** `Terminal`、**端口** `7681`、**协议** `HTTP`、**前缀模式** **移除前缀**。
 3. 在显示的 `/sidecars/terminal` 基础路径打开 SideCar。
 
 终端以启动 ttyd 的账户权限运行。`zsh` 不可用时选择其他 Shell。若更改 ttyd 默认端口，请使用实际端口，并在完成后单独停止 ttyd。为 CodeNomad 访问启用认证并加以保护；可写终端不是沙箱。

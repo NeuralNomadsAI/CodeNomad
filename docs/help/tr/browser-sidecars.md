@@ -38,7 +38,7 @@ Geliştirici Modu geçişi veya ekstra etkinleştirme yeniden başlatması yoktu
 | Mobil dikey | 390 × 844 |
 | Mobil yatay | 844 × 390 |
 
-Yerel mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları ve yeniden yüklemeleri temizler. Iframe geri dönüşü yalnızca yeniden boyutlandırılır. Bunlar tekrarlanabilir düzen referanslarıdır; Safari/Firefox emülasyonu veya telefon klavyelerinin, tarayıcı/sistem çubuklarının veya mobil işletim sistemi metin ayarlarının simülasyonları değildir. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
+Yerel mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Iframe geri dönüşü yalnızca yeniden boyutlandırılır. Bunlar tekrarlanabilir düzen referanslarıdır; Safari/Firefox emülasyonu veya telefon klavyelerinin, tarayıcı/sistem çubuklarının veya mobil işletim sistemi metin ayarlarının simülasyonları değildir. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
 
 ## SideCar kaydedin {#register-sidecar}
 
@@ -66,7 +66,7 @@ Ulaşılamıyorsa arka uçtaki işlemi ve bağlantı noktasını kontrol edin. H
 docker run -it --init -p 127.0.0.1:8000:3000 -v "${HOME}:${HOME}:cached" -e HOME=${HOME} gitpod/openvscode-server --server-base-path /sidecars/vscode
 ```
 
-2. **Ad** `VSCode`, **Port** `8000`, **Protokol** `HTTP`, **Ön ek modu** `Preserve prefix`'yi kaydedin.
+2. **Ad** `VSCode`, **Port** `8000`, **Protokol** `HTTP`, **Ön ek modu** **Ön eki koru** olacak şekilde kaydedin.
 3. Görüntülenen temel yolun `/sidecars/vscode` olduğunu doğrulayın ve ardından SideCar'yi açın.
 
 Bu kabuk örneği ana dizininizi kapsayıcıya bağlar; düzenleyici yalnızca daha dar bir konuma erişmeli ise onu bağlayın. Hizmetin `--server-base-path` değeri kayıtla tam eşleşmelidir. İşiniz bitince kapsayıcıyı ayrıca durdurun; SideCar silmek kapsayıcıyı veya dosyalarını kaldırmaz.
@@ -79,7 +79,7 @@ Bu kabuk örneği ana dizininizi kapsayıcıya bağlar; düzenleyici yalnızca d
 ttyd --interface 127.0.0.1 --writable zsh
 ```
 
-2. **Ad** `Terminal`, **Port** `7681`, **Protokol** `HTTP`, **Ön ek modu** `Strip prefix`'yi kaydedin.
+2. **Ad** `Terminal`, **Port** `7681`, **Protokol** `HTTP`, **Ön ek modu** **Ön eki çıkar** olacak şekilde kaydedin.
 3. SideCar'yi görüntülenen `/sidecars/terminal` temel yolunda açın.
 
 Terminal, ttyd'yi başlatan hesabın ayrıcalıklarıyla çalışır. `zsh` kullanılamıyorsa farklı bir kabuk seçin. Ttyd'nin varsayılanını değiştirdiyseniz gerçek bağlantı noktasını kullanın ve işiniz bittiğinde ttyd'yi ayrı olarak durdurun. CodeNomad erişimini doğrulayın ve koruyun; yazılabilir bir terminal bir korumalı alan değildir.

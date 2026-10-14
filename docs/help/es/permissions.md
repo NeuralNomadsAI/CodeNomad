@@ -22,7 +22,7 @@ Las solicitudes nuevas no reemplazan la que estás editando ni provocan navegaci
 ## Responder preguntas y formularios {#answer-questions-forms}
 
 1. Expande la solicitud deseada y completa sus campos o selecciona las opciones ofrecidas.
-2. En las preguntas, usa **Respuesta personalizada** cuando esté disponible y responde todas las preguntas obligatorias.
+2. Cuando un campo de selección permite respuestas personalizadas, aparece un campo de texto adicional: escribe allí tu propia respuesta en lugar de una opción ofrecida (o añade valores personalizados en un campo de selección múltiple). Responde todas las preguntas obligatorias.
 3. Elige **Enviar**; usa **Cancelar** para una pregunta o formulario solo cuando quieras esa cancelación nativa.
 
 Las respuestas parciales y los borradores de rechazo sobreviven a las actualizaciones de la cola y a la navegación entre conversaciones dentro del cliente en ejecución. No son una decisión enviada ni una garantía de recuperación después de borrar los datos del cliente. Una respuesta fallida sigue siendo editable; inspecciona la solicitud pendiente antes de reintentar. CodeNomad no repite automáticamente una respuesta.

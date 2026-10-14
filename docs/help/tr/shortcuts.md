@@ -59,13 +59,13 @@ Native tuşlar sabittir; karşılık gelen arayüz atamasını değiştirseniz v
 
 | Yerel eylem | Electron | Tauri |
 | --- | --- | --- |
-| Yeni Pencere | `Mod+Shift+N` | `Mod+Shift+N` |
-| Yeni Örnek / Komut Paleti | `Mod+N` / `Mod+Shift+P` | `Mod+N` / `Mod+Shift+P` |
-| Yeniden Yükle / Yeniden Yüklemeye Zorla | `Mod+R` / `Mod+Shift+R` | `Mod+R` / `Mod+Shift+R` |
-| Gerçek Boyut | `Mod+0` | `Mod+0` |
-| Yakınlaştır / Uzaklaştır | `Mod+Plus` / `Mod+-` | View menüsü kontrolleri ve platform web görünümünün yakınlaştırma girdisi |
-| Tam Ekran | Windows/Linux'ta `F11`; MacOS'ta `Ctrl+Cmd+F` | MacOS'ta `Ctrl+Cmd+F` menü hızlandırıcı; menüyü diğer platformlarda kullanın |
-| Geliştirici Araçları | Windows/Linux'ta `Ctrl+Shift+I`; MacOS'ta `Alt+Cmd+I` | `Alt+Mod+I` |
+| New Window | `Mod+Shift+N` | `Mod+Shift+N` |
+| New Instance / Command Palette | `Mod+N` / `Mod+Shift+P` | `Mod+N` / `Mod+Shift+P` |
+| Reload / Force Reload | `Mod+R` / `Mod+Shift+R` | `Mod+R` / `Mod+Shift+R` |
+| Actual Size | `Mod+0` | `Mod+0` |
+| Zoom | `Mod+Plus` / `Mod+-` | View menüsü kontrolleri ve platform web görünümünün yakınlaştırma girdisi |
+| Full Screen | Windows/Linux'ta `F11`; MacOS'ta `Ctrl+Cmd+F` | MacOS'ta `Ctrl+Cmd+F` menü hızlandırıcı; menüyü diğer platformlarda kullanın |
+| Developer Tools | Windows/Linux'ta `Ctrl+Shift+I`; MacOS'ta `Alt+Cmd+I` | `Alt+Mod+I` |
 
 Normal tarayıcı pencereleri tarayıcı kısayollarını da korur. Tuş birleşimi CodeNomad'e hiç ulaşmıyorsa güvenliği kapatmak veya işletim sistemi genelindeki tuşları değiştirmek yerine başka birleşim seçin.
 

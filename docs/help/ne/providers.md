@@ -33,7 +33,7 @@ authorization विन्डो रोकिए प्रवाहबाट **�
 | GitHub Copilot | पढ्न मिल्ने premium-request quota सहित OAuth; enterprise-endpoint credential पढ्न मिल्ने उम्मेदवार होइनन्। |
 | Coding plan | key-आधारित `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`। |
 
-हालको खाता पूर्ण हुँदा मात्र switch हुन्छ; बढी क्षमता भएको विकल्प हुँदैमा हुँदैन। read ले उम्मेदवार सक्रिय वा refresh token साटासाट नगरी स्पष्ट सुरक्षित credential जाँच्छ। Codex, Copilot र coding plan लाई प्रमाणित उपलब्ध उम्मेदवार चाहिन्छ। Go, Console र Claude ले हालैको native quota failure ले exhausted नचिनाए unknown-quota उम्मेदवार प्रयोग गर्न सक्छन्। OpenCode Go को usage endpoint र Console OAuth usage upstream मा अझै अप्रमाणित छन्, त्यसैले उपलब्धता सुनिश्चित छैन।
+हाल प्रयोग भइरहेको खाताको कोटा सकिँदा मात्र switch हुन्छ; बढी क्षमता भएको विकल्प हुँदैमा हुँदैन। read ले उम्मेदवार सक्रिय वा refresh token साटासाट नगरी स्पष्ट सुरक्षित credential जाँच्छ। Codex, Copilot र coding plan लाई प्रमाणित उपलब्ध उम्मेदवार चाहिन्छ। Go, Console र Claude ले हालैको native quota failure ले exhausted नचिनाए unknown-quota उम्मेदवार प्रयोग गर्न सक्छन्। OpenCode Go को usage endpoint र Console OAuth usage upstream मा अझै अप्रमाणित छन्, त्यसैले उपलब्धता सुनिश्चित छैन।
 
 यो **चल्दाचल्दै failover होइन**। असफल अनुरोध पुनःप्रयास वा prompt, command अथवा परिवर्तन replay गर्दैन। environment जडान, मनपरी provider, pay-as-you-go balance वा बाह्य Claude Code login घुमाउँदैन। चयन तयारीमा manual खाता परिवर्तनको सम्मान हुन्छ; cross-client account lock छैन। quota/authentication त्रुटिमा **सक्रिय खाता** जाँचेर Usage रिफ्रेस गर्नुहोस् र सचेत पुनःपठाइअघि आवश्यक भए credential स्वामीमार्फत sign in गर्नुहोस्।
 

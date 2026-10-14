@@ -27,7 +27,7 @@ Kararlı akış en son nihai sürümü seçer. Geliştirme derlemeleri aynı tem
 
 Tauri yalnızca seçilen feed/hedef için yayınlanmış bir güncelleme bildirimine sahip sürümleri sunar. Yeni duyurulan bir sürüm henüz yüklenemeyebilir; bildirim bunun yerine yayın sayfasını açabilir. Kurulumdan önce yerel imza doğrulaması gereklidir. Güncelleyici imzaları, işletim sistemi noter onayı/kod imzalama güvencelerinden farklıdır.
 
-Kurulum uygulamayı değiştirmeden/yeniden başlatmadan önce tüm uygulama pencerelerini temizler ve kendisine ait CodeNomad arka ucunu durdurur. Bağımsız yönetilen OpenCode daemon'ı bu kapatmaya dahil değildir. CodeNomad kapalıyken dönene kadar arka uca bağlı özellikler kullanılamaz; süren OpenCode oturumundan kesintisiz arayüz hizmeti sonucu çıkarmayın.
+Kurulum uygulamayı değiştirmeden/yeniden başlatmadan önce tüm uygulama pencerelerinin durumunu diske kaydeder ve kendisine ait CodeNomad arka ucunu durdurur. Bağımsız yönetilen OpenCode daemon'ı bu kapatmaya dahil değildir. CodeNomad kapalıyken dönene kadar arka uca bağlı özellikler kullanılamaz; süren OpenCode oturumundan kesintisiz arayüz hizmeti sonucu çıkarmayın.
 
 Bir kontrol meşgulse diğer pencerenin çalışmasını bekleyin. İndirme, doğrulama veya kapatma hataları için hatayı okuyun ve yeni bir kontrol yapın; eski bir bildirim, eski baytları yeniden yükleme lisansı değildir. Başarısız bir kurulum, arka ucu geri yükleyebilir ve pencereleri yeniden yükleyebilir ve kurulumu otomatik olarak yeniden yürütmez. Yerel kurulum kullanılamıyorsa uygun paketin yayın sayfasını kullanın; bkz. [Kurulum](install.md).
 

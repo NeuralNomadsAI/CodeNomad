@@ -34,7 +34,7 @@
 $env:CODENOMAD_PROFILE = "review"
 ```
 
-若需独立服务器配置，也请在启动前将 `CLI_CONFIG` 设为单独配置文件。默认值为 `~/.config/codenomad/config.yaml`。单独指定配置文件名不会更改该文件或共享 OpenCode 服务。
+若需独立服务器配置，也请在启动前将 `CLI_CONFIG` 设为单独配置文件。默认值为 `~/.config/codenomad/config.yaml`。仅指定桌面数据配置的名称，不会更改上述服务器配置文件或共享 OpenCode 服务。
 
 | 桌面数据配置文件隔离的内容 | 不会自动隔离的内容 |
 | --- | --- |
