@@ -100,12 +100,13 @@ async function setup(label: string, narrow = false, independent = false) {
       const supersededAt = Date.now()
       failureChecks.push(page.evaluate(() => window.missionNativeFamily?.snapshot().session).then(async activeSession => {
         if (activeSession && activeSession !== requestedSession) return navigationReadCancellations.push({ failure: message, requestedSession, activeSession })
-        if (!preview) {
-          const deadline = Date.now() + 5000
-          while (Date.now() < deadline && !outlineResponses.some(item => item.session === requestedSession && item.at >= supersededAt)) await new Promise(resolve => setTimeout(resolve, 50))
-          if (outlineResponses.some(item => item.session === requestedSession && item.at >= supersededAt))
-            return navigationReadCancellations.push({ failure: message, requestedSession, activeSession: activeSession ?? "" })
-        }
+        // timeline-previews.ts also aborts optional excerpts whenever the
+        // requested marker set changes (hover, visible window) in the same session.
+        if (preview) return navigationReadCancellations.push({ failure: message, requestedSession, activeSession: activeSession ?? "" })
+        const deadline = Date.now() + 5000
+        while (Date.now() < deadline && !outlineResponses.some(item => item.session === requestedSession && item.at >= supersededAt)) await new Promise(resolve => setTimeout(resolve, 50))
+        if (outlineResponses.some(item => item.session === requestedSession && item.at >= supersededAt))
+          return navigationReadCancellations.push({ failure: message, requestedSession, activeSession: activeSession ?? "" })
         failures.push(message)
       }).catch(() => { failures.push(message) }))
     } else failures.push(message)
