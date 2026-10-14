@@ -109,6 +109,10 @@ pub(crate) async fn check_desktop_update(
             release.version.to_string() == expected && (by_publication || release.version > current)
         })
         .timeout(Duration::from_secs(30))
+        // Stalls fail; slow but progressing downloads of large installers do not.
+        .configure_client(|client| {
+            client.connect_timeout(Duration::from_secs(30)).read_timeout(Duration::from_secs(60))
+        })
         // Windows installers terminate the process directly. The backend and
         // renderer flush already completed before PreparedUpdate::install.
         .on_before_exit(move || crate::client_state::release(&exit_app))
@@ -116,7 +120,8 @@ pub(crate) async fn check_desktop_update(
         .check().await.map_err(|e| e.to_string())?;
     match update {
         Some(mut update) => {
-            update.timeout = Some(Duration::from_secs(600));
+            // No total limit: the client's connect and read timeouts bound stalls.
+            update.timeout = None;
             let version = update.version.clone();
             *updates.checked.lock().map_err(|e| e.to_string())? = Some(update);
             Ok(CheckResult::Available { version })

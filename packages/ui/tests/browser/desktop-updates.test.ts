@@ -167,9 +167,11 @@ test("support and preview notifications check the saved feed natively", async ()
   }
 })
 
-test("a notified release without an installable manifest opens its release page", async () => {
+test("a notified release that cannot be installed in place opens its own release page", async () => {
+  // "current": not yet published with a manifest; "unsigned": this installation cannot update.
+  for (const scenario of ["current", "unsigned"])
   for (const [title, url] of [["Upgrade required", "https://example.com/release"], ["Update available", "https://example.com/preview"]]) {
-    const page = await fixture("current")
+    const page = await fixture(scenario)
     try {
       await serveMeta(page, notificationMeta("preview"))
       await page.evaluate(() => (window as any).fixture.releases())

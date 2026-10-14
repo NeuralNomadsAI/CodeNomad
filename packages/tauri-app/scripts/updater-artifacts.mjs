@@ -114,6 +114,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       output: join(packageRoot, "release-updater"), repository, tag,
     })
     if (fragment.signed && process.env.UPDATER_UPLOAD === "true") {
+      // A rebuilt tag must not keep a manifest that pairs the replaced payloads
+      // with their previous signatures; publication writes a fresh one.
+      const release = JSON.parse(execFileSync("gh", ["api", `repos/${repository}/releases/tags/${encodeURIComponent(tag)}`], { encoding: "utf8" }))
+      if (release.assets.some((asset) => asset.name === "latest.json")) {
+        execFileSync("gh", ["release", "delete-asset", tag, "latest.json", "--repo", repository, "--yes"], { stdio: "inherit" })
+      }
       for (const asset of [fragment.asset, `${fragment.asset}.sig`]) {
         execFileSync("gh", ["release", "upload", tag, join(packageRoot, "release-updater", asset), "--repo", repository, "--clobber"], { stdio: "inherit" })
       }

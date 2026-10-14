@@ -110,7 +110,7 @@ If you want the latest bleeding-edge builds (published as GitHub pre-releases), 
 npx @neuralnomads/codenomad-dev --password <your-password> --launch
 ```
 
-Choose which releases are offered in **Settings → Info → Updates → Update feed** (`server.updateFeed` in the CodeNomad config): **Stable releases** or **Previews and stable releases**. Until you choose, builds labelled `-dev-*` (including legacy `-dev-v2-*`) start on the preview feed and other builds on the stable feed. The feed only selects offered releases: changing it never switches windows, drafts, desktop data or the backend. Signed Tauri desktop installations install the release selected by the same feed after an explicit confirmation; other installations open the release page.
+Choose which releases are offered in **Settings → Info → Updates → Update feed** (`server.updateFeed` in the CodeNomad config): **Stable releases** or **Previews and stable releases**. Until you choose, builds labelled `-dev-*` (including legacy `-dev-v2-*`) start on the preview feed and other builds on the stable feed. The feed only selects offered releases: changing it never switches windows, drafts, desktop data or the backend. Signed Tauri Windows installer (NSIS), macOS app and Linux AppImage installations install the release selected by the same feed after an explicit confirmation; other installations, including Debian/RPM packages, open the release page.
 
 | Env Variable | Description |
 |-------------|-------------|

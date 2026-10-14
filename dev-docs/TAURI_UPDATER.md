@@ -78,8 +78,10 @@ whose install was accepted; another document merely checking stays silent.
 Notification history retains install actions, so an offer from an earlier check
 starts a fresh check instead of installing.
 
-The loading document has no menu listener: Get Updates opens the release page
-while the focused local window is loading or shows a backend error.
+The loading, sign-in (`/login`, `/auth/*`) and pairing documents have no menu
+listener: Get Updates opens the release page while the focused local window
+shows one of them. Every other server path serves the application, whose
+listener registers when it mounts.
 See `packages/tauri-app/vendor/README.md` for provenance.
 
 ## Build and publication
@@ -117,7 +119,13 @@ The final publication job waits for all four platform jobs, merges their receipt
 and checks the uploaded GitHub asset digests. Missing/duplicate targets, mixed
 versions or keys, partial signing, changed signatures and missing payloads fail
 publication. Only then does it generate and upload that release's `latest.json`;
-stable releases and dev prereleases each carry their own manifest.
+stable releases and dev prereleases each carry their own manifest. Before a
+platform replaces its signed payload on a rebuilt tag, staging deletes any
+existing `latest.json`, so no published manifest pairs new bytes with an old
+signature; until publication succeeds, the release is simply not installable.
+
+Downloads have connect (30 s) and read-stall (60 s) limits but no total limit,
+so slow connections can still fetch large installers.
 `tauri build` is not expected to generate that manifest. Fully unsigned builds
 produce no update manifest. Linux arm64 remains outside the existing release matrix.
 

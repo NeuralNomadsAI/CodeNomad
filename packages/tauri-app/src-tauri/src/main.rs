@@ -2481,18 +2481,20 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
 /// Delivers a menu action to the focused local window only. Untargeted JS
 /// listeners receive every event, so renderers listen on their own webview.
-/// The loading document has no menu listener, so it receives nothing.
+/// Loading, sign-in and pairing documents have no menu listener, so they receive nothing.
 fn emit_menu_action(app_handle: &AppHandle, action: &str) -> bool {
     local_windows::focused_local_window(app_handle).is_some_and(|window| {
-        !window.url().is_ok_and(|url| is_loading_document(&url))
+        !window.url().is_ok_and(|url| is_listenerless_document(&url))
             && app_handle
                 .emit_to(EventTarget::webview(window.label()), "menu:action", action)
                 .is_ok()
     })
 }
 
-fn is_loading_document(url: &url::Url) -> bool {
-    url.path() == "/loading.html"
+/// Native loading page and the server's non-application pages; the server
+/// serves the application for every other path.
+fn is_listenerless_document(url: &url::Url) -> bool {
+    matches!(url.path(), "/loading.html" | "/login" | "/remote-pair") || url.path().starts_with("/auth/")
 }
 
 /// The latest-release page omits prereleases. Without access to the saved feed,
@@ -2578,11 +2580,19 @@ mod menu_tests {
     }
 
     #[test]
-    fn menu_actions_skip_the_loading_document_on_every_platform() {
-        for loading in ["tauri://localhost/loading.html", "https://tauri.localhost/loading.html"] {
-            assert!(super::is_loading_document(&Url::parse(loading).unwrap()));
+    fn menu_actions_skip_documents_without_the_application() {
+        for page in [
+            "tauri://localhost/loading.html",
+            "https://tauri.localhost/loading.html",
+            "http://127.0.0.1:9898/login",
+            "http://127.0.0.1:9898/remote-pair",
+            "http://127.0.0.1:9898/auth/token",
+        ] {
+            assert!(super::is_listenerless_document(&Url::parse(page).unwrap()), "{page}");
         }
-        assert!(!super::is_loading_document(&Url::parse("http://127.0.0.1:9898/").unwrap()));
+        for page in ["http://127.0.0.1:9898/", "http://127.0.0.1:9898/?folder=x", "http://127.0.0.1:9898/login-help"] {
+            assert!(!super::is_listenerless_document(&Url::parse(page).unwrap()), "{page}");
+        }
     }
 
     #[test]

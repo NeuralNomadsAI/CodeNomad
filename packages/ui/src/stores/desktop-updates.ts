@@ -119,10 +119,10 @@ export async function requestDesktopUpdate(announcedRelease?: string): Promise<v
     notice?.dismiss()
     notice = undefined
     busy = false
-    if (result.status === "unsupported") {
-      await openExternalUrl(releasePage())
-    } else if (result.status === "current" && announcedRelease) {
+    if (result.status !== "available" && announcedRelease) {
       await openExternalUrl(announcedRelease)
+    } else if (result.status === "unsupported") {
+      await openExternalUrl(releasePage())
     } else if (result.status === "current") {
       notice = showToastNotification({ message: tGlobal("releases.desktop.current"), variant: "success" })
     } else {
