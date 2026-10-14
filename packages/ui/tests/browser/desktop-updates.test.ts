@@ -218,6 +218,12 @@ test("the Preferences update button installs in place, or opens the release it s
     const checks = await available.evaluate(() => (window as any).calls.filter((c: any) => c.command === "check_desktop_update"))
     assert.deepEqual(checks.map((c: any) => c.args.feed), ["preview"])
     assert.deepEqual(await openedUrls(available), [])
+    // Preferences owns the install; a failure delivered live (it kept its page) is reported once.
+    await available.getByRole("button", { name: "Install and restart" }).click()
+    await available.evaluate(() => (window as any).finishDownload())
+    await available.evaluate(() => (window as any).emitFailure())
+    await available.getByText(/The update could not be completed/).waitFor()
+    assert.equal(await available.getByText(/The update could not be completed/).count(), 1)
   } finally { await available.close() }
 
   const unsigned = await fixture("unsigned", "tauri", "preferences", meta, "?settings")

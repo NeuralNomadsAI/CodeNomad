@@ -180,6 +180,14 @@ pub(crate) fn record_failure() {
     *locked(&FAILURE_OWNER) = Some(owner);
 }
 
+/// A document that kept its page instead of reloading (Preferences declining to
+/// discard edits) cannot claim a recorded failure on mount; notify it live.
+pub(crate) fn notify_pending_failure(app: &AppHandle) {
+    if locked(&FAILURE_OWNER).is_some() {
+        let _ = app.emit("desktop-update:failed", ());
+    }
+}
+
 /// Notify live documents; the installing webview takes the failure.
 pub(crate) fn report_failure(app: &AppHandle) {
     record_failure();
