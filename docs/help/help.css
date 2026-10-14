@@ -34,6 +34,7 @@
 .search-controls input { min-inline-size: 0; flex: 1; }
 .search-controls input::-webkit-search-cancel-button { display: none; }
 .search-controls input, .search-controls button { font: inherit; color: var(--text); background: var(--canvas); border: 1px solid var(--border); border-radius: 0; min-block-size: 44px; padding: .4rem .6rem; }
+.search-controls input:focus-visible, .search-controls button:focus-visible { outline-offset: -3px; }
 .search-results { position: absolute; inset-inline: 0; inset-block-start: 100%; z-index: 4; background: var(--canvas); border: 1px solid var(--border); max-block-size: 50vh; max-block-size: 50dvh; overflow: auto; }
 .search-status { padding: .6rem; margin: 0; font-size: .875rem; }
 .search-results ul { list-style: none; margin: 0; padding: 0; }

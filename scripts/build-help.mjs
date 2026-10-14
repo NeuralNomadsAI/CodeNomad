@@ -20,7 +20,7 @@ const RESERVED_IDS = new Set(["content", "help-query", "help-results"])
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i
 
 const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char])
-const stripTags = (html) => html.replace(/<[^>]*>/g, "").replace(/&(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);/gi, (entity) => {
+const stripTags = (html) => html.replace(/<\/(?:p|div|h[1-6]|li|ul|ol|td|th|tr|table|blockquote|pre)\b[^>]*>|<(?:br|hr)\b[^>]*>/gi, " ").replace(/<[^>]*>/g, "").replace(/&(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);/gi, (entity) => {
   const named = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" }[entity.toLowerCase()]
   if (named) return named
   const code = entity[2].toLowerCase() === "x" ? parseInt(entity.slice(3, -1), 16) : Number(entity.slice(2, -1))

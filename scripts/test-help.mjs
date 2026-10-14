@@ -144,6 +144,19 @@ test("generic media is shared, H1 titles label translated navigation, and Markdo
   assert.ok(!french.includes('&amp;amp;'))
 })
 
+test("search excerpts separate table cells, list items and paragraphs without splitting inline text", async (ctx) => {
+  const { source, output } = await fixture(ctx)
+  for (const locale of LOCALES) {
+    const file = join(source, locale, "index.md")
+    await writeFile(file, (await readFile(file, "utf8")).replace("Text.", "<table><tr><th>Capability</th><th>Local desktop</th><th>Direct browser</th></tr><tr><td>账户</td><td>本地</td><td>远程</td></tr></table><ul><li>First</li><li>Second</li></ul><p>Third</p><p>Fourth<br>Fifth</p><p>in<strong>line</strong> &amp; text</p>"))
+  }
+  assert.deepEqual((await buildHelp({ content: source, output })).problems, [])
+  for (const locale of LOCALES) {
+    const entries = JSON.parse(await readFile(join(output, locale, "search-index.json"), "utf8"))
+    assert.equal(entries.find(entry => entry.href === "index.html#details").excerpt, "Capability Local desktop Direct browser 账户 本地 远程 First Second Third Fourth Fifth inline & text", locale)
+  }
+})
+
 test("English fallback is visibly marked in the selected language, and strict validation records the missing translation", async (ctx) => {
   const { source, output } = await fixture(ctx)
   await rm(join(source, "he/conversations.md"))

@@ -88,6 +88,19 @@ for (const locale of ["en", "he", "ne", "ja", "zh-Hans"]) for (const colorScheme
     await page.locator('.brand').focus()
     await page.keyboard.press('Control+k')
     assert.equal(await page.locator(':focus').getAttribute('id'), 'help-query')
+    for (const selector of ['#help-query', '.search-controls button']) {
+      const indicator = await page.locator(selector).evaluate(element => {
+        const style = getComputedStyle(element)
+        return { visible: element.matches(':focus-visible'), width: style.outlineWidth, style: style.outlineStyle, offset: style.outlineOffset, color: style.outlineColor }
+      })
+      assert.equal(indicator.visible, true)
+      assert.equal(indicator.width, '2px')
+      assert.equal(indicator.style, 'solid')
+      assert.equal(indicator.offset, '-3px', 'search focus stays inside the control, away from labels and neighbours')
+      assert.notEqual(indicator.color, 'rgba(0, 0, 0, 0)')
+      if (selector === '#help-query') await page.keyboard.press('Tab')
+    }
+    await page.keyboard.press('Shift+Tab')
     const term = (await page.locator('article h2').first().innerText()).slice(0, 3)
     await page.locator('#help-query').fill(term)
     const queryBox = await page.locator('#help-query').boundingBox()
