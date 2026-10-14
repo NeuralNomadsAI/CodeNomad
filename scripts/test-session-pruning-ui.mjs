@@ -187,10 +187,25 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     console.log("PASS: UI whole tool group deletion")
 
     const responseAction = page.getByRole("button", { name: "Remove tools and reasoning from this response", exact: true }).last()
-    await responseAction.locator('xpath=ancestor::div[contains(@class,"message-item-header-row")][1]').hover()
-    await responseAction.focus()
-    await responseAction.click()
-    await page.getByRole("dialog").getByRole("button", { name: "Remove", exact: true }).click()
+    // Header actions take pointer events only while their message is hovered or
+    // focused, and the virtualized row can be replaced while focus scrolls it
+    // into view. Activate from the keyboard only while the live button holds
+    // focus, retry transient detachment, and never press once the dialog shows.
+    const openResponseCleanup = async () => {
+      const dialog = page.getByRole("dialog")
+      for (let attempt = 1; ; attempt++) {
+        if (await dialog.isVisible()) return dialog
+        try {
+          await responseAction.focus({ timeout: 2000 })
+          if (await responseAction.evaluate(element => element === document.activeElement, null, { timeout: 2000 })) {
+            await page.keyboard.press("Enter")
+          }
+          await dialog.waitFor({ timeout: 2000 })
+          return dialog
+        } catch (error) { if (attempt >= 8) throw error }
+      }
+    }
+    await (await openResponseCleanup()).getByRole("button", { name: "Remove", exact: true }).click()
     await page.waitForFunction(ids => ids.every(id => window.fixture.snapshot().find(message => message.id === id)?.partIds.length === 0), [groupTarget.id, selected.id])
     console.log("PASS: UI response cleanup after cross-message group deletion")
 
@@ -215,11 +230,9 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
       && message.type === "assistant" && message.content.some(part => part.type === "tool"))
     assert.equal(freshTechnical.length, 2)
     await page.waitForFunction(ids => ids.every(id => window.fixture.snapshot().some(message => message.id === id && message.status === "complete")), fresh.map(message => message.id))
-    await responseAction.locator('xpath=ancestor::div[contains(@class,"message-item-header-row")][1]').hover()
-    await responseAction.focus()
-    await responseAction.click()
-    assert.match(await page.getByRole("dialog").textContent(), /Tool outputs: 4; reasoning blocks: 2/)
-    await page.getByRole("dialog").getByRole("button", { name: "Remove", exact: true }).click()
+    const freshCleanup = await openResponseCleanup()
+    assert.match(await freshCleanup.textContent(), /Tool outputs: 4; reasoning blocks: 2/)
+    await freshCleanup.getByRole("button", { name: "Remove", exact: true }).click()
     await page.waitForFunction(ids => ids.every(id => window.fixture.snapshot().find(message => message.id === id)?.partIds.length === 0), freshTechnical.map(message => message.id))
     for (const message of freshTechnical) assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: message.id })).content, [])
     console.log("PASS: UI response confirmation removes both tools and reasoning across messages")

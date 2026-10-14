@@ -7,7 +7,11 @@ import path from "node:path"
 import test from "node:test"
 import { createFamilyAuthorityIdentityFence, readFamilyAuthorityIdentity, readFamilyAuthorityIdentitySync } from "./family-authority-claim"
 
-const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], {
+// Git 2.46+ detaches automatic maintenance after commits; its late trace2
+// exit events would land in a trace the test has just cleared for a fence.
+const git = (directory: string, ...args: string[]) => execFileSync("git", [
+  "-C", directory, "-c", "maintenance.auto=false", "-c", "gc.auto=0", ...args,
+], {
   encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
 }).replace(/\r?\n$/, "")
 const gitPath = (file: string) => file.replaceAll("\\", "/")
