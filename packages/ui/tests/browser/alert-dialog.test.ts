@@ -23,41 +23,37 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-type Paint = { focused: string, accent: string[], hoverAccent: string[] }
+type Paint = { focused: string, filled: string[], ring: string[] }
 
 /**
- * Waits until the focused control (button label or "input") and the dialog buttons painted with the
- * primary accent, at rest or hovered, match `expected`, letting focus moves and transitions settle.
+ * Waits until the focused control (button label or "input"), the dialog buttons filled with the primary
+ * background and those showing the focus ring match `expected`, letting focus moves and transitions settle.
  */
-async function expectPaint(page: Page, expected: Partial<Paint>) {
+async function expectPaint(page: Page, expected: Paint) {
   const settled = await page.waitForFunction(expected => {
     const probe = document.body.appendChild(document.createElement("div"))
-    const colors: Record<string, string> = {}
-    for (const token of ["--button-primary-bg", "--button-primary-hover-bg"]) {
-      probe.style.backgroundColor = `var(${token})`
-      colors[token] = getComputedStyle(probe).backgroundColor
-    }
+    probe.style.backgroundColor = "var(--button-primary-bg)"
+    const primary = getComputedStyle(probe).backgroundColor
     probe.remove()
-    const buttons = [...document.querySelectorAll('[role="dialog"] button')]
-      .map(button => ({ label: button.textContent?.trim() ?? "", color: getComputedStyle(button).backgroundColor }))
+    const buttons = [...document.querySelectorAll('[role="dialog"] button')].map(button => {
+      const style = getComputedStyle(button)
+      return { label: button.textContent?.trim() ?? "", filled: style.backgroundColor === primary, ring: style.outlineStyle !== "none" && style.outlineWidth !== "0px" }
+    })
     const active = document.activeElement
     const paint: Paint = {
       focused: active?.tagName === "INPUT" ? "input" : active?.textContent?.trim() ?? "",
-      accent: buttons.filter(button => button.color === colors["--button-primary-bg"]).map(button => button.label),
-      hoverAccent: buttons.filter(button => button.color === colors["--button-primary-hover-bg"]).map(button => button.label),
+      filled: buttons.filter(button => button.filled).map(button => button.label),
+      ring: buttons.filter(button => button.ring).map(button => button.label),
     }
     ;(window as any).lastPaint = paint
-    return Object.entries(expected).every(([key, value]) => JSON.stringify(paint[key as keyof Paint]) === JSON.stringify(value))
+    return JSON.stringify(paint) === JSON.stringify(expected)
   }, expected, { timeout: 5000 }).then(() => true, () => false)
-  if (!settled) {
-    const actual = await page.evaluate(() => (window as any).lastPaint as Paint)
-    assert.deepEqual(actual, { ...actual, ...expected })
-  }
+  if (!settled) assert.deepEqual(await page.evaluate(() => (window as any).lastPaint as Paint), expected)
 }
 
-const expectAccentOn = (page: Page, label: string) => expectPaint(page, { focused: label, accent: [label] })
-
+/** Opens a dialog right after a mouse click, where :focus-visible would hide the initial focus. */
 async function open(page: Page, kind: "confirm" | "prompt" | "alert") {
+  await page.getByRole("button", { name: "Delete session" }).click()
   await page.evaluate(kind => (window as any).fixture[kind](), kind)
   await page.getByRole("dialog").waitFor()
   // Let any late focus move settle before checking it.
@@ -69,7 +65,7 @@ async function result(page: Page) {
   return page.evaluate(() => (window as any).confirmResult)
 }
 
-test("the confirmation accent follows focus: Cancel by default, Enter and Escape cancel, Tab then Enter confirms", async () => {
+test("alert dialogs show the focus ring on the button Enter acts on, from the initial focus", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -77,40 +73,33 @@ test("the confirmation accent follows focus: Cancel by default, Enter and Escape
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.getByRole("button", { name: "Delete session" }).click()
 
-    // The accent marks what Enter does; Cancel is the focused default.
+    // Confirm stays the filled primary action, but focus and its ring start on Cancel: Enter cancels.
     await open(page, "confirm")
-    await expectAccentOn(page, "Keep")
+    await expectPaint(page, { focused: "Keep", filled: ["Delete"], ring: ["Keep"] })
     await page.keyboard.press("Enter")
     assert.equal(await result(page), false)
 
-    // Hover darkens the focused accent; hovering the other button does not accent it.
     await open(page, "confirm")
-    await expectAccentOn(page, "Keep")
-    await page.getByRole("button", { name: "Keep", exact: true }).hover()
-    await expectPaint(page, { focused: "Keep", accent: [], hoverAccent: ["Keep"] })
-    await page.getByRole("button", { name: "Delete", exact: true }).hover()
-    await expectPaint(page, { focused: "Keep", accent: ["Keep"], hoverAccent: [] })
-    await page.mouse.move(0, 0)
+    await expectPaint(page, { focused: "Keep", filled: ["Delete"], ring: ["Keep"] })
     await page.keyboard.press("Escape")
     assert.equal(await result(page), false)
 
-    // Deleting from the keyboard stays one deliberate step away, and the accent moves with it.
+    // Deleting from the keyboard stays one deliberate step away, and the ring moves with focus.
     await open(page, "confirm")
     await page.keyboard.press("Tab")
-    await expectAccentOn(page, "Delete")
+    await expectPaint(page, { focused: "Delete", filled: ["Delete"], ring: ["Delete"] })
     await page.keyboard.press("Enter")
     assert.equal(await result(page), true)
 
-    // Prompts keep the submit accent while their input owns focus; alerts focus their accented OK.
+    // Prompts focus their input; alerts focus their single OK.
     await open(page, "prompt")
-    await expectPaint(page, { focused: "input", accent: ["Rename"] })
+    await expectPaint(page, { focused: "input", filled: ["Rename"], ring: [] })
     await page.keyboard.press("Escape")
     assert.equal(await result(page), null)
 
     await open(page, "alert")
-    await expectAccentOn(page, "OK")
+    await expectPaint(page, { focused: "OK", filled: ["OK"], ring: ["OK"] })
     await page.keyboard.press("Enter")
     await page.getByRole("dialog").waitFor({ state: "detached" })
     assert.deepEqual(errors, [])

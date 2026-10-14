@@ -1,14 +1,9 @@
-/* Confirmation actions: the accent follows keyboard focus, so it always marks
-   what Enter will do. Initial focus is Cancel (Kobalte's default), so Enter
-   never confirms a destructive action by reflex. Colors only: the buttons keep
-   their size when the accent moves. */
-.alert-dialog-actions--focus-accent > button:focus {
-  background-color: var(--button-primary-bg);
-  color: var(--button-primary-text);
-  border-color: var(--button-primary-bg);
-}
-
-.alert-dialog-actions--focus-accent > button:focus:hover:not(:disabled) {
-  background-color: var(--button-primary-hover-bg);
-  border-color: var(--button-primary-hover-bg);
+/* Alert dialogs: Enter acts on the focused button, which is not always the
+   filled primary one (confirms focus Cancel). Show the keyboard focus ring on
+   any focus, including the initial focus of a mouse-opened dialog, which
+   :focus-visible would hide. Same ring as buttons.css / utilities.css. */
+.alert-dialog button:focus {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
 }

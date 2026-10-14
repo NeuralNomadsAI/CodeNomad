@@ -124,12 +124,13 @@ const AlertDialog: Component = () => {
             <Dialog.Portal>
               <Dialog.Overlay class="modal-overlay z-[60]" />
               <Dialog.Content
-                class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl"
+                class="alert-dialog modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl"
                 tabIndex={-1}
                 onOpenAutoFocus={(event) => {
                   // Confirms keep Kobalte's default focus on Cancel, so Enter never
-                  // confirms a destructive action; their accent follows that focus.
-                  // Choice dialogs focus their last, non-destructive choice instead.
+                  // confirms a destructive action; the focus ring shows it from the
+                  // start (styles/components/alert-dialog.css). Choice dialogs focus
+                  // their last, non-destructive choice instead.
                   if (payload.type !== "choice" || !primaryButtonRef) return
                   event.preventDefault()
                   primaryButtonRef.focus()
@@ -206,9 +207,7 @@ const AlertDialog: Component = () => {
                    </Show>
 
                    <Show when={payload.type !== "choice"}>
-                   {/* Confirms accent the focused button (styles/components/alert-dialog.css);
-                       prompts keep the submit accent while the input owns focus. */}
-                   <div class={`mt-6 flex justify-end gap-3${isConfirm ? " alert-dialog-actions--focus-accent" : ""}`}>
+                   <div class="mt-6 flex justify-end gap-3">
                      {(isConfirm || isPrompt) && (
                        <button
                          type="button"
@@ -220,7 +219,7 @@ const AlertDialog: Component = () => {
                      )}
                      <button
                        type="button"
-                       class={isConfirm ? "button-secondary" : "button-primary"}
+                       class="button-primary"
                        onClick={() => dismiss(true, payload, inputValue())}
                      >
                        {confirmLabel}
