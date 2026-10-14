@@ -798,6 +798,11 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     await trigger.click()
     await panel.waitFor({ state: "hidden" })
     await trigger.focus()
+    // Without the ripple, keyboard focus is shown by the shared focus ring.
+    await page.keyboard.press("Shift+Tab")
+    await page.keyboard.press("Tab")
+    assert.equal(await trigger.evaluate(el => el === document.activeElement && el.classList.contains("Mui-focusVisible")
+      ? `${getComputedStyle(el).outlineStyle} ${getComputedStyle(el).outlineWidth}` : "not keyboard-focused"), "solid 2px")
     await page.keyboard.press("Enter")
     await panel.waitFor()
     await page.keyboard.press("Escape")

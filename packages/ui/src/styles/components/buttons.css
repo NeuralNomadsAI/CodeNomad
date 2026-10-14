@@ -1,4 +1,13 @@
 /* Button component styles */
+
+/* SUID buttons (icon buttons, switch thumbs) have no ripple theme-wide, so the ripple
+   is no longer their keyboard cue; show the shared focus ring instead. It sits inside the
+   control so header containers cannot clip it, and follows the switch thumb's radius. */
+.MuiButtonBase-root.Mui-focusVisible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
 .button-primary,
 button.button-primary {
   @apply px-3 text-sm;
