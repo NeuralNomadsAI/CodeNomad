@@ -59,6 +59,24 @@ test("explicit independent task uses frozen native ENV/IDs and remains part of p
   } finally { await f.dispose() }
 })
 
+test("stale native identity blocks only passage families, never ordinary prompts", async () => {
+  const f = await passageFixture()
+  try {
+    f.sessions.set("ses_stale", { id: "ses_stale", projectID: "stale-project", location: { directory: f.root } })
+    f.sessions.set("ses_stale_child", { id: "ses_stale_child", parentID: "ses_stale", projectID: "project", location: { directory: f.root } })
+    await prepareNativePassageSession(f.context, "ses_stale")
+    await prepareNativePassageSession(f.context, "ses_stale_child")
+    await f.start()
+    const coordinator = f.sessions.get(f.passage.coordinatorSessionID)!
+    const child = "ses_drifted_child"
+    f.sessions.set(child, { ...coordinator, id: child, parentID: coordinator.id, projectID: "stale-project" })
+    await assert.rejects(prepareNativePassageSession(f.context, child), /Passage session moved/)
+    f.sessions.set(coordinator.id, { ...coordinator, projectID: "stale-project" })
+    await assert.rejects(prepareNativePassageSession(f.context, coordinator.id), /Passage session moved/)
+    assert.deepEqual(f.counts(), { creates: 1, sends: 1, environments: 1 })
+  } finally { await f.dispose() }
+})
+
 test("restart restores real business reports from pending journal without rearming a Job or replaying a prompt", async () => {
   const f = await passageFixture()
   try {

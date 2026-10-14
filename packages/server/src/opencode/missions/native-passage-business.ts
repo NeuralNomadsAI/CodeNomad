@@ -86,15 +86,20 @@ export async function selectNativePassageBusiness(context: MissionsPluginContext
   humanGate?: NativeHumanAnswerGate): Promise<MissionBusinessRoute | undefined> {
   const seen = new Set<string>()
   let id = sessionID
+  let moved = false
   for (let depth = 0; depth <= 32; depth++) {
     if (seen.has(id)) throw new Error("Passage ancestry cycle")
     seen.add(id)
     const session = await context.session.get({ sessionID: id })
-    if (session.id !== id || session.projectID !== context.location.project.id || !sameLocation(session.location, context.location))
-      throw new Error("Passage session moved")
+    if (session.id !== id) throw new Error("Passage session moved")
+    moved ||= session.projectID !== context.location.project.id || !sameLocation(session.location, context.location)
     if (session.parentID) { id = session.parentID; continue }
     let passage = passages.get(id)
     const marker = session.metadata?.["codenomad.mission"] as { recurrence?: unknown; missionID?: unknown } | undefined
+    // Identity drift only matters to passage families; an ordinary conversation
+    // (e.g. a stale native project ID after Git repair) must stay promptable.
+    if (!passage && marker?.missionID === undefined && marker?.recurrence === undefined) return undefined
+    if (moved) throw new Error("Passage session moved")
     if (!passage && marker?.missionID !== undefined) {
       for (const candidate of passages.values()) {
         if (candidate.missionID !== marker.missionID || !sameLocation(candidate.location, context.location)) continue
