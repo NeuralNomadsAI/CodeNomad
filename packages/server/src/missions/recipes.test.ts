@@ -100,6 +100,33 @@ test("Wayfinder guidance cannot claim a human-proof gate without authoritative n
   assert.equal(recipe.roles.some(role => role.reportContract), false)
 })
 
+test("Product delivery keeps the NomadWorks gates without granting commits or human answers", () => {
+  const recipe = getMissionRecipe("delivery")
+  assert.match(recipe.coordinator, /never implement it yourself/)
+  assert.match(recipe.coordinator, /Classify every request by complexity and track before declaring tasks/)
+  assert.match(recipe.coordinator, /required for any change to product behavior or shared specifications \(tiny included\)/)
+  assert.match(recipe.coordinator, /optional only for tiny non-behavioral implementation and for investigation/)
+  assert.match(recipe.coordinator, /approval through a native Form and never answer for the human/)
+  assert.match(recipe.coordinator, /read-only tasks whose brief says no edits/)
+  assert.match(recipe.coordinator, /plus business-analyst when behavior, copy intent or requirements are affected/)
+  assert.match(recipe.coordinator, /at most one implementation task editing the shared checkout at a time/)
+  assert.match(recipe.coordinator, /every relevant check passes.*documentation impact is resolved/)
+  assert.match(recipe.coordinator, /Never stage, commit, push/)
+  assert.doesNotMatch(recipe.coordinator, /Reopen/)
+  assert.match(recipe.sequence.join("\n"), /the human owns commits/)
+  assert.deepEqual(recipe.roles.map(role => role.id), ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"])
+  for (const role of recipe.roles) {
+    assert.match(role.instructions, /pre-sync readiness review, do not edit files/, role.id)
+    assert.match(role.instructions, /Acceptance criteria coverage.*Documentation impact.*Recommended next step/, role.id)
+    assert.match(role.instructions, /Never stage, commit, push/, role.id)
+    assert.equal(role.reportContract, undefined, role.id)
+  }
+  const role = (id: string) => recipe.roles.find(candidate => candidate.id === id)!.instructions
+  assert.match(role("qa-engineer"), /skipped or disabled tests never count as passing/)
+  assert.match(role("ui-ux-designer"), /Before delivery, give design input/)
+  assert.match(role("developer"), /instead of silently expanding scope/)
+})
+
 function assertNativeWorkPolicy(text: string) {
   assert.match(text, /Each native child owns its bounded assignment and may recursively decompose it/)
   assert.match(text, /Run independent subtasks in parallel when useful/)

@@ -12,7 +12,7 @@ const templateRoles = {
 } as const
 
 describe("mission profile default normalization", () => {
-  it("accepts all three templates with their exact roles and preserves selector identities", () => {
+  it("accepts every template with its exact roles and preserves selector identities", () => {
     const input = Object.entries(templateRoles).map(([template, roles]) => ({
       template, profiles: { coordinator, roles: Object.fromEntries(roles.map(role => [role, specialist])) },
     }))

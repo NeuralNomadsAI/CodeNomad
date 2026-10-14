@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "Гибкая миссия",
   "missions.control.template.debug": "Отладка",
   "missions.control.template.wayfinder": "Исследование",
-  "missions.control.template.delivery": "Поставка продукта",
+  "missions.control.template.delivery": "Реализация продукта",
   "missions.control.status.active": "Активна",
   "missions.control.status.completed": "Завершена",
   "missions.control.status.failed": "Неудача",

@@ -207,7 +207,7 @@ export const missionMessages = {
   "missions.control.template.custom": "Flexible Mission",
   "missions.control.template.debug": "Fehlersuche",
   "missions.control.template.wayfinder": "Erkundung",
-  "missions.control.template.delivery": "Produktlieferung",
+  "missions.control.template.delivery": "Produktumsetzung",
   "missions.control.status.active": "Aktiv",
   "missions.control.status.completed": "Abgeschlossen",
   "missions.control.status.failed": "Fehlgeschlagen",

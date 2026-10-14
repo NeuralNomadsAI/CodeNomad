@@ -246,7 +246,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       assert.equal((await post({ ...payload, requestID: "wsl_schedule" })).statusCode, 200)
       assert.equal(writes, 3, "WSL duplicate is an exact read, not another native write")
     })
-    for (const template of ["debug", "wayfinder"] as const) await t.test(`recurring ${template} freezes its exact role selections`, async () => {
+    for (const template of ["debug", "wayfinder", "delivery"] as const) await t.test(`recurring ${template} freezes its exact role selections`, async () => {
       const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template]
         .map(role => [role, { ...profile, agent: "child" }])) }
       const recurring = { ...payload, requestID: `recurring_${template}`, template, profiles }
