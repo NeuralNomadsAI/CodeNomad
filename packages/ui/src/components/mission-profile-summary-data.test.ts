@@ -4,7 +4,7 @@ import { missionProfileRoles } from "../../../server/src/missions/playbook-profi
 import { groupMissionProfileSummary } from "./mission-profile-summary-data"
 
 test("all omitted/explicit native default roles form a single choice", () => {
-  for (const template of ["custom", "wayfinder", "debug"] as const) {
+  for (const template of ["custom", "wayfinder", "debug", "nomadworks"] as const) {
     assert.deepEqual(groupMissionProfileSummary(undefined, template), [{ roles: ["coordinator", ...missionProfileRoles[template]] }])
     assert.deepEqual(groupMissionProfileSummary({ coordinator: {}, roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, {}])) }, template),
       [{ roles: ["coordinator", ...missionProfileRoles[template]] }])

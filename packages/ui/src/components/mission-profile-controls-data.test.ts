@@ -41,9 +41,9 @@ test("profile edits preserve other roles and explicit template switch preserves 
   assert.deepEqual(changeMissionProfile(b, "review-standards", {}), a)
 })
 
-test("all ten locale bundles own all nineteen profile labels without English fallback", () => {
+test("all ten locale bundles own all twenty-five profile labels without English fallback", () => {
   const keys = Object.keys(en).filter(key => key.startsWith("missions.control.profiles."))
-  assert.equal(keys.length, 19)
+  assert.equal(keys.length, 25)
   const locales = { en, de, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
   for (const [locale, bundle] of Object.entries(locales)) for (const key of keys) {
     assert.ok(Object.prototype.hasOwnProperty.call(bundle, key), `${locale} owns ${key}`)

@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { MissionJsonValue, MissionReportOutcome, MissionTask, MissionTemplateId, MissionNativeBinding } from "./model"
 import { taskContractReferenceSchema, type TaskContractReference } from "./task-declaration"
 import { parseNativeBinding, sameNativeCall } from "./native-report-provenance"
+import { missionProfileRoles } from "./playbook-profiles"
 
 const nativeID = z.string().min(1).max(240).regex(/^[^\s\x00-\x1f\x7f]+$/)
 const decisionAnswer = z.union([z.string().min(1).max(20_000), z.array(z.string().min(1).max(20_000)).min(1).max(32)])
@@ -158,9 +159,9 @@ export function validateMissionDelegationPolicy(input: {
   tasks: readonly PolicyTask[]
 }): void {
   if (input.template === "custom" && !input.executionMode && input.phase !== "declaration") return
-  const roles = input.template === "debug"
+  const roles: readonly string[] = input.template === "debug"
     ? Object.keys(debugContracts)
-    : ["cartographer", "research", "prototype", "grilling", "decision"]
+    : missionProfileRoles[input.template]
   if (input.template !== "custom" && !roles.includes(input.role)) throw new Error(`${input.role} is not a ${input.template} playbook role`)
   if (input.executionMode || input.phase === "declaration") {
     const mode = input.executionMode

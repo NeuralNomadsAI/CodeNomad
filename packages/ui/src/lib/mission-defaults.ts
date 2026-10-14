@@ -5,7 +5,7 @@ export type MissionTaskMode = "native" | "independent"
 /** `all` is the global default; a mission type entry is an exception overriding it. */
 export type MissionDefaultScope = "all" | MissionTemplateId
 export interface MissionProfileDefault { template: MissionDefaultScope; profiles: MissionProfiles; taskMode?: MissionTaskMode }
-const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder"]
+const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder", "nomadworks"]
 // The global default carries one task profile, like the Flexible specialist.
 const scopeRoles = (scope: MissionDefaultScope): readonly string[] => missionProfileRoles[scope === "all" ? "custom" : scope]
 

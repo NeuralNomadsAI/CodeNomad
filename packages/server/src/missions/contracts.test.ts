@@ -76,6 +76,15 @@ test("fences fresh Debugging reviewers and implementer-session resolution withou
   }), /not a wayfinder/)
 })
 
+test("each playbook admits exactly its own declared roles", () => {
+  for (const role of ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"]) {
+    assert.doesNotThrow(() => validateMissionDelegationPolicy({ template: "nomadworks", role, tasks: [] }))
+  }
+  assert.throws(() => validateMissionDelegationPolicy({ template: "nomadworks", role: "implementer", tasks: [] }), /not a nomadworks/)
+  assert.throws(() => validateMissionDelegationPolicy({ template: "nomadworks", role: "decision", tasks: [] }), /not a nomadworks/)
+  assert.throws(() => validateMissionDelegationPolicy({ template: "wayfinder", role: "developer", tasks: [] }), /not a wayfinder/)
+})
+
 test("selects the implementer connected to Debugging review dependencies and rejects ambiguous lineage", () => {
   const tasks = [
     { key: "old-fix", role: "implementer", status: "withdrawn" as const, blockedBy: [], actorSessionId: "ses_old", replacedByTaskKey: "new-fix" },

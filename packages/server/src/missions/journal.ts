@@ -543,7 +543,7 @@ function parseLocation(input: unknown): MissionLocation | undefined {
 }
 
 function template(value: unknown): value is MissionTemplateId {
-  return value === "custom" || value === "debug" || value === "wayfinder"
+  return value === "custom" || value === "debug" || value === "wayfinder" || value === "nomadworks"
 }
 
 function delivery(value: unknown): value is "queue" | "steer" {

@@ -626,7 +626,7 @@ test("reset then a Flexible-only exception save keeps other Mission types unchan
     await ensureOptions(page)
     const template = page.getByLabel(await text(page, "missions.control.template"), { exact: true })
     assert.equal(await mode.inputValue(), "independent", "Flexible keeps its exception")
-    for (const other of ["debug", "wayfinder"]) {
+    for (const other of ["debug", "wayfinder", "nomadworks"]) {
       await template.selectOption(other)
       assert.equal(await mode.inputValue(), "native", `${other} is unchanged by a Flexible exception`)
     }

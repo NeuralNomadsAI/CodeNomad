@@ -17,6 +17,7 @@ const templateRoles = {
   custom: ["specialist"],
   debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
+  nomadworks: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
 } as const
 
 describe("strict reusable Mission model records", () => {
@@ -67,7 +68,7 @@ describe("strict reusable Mission model records", () => {
   })
 
   it("accepts every exact playbook role with independent parsed native profile selections", () => {
-    for (const template of ["custom", "debug", "wayfinder"] as const) {
+    for (const template of ["custom", "debug", "wayfinder", "nomadworks"] as const) {
       const input = model(1, {
         template, profiles: { coordinator: structuredClone(execution), roles: Object.fromEntries(templateRoles[template].map(role => [role, structuredClone(execution)])) },
       })
