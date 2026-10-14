@@ -113,6 +113,12 @@ test("Product delivery keeps the NomadWorks gates without granting commits or hu
   assert.match(recipe.coordinator, /every relevant check passes.*documentation impact is resolved/)
   assert.match(recipe.coordinator, /Never stage, commit, push/)
   assert.doesNotMatch(recipe.coordinator, /Reopen/)
+  assert.match(recipe.coordinator, /retire the task and add its replacement through mission\.revise \(replacesTaskKey\)/)
+  assert.match(recipe.coordinator, /keep its finished task and declare a follow-up whose reuseFromTaskKey names that live task/)
+  const independent = getMissionRecipe("delivery", "independent").coordinator
+  assert.match(independent, /persisted user-selected taskMode is independent/)
+  assert.doesNotMatch(independent, /Prefer ordinary native delegation/)
+  assert.match(independent, /Never stage, commit, push/)
   assert.match(recipe.sequence.join("\n"), /the human owns commits/)
   assert.deepEqual(recipe.roles.map(role => role.id), ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"])
   for (const role of recipe.roles) {
