@@ -299,6 +299,7 @@ jobs:
           packages/ui/src/lib/client-identity.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
           packages/ui/src/lib/global-cache.test.ts
+          packages/ui/src/lib/monaco/model-cache.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts

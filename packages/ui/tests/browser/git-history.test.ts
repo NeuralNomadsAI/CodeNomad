@@ -903,10 +903,11 @@ test("a reloaded diff keeps its collapsed regions and keeps its view model only 
       const { serverApi } = await import(apiPath)
       const w = window as any
       // Property assignments only: tsx wraps named functions in a page-absent __name.
+      // A BOM is one of the inputs Monaco's getValue() does not round-trip.
       w.setLongDiff = (changed: number[]) => {
         w.longDiff = {
-          before: Array.from({ length: 200 }, (_, line) => `line ${line}`).join("\n") + "\n",
-          after: Array.from({ length: 200 }, (_, line) => changed.includes(line) ? `changed ${line}` : `line ${line}`).join("\n") + "\n",
+          before: "﻿" + Array.from({ length: 200 }, (_, line) => `line ${line}`).join("\n") + "\n",
+          after: "﻿" + Array.from({ length: 200 }, (_, line) => changed.includes(line) ? `changed ${line}` : `line ${line}`).join("\n") + "\n",
         }
       }
       w.setLongDiff([100])
