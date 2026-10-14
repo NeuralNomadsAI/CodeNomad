@@ -17,7 +17,7 @@ import { setupCliIPC } from "./ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
-import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
+import { resolveApplicationTarget, resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
@@ -523,6 +523,8 @@ function runPrimary(firstIntent: LaunchIntent) {
         const mru = registry.mruRecord()?.window ?? null
         return resolveFocusedLocalTarget(focused, mru, (window) => Boolean(registry.resolve(window.webContents)))
       },
+      getApplicationTarget: () => resolveApplicationTarget(BrowserWindow.getFocusedWindow(), registry.mruRecord()?.window ?? null,
+        (window) => Boolean(registry.resolve(window.webContents))),
       getWindowTarget: () => resolveWindowTarget(BrowserWindow.getFocusedWindow(), registry.mruRecord()?.window ?? null),
       newWindow: () => { void intentQueue.enqueue({ newWindow: true, folders: [] }).catch(() => {}) },
       reload: (window) => { const record = registry.resolve(window.webContents); if (record) void record.navigation.navigate((target) => target.webContents.reload()); else window.webContents.reload() },

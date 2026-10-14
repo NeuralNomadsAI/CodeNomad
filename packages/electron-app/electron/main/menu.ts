@@ -8,6 +8,7 @@ import { openExternalWithFeedback } from "./open-external"
 interface ApplicationMenuActions {
   getLocalTarget(): BrowserWindow | null
   getWindowTarget(): BrowserWindow | null
+  getApplicationTarget?(): BrowserWindow | null
   newWindow(): void
   reload(window: BrowserWindow): void
   forceReload(window: BrowserWindow): void
@@ -73,9 +74,8 @@ function buildApplicationMenu() {
   // Labels follow the target window's UI locale; English until a renderer reports one.
   const l = nativeMenuLabels(target(true))
   builtLabels = JSON.stringify(l)
-  const sendCommand = (id: string) => () => {
-    const window = target(true)
-    if (!window) return false
+  const deliver = (window: BrowserWindow | null, id: string) => {
+    if (!window || window.isDestroyed()) return false
     const url = window.webContents.getURL()
     if (!url) return false
     const path = new URL(url).pathname
@@ -83,9 +83,10 @@ function buildApplicationMenu() {
     window.webContents.send("menu:action", id)
     return true
   }
-  // About opens Settings → Info → About in the application; documents without
-  // a menu listener (loading, sign-in, pairing) keep the native panel.
-  const showAbout = () => { if (!sendCommand("open-about")()) app.showAboutPanel() }
+  const sendCommand = (id: string) => () => deliver(target(true), id)
+  // About opens Settings → Info → About from the focused, else most recent,
+  // application window; without one able to listen, the native panel remains.
+  const showAbout = () => { if (!deliver(actions?.getApplicationTarget?.() ?? null, "open-about")) app.showAboutPanel() }
   const withTarget = (operation: (window: BrowserWindow) => void) => () => {
     const window = target(false)
     if (window) operation(window)
@@ -93,7 +94,7 @@ function buildApplicationMenu() {
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [{ label: "CodeNomad", submenu: [
-      { label: l.about, click: showAbout }, { type: "separator" as const }, { role: "hide" as const, label: l.hide },
+      { id: "app-open-about", label: l.about, click: showAbout }, { type: "separator" as const }, { role: "hide" as const, label: l.hide },
       { role: "hideOthers" as const, label: l.hideOthers }, { role: "unhide" as const, label: l.showAll },
       { type: "separator" as const }, { role: "quit" as const, label: l.quit },
     ] }] : []),
@@ -145,7 +146,7 @@ function buildApplicationMenu() {
       } },
       { label: l.getUpdates, click: () => { void shell.openExternal("https://github.com/NeuralNomadsAI/CodeNomad/releases").catch(() => {}) } },
       { type: "separator" },
-      { label: l.about, click: showAbout },
+      { id: "open-about", label: l.about, click: showAbout },
     ] },
   ]
 

@@ -3,7 +3,7 @@ const path = require("node:path")
 require("node:fs").mkdirSync(process.env.CODENOMAD_TEST_PROFILE, { recursive: true })
 app.setPath("userData", process.env.CODENOMAD_TEST_PROFILE)
 const { createApplicationMenu, setWorkspaceMenuEnabled, clearWorkspaceMenuWindow, popupTitlebarMenu } = require(process.env.CODENOMAD_TEST_MENU_MODULE)
-const { resolveFocusedLocalTarget, resolveWindowTarget } = require(path.join(path.dirname(process.env.CODENOMAD_TEST_MENU_MODULE), "menu-target.cjs"))
+const { resolveApplicationTarget, resolveFocusedLocalTarget, resolveWindowTarget } = require(path.join(path.dirname(process.env.CODENOMAD_TEST_MENU_MODULE), "menu-target.cjs"))
 
 app.whenReady().then(() => {
   const windows = [new BrowserWindow({ show: false }), new BrowserWindow({ show: false })]
@@ -23,6 +23,7 @@ app.whenReady().then(() => {
     void window.loadURL("about:blank")
   }
   createApplicationMenu({ getLocalTarget: target, getWindowTarget: () => resolveWindowTarget(focused, mru),
+    getApplicationTarget: () => resolveApplicationTarget(focused, mru, window => windows.includes(window)),
     newWindow() {}, reload() {}, forceReload() {} })
   global.menuFixture = {
     async rejectExternal() {

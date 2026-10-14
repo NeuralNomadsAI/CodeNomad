@@ -66,6 +66,13 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     await app.evaluate(() => (globalThis as any).menuFixture.focus(null))
     await app.evaluate(() => (globalThis as any).menuFixture.click("open-help"))
     assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.externalUrls), ["https://neuralnomadsai.github.io/CodeNomad/"], "preferences/remote windows use the language chooser")
+    await app.evaluate(() => (globalThis as any).menuFixture.click("open-about"))
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.actions.at(-1)), [delivery.id, "menu:action", "open-about"],
+      "About from Preferences/remote focus opens Settings → Info in the most recent application window")
+    await app.evaluate((_electron, state) => { const f = (globalThis as any).menuFixture; f.focus(1); f.set(1, state); f.focus(null) },
+      { ...makeState("fr"), menuLabels: { help: "Aide", codenomadHelp: "Aide de CodeNomad", getUpdates: "Rechercher des mises à jour…", about: "À propos de CodeNomad" } })
+    assert.deepEqual((await app.evaluate(() => (globalThis as any).menuFixture.helpLabels())).filter(Boolean),
+      ["Aide de CodeNomad", "Rechercher des mises à jour…", "À propos de CodeNomad"], "reported labels retitle the native menu")
     for (const pathname of ["/loading.html", "/login", "/remote-pair", "/auth/callback"]) {
       await app.evaluate((_electron, path) => { const f = (globalThis as any).menuFixture; f.focus(0); f.document(0, path); f.click('open-help') }, pathname)
     }
