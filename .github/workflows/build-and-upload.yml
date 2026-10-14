@@ -478,7 +478,7 @@ jobs:
       - name: Retain updater publication receipt (macOS x64)
         # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
         if: ${{ inputs.upload && inputs.tag != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: updater-${{ github.run_id }}-darwin-x86_64
           overwrite: true
@@ -576,7 +576,7 @@ jobs:
       - name: Retain updater publication receipt (macOS arm64)
         # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
         if: ${{ inputs.upload && inputs.tag != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: updater-${{ github.run_id }}-darwin-aarch64
           overwrite: true
@@ -678,7 +678,7 @@ jobs:
       - name: Retain updater publication receipt (Windows)
         # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
         if: ${{ inputs.upload && inputs.tag != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: updater-${{ github.run_id }}-windows-x86_64
           overwrite: true
@@ -946,7 +946,7 @@ jobs:
       - name: Retain updater publication receipt (Linux)
         # Only release uploads publish a manifest; PR runs keep no receipt artifacts.
         if: ${{ inputs.upload && inputs.tag != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: updater-${{ github.run_id }}-linux-x86_64
           overwrite: true
@@ -1003,13 +1003,13 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.2
         with:
           pattern: updater-${{ github.run_id }}-*
           path: updater-receipts
