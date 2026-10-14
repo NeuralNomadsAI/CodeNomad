@@ -197,9 +197,16 @@ export const InfoSettingsSection: Component = () => {
 
         <div class="settings-info-grid">
           <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.version.ui")}</span>
-            <span class="settings-info-value">{meta()?.ui?.version ?? "—"}</span>
+            <span class="settings-info-label">{t("settings.info.version.app")}</span>
+            <span class="settings-info-value" dir="ltr">{meta()?.serverVersion ?? meta()?.ui?.version ?? "—"}</span>
           </div>
+          {/* The served UI normally matches the server; show it only when it differs. */}
+          <Show when={meta()?.serverVersion && meta()?.ui?.version && meta()!.ui!.version !== meta()!.serverVersion}>
+            <div class="settings-info-row">
+              <span class="settings-info-label">{t("settings.info.version.ui")}</span>
+              <span class="settings-info-value" dir="ltr">{meta()?.ui?.version}</span>
+            </div>
+          </Show>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.version.uiSource")}</span>
             <span class="settings-info-value settings-info-value-muted">
@@ -227,121 +234,9 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-value settings-info-value-muted">{osDisplay()}</span>
           </div>
         </div>
-      </div>
 
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-heading-with-icon">
-            <Network class="settings-card-heading-icon" />
-            <div>
-              <h3 class="settings-card-title">{t("settings.info.connectivity.title")}</h3>
-              <p class="settings-card-subtitle">{t("settings.info.connectivity.subtitle")}</p>
-            </div>
-          </div>
-        </div>
-
-        <Show when={meta.loading}>
-          <div class="settings-card-message" role="status" aria-live="polite">
-            {t("remoteAccess.addresses.loading")}
-          </div>
-        </Show>
-        <Show when={metaLoadFailed()}>
-          <div class="settings-error-message" role="alert">
-            {t("settings.info.connectivity.loadFailed")}
-          </div>
-        </Show>
-        <Show when={meta()}>
-          {(serverMeta) => (
-            <>
-              <dl class="settings-info-grid">
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.version.server")}</dt>
-                  <dd class="settings-info-value" dir="ltr">{serverMeta().serverVersion ?? "—"}</dd>
-                </div>
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.server.os")}</dt>
-                  <dd class="settings-info-value" dir="ltr">{getServerOperatingSystem(serverMeta())}</dd>
-                </div>
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.server.arch")}</dt>
-                  <dd class="settings-info-value" dir="ltr">{serverMeta().system?.arch ?? "—"}</dd>
-                </div>
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("remoteAccess.sections.listeningMode.label")}</dt>
-                  <dd class="settings-info-value">
-                    {t(getDiagnosticListeningMode(serverMeta()) === "specific"
-                      ? "settings.info.connectivity.mode.specific"
-                      : getDiagnosticListeningMode(serverMeta()) === "all"
-                        ? "settings.info.connectivity.mode.all"
-                        : "settings.info.connectivity.mode.local")}
-                  </dd>
-                </div>
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.connectivity.host")}</dt>
-                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().host}</dd>
-                </div>
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.connectivity.localListener")}</dt>
-                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().localUrl}</dd>
-                </div>
-                <Show when={serverMeta().remoteUrl}>
-                  {(remoteUrl) => (
-                    <div class="settings-info-row">
-                      <dt class="settings-info-label">{t("settings.info.connectivity.remoteListener")}</dt>
-                      <dd class="settings-info-value settings-info-value-muted" dir="ltr">{remoteUrl()}</dd>
-                    </div>
-                  )}
-                </Show>
-                <div class="settings-info-row">
-                  <dt class="settings-info-label">{t("settings.info.server.root")}</dt>
-                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().workspaceRoot}</dd>
-                </div>
-              </dl>
-
-              <h4 class="settings-card-title">{t("remoteAccess.sections.addresses.label")}</h4>
-              <Show when={getDiagnosticAddresses(serverMeta()).length > 0} fallback={<div class="settings-card-message">{t("remoteAccess.addresses.none")}</div>}>
-                <dl class="settings-info-grid">
-                  <For each={getDiagnosticAddresses(serverMeta())}>{(address) => (
-                    <div class="settings-info-row">
-                      <dt class="settings-info-label">
-                        {address.family.toUpperCase()} · {t(address.scope === "external"
-                          ? "remoteAccess.address.scope.network"
-                          : address.scope === "internal"
-                            ? "remoteAccess.address.scope.internal"
-                            : "remoteAccess.address.scope.loopback")}
-                      </dt>
-                      <dd class="settings-info-value settings-info-value-muted" dir="ltr">{address.remoteUrl}</dd>
-                    </div>
-                  )}</For>
-                </dl>
-              </Show>
-              <p class="settings-help-text">{t("settings.info.connectivity.disclaimer")}</p>
-
-              <Show when={canOpenRemoteWindows()}>
-                <div class="settings-info-actions">
-                  <button type="button" class="settings-pill-button" onClick={() => openSettings("remote")}>
-                    {t("settings.nav.remote")}
-                  </button>
-                </div>
-              </Show>
-            </>
-          )}
-        </Show>
-      </div>
-
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div>
-            <h3 class="settings-card-title">{t("settings.info.updates.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.info.updates.subtitle")}</p>
-          </div>
-        </div>
-
+        <h4 class="settings-card-title">{t("settings.info.updates.title")}</h4>
         <div class="settings-info-grid">
-          <div class="settings-info-row">
-            <span class="settings-info-label">{t("settings.info.version.server")}</span>
-            <span class="settings-info-value">{meta()?.serverVersion ?? "—"}</span>
-          </div>
           <div class="settings-info-row">
             <label class="settings-info-label" for="settings-update-feed">{t("settings.info.updates.feed")}</label>
             <select
@@ -449,6 +344,102 @@ export const InfoSettingsSection: Component = () => {
           </div>
         )}
       </div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-heading-with-icon">
+            <Network class="settings-card-heading-icon" />
+            <div>
+              <h3 class="settings-card-title">{t("settings.info.connectivity.title")}</h3>
+              <p class="settings-card-subtitle">{t("settings.info.connectivity.subtitle")}</p>
+            </div>
+          </div>
+        </div>
+
+        <Show when={meta.loading}>
+          <div class="settings-card-message" role="status" aria-live="polite">
+            {t("remoteAccess.addresses.loading")}
+          </div>
+        </Show>
+        <Show when={metaLoadFailed()}>
+          <div class="settings-error-message" role="alert">
+            {t("settings.info.connectivity.loadFailed")}
+          </div>
+        </Show>
+        <Show when={meta()}>
+          {(serverMeta) => (
+            <>
+              <dl class="settings-info-grid">
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.os")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{getServerOperatingSystem(serverMeta())}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.arch")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{serverMeta().system?.arch ?? "—"}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("remoteAccess.sections.listeningMode.label")}</dt>
+                  <dd class="settings-info-value">
+                    {t(getDiagnosticListeningMode(serverMeta()) === "specific"
+                      ? "settings.info.connectivity.mode.specific"
+                      : getDiagnosticListeningMode(serverMeta()) === "all"
+                        ? "settings.info.connectivity.mode.all"
+                        : "settings.info.connectivity.mode.local")}
+                  </dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.connectivity.host")}</dt>
+                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().host}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.connectivity.localListener")}</dt>
+                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().localUrl}</dd>
+                </div>
+                <Show when={serverMeta().remoteUrl}>
+                  {(remoteUrl) => (
+                    <div class="settings-info-row">
+                      <dt class="settings-info-label">{t("settings.info.connectivity.remoteListener")}</dt>
+                      <dd class="settings-info-value settings-info-value-muted" dir="ltr">{remoteUrl()}</dd>
+                    </div>
+                  )}
+                </Show>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.root")}</dt>
+                  <dd class="settings-info-value settings-info-value-muted" dir="ltr">{serverMeta().workspaceRoot}</dd>
+                </div>
+              </dl>
+
+              <h4 class="settings-card-title">{t("remoteAccess.sections.addresses.label")}</h4>
+              <Show when={getDiagnosticAddresses(serverMeta()).length > 0} fallback={<div class="settings-card-message">{t("remoteAccess.addresses.none")}</div>}>
+                <dl class="settings-info-grid">
+                  <For each={getDiagnosticAddresses(serverMeta())}>{(address) => (
+                    <div class="settings-info-row">
+                      <dt class="settings-info-label">
+                        {address.family.toUpperCase()} · {t(address.scope === "external"
+                          ? "remoteAccess.address.scope.network"
+                          : address.scope === "internal"
+                            ? "remoteAccess.address.scope.internal"
+                            : "remoteAccess.address.scope.loopback")}
+                      </dt>
+                      <dd class="settings-info-value settings-info-value-muted" dir="ltr">{address.remoteUrl}</dd>
+                    </div>
+                  )}</For>
+                </dl>
+              </Show>
+              <p class="settings-help-text">{t("settings.info.connectivity.disclaimer")}</p>
+
+              <Show when={canOpenRemoteWindows()}>
+                <div class="settings-info-actions">
+                  <button type="button" class="settings-pill-button" onClick={() => openSettings("remote")}>
+                    {t("settings.nav.remote")}
+                  </button>
+                </div>
+              </Show>
+            </>
+          )}
+        </Show>
+      </div>
+
     </div>
   )
 }

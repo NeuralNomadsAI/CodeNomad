@@ -232,6 +232,32 @@ test("client hints name the Windows release and architecture in Info and the bug
   } finally { await page.close() }
 })
 
+test("About carries the single version and updates, with the network card last", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1800 } })
+  await setup(page, "tauri")
+  let ui = { version: "0.20.0", source: "bundled" }
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? { ...baseMeta, ui, updateFeed: "stable" } : {}) }))
+  try {
+    await page.goto(url)
+    await rowValue(page, "Version").waitFor()
+    const titles = await page.locator(".settings-section-stack > .settings-card h3.settings-card-title").allInnerTexts()
+    assert.deepEqual(titles, ["About", "Diagnostics", "CodeNomad server connectivity"])
+    const about = page.locator(".settings-section-stack > .settings-card").first()
+    assert.equal(await about.getByRole("heading", { name: "Updates", exact: true }).count(), 1)
+    assert.equal(await about.getByLabel("Update feed", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("0.20.0", { exact: true }).count(), 1, "the version is shown once")
+    assert.equal(await page.getByText("UI version", { exact: true }).count(), 0)
+    // A differing served UI is the only reason to show a second version.
+    ui = { version: "0.20.1-dev", source: "downloaded" }
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    await rowValue(page, "UI version").waitFor()
+    assert.equal(await rowValue(page, "UI version").innerText(), "0.20.1-dev")
+    assert.equal(await rowValue(page, "Version").innerText(), "0.20.0")
+    if (process.env.CODENOMAD_INFO_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_INFO_CAPTURE, fullPage: true })
+  } finally { await page.close() }
+})
+
 test("older or unreachable servers never borrow the client platform", async () => {
   const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
   await setup(page, "web")
