@@ -790,19 +790,12 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     await panel.waitFor()
     await page.locator("#outside").click()
     assert.equal(await panel.isVisible(), true)
-    // Header toggles have no Material ripple (theme default), so pressing them
-    // never animates and nothing can replay window autofocus afterwards.
-    assert.equal(await page.locator(`button[aria-controls="${id}"] .MuiTouchRipple-root`).count(), 0)
-    await page.waitForTimeout(600)
+    // The toggle's blur ripple must finish without replaying window autofocus.
+    await page.waitForFunction(id => !document.querySelector(`button[aria-controls="${id}"] .MuiTouchRipple-ripple`), id)
     assert.equal(await page.locator("#outside").evaluate(el => el === document.activeElement), true)
     await trigger.click()
     await panel.waitFor({ state: "hidden" })
     await trigger.focus()
-    // Without the ripple, keyboard focus is shown by the shared focus ring.
-    await page.keyboard.press("Shift+Tab")
-    await page.keyboard.press("Tab")
-    assert.equal(await trigger.evaluate(el => el === document.activeElement && el.classList.contains("Mui-focusVisible")
-      ? `${getComputedStyle(el).outlineStyle} ${getComputedStyle(el).outlineWidth}` : "not keyboard-focused"), "solid 2px")
     await page.keyboard.press("Enter")
     await panel.waitFor()
     await page.keyboard.press("Escape")

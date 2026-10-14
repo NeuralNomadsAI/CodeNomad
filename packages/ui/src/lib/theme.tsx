@@ -148,9 +148,9 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         borderRadius: 0,
       },
       components: {
-        // No Material ripple: MUI icon buttons behave like the app's plain buttons
-        // (hover and focus cues only, no expanding wave on press).
-        MuiButtonBase: { defaultProps: { disableRipple: true } },
+        // No press ripple: pointer and touch presses do not animate, like the Message
+        // content trigger. The keyboard focus ripple stays as the focus-visible cue.
+        MuiButtonBase: { defaultProps: { disableTouchRipple: true } },
         MuiIconButton: {
           styleOverrides: {
             root: {
