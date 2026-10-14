@@ -559,6 +559,8 @@ pub(crate) fn preferences_resolve_transition(
         state.pending_transition.take().map(|pending| pending.1)
     };
     if !approved {
+        // The kept page still owns an update it started; report its failure now.
+        crate::desktop_updater::notify_preferences_failure(&app);
         return Ok(());
     }
     match transition {

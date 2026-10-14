@@ -297,6 +297,19 @@ pub(crate) fn focused_local_window(app: &AppHandle) -> Option<Webview> {
     app.get_webview(&label)
 }
 
+/// The update flow lives in application windows. Preferences and remote windows
+/// hand it to the most recently used application window instead of skipping it.
+fn select_update_label(focused: Option<&str>, mru: Option<&str>) -> Option<String> {
+    select_local_label(focused, mru).or_else(|| select_local_label(None, mru))
+}
+
+pub(crate) fn update_flow_window(app: &AppHandle) -> Option<Webview> {
+    let focused = focused_window(app);
+    let mru = app.state::<LocalWindows>().mru_label();
+    let label = select_update_label(focused.as_ref().map(Webview::label), mru.as_deref())?;
+    app.get_webview(&label)
+}
+
 pub(crate) fn targeted_window(app: &AppHandle) -> Option<Webview> {
     focused_window(app).or_else(|| {
         app.state::<LocalWindows>()

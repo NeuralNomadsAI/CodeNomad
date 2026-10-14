@@ -689,6 +689,7 @@ export const settingsMessages = {
   "settings.info.updates.subtitle": "CodeNomad'ın yeni sürümlerini kontrol edin.",
   "settings.info.updates.latest": "En son sürüm",
   "settings.info.updates.download": "Güncellemeyi indir",
+  "settings.info.updates.install": "Güncellemeyi yükle",
   "settings.info.updates.refresh": "Yenile",
   "settings.info.updates.feed": "Güncelleme akışı",
   "settings.info.updates.feed.stable": "Kararlı sürümler",

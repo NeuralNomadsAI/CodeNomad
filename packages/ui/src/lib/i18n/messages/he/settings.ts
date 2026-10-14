@@ -713,6 +713,7 @@ export const settingsMessages = {
   "settings.info.updates.subtitle": "בדוק אם יש גרסאות חדשות של CodeNomad.",
   "settings.info.updates.latest": "הגרסה האחרונה",
   "settings.info.updates.download": "הורד עדכון",
+  "settings.info.updates.install": "התקן עדכון",
   "settings.info.updates.refresh": "רענן",
   "settings.info.updates.feed": "ערוץ עדכונים",
   "settings.info.updates.feed.stable": "גרסאות יציבות",

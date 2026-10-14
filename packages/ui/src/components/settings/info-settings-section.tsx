@@ -6,6 +6,8 @@ import { getServerMeta } from "../../lib/server-meta"
 import { canOpenRemoteWindows, runtimeEnv } from "../../lib/runtime-env"
 import { openSettings } from "../../stores/settings-screen"
 import { setUpdateFeed } from "../../stores/preferences"
+import { requestDesktopUpdate } from "../../stores/desktop-updates"
+import { supportsDesktopUpdateChecks } from "../../lib/native/updates"
 import type { UpdateFeed } from "../../../../server/src/api-types"
 import { openExternalUrl } from "../../lib/external-url"
 import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
@@ -434,14 +436,28 @@ export const InfoSettingsSection: Component = () => {
 
         <div class="settings-info-actions">
           {showDownloadLink().show && (
-            <a
-              href={showDownloadLink().url!}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="settings-pill-button"
+            <Show
+              when={supportsDesktopUpdateChecks()}
+              fallback={
+                <a
+                  href={showDownloadLink().url!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="settings-pill-button"
+                >
+                  {t("settings.info.updates.download")}
+                </a>
+              }
             >
-              {t("settings.info.updates.download")}
-            </a>
+              {/* Installs in place when this build can; otherwise opens the same release page. */}
+              <button
+                type="button"
+                class="settings-pill-button"
+                onClick={() => void requestDesktopUpdate(showDownloadLink().url!)}
+              >
+                {t("settings.info.updates.install")}
+              </button>
+            </Show>
           )}
           <button
             type="button"

@@ -713,6 +713,7 @@ export const settingsMessages = {
   "settings.info.updates.subtitle": "检查 CodeNomad 的新版本。",
   "settings.info.updates.latest": "最新版本",
   "settings.info.updates.download": "下载更新",
+  "settings.info.updates.install": "安装更新",
   "settings.info.updates.refresh": "刷新",
   "settings.info.updates.feed": "更新通道",
   "settings.info.updates.feed.stable": "稳定版",
