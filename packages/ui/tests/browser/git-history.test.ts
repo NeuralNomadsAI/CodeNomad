@@ -792,6 +792,10 @@ test("central diff inserts local lines and revision-qualified history into the r
     const editor = (await page.locator(".git-diff-view .monaco-diff-editor").elementHandle())!
     const diffReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length)
     const readsBefore = await diffReads()
+    const monacoPath = "/src/lib/monaco/setup.ts"
+    // A new diff view model would re-collapse regions the reader expanded.
+    await page.evaluate(async path => { (window as any).diffModelBeforeReopen = (await (await import(path)).loadMonaco()).editor.getDiffEditors()
+      .map((candidate: any) => candidate.getModel()) }, monacoPath)
     await page.evaluate(async () => {
       const storePath = "/src/stores/files-preview.ts"
       const { getFilePreview, openFilePreview } = await import(storePath)
@@ -799,6 +803,11 @@ test("central diff inserts local lines and revision-qualified history into the r
     })
     await page.waitForFunction(count => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length > count, readsBefore)
     assert.equal(await editor.evaluate(element => element.isConnected), true, "a refreshed identical target reloads in place")
+    assert.equal(await page.evaluate(async path => {
+      const current = (await (await import(path)).loadMonaco()).editor.getDiffEditors().map((candidate: any) => candidate.getModel())
+      const before = (window as any).diffModelBeforeReopen as unknown[]
+      return current.length === before.length && current.every((model: unknown, index: number) => model === before[index])
+    }, monacoPath), true, "a reload of the shown file keeps the diff view model and its expanded regions")
     const insert = page.getByRole("button", { name: "Ajouter au prompt", exact: true })
     await insert.click()
     assert.match(await composer.inputValue(), /Conserver ce brouillon/)

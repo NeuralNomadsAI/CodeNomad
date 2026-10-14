@@ -380,7 +380,11 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
     const original = getOrCreateTextModel({ monaco, cacheKey: beforeKey, value: before, languageId })
     const modified = getOrCreateTextModel({ monaco, cacheKey: afterKey, value: after, languageId })
-    diffEditor.setModel({ original, modified })
+    // Changed text already reached the cached models. Setting the same models
+    // again would build a new diff view model and re-collapse regions the
+    // reader expanded, so a refresh of the shown file keeps the current one.
+    const current = diffEditor.getModel?.()
+    if (current?.original !== original || current?.modified !== modified) diffEditor.setModel({ original, modified })
 
     void ensureMonacoLanguageLoaded(languageId).then(() => {
       try {
