@@ -509,7 +509,8 @@ uses only the authenticated connection's fixed
 `POST /api/rpc/codenomad.pending-requests/snapshot?location[directory]=<root>` with
 `{ "input": { "directories": [...] } }`. The root comes from the established
 workspace's owned native Location, never startup environment or a submitted
-candidate. The broker validates requested directories/common-repository identity,
+candidate. The broker validates requested directories against workspace-manager
+ownership (each candidate's own repository unchanged across the native read),
 native execution-host origin, full coverage and every returned placement,
 including cold/empty authority and WSL translations/aliases. Legacy workspace
 identities are rejected rather than erased. Workspace/connection replacement,
