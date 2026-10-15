@@ -324,13 +324,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // Virtua's imperative operations and smooth scrolls land later, at no known offset.
     const synchronous = op.type === "dom" || (op.type === "native" && op.behavior !== "smooth") || (op.type === "offset" && !handle)
     const to = synchronous ? element.scrollTop : undefined
-    // Still perform every operation and its bookkeeping, but omit duplicate/no-op diagnostics.
-    if (to !== undefined && Math.abs(to - traced.from) < 1) return
+    // A no-op still opens a programmatic window, so it takes the attribution;
+    // only its duplicate diagnostic line is omitted.
     if (op.type !== "release") {
       if (element.dataset.scrollWrite !== reason) element.dataset.scrollWrite = reason
       lastTracedWrite = reason
       lastTracedLanding = to
     }
+    if (to !== undefined && Math.abs(to - traced.from) < 1) return
     const index = op.type === "index" ? op.index : undefined
     const item = index === undefined ? undefined : untrack(virtualItems)[index]
     trace("write", {
@@ -346,7 +347,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     })
   }
 
-  /** Callers check `isScrollTraceEnabled()` first. */
+  /** Callers check `scrollTraceEnabled()` first. */
   function trace(kind: ScrollTraceKind, entry: ScrollTraceEntry) {
     traceScroll(kind, { ...entry, session: untrack(() => props.resetKey?.()), at: Math.round(performance.now()) })
   }
