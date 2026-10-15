@@ -139,7 +139,7 @@ function collectScrollTrace(page: Page) {
   return { entries, enable: () => page.evaluate(() => (window as any).codenomadLogger.enableLogger("scroll")) }
 }
 
-test("the scroll trace attributes every transcript write to a closed reason", async () => {
+test("the scroll trace emits coherent labelled writes and detects unclaimed movement", async () => {
   await open(async page => {
     const trace = collectScrollTrace(page)
     const stream = page.locator(".message-stream")
@@ -152,6 +152,12 @@ test("the scroll trace attributes every transcript write to a closed reason", as
     await page.mouse.wheel(0, -800)
     await frames(page, 45)
     assert.equal(await stream.getAttribute("data-follow-mode"), "escaped")
+    const unlabelledStart = trace.entries.length
+    const unlabelledOffset = await stream.evaluate(el => { el.scrollTop -= 40; return el.scrollTop })
+    await frames(page, 4)
+    const unlabelled = trace.entries.slice(unlabelledStart)
+    assert.ok(!unlabelled.some(entry => entry.kind === "write"), "An injected outside write must not invent a labelled write")
+    assert.ok(unlabelled.some(entry => entry.kind === "observe" && entry.owner === "unowned" && Math.abs(entry.to - unlabelledOffset) < 1), "An unlabelled writer must be visible as unowned")
     await stream.focus()
     await page.keyboard.press("End")
     await frames(page, 30)
@@ -166,9 +172,13 @@ test("the scroll trace attributes every transcript write to a closed reason", as
     assert.ok(writes.length > 0, "The scenario writes the transcript position")
     for (const write of writes) {
       assert.ok((SCROLL_REASONS as readonly string[]).includes(write.reason), `Unlabelled write: ${JSON.stringify(write)}`)
-      assert.ok(["offset", "dom", "native", "index", "release"].includes(write.op), JSON.stringify(write))
       assert.equal(write.session, "browser-session")
       assert.equal(typeof write.from, "number")
+      if (write.to !== undefined) assert.ok(Math.abs(write.to - write.from) >= 1, `Synchronous no-op noise: ${JSON.stringify(write)}`)
+      else {
+        assert.equal(typeof write.now, "number", JSON.stringify(write))
+        assert.notEqual(write.target, undefined, "An asynchronous request reports a target, not a pre-landing destination")
+      }
     }
     const reasons = new Set(writes.map(write => write.reason))
     for (const reason of ["jump-bottom", "content-grew", "explicit-pin"]) assert.ok(reasons.has(reason), `Missing ${reason}: ${[...reasons]}`)
@@ -179,7 +189,59 @@ test("the scroll trace attributes every transcript write to a closed reason", as
     const live = page.locator(".message-stream")
     assert.equal(await live.getAttribute("data-scroll-write"), writes.at(-1)!.reason)
     assert.equal(await live.getAttribute("data-follow-mode"), (await readerState(page)).followModeType)
+    const disabledStart = trace.entries.length
+    await page.evaluate(() => (window as any).codenomadLogger.disableLogger("scroll"))
+    await live.hover()
+    await page.mouse.wheel(0, -80)
+    await frames(page, 8)
+    await live.focus()
+    await page.keyboard.press("End")
+    await frames(page, 30)
+    assert.equal(await live.getAttribute("data-scroll-write"), null, "Disabling clears diagnostic DOM state on the next action")
+    assert.deepEqual(trace.entries.slice(disabledStart), [], "No writes, observations or modes are logged after disabling")
   })
+})
+
+test("Virtua releases do not claim a wheel's movement or replace its preceding write", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.nearTail())
+    await frames(page, 30)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    const trace = collectScrollTrace(page)
+    await trace.enable()
+    await page.mouse.wheel(0, -80)
+    await frames(page, 8)
+    assert.ok(trace.entries.some(entry => entry.kind === "write" && entry.reason === "cancel-virtua"), "The wheel releases the earlier imperative index request")
+    assert.ok(trace.entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.intent === "up"), "The wheel belongs to the user, not its release")
+    assert.equal(await stream.getAttribute("data-scroll-write"), null, "A release without a traced position write cannot publish an attribution")
+
+    const start = trace.entries.length
+    const moved = await page.evaluate(() => new Promise<{ at: number; offset: number; reason?: string }>(resolve => {
+      const w = window as any
+      w.fixture.align()
+      w.fixture.roll()
+      // Run after the rolling-window release in the same RAF batch. This is the
+      // routing layer's scrollBy leg of the still-fresh upward wheel, without a
+      // second wheel event that would clear the programmatic window first.
+      queueMicrotask(() => requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!
+        const reason = el.dataset.scrollWrite
+        el.scrollBy({ top: -80, behavior: "instant" })
+        el.dispatchEvent(new Event("scroll"))
+        resolve({ at: Math.round(performance.now()), offset: el.scrollTop, reason })
+      }))
+    }))
+    await frames(page, 4)
+    const entries = trace.entries.slice(start)
+    const release = entries.find(entry => entry.kind === "write" && entry.reason === "window-shift")
+    const preceding = entries.find(entry => entry.kind === "write" && entry.reason === "align-element")
+    assert.ok(release && preceding, JSON.stringify(entries))
+    assert.ok(moved.at - preceding.at < 120, "The displacement must occur during the preceding programmatic window")
+    assert.equal(moved.reason, "align-element", "A window release preserves the preceding position-write reason")
+    assert.ok(entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.during === "align-element" && entry.intent === "up" && Math.abs(entry.to - moved.offset) < 1), JSON.stringify(entries))
+    assert.ok(!entries.some(entry => entry.kind === "observe" && ["cancel-virtua", "window-shift"].includes(entry.owner)), "A release never owns an observation")
+  }, { name: "list" })
 })
 
 // A gesture's predicted landing (its amplitude) must not overshoot the real

@@ -24,6 +24,10 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
   follow: () => { api?.scrollToBottom({ immediate: true }); api?.setAutoScroll(true) },
   middle: () => api?.scrollToKey("row-100", { block: "start" }),
   nearTail: () => api?.scrollToKey("row-180", { block: "start" }),
+  align: () => {
+    const row = api?.getScrollElement()?.querySelector<HTMLElement>('[data-virtual-follow-key="row-180"]')
+    if (row) api?.alignElement(row, 8)
+  },
   roll: () => {
     setItems(current => [...current.slice(1), "streaming-tail"])
     // Metadata/inbox reprojection may publish the same IDs before settlement.

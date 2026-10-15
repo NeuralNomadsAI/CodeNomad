@@ -26,15 +26,16 @@ export const SCROLL_REASONS = [
 export type ScrollReason = typeof SCROLL_REASONS[number]
 
 export type ScrollTraceKind = "write" | "observe" | "mode"
+export type ScrollTraceEntry = { reason?: ScrollReason; source?: ScrollReason } & Record<string, unknown>
 
 const log = getLogger("scroll")
 
-/** Zero cost while disabled: callers must check this before reading layout or building an entry. */
+/** Gate diagnostic layout reads and entry allocation; scroll operation objects still exist when disabled. */
 export function isScrollTraceEnabled() {
   return log.enabled
 }
 
 /** One JSON line per entry so console captures (DevTools, `codenomad.inspect`, tests) stay parseable. */
-export function traceScroll(kind: ScrollTraceKind, entry: object) {
+export function traceScroll(kind: ScrollTraceKind, entry: ScrollTraceEntry) {
   log.log(`${kind} %j`, entry)
 }

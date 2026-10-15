@@ -4,7 +4,7 @@ import { attachScrollGestureRouting, getElementZoom, POINTER_CONTROL_SELECTOR, w
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
-import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceKind } from "./virtual-scroll-trace"
+import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -204,7 +204,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   /** The only follow-mode write; `source` labels the transition and any scroll it causes. */
   function syncControllerResult(result: ScrollControllerResult, source: ScrollReason) {
-    if (isScrollTraceEnabled()) {
+    if (scrollTraceEnabled()) {
       const from = untrack(followMode).type
       if (from !== result.state.mode.type) trace("mode", { from, to: result.state.mode.type, source })
     }
@@ -227,9 +227,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     switch (effect.type) {
       case "none":
         return
-      case "scroll-top": return performScrollToTop(effect.immediate)
+      case "scroll-top": return performScrollToTop(effect.immediate, source)
       case "scroll-bottom": return performScrollToBottom(effect.immediate, source)
-      case "scroll-key": return performScrollToKey(effect.key, { block: effect.block, smooth: effect.smooth })
+      case "scroll-key": return performScrollToKey(effect.key, { block: effect.block, smooth: effect.smooth }, source)
     }
   }
 
@@ -269,6 +269,17 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     return performance.now() <= programmaticScrollUntil
   }
 
+  function scrollTraceEnabled() {
+    if (isScrollTraceEnabled()) return true
+    // Lazy cleanup on the next list action/observation: no polling or layout read.
+    if (lastTracedWrite !== undefined) {
+      scrollElement()?.removeAttribute("data-scroll-write")
+      lastTracedWrite = undefined
+      lastTracedLanding = undefined
+    }
+    return false
+  }
+
   /**
    * The single transcript position write. Every op except a Virtua release
    * opens the programmatic window that tells writes from gestures; synchronous
@@ -279,7 +290,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function writeScroll(reason: ScrollReason, op: ScrollWriteOp) {
     const element = scrollElement()
     const handle = virtuaHandle()
-    const traced = isScrollTraceEnabled() && element
+    const traced = scrollTraceEnabled() && element
       ? { from: element.scrollTop, scrollHeight: element.scrollHeight }
       : undefined
     if (op.type === "release") {
@@ -309,26 +320,34 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
     }
     if (!traced || !element) return
-    if (element.dataset.scrollWrite !== reason) element.dataset.scrollWrite = reason
-    lastTracedWrite = reason
+    if (!handle && (op.type === "index" || op.type === "release")) return
     // Virtua's imperative operations and smooth scrolls land later, at no known offset.
     const synchronous = op.type === "dom" || (op.type === "native" && op.behavior !== "smooth") || (op.type === "offset" && !handle)
-    lastTracedLanding = synchronous ? element.scrollTop : undefined
+    const to = synchronous ? element.scrollTop : undefined
+    // Still perform every operation and its bookkeeping, but omit duplicate/no-op diagnostics.
+    if (to !== undefined && Math.abs(to - traced.from) < 1) return
+    if (op.type !== "release") {
+      if (element.dataset.scrollWrite !== reason) element.dataset.scrollWrite = reason
+      lastTracedWrite = reason
+      lastTracedLanding = to
+    }
     const index = op.type === "index" ? op.index : undefined
     const item = index === undefined ? undefined : untrack(virtualItems)[index]
     trace("write", {
       reason,
       op: op.type,
       from: traced.from,
-      to: lastTracedLanding ?? element.scrollTop,
-      target: "top" in op ? op.top : item === undefined ? undefined : props.getKey(item, index!),
+      to,
+      now: synchronous ? undefined : element.scrollTop,
+      target: "top" in op ? op.top : op.type === "index" ? item === undefined ? index : props.getKey(item, index!) : { delta: 0 },
+      handle: Boolean(handle),
       scrollHeight: traced.scrollHeight,
       mode: untrack(followMode).type,
     })
   }
 
   /** Callers check `isScrollTraceEnabled()` first. */
-  function trace(kind: ScrollTraceKind, entry: Record<string, unknown>) {
+  function trace(kind: ScrollTraceKind, entry: ScrollTraceEntry) {
     traceScroll(kind, { ...entry, session: untrack(() => props.resetKey?.()), at: Math.round(performance.now()) })
   }
 
@@ -414,16 +433,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     requestAnimationFrame(() => pinDomBottomAfterLayout(reason, remainingFrames - 1))
   }
 
-  function performScrollToTop(immediate = true) {
-    writeScroll("jump-top", immediate ? { type: "offset", top: 0 } : { type: "native", top: 0, behavior: "smooth", record: false })
+  function performScrollToTop(immediate: boolean, source: ScrollReason) {
+    writeScroll(source, immediate ? { type: "offset", top: 0 } : { type: "native", top: 0, behavior: "smooth", record: false })
   }
 
-  function performScrollToKey(key: string, opts: { block: ScrollLogicalPosition; smooth: boolean }) {
+  function performScrollToKey(key: string, opts: { block: ScrollLogicalPosition; smooth: boolean }, source: ScrollReason) {
     const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return
     // Large smooth jumps over dynamically measured items can leave Virtua's
     // mounted range behind the viewport. Semantic navigation must land first.
-    writeScroll("jump-key", { type: "index", index, align: opts.block, smooth: false })
+    writeScroll(source, { type: "index", index, align: opts.block, smooth: false })
   }
 
   function updateScrollStateFromDom() {
@@ -443,7 +462,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       scrollController.setUserIntent(offset < previous.lastObservedOffset ? "up" : offset > previous.lastObservedOffset ? "down" : previous.userIntentDirection, now + USER_SCROLL_INTENT_WINDOW_MS)
     }
     const programmatic = hasProgrammaticScrollIntent()
-    if (isScrollTraceEnabled()) traceObservation(offset, metrics.scrollHeight, programmatic, now)
+    if (scrollTraceEnabled()) traceObservation(offset, metrics.scrollHeight, programmatic, now)
     const observed = scrollController.observeViewport(metrics, now, programmatic)
     const result = nativeScrollbarDragging ? scrollController.setFollow(false) : observed
     const restoring = result.state.restoring

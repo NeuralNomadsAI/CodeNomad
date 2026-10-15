@@ -67,7 +67,7 @@ export function revealSearchRange(range: Range): void {
     if (vertical && (rect.top < top || rect.bottom > top + parent.clientHeight)) {
       const from = isScrollTraceEnabled() ? parent.scrollTop : undefined
       parent.scrollTop += (rect.top + rect.bottom) / 2 - top - parent.clientHeight / 2
-      if (from !== undefined) traceScroll("write", {
+      if (from !== undefined && Math.abs(parent.scrollTop - from) >= 1) traceScroll("write", {
         reason: "search-reveal", writer: "external", from, to: parent.scrollTop,
         mode: parent.dataset.followMode, transcript: parent.classList.contains("message-stream"),
         key: node.parentElement?.closest<HTMLElement>("[data-virtual-follow-key]")?.dataset.virtualFollowKey,

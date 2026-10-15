@@ -111,7 +111,7 @@ also account for off-window messages, not just the local scroll offset.
 
 ### Transcript scroll ownership and trace
 
-`VirtualFollowList.writeScroll(reason, op)` is the only transcript position write.
+`VirtualFollowList.writeScroll(reason, op)` is the only list-owned transcript position write.
 Reasons come from the closed `SCROLL_REASONS` list in `virtual-scroll-trace.ts`; the
 same call opens the programmatic window, records synchronous targets and keeps
 imperative Virtua operations cancellable by the next gesture. Follow-mode changes go
@@ -135,9 +135,14 @@ gesture from Virtua/browser movement. A recent synchronous write claims only its
 actual landing offset, not unrelated moves during its 120ms programmatic window
 (`during` retains that recent reason); asynchronous Virtua/smooth operations are
 attributed by that window and must be correlated with their preceding `write`.
-The trace is observational, not a proof of native/virtualizer ownership. While enabled, `.message-stream` also carries
-`data-scroll-write` (last reason); `data-follow-mode` is always present. Disabled, the
-trace performs no layout read or allocation.
+Virtua releases are logged without taking over attribution. Synchronous no-op writes
+are omitted; asynchronous requests report `now` and `target`, never a pre-landing `to`.
+The trace is observational, not a proof of native/virtualizer ownership. While enabled,
+`.message-stream` also carries `data-scroll-write` (last position-write reason), cleared
+with its attribution state on the next list action/observation after disabling.
+`data-follow-mode` is always present. Disabled, the trace adds no layout reads or
+diagnostic-entry allocations; the scroll operation literals and follow-mode binding
+still exist.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

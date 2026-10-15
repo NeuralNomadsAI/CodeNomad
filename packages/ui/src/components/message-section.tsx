@@ -285,7 +285,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const from = stream?.scrollTop
       anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
       if (anchor && isScrollTraceEnabled()) traceScroll("write", {
-        reason: "timeline-fallback", writer: "external", from, to: stream?.scrollTop,
+        reason: "timeline-fallback", writer: "external", from, now: stream?.scrollTop,
         mode: stream?.dataset.followMode, behavior: "smooth", target: segment.messageId,
         session: props.sessionId, at: Math.round(performance.now()),
       })
