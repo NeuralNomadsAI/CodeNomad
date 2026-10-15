@@ -915,15 +915,10 @@ test("restoring an escaped anchor during settleAtBottom wins over the pin", asyn
 // viewport resize (composer growth) re-align the target instead of dropping it.
 test("alignElement holds its target through late growth above and a viewport resize, and clamps an out-of-view offset", async () => {
   await open(async page => {
+    // Virtua's index request from this key navigation is still pending: the hold
+    // re-targets it rather than letting it re-place row-180 at the top.
     await page.evaluate(() => (window as any).fixture.nearTail())
     await frames(page)
-    // Virtua reasserts the settled index request on later measurements until a
-    // gesture replaces it (see the C5 test); start from a reader's own position.
-    await page.locator(".message-stream").hover()
-    for (let i = 0; i < 2; i++) {
-      await page.mouse.wheel(0, -60)
-      await frames(page, 45)
-    }
     await traceAnchor(page, "row-180")
     const samples = await pump(page, 90, `if (frame === 0) window.fixture.align('row-180', 8)
       if (frame >= 2 && frame <= 20) window.fixture.resizeRow('row-179', 48 + (frame - 1) * 12)
@@ -968,7 +963,7 @@ test("alignElement then Tab to an off-screen control keeps it visible and focuse
       ;(window as any).fixture.alignElement("#origin", 400)
       origin.focus({ preventScroll: true })
     })
-    await frames(page, 60)
+    // Tab right away, while the hold is still correcting (the old loop ran 30 frames).
     assert.ok(await injectOffscreenButton(page, "next", "below"))
     await trace.enable()
     await page.keyboard.press("Tab")
@@ -986,13 +981,14 @@ test("alignElement then Tab to an off-screen control keeps it visible and focuse
   }, { name: "list" })
 })
 
-test("an idle element hold yields to a scroll nobody wrote, even after later layout", async () => {
+test("an element hold yields at once to a scroll nobody wrote, even after later layout", async () => {
   await open(async page => {
     const trace = collectScrollTrace(page)
     await page.evaluate(() => (window as any).fixture.middle())
     await frames(page)
     await page.evaluate(() => (window as any).fixture.align("row-110", 8))
-    await frames(page, 60)
+    // Within the hold's correcting frames (and the old 30-frame alignment loop).
+    await frames(page, 4)
     await traceAnchor(page, "row-110")
     await trace.enable()
     // Find-in-page and assistive technology scroll without a recognised gesture.
@@ -1007,6 +1003,107 @@ test("an idle element hold yields to a scroll nobody wrote, even after later lay
     assert.deepEqual(realigned, [], diagnostics)
     assert.ok(samples.every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - 158) <= 2), diagnostics)
   }, { name: "list" })
+})
+
+// Streaming below the held row keeps its frames armed; a foreign scroll still wins.
+test("a hold yields to a foreign scroll while rows below keep growing", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.align("row-110", 8))
+    await frames(page, 20)
+    const below = await injectOffscreenButton(page, "spare", "below")
+    assert.ok(below)
+    await traceAnchor(page, "row-110")
+    await page.evaluate(key => { (window as any).growKey = key }, below)
+    await trace.enable()
+    const samples = await pump(page, 40, `window.fixture.resizeRow(window.growKey, 48 + frame * 10)
+      if (frame === 4) { window.foreignAt = performance.now(); document.querySelector('.message-stream').scrollTop -= 150 }`)
+    const foreignAt = await page.evaluate(() => (window as any).foreignAt)
+    // The foreign scroll runs inside a frame, before the hold's own frame in it:
+    // any later align-element write would be the hold undoing it.
+    const realigned = trace.entries.filter(entry => entry.kind === "write" && entry.reason === "align-element" && entry.at >= Math.floor(foreignAt))
+    const diagnostics = JSON.stringify({ realigned, samples: samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })) })
+    assert.deepEqual(realigned, [], diagnostics)
+    assert.ok(samples.filter(sample => sample.frame > 5).every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - 158) <= 2), diagnostics)
+  }, { name: "list" })
+})
+
+// Virtua compensating a row above keeps an idle hold, which then still corrects
+// later layout that Virtua does not compensate (a visible row above the element).
+test("an idle hold survives Virtua's compensation above and still corrects later visible growth", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.align("row-108", 300))
+    await frames(page, 40)
+    await traceAnchor(page, "row-108")
+    const above = await injectOffscreenButton(page, "spare", "above")
+    assert.ok(above)
+    await page.evaluate(key => { (window as any).aboveKey = key }, above)
+    await trace.enable()
+    const samples = await pump(page, 60, `if (frame >= 2 && frame <= 6) window.fixture.resizeRow(window.aboveKey, 48 + (frame - 1) * 40)
+      if (frame === 30) window.fixture.resizeRow('row-106', 160)`)
+    const diagnostics = JSON.stringify({ samples: samples.map(({ frame, top, anchorOffset }) => ({ frame, top, anchorOffset })) })
+    assert.deepEqual(samples.filter(sample => (sample.frame < 30 || sample.frame > 33) && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 300) > 2)), [], diagnostics)
+    assert.ok(trace.entries.some(entry => entry.kind === "write" && entry.reason === "align-element"), `The hold must correct the visible growth: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+test("a viewport resize clamps an alignment only while it lasts", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page)
+    await traceAnchor(page, "row-110")
+    const samples = await pump(page, 60, `if (frame === 0) window.fixture.align('row-110', 640)
+      if (frame === 10) document.getElementById('root').style.height = '560px'
+      if (frame === 30) document.getElementById('root').style.height = '700px'`)
+    const at = (frame: number) => samples.find(sample => sample.frame === frame)?.anchorOffset
+    const diagnostics = JSON.stringify(samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })))
+    assert.ok(Math.abs(at(8)! - 640) <= 2 && Math.abs(at(25)! - 512) <= 2 && Math.abs(at(55)! - 640) <= 2, diagnostics)
+  }, { name: "list" })
+})
+
+// A key navigation's index request stays pending in Virtua while measurements keep
+// coming (streaming); a reveal right after it must not be re-placed by it.
+test("a hold after a key navigation keeps its element while Virtua's pending request re-runs", async () => {
+  await open(async page => {
+    await traceAnchor(page, "row-108")
+    const samples = await pump(page, 60, `window.fixture.resizeRow('row-199', 48 + frame * 10)
+      if (frame === 0) window.fixture.middle()
+      if (frame === 2) window.fixture.align('row-108', 100)
+      if (frame >= 10 && frame <= 20) window.fixture.resizeRow('row-104', 48 + (frame - 9) * 20)`)
+    const diagnostics = JSON.stringify(samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })))
+    assert.deepEqual(samples.filter(sample => sample.frame > 3 && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 100) > 2)), [], diagnostics)
+  }, { name: "list" })
+})
+
+// A send keeps its intent through the turn; navigation that loads another window
+// while that intent is pending must still land (MessageSection deduplicates the token).
+test("a First jump during a pending send still lands on the first message", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.delayPrompt())
+    const prompt = page.locator("textarea:visible").first()
+    await prompt.fill("Pending send keeps its intent")
+    await prompt.press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.admitted())
+    await frames(page, 120)
+    await page.locator(".message-scroll-controls").hover()
+    await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
+    // The fixture serves this window from its newest records; what matters is that
+    // the loaded window replaces the latest one and is then entered at its top.
+    await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")
+    await frames(page, 60)
+    const state = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!, bounds = el.getBoundingClientRect(), key = (window as any).fixture.snapshot().ids[0]
+      const first = el.querySelector(`[data-virtual-follow-key="${key}"]`)
+      return { key, scrollTop: el.scrollTop, mode: el.dataset.followMode, firstTop: first ? Math.round(first.getBoundingClientRect().top - bounds.top) : null }
+    })
+    assert.ok(state.scrollTop <= 2 && state.mode === "escaped" && state.firstTop !== null && Math.abs(state.firstTop) <= 2, JSON.stringify(state))
+    await page.evaluate(() => (window as any).fixture.acceptPrompt())
+  }, { history: 620 })
 })
 
 const AT_BOTTOM = { scrollTop: 0, atBottom: true, followModeType: "following" }

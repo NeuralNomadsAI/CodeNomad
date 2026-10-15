@@ -38,13 +38,19 @@ export function createVirtualReaderSettlement(options: {
     notify,
     /**
      * A scroll was observed. It re-arms a retained reader. A held element follows
-     * layout only: `movedHeld` reports a scroll nobody wrote that moved it (focus,
-     * find-in-page, assistive technology, unlike Virtua's compensation, which keeps
-     * it in place); while idle, that is the reader moving on and releases the hold.
+     * layout only: a scroll that `isForeign` attributes to someone else (focus,
+     * find-in-page, assistive technology, unlike Virtua's compensation) is the
+     * reader moving on and releases the hold, even while layout is in flux.
+     * Returns whether it released one.
      */
-    scrolled: (movedHeld: (held: { element: HTMLElement; offset: number }) => boolean) => {
-      if (!anchor?.element) return notify()
-      if (frame === undefined && movedHeld({ element: anchor.element, offset: anchor.offset })) cancel()
+    scrolled: (isForeign: (held: HTMLElement) => boolean) => {
+      if (!anchor?.element) {
+        notify()
+        return false
+      }
+      if (!isForeign(anchor.element)) return false
+      cancel()
+      return true
     },
     /** The held element anchor, if any. */
     held: () => anchor?.element ? anchor : undefined,

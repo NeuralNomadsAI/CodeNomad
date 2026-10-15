@@ -62,7 +62,7 @@ type ScrollWriteOp =
   /** Direct DOM write; `record` publishes the synchronous result before its scroll event. */
   | { type: "dom"; top: number; record: boolean }
   | { type: "native"; top: number; behavior: ScrollBehavior; record: boolean }
-  | { type: "index"; index: number; align: ScrollLogicalPosition; smooth: boolean }
+  | { type: "index"; index: number; align: ScrollLogicalPosition; smooth: boolean; offset?: number }
   /** `scrollBy(0)`: releases Virtua's pending imperative or shift operation without claiming the next scroll. */
   | { type: "release" }
 
@@ -277,14 +277,60 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const element = scrollElement(), target = anchor.element ?? itemElements.get(anchor.key)
       // A virtual row may remount under its key; a detached revealed part is gone.
       if (!element || !target?.isConnected) return !anchor.element
-      const delta = measureAnchorDelta(element, target, anchor.offset)
-      if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
+      if (!anchor.element) {
+        const delta = measureAnchorDelta(element, target, anchor.offset)
+        if (Math.abs(delta) >= 1) writeScroll("reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
+        return
+      }
+      const fresh = heldPosition?.target !== anchor.element
+      // A foreign scroll may land before its scroll event, e.g. earlier in this frame.
+      if (movedByForeignScroll(element, anchor.element)) {
+        releasePendingVirtuaScroll()
+        return false
+      }
+      // A held element keeps its requested offset; only its application follows the viewport.
+      const offset = clampAlignmentOffset(element, anchor.offset)
+      const delta = measureAnchorDelta(element, target, offset)
+      if (Math.abs(delta) >= 1) writeScroll("align-element", { type: "dom", top: element.scrollTop + delta, record: true })
+      // A pending Virtua request (e.g. from a key navigation) would re-place its own
+      // target on later measurements: re-target it at the held element, which Virtua
+      // then keeps in place through the measurements it re-runs on.
+      const row = itemElements.get(anchor.key)
+      const index = pendingVirtuaScroll && row && (fresh || Math.abs(delta) >= 1)
+        ? virtualItems().findIndex((item, i) => props.getKey(item, i) === anchor.key)
+        : -1
+      if (row && index !== -1) {
+        // Virtua scrolls to the row's start plus `offset`: the element's place in its row, less the held offset.
+        const inRow = target.getBoundingClientRect().top - row.getBoundingClientRect().top
+        writeScroll("align-element", { type: "index", index, align: "start", smooth: false, offset: inRow - offset })
+      }
+      observeHeldPosition(element, anchor.element)
     },
   })
 
   /** How far `target` lies below `offset` px from the viewport top: the one anchor measurement. */
   function measureAnchorDelta(element: HTMLElement, target: Element, offset: number) {
     return target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset
+  }
+
+  // The held element's last observed viewport and content positions.
+  let heldPosition: { target: HTMLElement; scrollTop: number; contentTop: number } | undefined
+
+  function observeHeldPosition(element: HTMLElement, target: HTMLElement) {
+    const scrollTop = element.scrollTop
+    return heldPosition = { target, scrollTop, contentTop: measureAnchorDelta(element, target, 0) + scrollTop }
+  }
+
+  /**
+   * Virtua's compensation moves the viewport together with the content under it;
+   * a foreign scroll (find-in-page, assistive technology) moves only the viewport.
+   * The hold's own writes re-record the position, so they never read as foreign.
+   */
+  function movedByForeignScroll(element: HTMLElement, target: HTMLElement) {
+    const previous = heldPosition?.target === target ? heldPosition : undefined
+    const next = observeHeldPosition(element, target)
+    return previous !== undefined && Math.abs(next.scrollTop - previous.scrollTop) >= 1
+      && Math.abs(next.contentTop - previous.contentTop) < 1
   }
 
   /** `distance` is the gesture's known amplitude in scroller pixels, if any. */
@@ -294,16 +340,25 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     supersedePositioning()
     const element = scrollElement()
     syncControllerResult(scrollController.userGesture(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS, element ? getDomMetrics(element) : null, distance), "user-gesture")
-    if (element && pendingVirtuaScroll) {
-      // Replace an outstanding imperative operation once, not on every wheel
-      // or key repeat: scrollBy(0) itself creates a new measurement-time pin.
-      pendingVirtuaScroll = false
-      element.dispatchEvent(new Event("scroll"))
-      writeScroll("cancel-virtua", { type: "release" })
-    }
+    releasePendingVirtuaScroll()
     // At a clamped edge a wheel/key produces no scroll event. The gesture
     // itself must be able to request the next historical window.
     if (direction) updateScrollStateFromDom()
+  }
+
+  /**
+   * Virtua re-places an imperative target on every measurement while they keep
+   * coming. When the reader takes over (a gesture, or ending an element hold), the
+   * target becomes its current position.
+   */
+  function releasePendingVirtuaScroll() {
+    const element = scrollElement()
+    if (!element || !pendingVirtuaScroll) return
+    // Replace an outstanding imperative operation once, not on every wheel
+    // or key repeat: scrollBy(0) itself creates a new measurement-time pin.
+    pendingVirtuaScroll = false
+    element.dispatchEvent(new Event("scroll"))
+    writeScroll("cancel-virtua", { type: "release" })
   }
 
   function hasProgrammaticScrollIntent() {
@@ -339,7 +394,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     } else if (op.type === "index") {
       programmaticScrollUntil = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS
       pendingVirtuaScroll = true
-      handle?.scrollToIndex(op.index, { align: op.align, smooth: op.smooth })
+      handle?.scrollToIndex(op.index, { align: op.align, smooth: op.smooth, offset: op.offset })
     } else {
       if (!element) return
       programmaticScrollUntil = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS
@@ -604,11 +659,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleScroll() {
-    readerSettlement.scrolled((held) => {
+    const released = readerSettlement.scrolled((held) => {
       const element = scrollElement()
-      return Boolean(element) && held.element.isConnected && !hasProgrammaticScrollIntent()
-        && Math.abs(measureAnchorDelta(element!, held.element, held.offset)) >= 1
+      return Boolean(element) && held.isConnected && movedByForeignScroll(element!, held)
     })
+    if (released) releasePendingVirtuaScroll()
     updateScrollStateFromDom()
     props.onScroll?.(captureScrollSnapshot())
 
@@ -994,7 +1049,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // Moving focus elsewhere (Tab, assistive technology) ends an in-place reveal's hold.
     const handleFocusIn = (event: FocusEvent) => {
       const held = readerSettlement.held()
-      if (held && !itemElements.get(held.key)?.contains(event.target as Node)) readerSettlement.cancel()
+      if (!held || itemElements.get(held.key)?.contains(event.target as Node)) return
+      readerSettlement.cancel()
+      releasePendingVirtuaScroll()
     }
     const detachGestureRouting = attachScrollGestureRouting(element)
     element.addEventListener("focusin", handleFocusIn)
@@ -1064,8 +1121,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "align-element")
     // The virtualizer's resize compensation and late layout (fonts, lazy cards) can move
     // the target after this correction: the reader settlement re-measures it on each
-    // layout until a gesture, navigation, unwritten scroll or focus elsewhere ends it.
-    readerSettlement.hold({ key, offset: clampAlignmentOffset(element, viewportOffset), element: target })
+    // layout until a gesture, navigation, foreign scroll or focus elsewhere ends it.
+    heldPosition = undefined
+    readerSettlement.hold({ key, offset: viewportOffset, element: target })
   }
 
   /** A keyboard activation can happen off-screen (or mid-layout); always land in view. */
@@ -1291,10 +1349,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight
       if (nextHeight === previousHeight) return
-      // A held element is re-aligned below; its pending frames also keep a
-      // resize-induced clamp from reading as the reader moving on.
-      if (readerSettlement.held()) readerSettlement.notify()
-      else readerSettlement.cancel()
+      // A held element is re-aligned below. Its position is re-read after layout so
+      // that the browser clamping this resize causes is not taken as a foreign scroll.
+      const held = readerSettlement.held()
+      if (!held?.element) readerSettlement.cancel()
+      else {
+        observeHeldPosition(element, held.element)
+        readerSettlement.notify()
+      }
       if (!isActive() || previousHeight <= 0 || nextHeight <= 0) {
         previousHeight = nextHeight
         return
@@ -1315,7 +1377,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         if (canPinFollowBottom()) {
           pinFollowBottom("viewport-resize")
         } else if (held) {
-          readerSettlement.hold({ ...held, offset: clampAlignmentOffset(element, held.offset) })
+          readerSettlement.hold(held)
         } else {
           writeScroll("viewport-resize", { type: "offset", top: getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta) })
         }

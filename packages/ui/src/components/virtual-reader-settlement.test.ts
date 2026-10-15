@@ -64,17 +64,18 @@ test("an explicit hold aligns at once, follows later layouts and releases a lost
     assert.equal(reader.capture().anchor?.key, "revealed", "A window shift retains the held anchor")
     reader.scrolled(() => false); assert.equal(frames.size, 0, "A scroll does not re-arm a held element")
     reader.notify(); drain(); assert.equal(aligned, 24)
-    reader.notify(); reader.scrolled(() => true)
-    assert.equal(reader.held()?.element, element, "Layout in flux keeps the hold through a moving scroll")
+    reader.notify(); reader.scrolled(() => false)
+    assert.equal(reader.held()?.element, element, "Layout in flux keeps the hold through its own compensation")
     drain(); assert.equal(aligned, 36)
     held = false
     reader.notify(); drain(); assert.equal(aligned, 37)
     assert.equal(reader.capture().anchor?.key, "visible", "A lost anchor returns to the visible reader")
     reader.notify(); assert.equal(frames.size, 0)
     held = true
-    reader.hold({ key: "revealed", offset: 8, element }); drain()
+    reader.hold({ key: "revealed", offset: 8, element })
     reader.scrolled(() => true)
-    assert.equal(reader.held(), undefined, "An idle hold yields to a scroll that moved it")
+    assert.equal(reader.held(), undefined, "Even with frames pending, a foreign scroll releases the hold")
+    assert.equal(frames.size, 0)
     reader.settle(reader.capture()); drain()
     const before = aligned
     reader.scrolled(() => true); assert.equal(frames.size, 1, "A retained reader re-arms on scroll"); drain()
