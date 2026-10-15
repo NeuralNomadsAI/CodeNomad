@@ -102,7 +102,9 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
   })
   await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${holdMessages ? "holdMessages" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
-  await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+  // The deep fixture's tool rows contribute extra segments.
+  if (deep) await page.waitForFunction(() => Number(document.querySelector(".message-timeline")?.getAttribute("data-segment-count")) >= 1500)
+  else await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
   if (!holdMessages) await page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
   return { page, windows, errors, outlines, outlineReplies, previewRequests, resumeOutline,
     holdIndex: () => { indexGate = new Promise<void>(resolve => { releaseIndex = resolve }); return () => { releaseIndex?.(); indexGate = undefined } },
@@ -415,6 +417,32 @@ test("paging supersedes a restore that is loading its anchor", async () => {
   } finally { await f.close() }
 })
 
+// A resident placement supersedes an unpositioned jump that was itself
+// superseding the restore: the placement owns the position, so the restore
+// must not run again and move the reader back to the saved passage.
+test("a resident placement after an unpositioned jump is not overridden by the restore", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await seedSavedPosition(f.page, navigationMessageId(250))
+    const releaseSaved = f.hold(250)
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.waitForFunction(() => document.querySelector(".message-stream"))
+    for (let i = 0; i < 100 && !f.windows.some(target => target.messageID === navigationMessageId(250)); i++) await waitFrames(f.page, 3)
+    const releaseJump = f.hold(900)
+    await clickTimeline(f.page, 900)
+    await f.page.locator(".history-navigation-status").waitFor()
+    await clickTimeline(f.page, 1400)
+    releaseJump()
+    releaseSaved()
+    await assertPassageAtTop(f.page, 1400)
+    await waitFrames(f.page, 30)
+    assert.ok(Math.abs((await rowOffset(f.page, 1400))!) < 2, "the restore moved the placed passage")
+    assert.deepEqual(f.windows.map(target => target.messageID), [navigationMessageId(250), navigationMessageId(900)], "the restore must not run again")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 // Only a search navigation reveals its occurrence. A non-resident result that
 // the reader pages into view by scrolling leaves the reader where paging put it.
 test("a search result made resident by manual paging does not pull the reader", async () => {
@@ -440,25 +468,68 @@ test("a search result made resident by manual paging does not pull the reader", 
   } finally { await f.close() }
 })
 
+/** Deep fixture positioned on 1300 with search open and `Deepword<index>` hits routed. */
+async function deepSearch(index: number) {
+  const f = await fixture(false, false, false, true)
+  await f.page.route("**/session-history/query", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+    status: "page", scanned: 1500, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+    hits: [{ sessionID: "s", messageID: navigationMessageId(index), role: "assistant", partIndex: 0, kind: "text", excerpt: `Deepword${index}` }],
+  }) }))
+  await clickTimeline(f.page, 1300)
+  await assertPassageAtTop(f.page, 1300)
+  await f.page.evaluate(() => (window as any).fixture.openSearch())
+  return f
+}
+const assertOccurrenceVisible = async (page: Page, text: string) => {
+  const occurrence = await activeOccurrence(page)
+  assert.ok(occurrence && occurrence.text === text && occurrence.top >= 0 && occurrence.bottom <= occurrence.viewport,
+    `the highlighted occurrence must be visible: ${JSON.stringify(occurrence)}`)
+}
+
 // A search navigation places its message at the top, then reveals an
 // occurrence that placement leaves out of view, through the list's held
-// alignment rather than a one-frame write its placement would undo.
-test("a deep resident search occurrence is revealed after its message is placed", async () => {
-  const f = await fixture(false, false, false, true)
+// alignment rather than a one-frame write its placement would undo. The
+// virtualizer moves rows while a taller row below settles; the highlight
+// must survive those moves.
+for (const index of [1400, 600]) test(`a deep search occurrence is revealed and stays highlighted (${index === 1400 ? "resident" : "historical"})`, async () => {
+  const f = await deepSearch(index)
   try {
-    await f.page.route("**/session-history/query", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
-      status: "page", scanned: 1500, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
-      hits: [{ sessionID: "s", messageID: navigationMessageId(1400), role: "assistant", partIndex: 0, kind: "text", excerpt: "Deepword1400" }],
-    }) }))
-    await clickTimeline(f.page, 1300)
-    await assertPassageAtTop(f.page, 1300)
-    await f.page.evaluate(() => (window as any).fixture.openSearch())
+    await f.page.getByRole("searchbox").fill(`Deepword${index}`)
+    // A resident first result is located automatically; a historical one on selection.
+    if (index === 600) await f.page.locator(".history-search-result").first().click()
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids.includes(id), navigationMessageId(index))
+    await waitFrames(f.page, 90)
+    await assertOccurrenceVisible(f.page, `Deepword${index}`)
+    await waitFrames(f.page, 60)
+    await assertOccurrenceVisible(f.page, `Deepword${index}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// Selecting the same result again reveals it again; a gesture made before the
+// reveal's frame claims it, so the reader is never pulled.
+for (const gesture of [false, true]) test(`re-selecting a deep result ${gesture ? "with an immediate gesture leaves the reader in place" : "reveals it again"}`, async () => {
+  const f = await deepSearch(1400)
+  const aligned: string[] = []
+  f.page.on("console", message => { if (/scroll (?:%c)?write .*"reason":"align-element"/.test(message.text())) aligned.push(message.text()) })
+  try {
     await f.page.getByRole("searchbox").fill("Deepword1400")
     await f.page.locator(".history-search-result").first().waitFor()
     await waitFrames(f.page, 90)
-    const occurrence = await activeOccurrence(f.page)
-    assert.ok(occurrence && occurrence.text === "Deepword1400" && occurrence.top >= 0 && occurrence.bottom <= occurrence.viewport,
-      `the occurrence must be visible: ${JSON.stringify(occurrence)}`)
+    await clickTimeline(f.page, 1300)
+    await assertPassageAtTop(f.page, 1300)
+    await f.page.evaluate(() => (window as any).codenomadLogger.enableLogger("scroll"))
+    await f.page.evaluate(`(() => {
+      document.querySelector('.history-search-result').click()
+      if (${gesture}) document.querySelector('.message-stream').dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }))
+    })()`)
+    await waitFrames(f.page, 90)
+    await f.page.evaluate(() => (window as any).codenomadLogger.disableLogger("scroll"))
+    if (gesture) assert.deepEqual(aligned, [], "a claimed reveal must not align the transcript")
+    else {
+      assert.ok(aligned.length > 0, "the re-selection must reveal through the list")
+      await assertOccurrenceVisible(f.page, "Deepword1400")
+    }
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

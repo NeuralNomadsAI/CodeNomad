@@ -101,7 +101,7 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
     if (reveal && !reveal.claimed && activeRange) {
       owner.scrollFrame = view.requestAnimationFrame(() => {
         owner.scrollFrame = undefined
-        // A moved row collapses its live ranges; only a repaint can reveal again.
+        // A moved row collapses its live ranges; its repaint reveals instead.
         if (owners.get(root) === owner && !reveal.claimed && !activeRange!.collapsed && activeRange!.startContainer.isConnected) {
           reveal.claimed = true
           revealSearchRange(activeRange!, align)
@@ -109,12 +109,17 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
       })
     }
     owner.observer?.observe(root, { childList: true, characterData: true, subtree: true })
+    for (let parent = root.parentElement; parent; parent = parent.parentElement) owner.observer?.observe(parent, { childList: true })
   }
 
   // Markdown and lazy tool renderers can commit after the record's effect.
   // Observe DOM replacement, not style/paint changes; coalesce streaming work.
-  owner.observer = new view.MutationObserver(() => {
+  // A virtualizer that moves the row (removing and reinserting an ancestor)
+  // collapses its live ranges without mutating it, so ancestors' children are
+  // watched for the row's reinsertion. Other rows mounting there are ignored.
+  owner.observer = new view.MutationObserver((records) => {
     if (owner.frame !== undefined) return
+    if (!records.some(record => root.contains(record.target) || Array.from(record.addedNodes).some(node => node.contains(root)))) return
     owner.frame = view.requestAnimationFrame(() => {
       owner.frame = undefined
       if (root.isConnected) paint()

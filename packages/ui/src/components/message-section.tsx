@@ -435,23 +435,26 @@ export default function MessageSection(props: MessageSectionProps) {
   let retryAnchorRestore: (() => void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
 
-  function cancelWindowNavigation() {
+  /** `positioning`: the caller positions the list at once, so it leaves no restore pending. */
+  function cancelWindowNavigation(positioning = false) {
     const nav = navigation()
     if (nav.kind === "paging") {
       nav.controller.abort()
-      settlePaging(nav)
+      settlePaging(nav, positioning)
     } else if (nav.kind === "restoring" && nav.loading) {
       // The navigation that cancels the restore positions the list itself.
       nav.loading.abort()
       setNavigation({ kind: "idle" })
-    }
+    } else if (positioning && nav.kind === "unrestored") setNavigation({ kind: "idle" })
   }
 
-  function settlePaging(paging: PagingNavigation) {
+  function settlePaging(paging: PagingNavigation, positioning = false) {
     // Paging that never positioned a list the activation had not restored yet
-    // leaves that restore pending; its unpositioned list has nothing to persist.
+    // leaves that restore pending, unless the caller positions the list now; its
+    // unpositioned list has nothing to persist. A failed jump thus falls back
+    // to the saved position, whose restore then owns the retry banner.
     if (!paging.restored && !paging.positioned) {
-      setNavigation({ kind: "unrestored" })
+      setNavigation(positioning ? { kind: "idle" } : { kind: "unrestored" })
       return
     }
     setNavigation({ kind: "idle" })
@@ -764,7 +767,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function placeResidentMessage(messageId: string, searchMatchId?: string) {
-    cancelWindowNavigation()
+    cancelWindowNavigation(true)
     const api = listApi()
     if (api) placeMessage(api, messageId, searchMatchId)
   }
@@ -772,6 +775,13 @@ export default function MessageSection(props: MessageSectionProps) {
   function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string) {
     api.scrollToKey(messageId, { block: "start" })
     if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
+    else claimSearchReveal()
+  }
+
+  /** Any other navigation or gesture now owns the position: a pending reveal must not pull it. */
+  function claimSearchReveal() {
+    const reveal = untrack(searchReveal)
+    if (reveal) reveal.claimed = true
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -887,7 +897,11 @@ export default function MessageSection(props: MessageSectionProps) {
     const previous = navigation()
     if (previous.kind === "paging" && direction !== "around" && direction !== "latest") return
     const restored = previous.kind === "idle" || (previous.kind === "paging" && (previous.restored || previous.positioned))
-    cancelWindowNavigation()
+    // Paging positions the list itself; only a request that loads and positions
+    // nothing returns to a pending activation restore.
+    cancelWindowNavigation(true)
+    claimSearchReveal()
+    const leaveUnpositioned = () => { if (!restored && navigation().kind === "idle") setNavigation({ kind: "unrestored" }) }
     const load = direction === "around"
       ? props.onLoadMessageAnchor && anchorMessageId ? (signal?: AbortSignal) => props.onLoadMessageAnchor!(anchorMessageId, signal) : undefined
       : direction === "older"
@@ -899,14 +913,15 @@ export default function MessageSection(props: MessageSectionProps) {
           : props.onLoadLatestMessages
     if (!load) {
       if (direction === "oldest") after(api)
+      else leaveUnpositioned()
       return
     }
-    if (direction === "older" && !props.hasMoreMessages) return
+    if (direction === "older" && !props.hasMoreMessages) return leaveUnpositioned()
     if (direction === "oldest" && !props.hasMoreMessages) {
       after(api)
       return
     }
-    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
+    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return leaveUnpositioned()
     const sessionId = props.sessionId
     const controller = new AbortController()
     const paging: PagingNavigation = {
@@ -935,8 +950,10 @@ export default function MessageSection(props: MessageSectionProps) {
       api.notifyContentRendered()
       await waitTwoFrames()
       if (!isCurrent()) return
-      const retainedAnchor = previousPosition?.anchorKey && visibleMessageIds().includes(previousPosition.anchorKey)
-      paging.positioned = true
+      const visible = visibleMessageIds()
+      const retainedAnchor = previousPosition?.anchorKey && visible.includes(previousPosition.anchorKey)
+      // A jump target hidden from the list (filtered, beyond a revert) places nothing.
+      paging.positioned = visible.length > 0 && (Boolean(retainedAnchor) || direction !== "around" || visible.includes(anchorMessageId!))
       if (retainedAnchor) api.restoreScrollSnapshot({ ...previousPosition, atBottom: false, followModeType: "escaped" })
       else after(api)
       const bottomSettlement = !retainedAnchor && (direction === "older" || direction === "latest")
@@ -1175,7 +1192,7 @@ export default function MessageSection(props: MessageSectionProps) {
       <Show when={navigationPending()}>
         <div class="history-navigation-status window-toolbar" role="status">
           <span>{t("history.navigation.loading")}</span>
-          <button type="button" class="button-tertiary" onClick={cancelWindowNavigation}>{t("alertDialog.actions.cancel")}</button>
+          <button type="button" class="button-tertiary" onClick={() => cancelWindowNavigation()}>{t("alertDialog.actions.cancel")}</button>
         </div>
       </Show>
       <Show when={outline.error() && !navigationPending() && showMessageTimelinePreference()}>
@@ -1216,9 +1233,7 @@ export default function MessageSection(props: MessageSectionProps) {
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
           onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)
-            // The reader now owns the position: a pending occurrence reveal must not pull it.
-            const reveal = searchReveal()
-            if (reveal) reveal.claimed = true
+            claimSearchReveal()
             // An opposite directional gesture supersedes pending history paging
             // before it can position; taps and the requesting gesture do not.
             const nav = navigation()
@@ -1381,7 +1396,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
-              alignRevealedParts={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
+              alignInTranscript={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
             <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
             </>
