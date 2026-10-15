@@ -351,6 +351,9 @@ test("cancelling a committed timeline jump stores the reader's actual position",
       domScrollTop: stream.scrollTop, domAtBottom: stream.scrollHeight - stream.clientHeight - stream.scrollTop <= 1 }
   })()`
   try {
+    // This is the restored list's case: let the startup restore settle first
+    // (its persisted capture is the first snapshot carrying the list's extent).
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().scroll?.maxScrollTop !== undefined)
     await f.page.evaluate(`(async () => {
       const { messageStoreBus } = await import('/src/stores/message-v2/bus.ts')
       const stop = messageStoreBus.onScrollSnapshotChanged((_instance, _session, _scope, snapshot) => {
@@ -412,6 +415,57 @@ test("a jump cancelled before hydration still restores the saved passage", async
     await f.page.evaluate(() => (window as any).fixture.releaseMessages())
     await assertPassageAtTop(f.page, 1450)
     assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(1450))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// The page commit replaces the stored position with its destination. Once the
+// jump is cancelled, the pending restore must still return to the saved passage.
+test("a jump cancelled after its page commit, before hydration, still restores the saved passage", async () => {
+  const f = await fixture(false, false, true)
+  try {
+    await seedSavedPosition(f.page, navigationMessageId(1450))
+    await f.page.evaluate(`(async () => {
+      const { messageStoreBus } = await import('/src/stores/message-v2/bus.ts')
+      const stop = messageStoreBus.onScrollSnapshotChanged((_instance, _session, _scope, snapshot) => {
+        if (snapshot.anchorKey !== ${JSON.stringify(navigationMessageId(250))}) return
+        stop()
+        queueMicrotask(() => document.querySelector('.history-navigation-status button').click())
+      })
+    })()`)
+    await clickTimeline(f.page, 250)
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().window?.kind === "history")
+    await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
+    await f.page.evaluate(() => (window as any).fixture.releaseMessages())
+    await assertPassageAtTop(f.page, 1450)
+    assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(1450))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// A gesture that cancels a pending jump over a visible list leaves the reader
+// in charge: the restore must not run again under it.
+test("a gesture cancelling a jump over a visible list does not rerun the restore", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await seedSavedPosition(f.page, navigationMessageId(250))
+    const releaseSaved = f.hold(250)
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.waitForFunction(() => document.querySelector(".message-stream [data-virtual-follow-key]"))
+    for (let i = 0; i < 100 && !f.windows.some(target => target.messageID === navigationMessageId(250)); i++) await waitFrames(f.page, 3)
+    const releaseJump = f.hold(900)
+    await clickTimeline(f.page, 900)
+    await f.page.locator(".history-navigation-status").waitFor()
+    const box = (await f.page.locator(".message-stream").boundingBox())!
+    await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+    await f.page.mouse.wheel(0, -300)
+    await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
+    releaseJump()
+    releaseSaved()
+    await waitFrames(f.page, 60)
+    assert.deepEqual(f.windows.map(target => target.messageID), [navigationMessageId(250), navigationMessageId(900)], "the restore must not run again")
+    assert.ok(!(await snapshot(f.page)).ids.includes(navigationMessageId(250)), "the reader must stay on the visible list")
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
@@ -577,6 +631,16 @@ const assertOccurrenceVisible = async (page: Page, text: string) => {
 for (const index of [1400, 600]) test(`a deep search occurrence is revealed and stays highlighted (${index === 1400 ? "resident" : "historical"})`, async () => {
   const f = await deepSearch(index)
   try {
+    // Once revealed, no frame may lose the active highlight to a row move.
+    await f.page.evaluate(`(() => {
+      const frames = window.highlightFrames = []
+      const sample = () => {
+        const range = [...(CSS.highlights.get('codenomad-search-active') ?? [])][0]
+        frames.push(range ? (range.collapsed ? 'collapsed' : range.toString()) : 'none')
+        if (frames.length < 400) requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })()`)
     await f.page.getByRole("searchbox").fill(`Deepword${index}`)
     // A resident first result is located automatically; a historical one on selection.
     if (index === 600) await f.page.locator(".history-search-result").first().click()
@@ -585,6 +649,9 @@ for (const index of [1400, 600]) test(`a deep search occurrence is revealed and 
     await assertOccurrenceVisible(f.page, `Deepword${index}`)
     await waitFrames(f.page, 60)
     await assertOccurrenceVisible(f.page, `Deepword${index}`)
+    const sampled: string[] = await f.page.evaluate("window.highlightFrames")
+    const lost = sampled.slice(sampled.indexOf(`Deepword${index}`)).filter(frame => frame !== `Deepword${index}`)
+    assert.deepEqual(lost, [], `the active highlight was lost in ${lost.length} frame(s)`)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

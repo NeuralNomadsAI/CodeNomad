@@ -19,6 +19,45 @@ interface Owner {
 const documents = new WeakMap<Document, DocumentHighlights>()
 const owners = new WeakMap<HTMLElement, Owner>()
 
+/**
+ * A virtualizer that moves a row (removing and reinserting an ancestor)
+ * collapses the row's live ranges without mutating the row. One observer per
+ * document watches the rows' ancestors, up to their transcript, and repaints
+ * each reinserted row at once, before the next paint.
+ */
+interface RowMoves { observer: MutationObserver; repaints: Map<HTMLElement, () => void> }
+const rowMoves = new WeakMap<Document, RowMoves>()
+
+function watchRowMoves(root: HTMLElement, repaint: () => void) {
+  const document = root.ownerDocument
+  let moves = rowMoves.get(document)
+  if (!moves) {
+    const repaints = new Map<HTMLElement, () => void>()
+    const observer = new document.defaultView!.MutationObserver((records) => {
+      const moved = new Set<HTMLElement>()
+      for (const record of records) for (const node of record.addedNodes) {
+        if (!node.hasChildNodes()) continue
+        for (const row of repaints.keys()) if (node.contains(row)) moved.add(row)
+      }
+      for (const row of moved) repaints.get(row)?.()
+    })
+    moves = { observer, repaints }
+    rowMoves.set(document, moves)
+  }
+  moves.repaints.set(root, repaint)
+  const transcript = root.closest(".message-stream")
+  for (let parent = root.parentElement; parent; parent = parent === transcript ? null : parent.parentElement) {
+    moves.observer.observe(parent, { childList: true })
+  }
+}
+
+function unwatchRowMoves(root: HTMLElement) {
+  const moves = rowMoves.get(root.ownerDocument)
+  if (!moves?.repaints.delete(root) || moves.repaints.size > 0) return
+  moves.observer.disconnect()
+  rowMoves.delete(root.ownerDocument)
+}
+
 function registry(document: Document): DocumentHighlights | undefined {
   const view = document.defaultView as (Window & typeof globalThis) | null
   if (!view?.Highlight || !view.CSS?.highlights) return
@@ -54,6 +93,7 @@ export function clearSearchHighlights(root: HTMLElement): void {
   if (!owner) return
   owners.delete(root)
   owner.observer?.disconnect()
+  unwatchRowMoves(root)
   const view = root.ownerDocument.defaultView!
   if (owner.frame !== undefined) view.cancelAnimationFrame(owner.frame)
   if (owner.scrollFrame !== undefined) view.cancelAnimationFrame(owner.scrollFrame)
@@ -81,6 +121,8 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
 
   const paint = () => {
     if (owners.get(root) !== owner) return
+    if (owner.frame !== undefined) view.cancelAnimationFrame(owner.frame)
+    owner.frame = undefined
     if (owner.scrollFrame !== undefined) view.cancelAnimationFrame(owner.scrollFrame)
     owner.scrollFrame = undefined
     owner.observer?.disconnect()
@@ -109,17 +151,13 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
       })
     }
     owner.observer?.observe(root, { childList: true, characterData: true, subtree: true })
-    for (let parent = root.parentElement; parent; parent = parent.parentElement) owner.observer?.observe(parent, { childList: true })
+    watchRowMoves(root, paint)
   }
 
   // Markdown and lazy tool renderers can commit after the record's effect.
   // Observe DOM replacement, not style/paint changes; coalesce streaming work.
-  // A virtualizer that moves the row (removing and reinserting an ancestor)
-  // collapses its live ranges without mutating it, so ancestors' children are
-  // watched for the row's reinsertion. Other rows mounting there are ignored.
-  owner.observer = new view.MutationObserver((records) => {
+  owner.observer = new view.MutationObserver(() => {
     if (owner.frame !== undefined) return
-    if (!records.some(record => root.contains(record.target) || Array.from(record.addedNodes).some(node => node.contains(root)))) return
     owner.frame = view.requestAnimationFrame(() => {
       owner.frame = undefined
       if (root.isConnected) paint()

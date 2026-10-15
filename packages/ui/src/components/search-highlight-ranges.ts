@@ -60,7 +60,10 @@ export type AlignInTranscript = (target: HTMLElement, viewportOffset: number) =>
  * (`align-element`): a direct write would be undone by the list's placement
  * corrections after a jump. That offset cannot be negative, so an occurrence
  * more than half a viewport below the top of its element lands with that
- * element at the top, possibly still out of view. Nested scrollers, and a
+ * element at the top, possibly still out of view. The alignment re-measures
+ * that element for 30 frames, and a wheel consumed by a nested scroller is not
+ * a list gesture: scrolling such a scroller during that window moves the
+ * transcript along with the element. Nested scrollers, and a
  * transcript outside a list, are written directly and traced as `search-reveal`.
  */
 export function revealSearchRange(range: Range, align?: AlignInTranscript): void {
