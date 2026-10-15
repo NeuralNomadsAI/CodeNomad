@@ -9,7 +9,6 @@ import { buildRecordDisplayData } from "../stores/message-v2/record-display-cach
 import { getPartCharCount } from "../lib/token-utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
 import { getMessageContentIcon } from "./message-content-icons"
 import { Markdown } from "./markdown"
 import { createTimelinePreviews } from "../stores/timeline-previews"
@@ -446,37 +445,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     observer.observe(element)
     window.addEventListener("resize", clearHoverPreview)
     onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", clearHoverPreview) })
-  })
-
-  createEffect(() => {
-    const element = scrollElement()
-    if (!element || typeof ResizeObserver === "undefined") return
-    let previousHeight = element.clientHeight
-    let pendingHeightDelta = 0
-    let pendingFrame: number | null = null
-    const observer = new ResizeObserver(() => {
-      const nextHeight = element.clientHeight
-      if (nextHeight === previousHeight) return
-      if (previousHeight <= 0 || nextHeight <= 0) {
-        previousHeight = nextHeight
-        return
-      }
-      pendingHeightDelta += previousHeight - nextHeight
-      previousHeight = nextHeight
-      if (pendingFrame !== null) return
-      pendingFrame = requestAnimationFrame(() => {
-        pendingFrame = null
-        const offset = getBottomAnchoredViewportOffset(element.scrollTop, pendingHeightDelta)
-        pendingHeightDelta = 0
-        const maxOffset = Math.max(element.scrollHeight - element.clientHeight, 0)
-        element.scrollTop = Math.min(offset, maxOffset)
-      })
-    })
-    observer.observe(element)
-    onCleanup(() => {
-      observer.disconnect()
-      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
-    })
   })
 
   // Pre-computed set of messageIds that have at least one tool segment.

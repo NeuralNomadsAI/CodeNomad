@@ -6,6 +6,9 @@ import type { ScrollSnapshot } from "./types"
 
 const log = getLogger("session")
 
+/** Scroll-snapshot scope of a session's transcript. */
+export const MESSAGE_STREAM_SCROLL_SCOPE = "message-stream"
+
 export interface MessageScrollSnapshotSeed {
   sessionId: string
   scope: string

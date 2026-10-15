@@ -15,15 +15,14 @@ function scrollAxes(node: HTMLElement) {
   }
 }
 
-function wheelTarget(root: HTMLElement, target: EventTarget | null, dy: number): HTMLElement {
-  let node = target instanceof Element ? target : null
-  while (node && node !== root) {
-    if (node instanceof HTMLElement) {
-      if (scrollAxes(node).y && canScrollInDirection(node, dy < 0 ? "up" : "down")) return node
-    }
-    node = node.parentElement
+/** The single nested-scroller test: the innermost scroller from `target` up to,
+ * excluding, `root` that can still scroll vertically in `direction` consumes the gesture. */
+export function findNestedScroller(root: HTMLElement, target: EventTarget | null, direction: "up" | "down"): HTMLElement | null {
+  for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
+    // The edge test first skips style resolution for most ancestors.
+    if (node instanceof HTMLElement && canScrollInDirection(node, direction) && scrollAxes(node).y) return node
   }
-  return root
+  return null
 }
 
 /** Effective CSS zoom of `element`. The app zooms natively (1 here); CSS zoom still scales input. */
@@ -67,11 +66,13 @@ export function attachScrollGestureRouting(root: HTMLElement): () => void {
       return
     }
     const now = performance.now()
-    const target = wheelTarget(root, event.target, event.deltaY)
-    if (!wheelOwner?.isConnected || !root.contains(wheelOwner) || now - wheelAt > WHEEL_GESTURE_IDLE_MS) wheelOwner = target
+    const direction = event.deltaY < 0 ? "up" : "down"
+    const target = findNestedScroller(root, event.target, direction) ?? root
     // At an edge, chain only to an ancestor of the owner, never a new shell
     // passing under the cursor during the same gesture.
-    wheelOwner = wheelTarget(root, wheelOwner, event.deltaY)
+    wheelOwner = !wheelOwner?.isConnected || !root.contains(wheelOwner) || now - wheelAt > WHEEL_GESTURE_IDLE_MS
+      ? target
+      : findNestedScroller(root, wheelOwner, direction) ?? root
     wheelAt = now
     const owner = wheelOwner
     if (owner === target) return

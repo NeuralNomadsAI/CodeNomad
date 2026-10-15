@@ -26,7 +26,7 @@ import {
   getSessionDraftPromptsForInstance, getSessions,
   hasAuthoritativeSessionSelection,
 } from "../../stores/sessions"
-import { messageStoreBus } from "../../stores/message-v2/bus"
+import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../stores/message-v2/bus"
 import type { ScrollSnapshot } from "../../stores/message-v2/types"
 import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance } from "../../stores/attachments"
 import { serializeDraftAttachments } from "../../stores/client-state-attachments-codec"
@@ -39,13 +39,12 @@ import {
   hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
 } from "../../stores/app-session-workspace-hydration"
 const log = getLogger("actions")
-const MESSAGE_SCROLL_SCOPE = "message-stream"
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
 const CAPTURE_DEBOUNCE_MS = 100
 function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapshot> {
   const store = messageStoreBus.getInstance(instanceId)
   if (!store) return {}
-  const suffix = `:${MESSAGE_SCROLL_SCOPE}`
+  const suffix = `:${MESSAGE_STREAM_SCROLL_SCOPE}`
   return Object.fromEntries(Object.entries(store.state.scrollState)
     .filter(([key]) => key.endsWith(suffix))
     .map(([key, snapshot]) => ({ sessionId: key.slice(0, -suffix.length), snapshot }))
@@ -220,7 +219,7 @@ export function useAppSessionCapture() {
   }
   const cleanups = [
     messageStoreBus.onScrollSnapshotChanged((instanceId, sessionId, scope) => {
-      if (scope === MESSAGE_SCROLL_SCOPE) markScrollAuthority(instanceId, sessionId)
+      if (scope === MESSAGE_STREAM_SCROLL_SCOPE) markScrollAuthority(instanceId, sessionId)
     }),
     messageStoreBus.onSessionCleared(markScrollAuthority),
     messageStoreBus.onInstanceDestroyed((instanceId) => {

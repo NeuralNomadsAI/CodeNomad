@@ -69,7 +69,7 @@ import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, 
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
-import { messageStoreBus } from "./message-v2/bus"
+import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
@@ -121,7 +121,6 @@ const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
 const createSessionAuthorities = new Map<string, object>()
 const deleteSessionAuthorities = new Map<string, object>()
-const MESSAGE_STREAM_SCOPE = "message-stream"
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
 const MESSAGE_CURSOR_SEEK_LIMIT = 1000
@@ -1508,7 +1507,7 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
 
 function currentMessageWindow(instanceId: string, sessionId: string): MessageWindowState {
   const store = messageStoreBus.getOrCreate(instanceId)
-  return store.getMessageWindow(sessionId) ?? windowFromSnapshot(store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE))
+  return store.getMessageWindow(sessionId) ?? windowFromSnapshot(store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE))
 }
 
 function planMessageWindowLoad(
@@ -1535,10 +1534,10 @@ function commitMessageWindow(
 ) {
   const store = messageStoreBus.getOrCreate(instanceId)
   store.setMessageWindow(sessionId, window)
-  const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
+  const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE)
   const preservePosition = intent === "open"
   const atBottom = intent === "older" || intent === "latest"
-  store.setScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE, {
+  store.setScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE, {
     scrollTop: preservePosition ? existing?.scrollTop ?? 0 : 0,
     atBottom: preservePosition ? existing?.atBottom ?? window.kind === "latest" : atBottom,
     scrollRatio: preservePosition ? existing?.scrollRatio : undefined,
@@ -1580,7 +1579,7 @@ async function loadMessages(
   const store = messageStoreBus.getOrCreate(instanceId)
   const storedWindow = store.getMessageWindow(sessionId)
   let expectedWindow = storedWindow
-  const snapshot = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
+  const snapshot = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE)
   const currentWindow = storedWindow ?? windowFromSnapshot(snapshot)
   const planned: ReturnType<typeof planMessageWindowLoad> = options?.anchorMessageId
     ? { cursor: historyWindowCursor({ kind: "around", messageID: options.anchorMessageId }), next: currentWindow }

@@ -7,7 +7,7 @@ import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
 import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
 import { missionStore } from "../../stores/missions"
-import { messageStoreBus } from "../../stores/message-v2/bus"
+import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import PromptContextControls from "../prompt-input/PromptContextControls"
@@ -132,8 +132,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }, { defer: true }))
   createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
 
-  const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
-
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
   let pendingQueuedPayload: SessionInboxUserPayload | undefined
@@ -165,7 +163,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   function shouldScrollToBottomOnActivate() {
     const current = session()
     if (!current) return true
-    const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_SCROLL_CACHE_SCOPE)
+    const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_STREAM_SCROLL_SCOPE)
     return isSnapshotAutoFollowing(snapshot)
   }
 

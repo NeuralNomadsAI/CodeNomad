@@ -1,6 +1,8 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
+/** How long a user gesture keeps ownership of the scroll events it causes. */
+export const USER_SCROLL_INTENT_WINDOW_MS = 600
 export const ANCHOR_RESTORE_MAX_FRAMES = 300
 export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
@@ -293,14 +295,6 @@ export interface ScrollControllerResult {
   state: ScrollControllerState
 }
 
-export interface ScrollControllerSnapshot {
-  mode: FollowMode
-  lastObservedOffset: number
-  userIntentDirection: ScrollDirection
-  userIntentUntil: number
-  restoring: boolean
-}
-
 export interface FollowSnapshotState {
   followModeType?: FollowMode["type"]
 }
@@ -411,7 +405,7 @@ export class VirtualScrollController {
     }
   }
 
-  snapshot(): ScrollControllerSnapshot {
+  snapshot(): ScrollControllerState {
     return { ...this.state, mode: { ...this.state.mode } }
   }
 

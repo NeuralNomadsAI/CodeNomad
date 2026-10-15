@@ -1,4 +1,6 @@
-import { For, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { For, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js"
+import { trackHeightDelta } from "../lib/height-delta"
+import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
 
 export interface TimelineListHandle {
   scrollToIndex: (index: number) => void
@@ -53,13 +55,18 @@ export default function TimelineVirtualList<T>(props: {
       if (next.marker > 0 && (next.marker !== size().marker || next.gap !== size().gap)) setSize(next)
       readViewport()
     }
-    const observer = new ResizeObserver(measure)
+    // A resized rail keeps its bottom marker in place.
+    const bottomAnchor = trackHeightDelta(element, delta => {
+      element.scrollTop = Math.min(getBottomAnchoredViewportOffset(element.scrollTop, delta), Math.max(element.scrollHeight - element.clientHeight, 0))
+    })
+    const observer = new ResizeObserver(() => { bottomAnchor.update(); measure() })
     observer.observe(element)
     observer.observe(marker)
     observer.observe(gap)
     element.addEventListener("scroll", readViewport, { passive: true })
-    measure()
-    onCleanup(() => { observer.disconnect(); element.removeEventListener("scroll", readViewport) })
+    // Untracked: a geometry change must not rebuild the observer (and drop a pending anchor).
+    untrack(measure)
+    onCleanup(() => { observer.disconnect(); bottomAnchor.dispose(); element.removeEventListener("scroll", readViewport) })
   })
   props.register({ scrollToIndex: index => {
     const element = props.scrollElement, row = layout().rows[index]

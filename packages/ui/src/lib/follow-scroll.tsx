@@ -1,14 +1,11 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { BOTTOM_FOLLOW_EPSILON_PX, SCROLL_INTENT_KEYS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { BOTTOM_FOLLOW_EPSILON_PX, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
-
-const DEFAULT_SCROLL_INTENT_WINDOW_MS = 600
 
 interface FollowScrollOptions {
   getScrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
   sentinelClassName: string
-  intentWindowMs?: number
 }
 
 export interface FollowScrollHelpers {
@@ -41,11 +38,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       container.scrollTop = container.scrollHeight
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop)
     } else {
       container.scrollTop = lastKnownScrollTop
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop)
     }
+    scrollController.recordProgrammaticOffset(lastKnownScrollTop)
   }
 
   function persistScrollSnapshot(element?: HTMLElement | null) {
@@ -60,7 +56,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     // Upward intent takes ownership immediately, even if native middle-button
     // autoscroll waits longer than the intent deadline before its first scroll
     // event; a downward gesture reaching the bottom resumes follow (shared rule).
-    const result = scrollController.userGesture(direction, now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS), container ? getMetrics(container) : null, distance)
+    const result = scrollController.userGesture(direction, now + USER_SCROLL_INTENT_WINDOW_MS, container ? getMetrics(container) : null, distance)
     setAutoScroll(isAutoFollowing(result.state.mode))
     if (direction === "up") {
       suppressNextScrollHandling = false
