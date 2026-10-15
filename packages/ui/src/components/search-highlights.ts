@@ -1,6 +1,9 @@
 import type { SessionSearchMatch } from "../lib/session-search"
-import { collectSearchRanges, revealSearchRange, type SearchRange } from "./search-highlight-ranges"
+import { collectSearchRanges, revealSearchRange, type AlignInTranscript, type SearchRange } from "./search-highlight-ranges"
 import { paintSearchMarks } from "./search-highlight-marks"
+
+/** One navigation's reveal of its active occurrence; the first row to reveal it claims it. */
+export interface SearchRevealRequest { matchId: string; claimed: boolean }
 
 const MATCHES = "codenomad-search"
 const ACTIVE = "codenomad-search-active"
@@ -64,14 +67,17 @@ export function clearSearchHighlights(root: HTMLElement): void {
   }
 }
 
-/** One mounted message owns its contribution; another row cannot clear it. */
-export function applySearchHighlights(root: HTMLElement, query: string, active?: SessionSearchMatch | null, scrollActive = false): void {
+/**
+ * One mounted message owns its contribution; another row cannot clear it.
+ * `reveal` scrolls the active occurrence into view once, through `align` for
+ * the transcript itself.
+ */
+export function applySearchHighlights(root: HTMLElement, query: string, active?: SessionSearchMatch | null, reveal?: SearchRevealRequest, align?: AlignInTranscript): void {
   clearSearchHighlights(root)
   if (!query.trim()) return
   const view = root.ownerDocument.defaultView!
   const owner: Owner = { ranges: [], marks: [], documentHighlights: registry(root.ownerDocument) }
   owners.set(root, owner)
-  let needsScroll = scrollActive
 
   const paint = () => {
     if (owners.get(root) !== owner) return
@@ -92,12 +98,13 @@ export function applySearchHighlights(root: HTMLElement, query: string, active?:
       activeRange = painted.activeRange
       owner.ranges = []
     }
-    if (needsScroll && activeRange) {
+    if (reveal && !reveal.claimed && activeRange) {
       owner.scrollFrame = view.requestAnimationFrame(() => {
         owner.scrollFrame = undefined
-        if (owners.get(root) === owner && activeRange!.startContainer.isConnected) {
-          needsScroll = false
-          revealSearchRange(activeRange!)
+        // A moved row collapses its live ranges; only a repaint can reveal again.
+        if (owners.get(root) === owner && !reveal.claimed && !activeRange!.collapsed && activeRange!.startContainer.isConnected) {
+          reveal.claimed = true
+          revealSearchRange(activeRange!, align)
         }
       })
     }

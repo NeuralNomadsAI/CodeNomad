@@ -11,7 +11,7 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { serverApi } from "../../../src/lib/api-client"
 import { applyUiSettings } from "./ui-settings"
-import { mode, record, samples } from "./search-highlight-adapter"
+import { mode, record, samples, type SearchRevealRequest } from "./search-highlight-adapter"
 import type { SessionSearchMatch } from "../../../src/lib/session-search"
 import type { ClientPart } from "../../../src/types/message"
 import "../../../src/index.css"
@@ -55,6 +55,8 @@ for (const [index, id] of ids.entries()) {
 await applyUiSettings({ locale: "en", toolCallExpansionDefaults: { preset: "everything" } })
 const [query, setQuery] = createSignal("")
 const [active, setActive] = createSignal<SessionSearchMatch | null>(null)
+// Like MessageSection, each newly selected match requests one reveal.
+const [reveal, setReveal] = createSignal<SearchRevealRequest | null>(null)
 const [visible, setVisible] = createSignal(true)
 const [visibleIds, setVisibleIds] = createSignal(ids)
 const [thinking, setThinking] = createSignal(true)
@@ -66,7 +68,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
       <MessageBlock instanceId={instanceId} sessionId={sessionId} messageId={id} messageIndex={index()} store={() => store}
         showThinking={thinking} thinkingDefaultExpanded={() => true} toolVisibility={() => "expanded"}
         usageMetricsVisibility={() => "hidden"} systemMessagesVisibility={() => "expanded"}
-        searchQuery={query} activeSearchMatch={active} />
+        searchQuery={query} activeSearchMatch={active} searchReveal={reveal} />
     }</For></Show>
   </div>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
@@ -94,8 +96,10 @@ const emit = (type: string, data: unknown) => (sseManager as any).handleEvent(in
 })
 async function change(value: string, occurrence: number | null = null, id = ids[0], part = "text") {
   setQuery(value)
-  setActive(occurrence === null ? null : { id: `hit-${++serial}`, messageId: id, partId: `${id}-${part}`,
-    role: "user", occurrence, start: 0, end: value.length, preview: value })
+  const match: SessionSearchMatch | null = occurrence === null ? null : { id: `hit-${++serial}`, messageId: id, partId: `${id}-${part}`,
+    role: "user", occurrence, start: 0, end: value.length, preview: value }
+  setActive(match)
+  setReveal(match && { matchId: match.id, claimed: false })
   await settle()
 }
 ;(window as any).highlightFixture = {

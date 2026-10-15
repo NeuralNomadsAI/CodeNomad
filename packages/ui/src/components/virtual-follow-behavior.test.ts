@@ -22,7 +22,6 @@ import {
   isAtBottomForMode,
   isAutoFollowing,
   isMiddleButtonScrollIntent,
-  isScrollRestoreGenerationCurrent,
   isScrollRestoreMeasurementReady,
   isSnapshotAutoFollowing,
   resolveAutoPinHoldElement,
@@ -589,11 +588,5 @@ describe("virtual follow behavior", () => {
       assert.equal(cancelled, true, path)
       assert.equal(restoredOldMode, false, path)
     }
-  })
-
-  it("rejects stale applied or cancellation callbacks from another session generation", () => {
-    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 3), true)
-    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-b", 4), false)
-    assert.equal(isScrollRestoreGenerationCurrent("session-a", 3, "session-a", 4), false)
   })
 })

@@ -15,11 +15,12 @@ import { loadMessages, loadLatestMessageWindow } from "../../../src/stores/sessi
 import { historyWindowCursor } from "../../../src/stores/history-window"
 import { createSessionOutline, captureSessionOutlineIndexes, seedSessionOutlineIndexes } from "../../../src/stores/session-outline"
 import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
-import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./history-navigation-data"
+import { navigationMessage, navigationMessageId, mixedNavigationMessage, deepNavigationMessage } from "./history-navigation-data"
 import "../../../src/index.css"
 
 const instanceId = "navigation", sessionId = "s", count = 1500
-const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage : navigationMessage
+const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage
+  : location.search.includes("deep") ? deepNavigationMessage : navigationMessage
 const model = { providerID: "fixture", id: "fixture" }
 const assistantId = "msg_streaming"
 let nativeLists = 0, time = 10000, live = "", streaming = false

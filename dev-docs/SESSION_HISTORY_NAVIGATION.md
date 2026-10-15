@@ -117,11 +117,15 @@ same call opens the programmatic window, records synchronous targets and keeps
 imperative Virtua operations cancellable by the next gesture. Follow-mode changes go
 through `syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
-compensation, browser clamping and search-result reveals.
+compensation, browser clamping and search-result reveals inside nested scrollers.
 
-Search reveals keep their one-shot occurrence centering through nested scrollers
-(not an element-alignment hold). They emit `writer: "external"` with reason
-`search-reveal` and do not change the list's programmatic marking. SessionView's
+A search navigation reveals its occurrence once, after placing its message. Inside
+nested code/tool scrollers the reveal writes them directly and emits
+`writer: "external"` with reason `search-reveal`, without changing the list's
+programmatic marking. The transcript step goes through the list's `alignElement`
+(reason `align-element`), which holds the occurrence's element at its centred offset
+for the alignment window against the list's placement corrections; only a transcript
+outside a list (no alignment) is written directly as `search-reveal`. SessionView's
 activation/submission handles and MessageSection's paging, restoration and message
 navigation (timeline and search alike, through `navigateToMessage`) use the list API
 and therefore reach `writeScroll`.

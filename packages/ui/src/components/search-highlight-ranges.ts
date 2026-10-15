@@ -49,13 +49,21 @@ export function collectSearchRanges(root: HTMLElement, query: string, active?: S
   return result
 }
 
+/** Holds `target` `viewportOffset` px below the transcript top through the list that owns its position. */
+export type AlignInTranscript = (target: HTMLElement, viewportOffset: number) => void
+
 /**
- * Reveal the actual occurrence through nested code/tool scrollers, up to the
- * transcript. The transcript has already placed its message; it moves only for
- * an occurrence that message placement leaves out of view. That centering
- * bypasses VirtualFollowList's `writeScroll` and is traced as `search-reveal`.
+ * Reveal the actual occurrence through nested code/tool scrollers, then the
+ * transcript, centring it in each scroller that leaves it out of view. The
+ * walk stops at the transcript. With `align`, the transcript's list holds the
+ * occurrence's element at its centred offset through its own `writeScroll`
+ * (`align-element`): a direct write would be undone by the list's placement
+ * corrections after a jump. That offset cannot be negative, so an occurrence
+ * more than half a viewport below the top of its element lands with that
+ * element at the top, possibly still out of view. Nested scrollers, and a
+ * transcript outside a list, are written directly and traced as `search-reveal`.
  */
-export function revealSearchRange(range: Range): void {
+export function revealSearchRange(range: Range, align?: AlignInTranscript): void {
   const node = range.startContainer
   if (!node.isConnected) return
   const document = node.ownerDocument!
@@ -67,14 +75,19 @@ export function revealSearchRange(range: Range): void {
     const vertical = parent.scrollHeight > parent.clientHeight && (/auto|scroll|overlay/.test(style.overflowY) || parent === document.scrollingElement)
     const horizontal = parent.scrollWidth > parent.clientWidth && /auto|scroll|overlay/.test(style.overflowX)
     if (vertical && (rect.top < top || rect.bottom > top + parent.clientHeight)) {
-      const from = isScrollTraceEnabled() ? parent.scrollTop : undefined
-      parent.scrollTop += (rect.top + rect.bottom) / 2 - top - parent.clientHeight / 2
-      if (from !== undefined && Math.abs(parent.scrollTop - from) >= 1) traceScroll("write", {
-        reason: "search-reveal", writer: "external", from, to: parent.scrollTop,
-        mode: parent.dataset.followMode, transcript: parent.classList.contains("message-stream"),
-        key: node.parentElement?.closest<HTMLElement>("[data-virtual-follow-key]")?.dataset.virtualFollowKey,
-        at: Math.round(performance.now()),
-      })
+      const delta = (rect.top + rect.bottom) / 2 - top - parent.clientHeight / 2
+      const target = node.parentElement!
+      if (parent === transcript && align) align(target, target.getBoundingClientRect().top - top - delta)
+      else {
+        const from = isScrollTraceEnabled() ? parent.scrollTop : undefined
+        parent.scrollTop += delta
+        if (from !== undefined && Math.abs(parent.scrollTop - from) >= 1) traceScroll("write", {
+          reason: "search-reveal", writer: "external", from, to: parent.scrollTop,
+          mode: parent.dataset.followMode, transcript: parent === transcript,
+          key: node.parentElement?.closest<HTMLElement>("[data-virtual-follow-key]")?.dataset.virtualFollowKey,
+          at: Math.round(performance.now()),
+        })
+      }
     }
     if (horizontal && (rect.left < left || rect.right > left + parent.clientWidth)) {
       parent.scrollLeft += rect.left < left ? rect.left - left : rect.right - left - parent.clientWidth

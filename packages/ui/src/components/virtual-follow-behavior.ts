@@ -244,15 +244,6 @@ export function selectTopViewportAnchor(
   return visible.sort((a, b) => a.top - b.top)[0]
 }
 
-export function isScrollRestoreGenerationCurrent(
-  startedSessionId: string,
-  startedGeneration: number,
-  currentSessionId: string,
-  currentGeneration: number,
-) {
-  return startedSessionId === currentSessionId && startedGeneration === currentGeneration
-}
-
 export type FollowEffect =
   | { type: "none" }
   | { type: "scroll-top"; immediate: boolean }

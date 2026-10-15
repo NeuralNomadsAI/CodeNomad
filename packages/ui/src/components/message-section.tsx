@@ -32,6 +32,7 @@ import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
+import type { SearchRevealRequest } from "./search-highlights"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { isLatestWindow, preserveMessageWindowCursor, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadPagesUntilAnchor } from "./message-history-pagination"
@@ -52,8 +53,15 @@ const log = getLogger("session")
 
 /** Loads the anchor of the activation's scroll snapshot, then restores it through the list. */
 interface RestoringNavigation { kind: "restoring"; sessionId: string; loading: AbortController | null }
-/** Pages the history window; `gesture` is the scroll direction that requested it. */
-interface PagingNavigation { kind: "paging"; sessionId: string; controller: AbortController; gesture: "up" | "down" | null; around: boolean }
+/**
+ * Pages the history window; `gesture` is the scroll direction that requested it.
+ * `restored` records whether the activation restore had positioned the list
+ * before paging began, and `positioned` whether paging has positioned it since.
+ */
+interface PagingNavigation {
+  kind: "paging"; sessionId: string; controller: AbortController; gesture: "up" | "down" | null; around: boolean
+  restored: boolean; positioned: boolean
+}
 /** One owner positions the transcript: the activation's restore, then history paging. */
 type TranscriptNavigation = { kind: "unrestored" } | RestoringNavigation | PagingNavigation | { kind: "idle" }
 
@@ -301,6 +309,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const [skippedSearchMessages, setSkippedSearchMessages] = createSignal(0)
   const [previewSearchMatch, setPreviewSearchMatch] = createSignal<{ sessionId: string; messageId: string }>()
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
+  // Set once a search navigation has placed its message: that row reveals the
+  // occurrence once. Rows mounted later by paging or virtualization find it
+  // claimed, and any reader gesture claims it first.
+  const [searchReveal, setSearchReveal] = createSignal<SearchRevealRequest | null>(null)
   const searchLocatorAuthority = createSearchLocatorAuthority()
   let searchGeneration = 0
   let searchInputRef: HTMLInputElement | undefined
@@ -425,17 +437,26 @@ export default function MessageSection(props: MessageSectionProps) {
 
   function cancelWindowNavigation() {
     const nav = navigation()
-    if (nav.kind === "paging") nav.controller.abort()
-    else if (nav.kind === "restoring" && nav.loading) nav.loading.abort()
-    else return
+    if (nav.kind === "paging") {
+      nav.controller.abort()
+      settlePaging(nav)
+    } else if (nav.kind === "restoring" && nav.loading) {
+      // The navigation that cancels the restore positions the list itself.
+      nav.loading.abort()
+      setNavigation({ kind: "idle" })
+    }
+  }
+
+  function settlePaging(paging: PagingNavigation) {
+    // Paging that never positioned a list the activation had not restored yet
+    // leaves that restore pending; its unpositioned list has nothing to persist.
+    if (!paging.restored && !paging.positioned) {
+      setNavigation({ kind: "unrestored" })
+      return
+    }
     setNavigation({ kind: "idle" })
-    // A committed page records its intended position in the store; record where
-    // the reader actually is, or the last good position of an unpositioned restore.
-    persistMessageScrollSnapshot({
-      sessionId: nav.sessionId,
-      allowCapture: nav.kind === "paging" && nav.sessionId === props.sessionId,
-      requireActive: false,
-    })
+    // A committed page records its intended position in the store; record the reader's actual one.
+    persistMessageScrollSnapshot({ sessionId: paging.sessionId, allowCapture: paging.sessionId === props.sessionId, requireActive: false })
   }
 
   function resetNavigation() {
@@ -601,10 +622,11 @@ export default function MessageSection(props: MessageSectionProps) {
   // Restore once per activation, when the transcript can show the snapshot.
   // The snapshot is read untracked: persisting the position must not restart it.
   createEffect(() => {
+    // Checked first: once restored, the effect does not track the transcript.
+    if (navigation().kind !== "unrestored") return
     const element = streamElement()
     const api = listApi()
     if (!element || !api || !isActive() || props.loading || visibleMessageIds().length === 0) return
-    if (navigation().kind !== "unrestored") return
     untrack(() => restoreTranscriptPosition(api))
   })
 
@@ -699,6 +721,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setFailedSearchQuery("")
     setSearchMatches([])
     setActiveSearchIndex(0)
+    setSearchReveal(null)
   }
 
   function updateSearchQuery(query: string) {
@@ -728,17 +751,27 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!match) return
     if (match.sessionId !== props.sessionId || !props.onLoadMessageAnchor) setPreviewSearchMatch(match)
     // The active-match effect locates a newly selected resident match.
-    else if (match === previous || !messageIds().includes(match.messageId)) navigateToMessage(match.messageId)
+    else if (match === previous || !messageIds().includes(match.messageId)) navigateToMessage(match.messageId, match.id)
   }
 
-  /** Places a message at the top, first paging in its history window when it is not resident. */
-  function navigateToMessage(messageId: string) {
-    if (!messageIds().includes(messageId)) {
-      void pageWindow("around", api => api.scrollToKey(messageId, { block: "start" }), messageId)
-      return
-    }
+  /**
+   * Places a message at the top, first paging in its history window when it is
+   * not resident. A search navigation then reveals its occurrence once.
+   */
+  function navigateToMessage(messageId: string, searchMatchId?: string) {
+    if (messageIds().includes(messageId)) placeResidentMessage(messageId, searchMatchId)
+    else void pageWindow("around", api => placeMessage(api, messageId, searchMatchId), messageId)
+  }
+
+  function placeResidentMessage(messageId: string, searchMatchId?: string) {
     cancelWindowNavigation()
-    listApi()?.scrollToKey(messageId, { block: "start" })
+    const api = listApi()
+    if (api) placeMessage(api, messageId, searchMatchId)
+  }
+
+  function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string) {
+    api.scrollToKey(messageId, { block: "start" })
+    if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -851,7 +884,9 @@ export default function MessageSection(props: MessageSectionProps) {
   ) {
     const api = listApi()
     if (!api || !isActive()) return
-    if (navigation().kind === "paging" && direction !== "around" && direction !== "latest") return
+    const previous = navigation()
+    if (previous.kind === "paging" && direction !== "around" && direction !== "latest") return
+    const restored = previous.kind === "idle" || (previous.kind === "paging" && (previous.restored || previous.positioned))
     cancelWindowNavigation()
     const load = direction === "around"
       ? props.onLoadMessageAnchor && anchorMessageId ? (signal?: AbortSignal) => props.onLoadMessageAnchor!(anchorMessageId, signal) : undefined
@@ -880,6 +915,8 @@ export default function MessageSection(props: MessageSectionProps) {
       controller,
       gesture: direction === "older" || direction === "oldest" ? "up" : direction === "around" ? null : "down",
       around: direction === "around",
+      restored,
+      positioned: false,
     }
     setNavigation(paging)
     const isCurrent = () => navigation() === paging && isActive() && api === listApi()
@@ -899,6 +936,7 @@ export default function MessageSection(props: MessageSectionProps) {
       await waitTwoFrames()
       if (!isCurrent()) return
       const retainedAnchor = previousPosition?.anchorKey && visibleMessageIds().includes(previousPosition.anchorKey)
+      paging.positioned = true
       if (retainedAnchor) api.restoreScrollSnapshot({ ...previousPosition, atBottom: false, followModeType: "escaped" })
       else after(api)
       const bottomSettlement = !retainedAnchor && (direction === "older" || direction === "latest")
@@ -920,12 +958,7 @@ export default function MessageSection(props: MessageSectionProps) {
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
-      // However paging ended, a committed page recorded its intended position:
-      // replace it with the reader's actual one.
-      if (navigation() === paging) {
-        setNavigation({ kind: "idle" })
-        persistMessageScrollSnapshot()
-      }
+      if (navigation() === paging) settlePaging(paging)
     }
   }
 
@@ -1043,7 +1076,8 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   // Locates a newly active resident match. Residency is untracked: paging a
-  // non-resident match in positions it once its page commits.
+  // non-resident match in positions it once its page commits. `locate` never
+  // awaits, so the match checked resident here is still resident when placed.
   createEffect(() => {
     const match = activeSearchMatch()
     if (!match || !isSearchOpen() || match.sessionId !== props.sessionId || !untrack(messageIds).includes(match.messageId)) return
@@ -1053,7 +1087,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const endTraversal = beginMessageHistoryTraversal(props.instanceId, props.sessionId)
       try {
       if (searchLocatorAuthority.isCurrent(locatorAuthority) && activeSearchMatch()?.id === match.id) {
-        navigateToMessage(match.messageId)
+        placeResidentMessage(match.messageId, match.id)
       }
       } finally {
         endTraversal()
@@ -1182,6 +1216,9 @@ export default function MessageSection(props: MessageSectionProps) {
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
           onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)
+            // The reader now owns the position: a pending occurrence reveal must not pull it.
+            const reveal = searchReveal()
+            if (reveal) reveal.claimed = true
             // An opposite directional gesture supersedes pending history paging
             // before it can position; taps and the requesting gesture do not.
             const nav = navigation()
@@ -1335,6 +1372,7 @@ export default function MessageSection(props: MessageSectionProps) {
               searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}
               activeSearchMatch={activeSearchMatch}
+              searchReveal={searchReveal}
               pendingFormToolTargets={pendingFormToolTargets}
               technicalGroupForPart={technicalGroupForPart}
               technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
