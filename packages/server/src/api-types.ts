@@ -873,3 +873,7 @@ export type {
   OpenCodeBinary,
 }
 export type { PruneRequest, PruneResult } from "./opencode/session-pruning/contract"
+export interface ServiceUsageSnapshot {
+  scope: "service"
+  stats: import("@opencode/client").SessionStatsInfo
+}

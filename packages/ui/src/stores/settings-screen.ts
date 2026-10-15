@@ -14,6 +14,7 @@ export type SettingsSectionId =
   | "opencode"
   | "providers"
   | "missions"
+  | "usage"
   | "sidecars"
   | "config-files"
   | "advanced"

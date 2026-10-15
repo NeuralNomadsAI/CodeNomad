@@ -8,7 +8,7 @@ import { normalizeOpenerStartupStateResult, type OpenerStartupStateResult, type 
 
 const sections = new Set<SettingsSectionId>([
   "general", "chat", "hotkeys", "notifications", "speech", "remote", "opencode",
-  "providers", "missions", "sidecars", "config-files", "advanced", "info",
+  "providers", "missions", "usage", "sidecars", "config-files", "advanced", "info",
 ])
 
 export interface NativePreferencesRequest {
