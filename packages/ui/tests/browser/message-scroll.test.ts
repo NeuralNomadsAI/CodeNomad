@@ -563,6 +563,38 @@ test("streaming at the tail never paints a backward jump", async () => {
   })
 })
 
+/** Trace moves no write claimed (Virtua, browser or gesture), for failure messages. */
+function unownedMoves(entries: ScrollTraceEntry[]) {
+  return entries.filter(entry => entry.kind === "observe" && entry.owner === "unowned")
+    .map(({ from, to, top, scrollHeight, intent }) => ({ from, to, top, scrollHeight, intent }))
+}
+
+// Growth below an escaped reader must not move it. A remounted Virtualizer
+// (each short append while following) used to re-estimate its default row size
+// once newly measured rows outgrew the viewport, shrinking never-measured history
+// rows above the reader; near the bottom the browser clamped before Virtua's
+// compensation, landing the reader many rows back.
+test("streaming below an escaped reader near the tail never moves it", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    await bottom(page)
+    await page.evaluate(() => (window as any).fixture.start())
+    await page.evaluate(() => (window as any).fixture.delta("Initial response.\n\n".repeat(3)))
+    await frames(page, 12)
+    await trace.enable()
+    await page.locator(".message-stream").hover()
+    await page.mouse.wheel(0, -240)
+    await frames(page, 45)
+    const before = await page.evaluate(topReader)
+    assert.equal(before.state.followModeType, "escaped")
+    const anchor = await page.locator(`[data-virtual-follow-key="${before.anchorKey}"]`).evaluate(row => row.getBoundingClientRect().top - row.closest(".message-stream")!.getBoundingClientRect().top)
+    await traceAnchor(page, before.anchorKey!)
+    const samples = await sampleAnchor(page, { key: before.anchorKey!, stream: ".message-stream", count: 120, step: 'if (frame % 2 === 0) window.fixture.delta("Streamed paragraph below the reader.\\n\\n".repeat(3))' })
+    const moved = samples.filter(sample => sample.anchorOffset === null || Math.abs(sample.anchorOffset - anchor) > 2)
+    assert.deepEqual(moved, [], `The escaped reader moved (${before.anchorKey} at ${anchor}px): ${JSON.stringify({ moved: moved.slice(0, 3), unowned: unownedMoves(trace.entries) })}`)
+  })
+})
+
 /** Streams into A from the bottom until the long-reply hold escapes follow; returns the per-frame top row. */
 async function streamUntilHold(page: Page, scope: string) {
   await bottom(page, scope)
@@ -606,18 +638,16 @@ test("the long-reply hold persists while streaming and the latest button resumes
   }, { name: "switch", hold: true })
 })
 
-// Documents a pre-existing displacement (also on the pre-#967 base). The scroll
-// trace shows no transcript write in that frame: an `unowned` move where Virtua's
-// one-time default-size estimate (armed per Virtualizer instance, fired once newly
-// measured rows exceed the viewport, i.e. as the reply outgrows it like the hold)
-// shrinks never-measured history rows. The browser clamps to the new maximum and
-// Virtua's jump compensation is applied on top, landing around msg_0030_A.
-test("the long-reply hold keeps the streaming reply in view when it escapes", { todo: "hold escape displaces the reader to older history (follow-up)" }, async () => {
+// The hold only escapes follow; it must not hand the next default-size
+// re-estimate of never-measured history rows a visible clamp (see above).
+test("the long-reply hold keeps the streaming reply in view when it escapes", async () => {
   const scope = '[data-session-id="A"]'
   await open(async page => {
+    const trace = collectScrollTrace(page)
+    await trace.enable()
     const topRows = await streamUntilHold(page, scope)
     const displaced = topRows.filter(key => key && key !== "stream-A" && !/^msg_005[5-9]_A$/.test(key))
-    assert.deepEqual(displaced, [], `The hold escape moved the reader away from the streaming tail: ${JSON.stringify(topRows)}`)
+    assert.deepEqual(displaced, [], `The hold escape moved the reader away from the streaming tail: ${JSON.stringify({ topRows: [...new Set(topRows)], unowned: unownedMoves(trace.entries) })}`)
   }, { name: "switch", hold: true })
 })
 
@@ -637,6 +667,29 @@ for (const streaming of [false, true]) test(`remount retains an intra-message an
     const samples = await sampleAnchor(page, { key: before.anchorKey, stream: ".message-stream", count: streaming ? 120 : 180, step: streaming ? 'if (frame % 2 === 0) window.fixture.delta("More streamed text.\\n\\n".repeat(3))' : undefined })
     await assertAnchorHeld(page, samples, before.anchorOffset, 4, 30)
   })
+})
+
+// Deactivation abandons a restoration in flight without settling it. Neither its
+// `restoring` state nor its armed anchor restart may outlive the inactive view:
+// after reactivation, following growth pins the bottom again (no gesture, which
+// would cancel the stale restoration and hide it).
+test("deactivating during a restoration leaves following intact after reactivation", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page)
+    const target = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.ok(target.anchorKey && !target.atBottom, JSON.stringify(target))
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page)
+    await page.evaluate(target => (window as any).fixture.deactivateDuringRestore(target), target)
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.activate())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.append())
+    await frames(page)
+    const gap = await page.locator(".message-stream").evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.deepEqual({ following: await page.evaluate(() => (window as any).fixture.autoScroll()), atBottom: gap <= 1 }, { following: true, atBottom: true }, `gap=${gap}`)
+  }, { name: "list" })
 })
 
 function topReader() {

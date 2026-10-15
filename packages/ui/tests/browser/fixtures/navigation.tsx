@@ -4,6 +4,7 @@ import VirtualFollowList, { type VirtualFollowListApi, type VirtualFollowScrollS
 import "../../../src/index.css"
 
 const [visible, setVisible] = createSignal(true)
+const [active, setActive] = createSignal(true)
 const [items, setItems] = createSignal(Array.from({ length: 200 }, (_, i) => `row-${i}`))
 const [tailHeight, setTailHeight] = createSignal(48)
 const [headHeight, setHeadHeight] = createSignal(48)
@@ -12,6 +13,7 @@ let snapshot: VirtualFollowScrollSnapshot | undefined
 let reachedTop = 0
 render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={item => item}
   initialAutoScroll={() => false} initialScrollToBottom={() => false}
+  isActive={active} scrollToBottomOnActivate={() => false}
   onUserReachedTop={() => { reachedTop++ }}
   registerApi={value => {
     api = value
@@ -44,4 +46,7 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
   append: () => setItems(current => [...current, `row-${current.length}`]),
   switchAway: () => { snapshot = api?.captureScrollSnapshot(); setVisible(false) },
   return: () => setVisible(true),
+  deactivateDuringRestore: (target: VirtualFollowScrollSnapshot) => { api?.restoreScrollSnapshot(target); setActive(false) },
+  activate: () => setActive(true),
+  autoScroll: () => api?.getAutoScroll(),
 }
