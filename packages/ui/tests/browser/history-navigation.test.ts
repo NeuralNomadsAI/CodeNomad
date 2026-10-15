@@ -326,14 +326,18 @@ test("global timeline jumps over 1200 messages in one bounded window and restore
 
 // A jump's page commit stores its intended position before the list reaches
 // it. Cancelling after that commit must store the reader's actual position at
-// once, not only after a later scroll event happens to persist it.
+// once, not only after a later scroll event happens to persist it. Right after
+// the commit the remounted list can sit at the bottom of its estimated content;
+// a capture there carries no anchor, so it must match the DOM offset instead,
+// and must not inherit the commit's intended anchor.
 test("cancelling a committed timeline jump stores the reader's actual position", async () => {
   const f = await fixture()
   const readStoredPosition = `(() => {
     const scroll = { ...window.fixture.snapshot().scroll }
     const stream = document.querySelector('.message-stream')
     const row = stream.querySelector('[data-virtual-follow-key="' + scroll.anchorKey + '"]')
-    return { scroll, offset: row ? row.getBoundingClientRect().top - stream.getBoundingClientRect().top : null }
+    return { scroll, offset: row ? row.getBoundingClientRect().top - stream.getBoundingClientRect().top : null,
+      domScrollTop: stream.scrollTop, domAtBottom: stream.scrollHeight - stream.clientHeight - stream.scrollTop <= 1 }
   })()`
   try {
     await f.page.evaluate(`(async () => {
@@ -353,8 +357,12 @@ test("cancelling a committed timeline jump stores the reader's actual position",
     await f.page.evaluate(`new Promise(resolve => { let count = 30; const next = () => --count ? requestAnimationFrame(next) : resolve(); requestAnimationFrame(next) })`)
     const states = { cancelled: await f.page.evaluate(() => (window as any).cancelledPosition), settled: await f.page.evaluate(readStoredPosition) }
     for (const [when, state] of Object.entries(states)) {
-      assert.ok(state.offset !== null && Math.abs(state.offset - state.scroll.anchorOffset) < 4, `Stored position (${when}) is not the reader's: ${JSON.stringify(state)}`)
+      const actual = state.scroll.anchorKey !== undefined
+        ? state.offset !== null && Math.abs(state.offset - state.scroll.anchorOffset) < 4
+        : state.scroll.atBottom && state.domAtBottom && Math.abs(state.scroll.scrollTop - state.domScrollTop) < 2
+      assert.ok(actual, `Stored position (${when}) is not the reader's: ${JSON.stringify(state)}`)
     }
+    assert.ok(states.settled.scroll.anchorKey !== undefined, `The settled reader must be anchored: ${JSON.stringify(states.settled)}`)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

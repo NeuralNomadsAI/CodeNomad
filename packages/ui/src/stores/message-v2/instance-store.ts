@@ -1274,16 +1274,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return `${sessionId}:${scope}`
   }
 
+  // A snapshot is a whole position: replace the stored one rather than merging
+  // into it, or an unanchored capture would inherit a previous anchor.
   function setScrollSnapshot(sessionId: string, scope: string, snapshot: Omit<ScrollSnapshot, "updatedAt">) {
     const key = makeScrollKey(sessionId, scope)
     const next = { ...snapshot, updatedAt: Date.now() }
-    setState("scrollState", key, next)
+    setState("scrollState", { [key]: next })
     hooks?.onScrollSnapshotChanged?.(instanceId, sessionId, scope, next)
   }
 
   function restoreScrollSnapshot(sessionId: string, scope: string, snapshot: ScrollSnapshot) {
     const key = makeScrollKey(sessionId, scope)
-    setState("scrollState", key, snapshot)
+    setState("scrollState", { [key]: snapshot })
   }
 
   function getScrollSnapshot(sessionId: string, scope: string) {

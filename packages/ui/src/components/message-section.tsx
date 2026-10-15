@@ -540,7 +540,10 @@ export default function MessageSection(props: MessageSectionProps) {
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const snapshot = overlayWindowOnSnapshot(options?.snapshot ?? listApi()?.captureScrollSnapshot())
+      const captured = options?.snapshot ?? listApi()?.captureScrollSnapshot()
+      // Only the bottom or an anchored row identifies the reader. A capture with
+      // neither (rows already torn down at unmount) keeps the last good position.
+      const snapshot = captured && (captured.atBottom || captured.anchorKey !== undefined) ? overlayWindowOnSnapshot(captured) : undefined
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
         const resolvedStore = store()
