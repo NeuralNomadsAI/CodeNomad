@@ -116,14 +116,14 @@ test("persistently incomplete recovery uses existing notifications once until re
   const { page, errors } = await fixture(393)
   try {
     await page.evaluate(() => (window as any).fixture.recover("empty"))
-    const warning = page.getByText(/^Question and permission recovery is incomplete/)
+    const warning = page.getByText(/^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./)
     // A single transient failure is retried by the liveness pass without a warning.
     assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 0)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
     assert.equal(await warning.count(), 1)
     assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 1)
-    assert.equal(await page.getByRole("button", { name: /^Question and permission recovery is incomplete/ }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: /^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./ }).count(), 0)
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await warning.waitFor({ state: "detached" })
     assert.equal(await page.locator(".interruption-dock").count(), 0)

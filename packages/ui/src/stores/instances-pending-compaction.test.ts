@@ -107,7 +107,7 @@ async function history(h: ReturnType<typeof harness>) {
 }
 
 test("loaded-only scans defer across instances and recover idle/global Forms only after the last overlapping compaction", async () => {
-  const warnings = () => getToastHistory().filter((item) => item.message.includes("Question and permission recovery is incomplete")).length
+  const warnings = () => getToastHistory().filter((item) => item.variant === "warning").length
   const before = warnings()
   const a = harness(), b = harness()
   await history(b)

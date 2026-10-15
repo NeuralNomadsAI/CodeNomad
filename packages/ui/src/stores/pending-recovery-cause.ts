@@ -66,8 +66,9 @@ export function recoveryCauseOf(error: unknown): PendingRecoveryCause {
   return error instanceof PendingRecoveryError ? error.recoveryCause : { kind: "request", detail: errorDetail(error) }
 }
 
+/** Initial loading failures keep a recovery cause when recovery itself is what failed. */
 export function hydrationCause(error: unknown): PendingRecoveryCause {
-  return { kind: "hydration", detail: errorDetail(error) }
+  return error instanceof PendingRecoveryError ? error.recoveryCause : { kind: "hydration", detail: errorDetail(error) }
 }
 
 /** One error naming every failed directory; any other failure keeps its own meaning. */

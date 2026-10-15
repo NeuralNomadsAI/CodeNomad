@@ -73,6 +73,6 @@ Yolo auszuschalten widerruft keine bereits angenommene Entscheidung und macht ke
 
 1. Prüfen Sie die Verbindungsanzeige und verbinden Sie sich erneut mit demselben Backend/Projekt.
 2. Lassen Sie die Wiederherstellung offene native Anfragen abgleichen; bekannte Anfragen und Entwürfe bleiben bei unvollständiger Abdeckung erhalten.
-3. Erscheint **Fragen und Berechtigungen konnten nicht vollständig wiederhergestellt werden**, prüfen Sie Laufzeit-/Verbindungsdiagnosen und versuchen Sie es nach Behebung der Ursache erneut.
+3. Erscheint die Warnung **Fragen und Berechtigungen nicht vollständig wiederhergestellt**, nennt ihre Meldung die Ursache, die Ordner und die betroffenen Sitzungen. Beheben Sie diese Ursache (zum Beispiel ein gelöschter Worktree oder eine Sitzung, die außerhalb dieses Projekts arbeitet); der nächste Wiederherstellungsdurchlauf versucht es automatisch erneut.
 
 Die Wiederherstellung lädt nicht jeden inaktiven Worktree, nur um Anfragen aufzulisten. Eine unvollständige Antwort ist keine maßgebliche leere Warteschlange, und die Warnung erlaubt keine Wiederholung eines Prompts, einer Antwort oder Freigabe. Konfigurationsneuladen kann native Forms/Berechtigungen abbrechen; verwenden Sie es nicht als routinemäßige Anfrageaktualisierung. Siehe [Fehlerbehebung](troubleshooting.md) und [OpenCode-Einrichtung](opencode.md).

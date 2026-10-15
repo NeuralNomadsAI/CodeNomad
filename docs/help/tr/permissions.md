@@ -73,6 +73,6 @@ Yolo'nun kapatılması halihazırda kabul edilmiş bir kararı iptal etmez veya 
 
 1. Bağlantı göstergesini kontrol edin ve aynı arka uca/projeye yeniden bağlanın.
 2. Kurtarmanın bekleyen yerel istekleri uzlaştırmasına izin verin; Kapsamın eksik olması durumunda bilinen talepler ve taslaklar korunur.
-3. **Soru ve izin kurtarma işlemi eksik** görüntülenirse çalışma zamanı/bağlantı tanılamalarını inceleyin ve nedeni çözdükten sonra yeniden deneyin.
+3. **Sorular ve izinler tam olarak kurtarılamadı** uyarısı görünürse, mesajı nedeni, klasörleri ve etkilenen oturumları belirtir. Bu nedeni giderin (örneğin silinmiş bir çalışma ağacı veya bu projenin dışında çalışan bir oturum); bir sonraki kurtarma geçişi otomatik olarak yeniden dener.
 
 Kurtarma, yalnızca istekleri numaralandırmak için etkin olmayan her çalışma ağacını yüklemez. Eksik bir yanıt, yetkili bir boş kuyruk değildir ve uyarı, bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).

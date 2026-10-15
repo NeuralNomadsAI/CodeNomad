@@ -3,6 +3,7 @@ import { it } from "node:test"
 import toast from "solid-toast"
 import { serverApi } from "../lib/api-client"
 import { getToastHistory } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
@@ -10,6 +11,9 @@ import { addInstance, incompletePendingRecovery, invalidatePendingRequestSync, r
 import { getSessionListIds, sessions } from "./session-state"
 import { refreshSessionCatalog } from "./session-api"
 import { reloadWorktrees } from "./worktrees"
+
+// Fixture workspaces live in /repo; newest warning first, like the notification history.
+const recoveryWarnings = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryIncomplete.title", { workspace: "repo" }))
 
 it("publishes root sessions before project metadata and checkout discovery, then reconciles verified families", async () => {
   const id = "startup-slow-checkouts"
@@ -81,7 +85,7 @@ it("warns when initial hydration fails before pending recovery can start", async
   const client: any = { session: { list: async () => ({ data: [], cursor: {} }) }, location: { get: async () => ({ directory: "/repo" }) } }
   sdkManager.createClient = () => client
   serverApi.fetchWorktrees = async () => { throw new Error("Worktree metadata unavailable") }
-  const warnings = () => getToastHistory().filter((item) => item.message.includes("Question and permission recovery is incomplete")).length
+  const warnings = () => recoveryWarnings().length
   const before = warnings()
   try {
     ;(serverEvents as any).dispatch({ type: "workspace.started", workspace: {
@@ -102,7 +106,7 @@ for (const scenario of ["success", "reuse", "invalidation", "unrelated compactio
   const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees, oldPending = serverApi.getPendingRequests
   const oldToast = toast.custom
   toast.custom = () => "fixture-toast"
-  const warnings = () => getToastHistory().filter((item) => item.message.includes("Question and permission recovery is incomplete")).length
+  const warnings = () => recoveryWarnings().length
   serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
     directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }],
   })) })
@@ -149,6 +153,8 @@ for (const scenario of ["success", "reuse", "invalidation", "unrelated compactio
       serverApi.getPendingRequests = async () => { throw new Error("Recovery still unavailable") }
       await syncPendingRequests(id).catch(() => {})
       assert.equal(warnings(), before + 1)
+      // The warning describes the attempt that crossed the threshold.
+      assert.equal(recoveryWarnings()[0]?.message, tGlobal("interruption.recoveryIssue.unavailableDetail", { directories: "repo", detail: "Recovery still unavailable" }))
     }
   } finally {
     failWorktrees(new Error("Fixture disposed"))

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import {
-  batchIssue, combinePendingFailures, describePendingRecovery, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
+  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
 } from "./pending-recovery-cause"
 
 // Echoes each key with its parameters so assertions show exactly what the user would read.
@@ -77,6 +77,12 @@ test("request failures map to the folder issue the user can act on", () => {
   assert.deepEqual(batchIssue(new HttpResponseError("Pending discovery deferred", 503, "30", "deferred")), { issue: "deferred" })
   assert.deepEqual(batchIssue(new DOMException("aborted", "AbortError")), { issue: "timeout" })
   assert.deepEqual(recoveryCauseOf(new Error("socket hang up")), { kind: "request", detail: "socket hang up" })
+})
+
+test("an initial load that failed in recovery keeps the recovery cause", () => {
+  const recovery = new PendingRecoveryError({ kind: "directories", directories: [{ directory: "/repo", issue: "missing" }] })
+  assert.deepEqual(hydrationCause(recovery), recovery.recoveryCause)
+  assert.deepEqual(hydrationCause(new Error("Worktree metadata unavailable")), { kind: "hydration", detail: "Worktree metadata unavailable" })
 })
 
 test("failed folders combine into one cause; any other failure keeps its meaning", () => {
