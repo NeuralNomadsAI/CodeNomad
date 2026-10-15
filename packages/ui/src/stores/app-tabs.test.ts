@@ -283,6 +283,51 @@ describe("renderer-local workspace tabs", () => {
     } finally { removeInstance(workspace.id, { authoritative: false }) }
   })
 
+  for (const outcome of ["success", "failure", "timeout"] as const) {
+    it(`remembers a local close after DELETE ${outcome}, reattachment and a delayed stop`, async () => {
+      const workspace = instance(`delayed-close-${outcome}`)
+      let deletes = 0
+      serverApi.deleteWorkspace = async () => {
+        deletes += 1
+        if (outcome !== "success") throw new Error(outcome === "timeout" ? "cleanup did not finish" : "delete failed")
+      }
+      addInstance(workspace)
+      selectInstanceTab(workspace.id)
+      try {
+        closeInstanceTab(workspace.id)
+        await new Promise((resolve) => setImmediate(resolve))
+        assert.equal(deletes, 1)
+        assert.equal(getExistingInstanceForFolder(workspace.folder)?.id, workspace.id)
+        assert.equal(getToastHistory().length, outcome === "success" ? 0 : 1)
+        clearToastHistory()
+        selectInstanceTab(workspace.id)
+        ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: workspace.id, reason: "deleted" })
+        await Promise.resolve()
+        assert.equal(instances().has(workspace.id), false)
+        assert.equal(appTabs().some(tab => tab.id === `instance:${workspace.id}`), false)
+        assert.equal(deletes, 1)
+        assert.deepEqual(getToastHistory(), [])
+      } finally { removeInstance(workspace.id, { authoritative: false }) }
+    })
+  }
+
+  it("clears local close origin on instance removal so a later foreign close notifies", async () => {
+    const workspace = instance("removed-close-origin")
+    addInstance(workspace)
+    selectInstanceTab(workspace.id)
+    try {
+      closeInstanceTab(workspace.id)
+      await new Promise((resolve) => setImmediate(resolve))
+      removeInstance(workspace.id, { authoritative: false })
+      addInstance(workspace)
+      selectInstanceTab(workspace.id)
+      ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: workspace.id, reason: "deleted" })
+      await Promise.resolve()
+      assert.equal(getToastHistory()[0]?.message,
+        tGlobal("app.closeInstance.toast.otherWindow", { project: "removed-close-origin" }))
+    } finally { removeInstance(workspace.id, { authoritative: false }) }
+  })
+
   it("does not notify for shutdown or for records not displayed in this window", async () => {
     for (const [id, reason, attached] of [["shutdown", "stopped", true], ["hidden", "deleted", false]] as const) {
       addInstance(instance(id))

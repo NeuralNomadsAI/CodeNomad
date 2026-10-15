@@ -1346,8 +1346,9 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       break
     case "workspace.stopped": {
       const instance = instances().get(event.workspaceId)
+      const locallyClosed = locallyRequestedWorkspaceCloses.delete(event.workspaceId)
       if (event.reason === "deleted" && instance && openInstanceTabIds().has(event.workspaceId)
-        && !workspaceCloseRequests.has(event.workspaceId)) {
+        && !locallyClosed) {
         showToastNotification({
           message: tGlobal("app.closeInstance.toast.otherWindow", { project: getInstanceLabel(instance) }),
           variant: "info",
@@ -1491,6 +1492,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
   const removedInstance = instances().get(id)
@@ -1789,11 +1791,13 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
 }
 
 const workspaceCloseRequests = new Map<string, Promise<void>>()
+const locallyRequestedWorkspaceCloses = new Set<string>()
 
-/** Normal close and temporary discard share in-flight deduplication and window provenance. */
+/** Origin outlives the HTTP request: cleanup and its stop event may arrive later. */
 function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promise<void> {
   const pending = workspaceCloseRequests.get(id)
   if (pending) return pending
+  locallyRequestedWorkspaceCloses.add(id)
   const request = Promise.resolve().then(operation).finally(() => workspaceCloseRequests.delete(id))
   workspaceCloseRequests.set(id, request)
   return request
