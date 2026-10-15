@@ -3,7 +3,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { attachScrollGestureRouting, getElementZoom, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, INTERACTIVE_KEY_TARGET_SELECTOR, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, TEXT_EDITING_KEY_TARGET_SELECTOR, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, INTERACTIVE_KEY_TARGET_SELECTOR, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -844,14 +844,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (!isActive() || event.defaultPrevented) return
       if (!SCROLL_INTENT_KEYS.has(event.key)) return
-      const target = event.target as HTMLElement | null
       const intent = getKeyboardScrollIntent({
         key: event.key,
         shiftKey: event.shiftKey,
-        interactive: Boolean(target?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)),
-        textEditing: Boolean(target?.closest(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+        ...describeKeyTarget(event.target),
         viewportHeight: element.clientHeight,
         zoom: getElementZoom(element),
+        devicePixelRatio: window.devicePixelRatio,
       })
       if (!intent) return
       const direction = intent.type === "top" ? "up" : intent.type === "bottom" ? "down" : intent.direction

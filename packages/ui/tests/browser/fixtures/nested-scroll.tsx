@@ -13,9 +13,10 @@ render(() => <VirtualFollowList items={items} getKey={item => item}
   registerApi={value => { api = value }}
   renderItem={(item, index) => item === "row-29"
     ? <div data-item-index={index()} style={{ height: "250px" }}>
-        <div data-nested-output ref={nested.registerContainer} onScroll={nested.handleScroll}
+        <div data-nested-output tabIndex={0} ref={nested.registerContainer} onScroll={nested.handleScroll}
           style={{ height: "200px", width: "600px", overflow: "auto" }}>
           <pre style={{ margin: "0", height: `${outputHeight()}px` }}><code>Artificial tool output</code></pre>
+          <button type="button" data-output-action>Copy</button>
           {nested.renderSentinel()}
         </div>
       </div>

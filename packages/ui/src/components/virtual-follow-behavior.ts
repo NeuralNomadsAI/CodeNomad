@@ -16,8 +16,23 @@ export function getPrimaryPointerDragDirection(previousY: number, nextY: number,
 }
 
 export const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
+// Space activates these instead of scrolling; pointer presses on them are not scroll intent.
 export const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
-export const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
+const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
+// Widgets that consume arrows (and Space). Plain buttons and links do not:
+// Chromium scrolls their scroller, so their arrows remain scroll intent.
+const ARROW_KEY_WIDGET_SELECTOR = ["listbox", "menu", "menubar", "radiogroup", "slider", "spinbutton", "combobox", "tablist", "tree", "treegrid", "grid"]
+  .map(role => `[role='${role}']`).join(", ")
+
+/** Which scroll keys a focused key target consumes instead of its scroller. */
+export function describeKeyTarget(target: EventTarget | null) {
+  const element = target as Element | null
+  return {
+    textEditing: Boolean(element?.closest?.(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+    interactive: Boolean(element?.closest?.(INTERACTIVE_KEY_TARGET_SELECTOR)),
+    arrowWidget: Boolean(element?.closest?.(ARROW_KEY_WIDGET_SELECTOR)),
+  }
+}
 
 export type KeyboardScrollIntent =
   | { type: "top" }
@@ -25,26 +40,33 @@ export type KeyboardScrollIntent =
   | { type: "direction"; direction: "up" | "down"; distance: number }
 
 /**
- * `distance` is Chromium's step in the scroller's own pixels (measured): a
- * page is 0.875 of the viewport, a line 40 page pixels, so 40/zoom under CSS zoom.
+ * `distance` is Chromium's step in the scroller's own pixels, never more
+ * (measured): a page is 0.875 of the viewport; a line is 40 DIP, which native
+ * page zoom shrinks too. The renderer cannot separate that zoom from the display
+ * scale, so dividing by CSS zoom × devicePixelRatio can only under-predict, and
+ * an under-predicted landing just falls back to being observed.
  */
 export function getKeyboardScrollIntent(input: {
   key: string
   shiftKey: boolean
   interactive: boolean
   textEditing: boolean
+  arrowWidget: boolean
   viewportHeight: number
   zoom: number
+  devicePixelRatio: number
 }): KeyboardScrollIntent | null {
   if (input.textEditing) return null
   if (input.key === "End") return { type: "bottom" }
   if (input.key === "Home") return { type: "top" }
-  if (input.interactive && input.key !== "PageUp" && input.key !== "PageDown") return null
-  const distance = input.key.startsWith("Arrow") ? 40 / input.zoom : Math.floor(input.viewportHeight * 0.875)
-  if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && (input.key === " " || input.key === "Spacebar"))) {
+  const arrow = input.key.startsWith("Arrow")
+  const space = input.key === " " || input.key === "Spacebar"
+  if ((space && (input.interactive || input.arrowWidget)) || (arrow && input.arrowWidget)) return null
+  const distance = arrow ? 40 / (input.zoom * Math.max(1, input.devicePixelRatio)) : Math.floor(input.viewportHeight * 0.875)
+  if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && space)) {
     return { type: "direction", direction: "up", distance }
   }
-  if (input.key === "ArrowDown" || input.key === "PageDown" || input.key === " " || input.key === "Spacebar") {
+  if (input.key === "ArrowDown" || input.key === "PageDown" || space) {
     return { type: "direction", direction: "down", distance }
   }
   return null

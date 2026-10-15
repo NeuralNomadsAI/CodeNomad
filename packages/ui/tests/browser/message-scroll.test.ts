@@ -231,6 +231,33 @@ test("nested follow-scroll output resumes only at its true bottom", async () => 
   }, { name: "nested" })
 })
 
+// Plain buttons and links do not consume arrows: Chromium scrolls their
+// scroller, so an arrow from a focused output action is still scroll intent.
+test("an arrow key from a button inside growing nested output escapes its follow", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
+    await frames(page, 10)
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().innerFollow), true)
+    await page.locator("[data-output-action]").evaluate(button => (button as HTMLElement).focus({ preventScroll: true }))
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press("ArrowUp")
+      await frames(page, 10)
+    }
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => (window as any).fixture.growOutput(20))
+      await frames(page, 4)
+    }
+    const innerFollow = await page.evaluate(() => (window as any).fixture.snapshot().innerFollow)
+    const gap = await output.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.equal(innerFollow, false, `Arrow keys from a focused button must take ownership (gap ${gap}px)`)
+    assert.ok(gap > 100, `The escaped output must not be repinned: ${gap}px`)
+  }, { name: "nested" })
+})
+
 // Tool/reasoning output shares the transcript's gesture rule: reaching a
 // growing output's bottom by wheel or key resumes its follow.
 for (const gesture of ["wheel", "PageDown"] as const) test(`a ${gesture} to growing nested output resumes its follow`, async () => {

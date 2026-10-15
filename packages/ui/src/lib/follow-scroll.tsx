@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { BOTTOM_FOLLOW_EPSILON_PX, INTERACTIVE_KEY_TARGET_SELECTOR, SCROLL_INTENT_KEYS, TEXT_EDITING_KEY_TARGET_SELECTOR, VirtualScrollController, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { BOTTOM_FOLLOW_EPSILON_PX, SCROLL_INTENT_KEYS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
 
 const DEFAULT_SCROLL_INTENT_WINDOW_MS = 600
@@ -84,14 +84,13 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     }
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (event.defaultPrevented || !SCROLL_INTENT_KEYS.has(event.key)) return
-      const target = event.target as HTMLElement | null
       const intent = getKeyboardScrollIntent({
         key: event.key,
         shiftKey: event.shiftKey,
-        interactive: Boolean(target?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)),
-        textEditing: Boolean(target?.closest(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+        ...describeKeyTarget(event.target),
         viewportHeight: element.clientHeight,
         zoom: getElementZoom(element),
+        devicePixelRatio: window.devicePixelRatio,
       })
       if (!intent) return
       // Home/End scroll natively here; End reaches the bottom whatever its distance.

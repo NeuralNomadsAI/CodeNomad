@@ -53,23 +53,35 @@ describe("virtual follow behavior", () => {
   })
 
   it("keeps page navigation available from non-editing interactive descendants", () => {
-    const key = (key: string, interactive: boolean, textEditing = false) => getKeyboardScrollIntent({ key, shiftKey: false, interactive, textEditing, viewportHeight: 614, zoom: 1 })
-    assert.deepEqual(key("PageUp", true), { type: "direction", direction: "up", distance: 537 })
-    assert.deepEqual(key("Home", true), { type: "top" })
-    assert.equal(key("PageUp", true, true), null)
-    assert.equal(key(" ", true), null)
+    const target = { interactive: false, textEditing: false, arrowWidget: false }
+    const key = (key: string, flags: Partial<typeof target>) => getKeyboardScrollIntent({ key, shiftKey: false, ...target, ...flags, viewportHeight: 614, zoom: 1, devicePixelRatio: 1 })
+    assert.deepEqual(key("PageUp", { interactive: true }), { type: "direction", direction: "up", distance: 537 })
+    assert.deepEqual(key("Home", { interactive: true }), { type: "top" })
+    assert.equal(key("PageUp", { interactive: true, textEditing: true }), null)
+    // A button activates on Space, but Chromium scrolls its scroller on arrows.
+    assert.equal(key(" ", { interactive: true }), null)
+    assert.deepEqual(key("ArrowUp", { interactive: true }), { type: "direction", direction: "up", distance: 40 })
+    // Widgets such as listboxes and sliders consume arrows and Space.
+    assert.equal(key("ArrowDown", { arrowWidget: true }), null)
+    assert.equal(key(" ", { arrowWidget: true }), null)
+    assert.deepEqual(key("PageDown", { arrowWidget: true }), { type: "direction", direction: "down", distance: 537 })
   })
 
-  it("carries Chromium's measured keyboard step as the gesture amplitude", () => {
-    const step = (key: string, viewportHeight: number, zoom: number) => {
-      const intent = getKeyboardScrollIntent({ key, shiftKey: false, interactive: false, textEditing: false, viewportHeight, zoom })
+  it("never over-predicts Chromium's keyboard step as the gesture amplitude", () => {
+    const step = (key: string, zoom: number, devicePixelRatio = 1) => {
+      const intent = getKeyboardScrollIntent({ key, shiftKey: false, interactive: false, textEditing: false, arrowWidget: false, viewportHeight: 614, zoom, devicePixelRatio })
       return intent?.type === "direction" ? intent.distance : undefined
     }
-    // Measured: PageDown/Space 537px of a 614px viewport (also under CSS zoom), ArrowDown 40/zoom.
-    assert.equal(step("PageDown", 614, 1), 537)
-    assert.equal(step(" ", 614, 1.25), 537)
-    assert.equal(step("ArrowDown", 614, 1), 40)
-    assert.equal(step("ArrowDown", 614, 1.25), 32)
+    // Measured: PageDown/Space 537px of a 614px viewport under CSS and native zoom.
+    assert.equal(step("PageDown", 1), 537)
+    assert.equal(step(" ", 1.25, 2), 537)
+    // A line is 40 DIP: 40/zoom under CSS zoom, 26.67 at native zoom 1.5, 20 at 2 (Electron).
+    assert.equal(step("ArrowDown", 1), 40)
+    assert.equal(step("ArrowDown", 1.25), 32)
+    assert.equal(step("ArrowDown", 1, 2), 20)
+    // Native zoom cannot be told from display scale: a 2x display under-predicts (40 real).
+    assert.ok(step("ArrowDown", 1, 1.5)! <= 40 / 1.5)
+    assert.equal(step("ArrowDown", 1, 0.5), 40, "Zooming out only lengthens the real step")
   })
 
   it("resumes follow from a downward gesture whose amplitude reaches the bottom laid out now", () => {
