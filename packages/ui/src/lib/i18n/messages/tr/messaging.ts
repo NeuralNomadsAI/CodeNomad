@@ -25,6 +25,7 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "Kontrol zaman aşımına uğradı: {directories}.",
   "interruption.recoveryIssue.unavailable": "Sunucu yanıt vermedi: {directories}.",
   "interruption.recoveryIssue.unavailableDetail": "Sunucu yanıt vermedi: {directories} ({detail}).",
+  "interruption.recoveryIssue.deferred": "Bir oturum sıkıştırılırken ertelendi: {directories}.",
   "interruption.recoveryIssue.excluded": "Klasör eksik veya bu projenin dışında: {directories}.",
   "interruption.recoverySessions": "Etkilenen oturumlar: {sessions}.",
   "interruption.recoveryCause.unsupported": "Bekleyen soruları listeleyen CodeNomad eklentisi OpenCode'da kullanılamıyor.",

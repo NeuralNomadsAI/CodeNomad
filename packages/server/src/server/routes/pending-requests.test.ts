@@ -210,6 +210,36 @@ test("unowned directories and arbitrary query selectors never reach native", asy
   } finally { await h.cleanup() }
 })
 
+test("refusals, deferrals and uncertain placements report a precise reason", async () => {
+  const h = await harness()
+  try {
+    // A batch without a readable directory is refused, yet names each path's own reason.
+    const deleted = join(h.root, "deleted-worktree"), untranslatable = "/home/fixture/untranslatable"
+    h.state.allowed.add(deleted)
+    const host = h.manager.getHostPathForServicePath
+    h.manager.getHostPathForServicePath = async (id, directory) => directory === untranslatable ? undefined : host(id, directory)
+    const refused = await h.app.inject({ url: h.url([deleted, "/foreign", untranslatable]) })
+    assert.equal(refused.statusCode, 403)
+    assert.deepEqual(refused.json(), { error: "Directory does not belong to workspace", directories: [
+      { directory: deleted, status: "error", reason: "missing" },
+      { directory: "/foreign", status: "error", reason: "not-owned" },
+      { directory: untranslatable, status: "error", reason: "unverified" },
+    ] })
+    assert.deepEqual(h.state.calls, [], "a refused batch never reaches native")
+
+    // A placement whose ownership check fails is unverified, not foreign.
+    h.state.result = { data: [complete(h.root, [emptyLocation(h.root)])] }
+    h.state.onOwnership = () => { throw Object.assign(new Error("Access denied"), { code: "EACCES" }) }
+    assert.deepEqual((await h.app.inject({ url: h.url() })).json(), { supported: true, directories: [{ directory: h.root, status: "error", reason: "unverified" }] })
+
+    // A compaction deferral is identified as such rather than as an unavailable server.
+    observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+    const deferred = await h.app.inject({ url: h.url() })
+    assert.equal(deferred.statusCode, 503)
+    assert.equal(deferred.json().code, "deferred")
+  } finally { await h.cleanup() }
+})
+
 test("an owned nested checkout of another repository recovers like prompts and live events, fenced by its own repository", async () => {
   const h = await harness()
   try {
@@ -515,7 +545,7 @@ test("a missing path through a symlink outside the owned root is not excluded", 
     const translate = h.manager.getServiceDirectoryForPath
     h.manager.getServiceDirectoryForPath = async (id, candidate) => candidate === alias ? h.root : translate(id, candidate)
     const response = await h.app.inject({ url: h.url([h.root, missing], [missing]) })
-    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === missing), { directory: missing, status: "error", reason: "not-owned" })
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === missing), { directory: missing, status: "error", reason: "unverified" })
     assert.deepEqual(h.state.batches, [[h.root]])
   } finally { await h.cleanup(); await rm(foreign, { recursive: true, force: true }) }
 })

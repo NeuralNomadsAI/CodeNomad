@@ -4,6 +4,7 @@ import type { OpenCodeClient, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
 import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import { sdkManager } from "../lib/sdk-manager"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
@@ -264,6 +265,29 @@ test("the recovery warning names its cause, the folders and the sessions that re
     const [timeoutPrefix] = tGlobal("interruption.recoveryIssue.timeout", { directories: "\u0000" }).split("\u0000")
     assert(message.startsWith(timeoutPrefix), message)
     for (const name of ["pending-fixture", "prompt-replay-yield", "ISSUES Codenomad"]) assert(message.includes(name), message)
+  } finally { h.cleanup() }
+})
+
+test("a refused batch shows each folder's real reason and leaves excluded history out", async () => {
+  const h = harness()
+  try {
+    const gone = `${h.directory}/.codenomad/worktrees/gone`, history = "/old-history"
+    const active = createClientSession({ id: "active", title: "Active", location: { directory: gone }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
+    const old = createClientSession({ id: "old", title: "Old", location: { directory: history }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions((previous) => new Map(previous).set(h.id, new Map([[active.id, active], [old.id, old]])))
+    serverApi.getPendingRequests = async () => {
+      throw new HttpResponseError("Directory does not belong to workspace", 403, null, undefined, { directories: [
+        { directory: gone, status: "error", reason: "missing" }, { directory: history, status: "excluded" },
+      ] })
+    }
+    const before = recoveryWarnings().length
+    await assert.rejects(syncPendingRequests(h.id))
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(recoveryWarnings().length, before + 1)
+    const message = recoveryWarnings()[0]?.message ?? ""
+    assert(message.includes(tGlobal("interruption.recoveryIssue.missing", { directories: "gone" })), message)
+    assert(!message.includes("old-history"), "an excluded optional hint is not reported")
+    assert(!message.includes(tGlobal("interruption.recoveryIssue.notOwned", { directories: "gone" })), "not mislabelled as outside the project")
   } finally { h.cleanup() }
 })
 

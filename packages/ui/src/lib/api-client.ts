@@ -174,7 +174,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code)
+      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code, body)
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })

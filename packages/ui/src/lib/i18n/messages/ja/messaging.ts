@@ -25,6 +25,7 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "確認がタイムアウトしました: {directories}。",
   "interruption.recoveryIssue.unavailable": "サーバーから応答がありませんでした: {directories}。",
   "interruption.recoveryIssue.unavailableDetail": "サーバーから応答がありませんでした: {directories}（{detail}）。",
+  "interruption.recoveryIssue.deferred": "セッションのコンパクト化中のため延期: {directories}。",
   "interruption.recoveryIssue.excluded": "フォルダーが存在しないか、このプロジェクトの外にあります: {directories}。",
   "interruption.recoverySessions": "影響を受けるセッション: {sessions}。",
   "interruption.recoveryCause.unsupported": "保留中の質問を一覧表示する CodeNomad プラグインが OpenCode で利用できません。",

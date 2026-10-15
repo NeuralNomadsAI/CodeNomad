@@ -76,8 +76,8 @@ import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { getInstanceLabel } from "../lib/instance-label"
 import {
-  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf,
-  type PendingRecoveryCause, type RecoverySnapshot,
+  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
+  type PendingRecoveryCause, type RecoveryDirectory, type RecoverySnapshot,
 } from "./pending-recovery-cause"
 import { loadInstanceMetadata, loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
 import {
@@ -795,29 +795,37 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     const batch = directories.slice(offset, end)
     const optional = batch.filter((directory) => !required.has(normalizeWorkspacePath(directory)))
     offset = end
-    try {
-      // Directory/Git authorization has a longer broker budget than native queue
-      // reads. Let it finish, with a small transport margin, before aborting.
-      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
-      if (next.supported === false) return next
-      if (next.supported !== true) throw new Error("Invalid pending request snapshot")
+    const addBatch = (entries: readonly RecoveryDirectory[]) => {
       const currentRequired = requiredDirectories()
-      const reported = new Set(next.directories.map((entry) => normalizeWorkspacePath(entry.directory)))
+      const reported = new Set(entries.map((entry) => normalizeWorkspacePath(entry.directory)))
       for (const directory of batch) if (!reported.has(normalizeWorkspacePath(directory))) {
         snapshot.directories.push({ directory, status: "error", reason: "unavailable" })
       }
-      for (const entry of next.directories) {
+      for (const entry of entries) {
         if (entry.status !== "excluded") snapshot.directories.push(entry)
         else if (!optional.includes(entry.directory) || currentRequired.has(normalizeWorkspacePath(entry.directory))) {
           snapshot.directories.push({ directory: entry.directory, status: "error", reason: "excluded" })
         }
         // Excluded historical hints never authorize clearing a known queue.
       }
+    }
+    try {
+      // Directory/Git authorization has a longer broker budget than native queue
+      // reads. Let it finish, with a small transport margin, before aborting.
+      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
+      if (next.supported === false) return next
+      if (next.supported !== true) throw new Error("Invalid pending request snapshot")
+      addBatch(next.directories)
     } catch (error) {
       if (error === pendingDiscoveryDeferred) throw error
       if (!isCurrent()) throw pendingRequestSyncSuperseded
-      const { issue, detail } = batchIssue(error)
-      snapshot.directories.push(...batch.map((directory) => ({ directory, status: "error" as const, reason: issue, detail })))
+      // A refused batch still reports each directory's own status and reason.
+      const refused = refusedDirectories(error)
+      if (refused) addBatch(refused)
+      else {
+        const { issue, detail } = batchIssue(error)
+        snapshot.directories.push(...batch.map((directory) => ({ directory, status: "error" as const, reason: issue, detail })))
+      }
     }
   }
   return snapshot

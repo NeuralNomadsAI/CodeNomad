@@ -25,6 +25,7 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "Истекло время проверки: {directories}.",
   "interruption.recoveryIssue.unavailable": "Сервер не ответил для: {directories}.",
   "interruption.recoveryIssue.unavailableDetail": "Сервер не ответил для: {directories} ({detail}).",
+  "interruption.recoveryIssue.deferred": "Отложено, пока сессия компактируется: {directories}.",
   "interruption.recoveryIssue.excluded": "Папка отсутствует или находится вне этого проекта: {directories}.",
   "interruption.recoverySessions": "Затронутые сессии: {sessions}.",
   "interruption.recoveryCause.unsupported": "Плагин CodeNomad, выводящий ожидающие вопросы, недоступен в OpenCode.",

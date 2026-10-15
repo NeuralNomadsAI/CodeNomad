@@ -25,6 +25,7 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "הבדיקה חרגה מהזמן: {directories}.",
   "interruption.recoveryIssue.unavailable": "השרת לא השיב עבור: {directories}.",
   "interruption.recoveryIssue.unavailableDetail": "השרת לא השיב עבור: {directories} ({detail}).",
+  "interruption.recoveryIssue.deferred": "נדחה בזמן שסשן מסוכם: {directories}.",
   "interruption.recoveryIssue.excluded": "התיקייה חסרה או מחוץ לפרויקט הזה: {directories}.",
   "interruption.recoverySessions": "סשנים מושפעים: {sessions}.",
   "interruption.recoveryCause.unsupported": "התוסף של CodeNomad שמציג שאלות ממתינות אינו זמין ב-OpenCode.",

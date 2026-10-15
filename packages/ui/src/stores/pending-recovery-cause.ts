@@ -6,6 +6,7 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 export type PendingDirectoryIssue =
   | PendingDirectoryErrorReason
   | "timeout" // the snapshot request exceeded its deadline
+  | "deferred" // the server deferred discovery while a session compacts
   | "unavailable" // the server could not answer for it
   | "excluded" // required (active session or known request), yet reported as outside history
 
@@ -18,13 +19,27 @@ export type PendingRecoveryCause =
 
 type SupportedSnapshot = Extract<WorkspacePendingRequestsResponse, { supported: true }>
 type SnapshotDirectory = SupportedSnapshot["directories"][number]
+export type RecoveryDirectory = Exclude<SnapshotDirectory, { status: "error" }> | {
+  directory: string; status: "error"; reason?: PendingDirectoryIssue; detail?: string
+  locations?: Extract<SnapshotDirectory, { status: "ok" }>["locations"]
+}
 /** The server snapshot, with client-side issues attached to the directories it could not cover. */
-export type RecoverySnapshot = { supported: false } | {
-  supported: true
-  directories: Array<Exclude<SnapshotDirectory, { status: "error" }> | {
-    directory: string; status: "error"; reason?: PendingDirectoryIssue; detail?: string
-    locations?: Extract<SnapshotDirectory, { status: "ok" }>["locations"]
-  }>
+export type RecoverySnapshot = { supported: false } | { supported: true; directories: RecoveryDirectory[] }
+
+const SERVER_REASONS = new Set<string>(["not-owned", "deleting", "missing", "unverified", "changed"])
+
+/** The per-directory statuses a refused (403) snapshot request still reports, if any. */
+export function refusedDirectories(error: unknown): RecoveryDirectory[] | undefined {
+  if (!(error instanceof HttpResponseError) || error.status !== 403) return undefined
+  const directories = (error.body as { directories?: unknown } | undefined)?.directories
+  if (!Array.isArray(directories)) return undefined
+  return directories.flatMap((entry): RecoveryDirectory[] => {
+    if (typeof entry?.directory !== "string") return []
+    if (entry.status === "excluded") return [{ directory: entry.directory, status: "excluded" }]
+    if (entry.status !== "error") return []
+    const reason = SERVER_REASONS.has(entry.reason) ? entry.reason as PendingDirectoryErrorReason : undefined
+    return [{ directory: entry.directory, status: "error", reason }]
+  })
 }
 
 export class PendingRecoveryError extends Error {
@@ -41,6 +56,8 @@ function errorDetail(error: unknown): string {
 /** Classifies a failed snapshot batch request for every directory it carried. */
 export function batchIssue(error: unknown): { issue: PendingDirectoryIssue; detail?: string } {
   if (error instanceof HttpResponseError && error.status === 403) return { issue: "not-owned" }
+  if (error instanceof HttpResponseError && error.code === "timeout") return { issue: "timeout" }
+  if (error instanceof HttpResponseError && error.code === "deferred") return { issue: "deferred" }
   if (error instanceof DOMException && error.name === "AbortError") return { issue: "timeout" }
   return { issue: "unavailable", detail: errorDetail(error) }
 }
@@ -68,11 +85,25 @@ const ISSUE_KEYS: Record<PendingDirectoryIssue, string> = {
   unverified: "interruption.recoveryIssue.unverified",
   changed: "interruption.recoveryIssue.changed",
   timeout: "interruption.recoveryIssue.timeout",
+  deferred: "interruption.recoveryIssue.deferred",
   unavailable: "interruption.recoveryIssue.unavailable",
   excluded: "interruption.recoveryIssue.excluded",
 }
 
 const MAX_LISTED = 3
+
+/** Short folder names; folders sharing a name keep their parent to stay distinct. */
+function folderNames(directories: readonly string[]): Map<string, string> {
+  const unique = [...new Set(directories)]
+  const counts = new Map<string, number>()
+  for (const directory of unique) counts.set(getPathBasename(directory), (counts.get(getPathBasename(directory)) ?? 0) + 1)
+  return new Map(unique.map((directory) => {
+    const name = getPathBasename(directory)
+    if (counts.get(name) === 1) return [directory, name]
+    const parent = getPathBasename(directory.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, ""))
+    return [directory, `${parent}/${name}`]
+  }))
+}
 
 function list(values: readonly string[]): string {
   const unique = [...new Set(values)]
@@ -93,6 +124,7 @@ export function describePendingRecovery(
     const detail = "detail" in cause ? cause.detail : ""
     return { title, message: t(`interruption.recoveryCause.${cause.kind}`, { detail }) }
   }
+  const names = folderNames(cause.directories.map(({ directory }) => directory))
   const byIssue = new Map<PendingDirectoryIssue, { directories: string[]; details: string[] }>()
   for (const { directory, issue, detail } of cause.directories) {
     const entry = byIssue.get(issue) ?? { directories: [], details: [] }
@@ -102,7 +134,7 @@ export function describePendingRecovery(
   }
   const lines = [...byIssue].map(([issue, { directories, details }]) => t(issue === "unavailable" && details.length
     ? "interruption.recoveryIssue.unavailableDetail" : ISSUE_KEYS[issue], {
-    directories: list(directories.map(getPathBasename)),
+    directories: list(directories.map((directory) => names.get(directory)!)),
     detail: list(details),
   }))
   const titles = sessionTitlesIn(cause.directories.map(({ directory }) => directory))

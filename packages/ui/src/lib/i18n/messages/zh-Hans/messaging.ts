@@ -25,6 +25,7 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "检查超时：{directories}。",
   "interruption.recoveryIssue.unavailable": "服务器未响应：{directories}。",
   "interruption.recoveryIssue.unavailableDetail": "服务器未响应：{directories}（{detail}）。",
+  "interruption.recoveryIssue.deferred": "会话压缩期间已推迟：{directories}。",
   "interruption.recoveryIssue.excluded": "文件夹不存在或不在此项目内：{directories}。",
   "interruption.recoverySessions": "受影响的会话：{sessions}。",
   "interruption.recoveryCause.unsupported": "OpenCode 中没有可用的 CodeNomad 插件来列出待处理的问题。",

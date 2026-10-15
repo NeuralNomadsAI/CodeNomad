@@ -25,6 +25,7 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "Zeitüberschreitung bei der Prüfung: {directories}.",
   "interruption.recoveryIssue.unavailable": "Der Server hat nicht geantwortet für: {directories}.",
   "interruption.recoveryIssue.unavailableDetail": "Der Server hat nicht geantwortet für: {directories} ({detail}).",
+  "interruption.recoveryIssue.deferred": "Zurückgestellt, während eine Sitzung komprimiert wird: {directories}.",
   "interruption.recoveryIssue.excluded": "Ordner fehlt oder liegt außerhalb dieses Projekts: {directories}.",
   "interruption.recoverySessions": "Betroffene Sitzungen: {sessions}.",
   "interruption.recoveryCause.unsupported": "Das CodeNomad-Plugin, das ausstehende Fragen auflistet, ist in OpenCode nicht verfügbar.",
