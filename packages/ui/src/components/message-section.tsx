@@ -16,7 +16,7 @@ import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFol
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { isScrollTraceEnabled, traceScroll } from "./virtual-scroll-trace"
 import { useConfig } from "../stores/preferences"
-import { messageStoreBus } from "../stores/message-v2/bus"
+import { MESSAGE_STREAM_SCROLL_SCOPE as MESSAGE_SCROLL_CACHE_SCOPE, messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
@@ -44,7 +44,6 @@ import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
-const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250

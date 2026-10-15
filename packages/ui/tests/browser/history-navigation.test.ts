@@ -363,7 +363,11 @@ test("a resized timeline keeps its bottom marker in place", async () => {
     await rail.hover()
     await rail.evaluate(element => { element.scrollTop = element.scrollHeight / 2 })
     const before = await rail.evaluate(element => ({ height: element.clientHeight, bottom: element.scrollTop + element.clientHeight }))
-    await rail.evaluate(element => { element.style.maxHeight = `${element.clientHeight - 120}px` })
+    // Markers resize in the same step (zoom-like): the anchor must survive the geometry update.
+    await rail.evaluate(element => {
+      document.head.appendChild(document.createElement("style")).textContent = ".message-timeline-segment { height: 26px !important }"
+      element.style.maxHeight = `${element.clientHeight - 120}px`
+    })
     await f.page.waitForTimeout(300)
     const after = await rail.evaluate(element => ({ height: element.clientHeight, bottom: element.scrollTop + element.clientHeight }))
     assert(after.height < before.height && Math.abs(after.bottom - before.bottom) < 2, JSON.stringify({ before, after }))

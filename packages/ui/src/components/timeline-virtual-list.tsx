@@ -64,7 +64,8 @@ export default function TimelineVirtualList<T>(props: {
     observer.observe(marker)
     observer.observe(gap)
     element.addEventListener("scroll", readViewport, { passive: true })
-    // Untracked: a geometry change must not rebuild the observer (and drop a pending anchor).
+    // Untracked: a marker geometry change must not rebuild this observer, which
+    // also owns the bottom anchor and would drop its pending delta.
     untrack(measure)
     onCleanup(() => { observer.disconnect(); bottomAnchor.dispose(); element.removeEventListener("scroll", readViewport) })
   })

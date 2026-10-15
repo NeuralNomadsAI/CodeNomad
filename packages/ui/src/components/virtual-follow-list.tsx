@@ -3,7 +3,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { attachScrollGestureRouting, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -11,7 +11,6 @@ const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
 const MEASUREMENT_PROBE_COUNT = 8
 const TOP_SCROLL_EPSILON_PX = 0
 const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
-const USER_SCROLL_INTENT_WINDOW_MS = 600
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_FRAMES = 30

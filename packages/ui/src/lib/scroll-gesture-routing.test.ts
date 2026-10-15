@@ -22,7 +22,8 @@ test("the innermost nested scroller that can still move consumes the gesture", (
     getComputedStyle: (node: FakeElement) => { styleReads++; return { overflowX: "visible", overflowY: node.overflowY } },
   })
   try {
-    const root = new FakeElement()
+    // The root scrolls too: only its descendants count as nested.
+    const root = Object.assign(new FakeElement(), { overflowY: "auto", scrollHeight: 1000 })
     const outer = Object.assign(new FakeElement(root), { overflowY: "auto", scrollHeight: 400 })
     // Overflowing content of a non-scroller still reports a larger scrollHeight.
     const visible = Object.assign(new FakeElement(outer), { scrollHeight: 300 })
