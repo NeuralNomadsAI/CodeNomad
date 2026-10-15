@@ -715,10 +715,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function findTopVisibleAnchor(element: HTMLDivElement) {
     const containerRect = element.getBoundingClientRect()
     const candidates = []
-    for (const [key, itemElement] of itemElements) {
-      if (!itemElement.isConnected) continue
-      const rect = itemElement.getBoundingClientRect()
-      candidates.push({ key, top: rect.top, bottom: rect.bottom })
+    // Read the rendered rows, not itemElements: a list being unmounted has
+    // already dropped those entries while its rows remain laid out.
+    for (const row of element.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")) {
+      if (row.closest(".message-stream") !== element) continue
+      const rect = row.getBoundingClientRect()
+      candidates.push({ key: row.dataset.virtualFollowKey!, top: rect.top, bottom: rect.bottom })
     }
     const handle = virtuaHandle()
     const index = handle?.findItemIndex(handle.scrollOffset)

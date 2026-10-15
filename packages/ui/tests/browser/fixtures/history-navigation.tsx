@@ -24,6 +24,7 @@ const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage
 const model = { providerID: "fixture", id: "fixture" }
 const assistantId = "msg_streaming"
 let nativeLists = 0, time = 10000, live = "", streaming = false
+let listHold: Promise<void> | undefined, releaseListHold: (() => void) | undefined, listPending = false
 let releaseMessages!: () => void
 const messagesGate = new Promise<void>(resolve => { releaseMessages = resolve })
 if (!location.search.includes("holdMessages")) releaseMessages()
@@ -43,6 +44,13 @@ const client: any = {
   message: { list: async ({ cursor, limit = 200, order }: any = {}) => {
     nativeLists++
     await messagesGate
+    if (listHold) {
+      const hold = listHold
+      listHold = undefined
+      listPending = true
+      await hold
+      listPending = false
+    }
     if (order === 'asc' || cursor?.startsWith('asc:')) {
       const start = cursor ? Number(cursor.slice(4)) : 0
       const end = Math.min(count, start + limit)
@@ -80,6 +88,10 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
 ;(window as any).fixture = {
   id: navigationMessageId,
   releaseMessages,
+  /** Holds the next native page read until `releaseList`. */
+  holdNextList: () => { listHold = new Promise<void>(resolve => { releaseListHold = resolve }) },
+  listPending: () => listPending,
+  releaseList: () => { listHold = undefined; releaseListHold?.() },
   index: () => captureSessionOutlineIndexes(instanceId)?.[sessionId],
   saveIndexes: async (projectID?: string) => {
     const indexes = captureSessionOutlineIndexes(instanceId)!

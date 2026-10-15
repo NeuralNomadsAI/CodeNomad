@@ -66,6 +66,7 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
   const reads = new Set<Promise<unknown>>()
   let indexGate: Promise<void> | undefined, releaseIndex: (() => void) | undefined
   let hold: { messageID: string; release: () => void; promise: Promise<void> } | undefined
+  let nextWindowHold: { release: () => void; promise: Promise<void> } | undefined
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", async route => {
     const request = route.request(), method = request.url().split("/").at(-1)
@@ -97,6 +98,9 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     if (method === "window") {
       windows.push(input.target)
       if (input.target.messageID === hold?.messageID) await hold!.promise
+      const held = nextWindowHold
+      nextWindowHold = undefined
+      if (held) await held.promise
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
@@ -121,7 +125,14 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
       hold = { messageID: navigationMessageId(index), release, promise }
       return release
     },
-    close: async () => { hold?.release(); releaseIndex?.(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close(); await rm(databaseDirectory, { recursive: true, force: true }) },
+    /** Holds the next window read, whatever its target. */
+    holdNextWindow: () => {
+      let release!: () => void
+      const promise = new Promise<void>(done => { release = done })
+      nextWindowHold = { release, promise }
+      return release
+    },
+    close: async () => { hold?.release(); nextWindowHold?.release(); releaseIndex?.(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close(); await rm(databaseDirectory, { recursive: true, force: true }) },
   }
 }
 
@@ -421,6 +432,70 @@ test("paging supersedes a restore that is loading its anchor", async () => {
     await waitFrames(f.page, 60)
     assert.ok(Math.abs((await rowOffset(f.page, 900))!) < 2, "the late restore anchor moved the paged passage")
     assert((await snapshot(f.page)).ids.includes(navigationMessageId(900)))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+/** Unmounts the session in the first frame where `index` reaches the top, while its page load still owns the position. */
+const switchAwayWhenAtTop = (page: Page, index: number) => page.evaluate(`new Promise(resolve => {
+  const next = () => {
+    const stream = document.querySelector('.message-stream')
+    const row = stream?.querySelector('[data-virtual-follow-key="${navigationMessageId(index)}"]')
+    if (row && Math.abs(row.getBoundingClientRect().top - stream.getBoundingClientRect().top) < 2) {
+      window.fixture.switchAway()
+      resolve()
+    } else requestAnimationFrame(next)
+  }
+  requestAnimationFrame(next)
+})`)
+
+// Unmounting while a page load still owns a list it has positioned (or one
+// awaiting an older page) must store where the reader is, not the position
+// held before the load under the new window's cursor.
+for (const via of ["timeline", "search"] as const) test(`unmounting right after a far ${via} jump lands stores the destination`, async () => {
+  const f = await fixture()
+  try {
+    if (via === "search") {
+      await f.page.route("**/session-history/query", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+        status: "page", scanned: 1500, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+        hits: [{ sessionID: "s", messageID: navigationMessageId(250), role: "user", partIndex: 0, kind: "text", excerpt: "Passage 250" }],
+      }) }))
+      await f.page.evaluate(() => (window as any).fixture.openSearch())
+      await f.page.getByRole("searchbox").fill("Passage")
+      await f.page.locator(".history-search-result").first().waitFor()
+      const landed = switchAwayWhenAtTop(f.page, 250)
+      await f.page.locator(".history-search-result").first().click()
+      await landed
+    } else {
+      const landed = switchAwayWhenAtTop(f.page, 250)
+      await clickTimeline(f.page, 250)
+      await landed
+    }
+    assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(250))
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await assertPassageAtTop(f.page, 250)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("unmounting during a held older page stores the reader's position", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.holdNextList())
+    const releaseWindow = f.holdNextWindow()
+    const box = (await f.page.locator(".message-stream").boundingBox())!
+    await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+    await f.page.mouse.wheel(0, -1000000)
+    await f.page.waitForFunction(() => (window as any).fixture.listPending(), undefined, { timeout: 5000 }).catch(() => {})
+    await waitFrames(f.page, 30)
+    assert.ok(Math.abs((await rowOffset(f.page, 1300))!) < 2, "the reader must be at the top of the latest page")
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(1300))
+    await f.page.evaluate(() => (window as any).fixture.releaseList())
+    releaseWindow()
+    await waitFrames(f.page, 30)
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await assertPassageAtTop(f.page, 1300)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
