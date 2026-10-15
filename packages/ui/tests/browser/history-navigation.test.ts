@@ -356,7 +356,7 @@ test("resident streaming keeps a distant timeline marker mounted", async () => {
   } finally { await f.close() }
 })
 
-test("a resized timeline keeps its bottom marker in place", async () => {
+test("a resized timeline keeps its bottom edge anchored", async () => {
   const f = await fixture()
   try {
     const rail = f.page.locator(".message-timeline")

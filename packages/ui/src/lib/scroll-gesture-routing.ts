@@ -15,8 +15,9 @@ function scrollAxes(node: HTMLElement) {
   }
 }
 
-/** The single nested-scroller test: the innermost scroller from `target` up to,
- * excluding, `root` that can still scroll vertically in `direction` consumes the gesture. */
+/** Nested-scroller test for gesture routing: the innermost scroller from `target`
+ * up to, excluding, `root` that can still scroll vertically in `direction` consumes
+ * the gesture. The transcript's own intent check still walks ancestors separately. */
 export function findNestedScroller(root: HTMLElement, target: EventTarget | null, direction: "up" | "down"): HTMLElement | null {
   for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
     // The edge test first skips style resolution for most ancestors.
