@@ -28,7 +28,7 @@ after(async () => { await browser?.close(); await server?.close(); await cache?.
 
 for (const gesture of ["click", "Control+w", "Meta+w"] as const) {
   test(`real project tabs close immediately and delete only their occurrence (${gesture})`, async () => {
-    const page = await browser.newPage()
+    const page = await browser.newPage({ locale: "en-US" })
     const errors: string[] = [], deletes: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     await page.addInitScript(mac => {
@@ -65,7 +65,7 @@ for (const gesture of ["click", "Control+w", "Meta+w"] as const) {
       await page.evaluate(() => (window as any).closeFixture.stopped("first"))
       assert.equal(await page.getByRole("tab").count(), 0)
       assert.equal(await page.evaluate(() => (window as any).closeFixture.history()[0].message),
-        await page.evaluate(() => (window as any).closeFixture.otherWindowMessage()))
+        "first was closed from another window.")
       assert.deepEqual(errors, [])
     } catch (error) {
       console.error({ errors, body: await page.locator("body").innerText() })

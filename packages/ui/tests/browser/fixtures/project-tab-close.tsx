@@ -3,7 +3,7 @@ import InstanceTabs from "../../../src/components/instance-tabs"
 import { activeAppTabId, appTabs, closeInstanceTab, selectAppTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { ConfigProvider } from "../../../src/stores/preferences"
-import { I18nProvider, tGlobal } from "../../../src/lib/i18n"
+import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import { releaseAppSessionRestoreGate } from "../../../src/stores/app-session-restore-gate"
@@ -20,7 +20,6 @@ for (const id of ["first", "second"]) {
 ;(window as any).closeFixture = {
   records: () => [...instances().keys()],
   history: getToastHistory,
-  otherWindowMessage: () => tGlobal("app.closeInstance.toast.otherWindow", { project: "first" }),
   stopped: (id: string, reason = "deleted") => (serverEvents as any).dispatchBatch([
     { type: "workspace.stopped", workspaceId: id, reason },
   ]),
