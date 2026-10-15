@@ -13,7 +13,8 @@ describe("session bottom pin intent", () => {
     assert.match(submit, /const initialPinIntent = startSubmitBottomPinIntent/)
     assert.doesNotMatch(submit, /delivery === "queue"/)
     // The intent starts the pin itself; a second bottom jump would duplicate it.
-    assert.doesNotMatch(source, /scrollToBottom/)
+    assert.doesNotMatch(submit, /scrollToBottom|jumpToBottom|settleAtBottom/)
+    assert.doesNotMatch(source, /scrollToBottomHandle|registerScrollToBottom|scheduleScrollToBottom/)
   })
 
   it("targets only the queued user prompt when submitting during active streaming", () => {

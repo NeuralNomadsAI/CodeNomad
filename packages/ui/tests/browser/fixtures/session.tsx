@@ -62,9 +62,10 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
 setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
 setActiveSession(instanceId, sessionId)
 const [visible, setVisible] = createSignal(true)
+const [active, setActive] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <Show when={visible()}><SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} /></Show>
+  <Show when={visible()}><SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={active()} /></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   delayPrompt: () => { delayPrompt = true },
@@ -111,5 +112,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   },
   switchAway: () => { setActiveSession(instanceId, "other"); setVisible(false) },
   return: () => { setActiveSession(instanceId, sessionId); setVisible(true) },
+  // Keeps the SessionView mounted, as a project tab or session switch does.
+  setActive,
   snapshot: () => ({ calls, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId), scroll: store.getScrollSnapshot(sessionId, "message-stream"), text: store.getMessage(assistantId)?.parts[`${assistantId}-text-0`]?.data.text }),
 }
