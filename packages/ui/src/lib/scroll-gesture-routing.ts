@@ -1,5 +1,8 @@
 import { canScrollInDirection } from "../components/virtual-follow-behavior"
 
+/** Controls that consume a pointer press: neither middle-button autoscroll nor a selection drag starts on them. */
+export const POINTER_CONTROL_SELECTOR = "a[href],button,input,textarea,select,[contenteditable]:not([contenteditable='false']),[role='button'],[role='textbox']"
+
 const WHEEL_GESTURE_IDLE_MS = 180
 const MIDDLE_DEAD_ZONE_PX = 8
 
@@ -103,7 +106,7 @@ export function attachScrollGestureRouting(root: HTMLElement): () => void {
   const down = (event: PointerEvent) => {
     if (!event.isTrusted || event.button !== 1 || event.defaultPrevented) return
     // Preserve middle-click link opening and editable/control behavior.
-    if (event.target instanceof Element && event.target.closest("a[href],button,input,textarea,select,[contenteditable]:not([contenteditable='false']),[role='button'],[role='textbox']")) return
+    if (event.target instanceof Element && event.target.closest(POINTER_CONTROL_SELECTOR)) return
     stopMiddle()
     wheelOwner = undefined
     const owners = middleTargets(root, event.target)

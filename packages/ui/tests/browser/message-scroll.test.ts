@@ -362,6 +362,49 @@ for (const streamingSession of ["none", "A", "B"]) test(`retained A-B-A switch r
 
 // Space toggles a focused <summary> (like a button) instead of scrolling, so
 // it must not carry a page amplitude that "reaches" the bottom.
+// Unlike Space, a pointer press on a <summary> still starts middle-button
+// autoscroll and text-selection drags, so their upward movement must escape a
+// streaming follow instead of fighting the pin.
+for (const gesture of ["middle-button autoscroll", "selection drag"] as const) test(`a ${gesture} started on a summary escapes a streaming follow`, async () => {
+  await open(async page => {
+    await bottom(page)
+    await page.evaluate(() => (window as any).fixture.start())
+    await frames(page, 4)
+    const stream = page.locator(".message-stream")
+    // Turn an in-flow transcript paragraph, well inside the viewport, into a summary.
+    await stream.evaluate(el => {
+      const bounds = el.getBoundingClientRect()
+      const paragraph = Array.from(el.querySelectorAll<HTMLElement>("[data-virtual-follow-key] p"))
+        .find(p => { const rect = p.getBoundingClientRect(); return rect.top >= bounds.top + 150 && rect.bottom <= bounds.bottom - 150 })!
+      const details = document.createElement("details")
+      details.innerHTML = "<summary data-press-target>Summary text that can be selected</summary><p>Body</p>"
+      paragraph.replaceWith(details)
+    })
+    await frames(page, 10)
+    assert.equal((await readerState(page)).followModeType, "following")
+    const box = (await page.locator("[data-press-target]").boundingBox())!
+    const [x, y] = [box.x + 40, box.y + box.height / 2]
+    assert.ok(await page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x, y)?.closest("[data-press-target]")), [x, y]), "The press must hit the summary")
+    await page.mouse.move(x, y)
+    await page.mouse.down({ button: gesture === "selection drag" ? "left" : "middle" })
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(x, y - i * 10)
+      await page.evaluate(() => (window as any).fixture.delta("Streamed while the pointer drags.\n\n"))
+      await frames(page, 3)
+    }
+    await page.mouse.up({ button: gesture === "selection drag" ? "left" : "middle" })
+    for (let i = 0; i < 6; i++) {
+      await page.evaluate(() => (window as any).fixture.delta("Streamed after release.\n\n".repeat(2)))
+      await frames(page, 3)
+    }
+    // The persisted snapshot updates on scroll events, which an escaped reader
+    // does not produce while content grows below; assert the visible state.
+    const state = await readerState(page)
+    assert.equal(state.latestButton, 1, `The ${gesture} must take ownership from the follow pin: ${JSON.stringify(state)}`)
+    assert.ok(state.gap > 48, `The reader must not be repinned to the streaming tail: ${JSON.stringify(state)}`)
+  })
+})
+
 for (const control of ["summary", "button"] as const) test(`Space on a focused ${control} near the bottom keeps manual reading`, async () => {
   await open(async page => {
     await bottom(page)
