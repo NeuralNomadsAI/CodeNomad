@@ -151,8 +151,9 @@ or after the long-reply hold escapes) and resize every never-measured history ro
 once; near the bottom the browser clamps before Virtua compensates, an `unowned`
 backward jump of many rows. When every retained row is measured, the remap refreshes
 that default to their median, so a 40px fallback carried by an instance that remounted
-before estimating lasts only until the first remount whose retained rows are all measured. A new instance reads offset 0
-until the next scroll event, so a non-zero offset is seeded by one scroll event (the
+before estimating lasts only until the first remount whose retained rows are all
+measured. A new instance reads offset 0 until the next scroll event, so a non-zero
+offset is seeded by one scroll event (the
 remount has already recreated every row). The long-reply hold publishes its escaped
 position itself, since it scrolls nothing. Gestures and explicit navigation supersede
 restoration, alignment and bottom pins through one function; deactivation, session

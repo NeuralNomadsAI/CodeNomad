@@ -1255,8 +1255,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // Virtua keeps reasserting a queued imperative target (e.g. the restore
       // index) after it lands; release it so the hidden list stays put. Only
       // here: on reset, the next session's positioning replaces that queue.
-      // Unlike a gesture, no scroll event is dispatched first: an inactive
-      // list publishes no observation, so there is no stale offset to flush.
+      // Unlike a gesture, no scroll event is dispatched first: it would publish
+      // an observation and snapshot from an inactive list, and a stale Virtua
+      // offset is harmless while hidden because reactivation restores anew.
       if (pendingVirtuaScroll) {
         pendingVirtuaScroll = false
         writeScroll("cancel-virtua", { type: "release" })
