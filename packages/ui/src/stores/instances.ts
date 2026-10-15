@@ -1797,8 +1797,14 @@ const locallyRequestedWorkspaceCloses = new Set<string>()
 function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promise<void> {
   const pending = workspaceCloseRequests.get(id)
   if (pending) return pending
+  const hadOrigin = locallyRequestedWorkspaceCloses.has(id)
   locallyRequestedWorkspaceCloses.add(id)
-  const request = Promise.resolve().then(operation).finally(() => workspaceCloseRequests.delete(id))
+  const request = Promise.resolve().then(operation).catch((error) => {
+    if (!hadOrigin && error instanceof HttpResponseError && error.status >= 400 && error.status < 500) {
+      locallyRequestedWorkspaceCloses.delete(id)
+    }
+    throw error
+  }).finally(() => workspaceCloseRequests.delete(id))
   workspaceCloseRequests.set(id, request)
   return request
 }

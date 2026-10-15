@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { afterEach, beforeEach, describe, it } from "node:test"
 import toast from "solid-toast"
+import { HttpResponseError } from "../lib/retryable-file-search"
 
 import { serverApi } from "../lib/api-client.ts"
 import type { Instance } from "../types/instance.ts"
@@ -283,12 +284,13 @@ describe("renderer-local workspace tabs", () => {
     } finally { removeInstance(workspace.id, { authoritative: false }) }
   })
 
-  for (const outcome of ["success", "failure", "timeout"] as const) {
+  for (const outcome of ["success", "failure", "timeout", "5xx"] as const) {
     it(`remembers a local close after DELETE ${outcome}, reattachment and a delayed stop`, async () => {
       const workspace = instance(`delayed-close-${outcome}`)
       let deletes = 0
       serverApi.deleteWorkspace = async () => {
         deletes += 1
+        if (outcome === "5xx") throw new HttpResponseError("cleanup failed", 503, null)
         if (outcome !== "success") throw new Error(outcome === "timeout" ? "cleanup did not finish" : "delete failed")
       }
       addInstance(workspace)
@@ -327,6 +329,33 @@ describe("renderer-local workspace tabs", () => {
         tGlobal("app.closeInstance.toast.otherWindow", { project: "removed-close-origin" }))
     } finally { removeInstance(workspace.id, { authoritative: false }) }
   })
+
+  for (const priorUncertainClose of [false, true]) {
+    it(`reconciles a 401 refusal on the same record (prior uncertain close: ${priorUncertainClose})`, async () => {
+      const workspace = instance(`refused-close-${priorUncertainClose}`)
+      addInstance(workspace)
+      selectInstanceTab(workspace.id)
+      try {
+        if (priorUncertainClose) {
+          serverApi.deleteWorkspace = async () => { throw new TypeError("network unavailable") }
+          closeInstanceTab(workspace.id)
+          await new Promise((resolve) => setImmediate(resolve))
+          selectInstanceTab(workspace.id)
+        }
+        serverApi.deleteWorkspace = async () => { throw new HttpResponseError("Unauthorized", 401, null) }
+        closeInstanceTab(workspace.id)
+        await new Promise((resolve) => setImmediate(resolve))
+        assert.equal(instances().get(workspace.id), workspace)
+        selectInstanceTab(workspace.id)
+        clearToastHistory()
+        ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: workspace.id, reason: "deleted" })
+        await Promise.resolve()
+        assert.equal(getToastHistory().length, priorUncertainClose ? 0 : 1)
+        if (!priorUncertainClose) assert.equal(getToastHistory()[0]?.message,
+          tGlobal("app.closeInstance.toast.otherWindow", { project: `refused-close-${priorUncertainClose}` }))
+      } finally { removeInstance(workspace.id, { authoritative: false }) }
+    })
+  }
 
   it("does not notify for shutdown or for records not displayed in this window", async () => {
     for (const [id, reason, attached] of [["shutdown", "stopped", true], ["hidden", "deleted", false]] as const) {

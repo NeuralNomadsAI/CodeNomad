@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { serverApi } from "../lib/api-client"
+import { HttpResponseError } from "../lib/retryable-file-search"
+import toast from "solid-toast"
 
 // Preferences load when their module is imported, so stub storage first.
 const patches: any[] = []
@@ -24,6 +26,7 @@ serverApi.createWorkspace = async (payload: any) => { createdName = payload?.nam
 serverApi.abandonTemporaryFolder = async (path) => { calls.push(`abandon:${path}`) }
 
 const { tGlobal } = await import("../lib/i18n")
+const { clearToastHistory, getToastHistory } = await import("../lib/notifications")
 const { serverEvents } = await import("../lib/server-events")
 const { alertDialogState } = await import("./alerts")
 const { activeAppTabId, appTabs, attachInstanceTab, selectInstanceTab } = await import("./app-tabs")
@@ -117,6 +120,35 @@ test("a successful discard closes the tab", async () => {
     assert.equal(tabOpen("gone"), false)
   } finally { reset("gone") }
 })
+
+for (const code of ["temporary_not_empty", "temporary_running"]) {
+  test(`a 409 ${code} refusal does not hide a later foreign close on the restored live record`, async () => {
+    const id = `foreign-after-${code}`
+    if (code === "temporary_not_empty") openEmpty(id)
+    else open(id)
+    selectInstanceTab(id)
+    const live = instances().get(id)
+    const originalToast = toast.custom
+    toast.custom = () => "test-toast"
+    discardError = new HttpResponseError(code, 409, null, undefined, { error: code })
+    try {
+      const closing = closeTemporaryInstance(id)
+      await answer(code === "temporary_not_empty" ? null : "discard")
+      await closing
+      assert.equal(instances().get(id), live)
+      assert.equal(activeAppTabId(), `instance:${id}`)
+      assert.ok(tabOpen(id))
+      assert.equal(calls.some(call => call.startsWith("delete:")), false)
+      clearToastHistory()
+      ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: id, reason: "deleted" })
+      await Promise.resolve()
+      assert.equal(tabOpen(id), false)
+      assert.equal(getToastHistory().length, 1)
+      assert.equal(getToastHistory()[0].message,
+        tGlobal("app.closeInstance.toast.otherWindow", { project: "Temporary · 12:00" }))
+    } finally { toast.custom = originalToast; clearToastHistory(); reset(id) }
+  })
+}
 
 test("the visible tab yields to its neighbour before the server stops it, and a refusal restores it in place", async () => {
   openEmpty("neighbour")
