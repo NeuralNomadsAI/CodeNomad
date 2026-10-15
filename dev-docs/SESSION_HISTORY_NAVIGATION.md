@@ -164,12 +164,22 @@ queued imperative scroll.
 One bottom loop (`bottomPin`) keeps the bottom, and only while following: leaving
 follow ends it. Ordinary following re-pins for two frames after each bottom write;
 an explicit pin (send intent, latest paging, restoration at the bottom) lasts until
-enough rows exist and the bottom stays put, within a frame deadline. Layout changes
-apply restoration, then an explicit pin, then the long-reply hold, then follow; a
-restoration requested during a pin supersedes it (the pin settles `interrupted`) and
-reports `onApplied` only after its own landing. In-place reveals (`alignElement`)
-are reader-settlement holds on the revealed element, and settlement, alignment and
-anchor restoration share one anchor measurement.
+enough rows exist and the bottom stays put, within a frame deadline, then hands the
+bottom back to ordinary following. Layout changes apply restoration, then an explicit
+pin, then the long-reply hold, then follow. A restoration requested during a pin
+supersedes it (the pin settles `interrupted`), except that a restoration to the
+bottom joins an active explicit pin and keeps its row count; it reports `onApplied`
+only after its own landing, and `onCancelled` when superseded or when its pin loses
+follow without a gesture. A new send intent also cancels MessageSection's pending
+window paging, which would otherwise leave follow after the send.
+
+In-place reveals (`alignElement`) are reader-settlement holds on the revealed
+element. A hold re-aligns on layout notifications only (including viewport and
+`beforeItems` resizes), never because of a scroll. Gestures and navigation end it,
+as do focus moving outside its row (Tab, assistive technology) and, while idle, a
+scroll nobody wrote that moves the element (find-in-page). Virtua's compensation,
+which keeps the element in place, does not. Settlement, alignment and anchor
+restoration share one anchor measurement.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

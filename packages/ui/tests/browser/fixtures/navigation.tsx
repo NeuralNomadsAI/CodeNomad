@@ -62,5 +62,11 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
   restore: (target: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) => api?.restoreScrollSnapshot(target, opts),
   // A fresh object each call, so re-emitting an existing token is observable.
   pin: (token: string, minItemCount?: number) => setPinIntent({ token, minItemCount }),
+  unpin: () => setPinIntent(null),
   pinCancelled: () => pinCancelled,
+  setAutoScroll: (enabled: boolean) => api?.setAutoScroll(enabled),
+  alignElement: (selector: string, offset: number) => {
+    const target = api?.getScrollElement()?.querySelector<HTMLElement>(selector)
+    if (target) api?.alignElement(target, offset)
+  },
 }

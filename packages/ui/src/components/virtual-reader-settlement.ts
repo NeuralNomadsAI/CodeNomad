@@ -34,7 +34,20 @@ export function createVirtualReaderSettlement(options: {
   }
   return {
     cancel,
+    /** Layout changed: re-arms the anchor. */
     notify,
+    /**
+     * A scroll was observed. It re-arms a retained reader. A held element follows
+     * layout only: `movedHeld` reports a scroll nobody wrote that moved it (focus,
+     * find-in-page, assistive technology, unlike Virtua's compensation, which keeps
+     * it in place); while idle, that is the reader moving on and releases the hold.
+     */
+    scrolled: (movedHeld: (held: { element: HTMLElement; offset: number }) => boolean) => {
+      if (!anchor?.element) return notify()
+      if (frame === undefined && movedHeld({ element: anchor.element, offset: anchor.offset })) cancel()
+    },
+    /** The held element anchor, if any. */
+    held: () => anchor?.element ? anchor : undefined,
     capture: () => ({ anchor: anchor ?? options.getAnchor(), generation }),
     settle: (next: { anchor: VirtualItemAnchor | undefined; generation: number } | undefined) => {
       if (!next?.anchor || next.generation !== generation) return

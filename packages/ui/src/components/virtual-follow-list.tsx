@@ -507,10 +507,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         requiredStableFrames: settle.requiredStableFrames,
       })
       settle.progress = progress
-      if (progress.settled) return endBottomPin("settled")
+      if (progress.settled) return handBottomToFollow(pin, "settled")
     }
-    if (pin.frames <= 0) return endBottomPin("timeout")
+    if (pin.frames <= 0) return settle ? handBottomToFollow(pin, "timeout") : endBottomPin("timeout")
     scheduleBottomPin()
+  }
+
+  /** An explicit pin that ends by itself leaves following re-pinning while layout settles. */
+  function handBottomToFollow(pin: BottomPin, settlement: VirtualBottomSettlement) {
+    const resolve = pin.settle?.resolve
+    bottomPin = { reason: pin.reason, frames: FOLLOW_BOTTOM_PIN_FRAMES }
+    scheduleBottomPin()
+    resolve?.(settlement)
   }
 
   function endBottomPin(settlement: VirtualBottomSettlement) {
@@ -596,7 +604,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleScroll() {
-    readerSettlement.notify()
+    readerSettlement.scrolled((held) => {
+      const element = scrollElement()
+      return Boolean(element) && held.element.isConnected && !hasProgrammaticScrollIntent()
+        && Math.abs(measureAnchorDelta(element!, held.element, held.offset)) >= 1
+    })
     updateScrollStateFromDom()
     props.onScroll?.(captureScrollSnapshot())
 
@@ -721,11 +733,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
     // Restoration outranks a bottom pin (as in flushContentRendered): it
-    // supersedes the pin and any earlier restoration, and reports only its own landing.
-    cancelActiveScrollRestore()
-    endBottomPin("interrupted")
+    // supersedes the pin, except that a restoration to the bottom joins an
+    // active explicit pin and keeps its row-count guarantee. It also supersedes
+    // any earlier restoration, notified once this one owns the position (a
+    // re-entrant restoration from that callback then supersedes this one), and
+    // reports only its own landing.
+    const superseded = cancelRestore
+    readerSettlement.cancel()
+    invalidateScrollRestore()
+    if (!snapshot.atBottom || !bottomPin?.settle) endBottomPin("interrupted")
     const element = scrollElement()
     if (!element) {
+      superseded?.()
       opts?.fallback?.()
       return
     }
@@ -735,6 +754,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     restartAnchorRestore = undefined
     scrollController.setRestoring(true)
     cancelRestore = () => opts?.onCancelled?.()
+    superseded?.()
 
     const finish = () => {
       if (!isCurrent()) return
@@ -763,9 +783,17 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (snapshot.atBottom) {
-        startExplicitBottomPin({ settleFrames: LOCAL_BOTTOM_PIN_SETTLE_FRAMES }, (settlement) => {
+        const onSettled = (settlement: VirtualBottomSettlement) => {
           if (settlement !== "cancelled") finish()
-        })
+          // Follow was left without a gesture (which cancels the restoration itself).
+          else if (restoreToken.isCurrent(token)) cancelActiveScrollRestore()
+        }
+        const joined = bottomPin?.settle
+        if (!joined) startExplicitBottomPin({ settleFrames: LOCAL_BOTTOM_PIN_SETTLE_FRAMES }, onSettled)
+        else {
+          const resolve = joined.resolve
+          joined.resolve = (settlement) => { resolve?.(settlement); onSettled(settlement) }
+        }
         return
       }
 
@@ -963,7 +991,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
       markUserScrollIntent(intent.direction, intent.distance)
     }
+    // Moving focus elsewhere (Tab, assistive technology) ends an in-place reveal's hold.
+    const handleFocusIn = (event: FocusEvent) => {
+      const held = readerSettlement.held()
+      if (held && !itemElements.get(held.key)?.contains(event.target as Node)) readerSettlement.cancel()
+    }
     const detachGestureRouting = attachScrollGestureRouting(element)
+    element.addEventListener("focusin", handleFocusIn)
     element.addEventListener("wheel", handleWheelIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
     element.addEventListener("pointermove", handlePointerMove)
@@ -979,6 +1013,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     element.addEventListener("keydown", handleKeyIntent)
     detachScrollIntentListeners = () => {
       detachGestureRouting()
+      element.removeEventListener("focusin", handleFocusIn)
       element.removeEventListener("wheel", handleWheelIntent)
       element.removeEventListener("pointerdown", handlePointerIntent)
       element.removeEventListener("pointermove", handlePointerMove)
@@ -1027,12 +1062,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element || !element.contains(target) || key === undefined) return
     supersedePositioning()
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "align-element")
-    // A keyboard activation can happen off-screen (or mid-layout); always land in view.
-    const offset = Math.min(Math.max(viewportOffset, 0), Math.max(0, element.clientHeight - ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX))
     // The virtualizer's resize compensation and late layout (fonts, lazy cards) can move
     // the target after this correction: the reader settlement re-measures it on each
-    // layout until a gesture or navigation supersedes it.
-    readerSettlement.hold({ key, offset, element: target })
+    // layout until a gesture, navigation, unwritten scroll or focus elsewhere ends it.
+    readerSettlement.hold({ key, offset: clampAlignmentOffset(element, viewportOffset), element: target })
+  }
+
+  /** A keyboard activation can happen off-screen (or mid-layout); always land in view. */
+  function clampAlignmentOffset(element: HTMLElement, offset: number) {
+    return Math.min(Math.max(offset, 0), Math.max(0, element.clientHeight - ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX))
   }
 
   const api: VirtualFollowListApi = {
@@ -1081,7 +1119,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const offset = delta < 0 && !canScrollInDirection(stream, "down") ? stableOffset : stream.scrollTop
       // A bottom pin exists only while following, so it never retains a reader.
       const retainReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
-      if (retainReader) readerSettlement.cancel()
+      // The correction below keeps a held element in place; a retained reader restarts.
+      if (retainReader && !readerSettlement.held()) readerSettlement.cancel()
       setBeforeItemsHeight(nextHeight)
       if (retainReader && !nativeScrollbarDragging && offset >= height) {
         // One synchronous layout correction, not a deferred pin that can
@@ -1252,7 +1291,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight
       if (nextHeight === previousHeight) return
-      readerSettlement.cancel()
+      // A held element is re-aligned below; its pending frames also keep a
+      // resize-induced clamp from reading as the reader moving on.
+      if (readerSettlement.held()) readerSettlement.notify()
+      else readerSettlement.cancel()
       if (!isActive() || previousHeight <= 0 || nextHeight <= 0) {
         previousHeight = nextHeight
         return
@@ -1269,8 +1311,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         const heightDelta = pendingViewportHeightDelta
         pendingViewportHeightDelta = 0
         if (scrollController.snapshot().restoring) return
+        const held = readerSettlement.held()
         if (canPinFollowBottom()) {
           pinFollowBottom("viewport-resize")
+        } else if (held) {
+          readerSettlement.hold({ ...held, offset: clampAlignmentOffset(element, held.offset) })
         } else {
           writeScroll("viewport-resize", { type: "offset", top: getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta) })
         }

@@ -521,6 +521,12 @@ export default function MessageSection(props: MessageSectionProps) {
 
   onCleanup(cancelWindowNavigation)
 
+  // A send loads and pins the latest window itself: stale paging must not resume
+  // afterwards and leave follow, which would cancel the new send pin.
+  createEffect(on(() => props.explicitBottomPinIntent?.token, (token) => {
+    if (token !== undefined) cancelWindowNavigation()
+  }, { defer: true }))
+
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
     if (!element) return false
