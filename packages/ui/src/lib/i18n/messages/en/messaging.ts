@@ -25,7 +25,6 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "The check timed out for: {directories}.",
   "interruption.recoveryIssue.unavailable": "The server did not answer for: {directories}.",
   "interruption.recoveryIssue.unavailableDetail": "The server did not answer for: {directories} ({detail}).",
-  "interruption.recoveryIssue.deferred": "Deferred while a session is compacting: {directories}.",
   "interruption.recoveryIssue.excluded": "Folder missing or outside this project: {directories}.",
   "interruption.recoverySessions": "Affected sessions: {sessions}.",
   "interruption.recoveryCause.unsupported": "The CodeNomad plugin that lists pending questions is unavailable in OpenCode.",

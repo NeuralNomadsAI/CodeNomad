@@ -25,7 +25,6 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "La comprobación excedió el tiempo: {directories}.",
   "interruption.recoveryIssue.unavailable": "El servidor no respondió para: {directories}.",
   "interruption.recoveryIssue.unavailableDetail": "El servidor no respondió para: {directories} ({detail}).",
-  "interruption.recoveryIssue.deferred": "Aplazado mientras se compacta una sesión: {directories}.",
   "interruption.recoveryIssue.excluded": "Carpeta inexistente o fuera de este proyecto: {directories}.",
   "interruption.recoverySessions": "Sesiones afectadas: {sessions}.",
   "interruption.recoveryCause.unsupported": "El plugin de CodeNomad que lista las preguntas pendientes no está disponible en OpenCode.",

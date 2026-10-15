@@ -25,7 +25,6 @@ export const messagingMessages = {
   "interruption.recoveryIssue.timeout": "जाँचको समय सकियो: {directories}।",
   "interruption.recoveryIssue.unavailable": "सर्भरले जवाफ दिएन: {directories}।",
   "interruption.recoveryIssue.unavailableDetail": "सर्भरले जवाफ दिएन: {directories} ({detail})।",
-  "interruption.recoveryIssue.deferred": "सत्र संक्षिप्त हुँदै गर्दा स्थगित: {directories}।",
   "interruption.recoveryIssue.excluded": "फोल्डर हराएको छ वा यो परियोजना बाहिर छ: {directories}।",
   "interruption.recoverySessions": "प्रभावित सत्रहरू: {sessions}।",
   "interruption.recoveryCause.unsupported": "पर्खिरहेका प्रश्नहरू सूचीबद्ध गर्ने CodeNomad प्लगइन OpenCode मा उपलब्ध छैन।",

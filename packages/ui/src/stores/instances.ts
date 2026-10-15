@@ -75,6 +75,7 @@ import { showWorkspaceLaunchError } from "./launch-errors"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { getInstanceLabel } from "../lib/instance-label"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import {
   batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
   type PendingRecoveryCause, type RecoveryDirectory, type RecoverySnapshot,
@@ -819,6 +820,9 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     } catch (error) {
       if (error === pendingDiscoveryDeferred) throw error
       if (!isCurrent()) throw pendingRequestSyncSuperseded
+      // The backend also defers for compactions this UI never observed (unloaded or
+      // other projects' sessions). Like a local deferral, wait for the next pass.
+      if (error instanceof HttpResponseError && error.status === 503 && error.code === "deferred") throw pendingDiscoveryDeferred
       // A refused batch still reports each directory's own status and reason.
       const refused = refusedDirectories(error)
       if (refused) addBatch(refused)

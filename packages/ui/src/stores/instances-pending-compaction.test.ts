@@ -8,8 +8,9 @@ import { getToastHistory } from "../lib/notifications"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, reconcilePendingRequestLiveness,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied, hasRepliedPermission, sendPermissionResponse,
-  addPendingForm, sendFormReply, sendFormCancel,
+  addPendingForm, sendFormReply, sendFormCancel, incompletePendingRecovery,
 } from "./instances"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled, hasSettledForm } from "./form-settlements"
 import { sessions, setSessions } from "./session-state"
@@ -163,6 +164,28 @@ test("an unavailable capability after compaction retains requests without legacy
   assert.deepEqual(h.reads, [])
   assert.equal(getPermissionQueue(h.id)[0]?.id, "unscanned")
   assert.equal(getFormQueue(h.id)[0]?.id, "unscanned")
+})
+
+test("a backend-only compaction deferral waits for the next pass without warning or losing requests", async () => {
+  const h = harness()
+  addPermissionToQueue(h.id, permission("known"), h.directory)
+  const warnings = () => getToastHistory().filter((item) => item.variant === "warning").length
+  const before = warnings()
+  // The backend sees compactions this UI never loaded (another project's or a mission's session).
+  serverApi.getPendingRequests = async () => {
+    brokerReads++
+    throw new HttpResponseError("Pending discovery deferred during compaction; retain existing queues", 503, "30", "deferred")
+  }
+  for (let attempt = 0; attempt < 3; attempt++) await syncPendingRequests(h.id)
+  assert.equal(brokerReads, 3, "one deferred read per pass, never a tight retry loop")
+  assert.equal(warnings(), before, "a deferral is not a failed recovery")
+  assert.equal(incompletePendingRecovery().has(h.id), true, "coverage stays non-authoritative while deferred")
+  assert.equal(getPermissionQueue(h.id)[0]?.id, "known")
+  assert.deepEqual(h.reads, [], "no ordinary-list fallback")
+  serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
+    directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }] })) })
+  await syncPendingRequests(h.id)
+  assert.equal(incompletePendingRecovery().has(h.id), false)
 })
 
 test("supported snapshot batching also stops before the next batch during compaction", async () => {

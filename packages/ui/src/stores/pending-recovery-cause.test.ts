@@ -74,7 +74,6 @@ test("request failures map to the folder issue the user can act on", () => {
   assert.deepEqual(batchIssue(new HttpResponseError("Directory does not belong to workspace", 403, null)), { issue: "not-owned" })
   assert.deepEqual(batchIssue(new HttpResponseError("Pending requests unavailable", 503, "30")), { issue: "unavailable", detail: "HTTP 503" })
   assert.deepEqual(batchIssue(new HttpResponseError("Pending requests unavailable", 503, null, "timeout")), { issue: "timeout" })
-  assert.deepEqual(batchIssue(new HttpResponseError("Pending discovery deferred", 503, "30", "deferred")), { issue: "deferred" })
   assert.deepEqual(batchIssue(new DOMException("aborted", "AbortError")), { issue: "timeout" })
   assert.deepEqual(recoveryCauseOf(new Error("socket hang up")), { kind: "request", detail: "socket hang up" })
 })

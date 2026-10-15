@@ -6,7 +6,6 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 export type PendingDirectoryIssue =
   | PendingDirectoryErrorReason
   | "timeout" // the snapshot request exceeded its deadline
-  | "deferred" // the server deferred discovery while a session compacts
   | "unavailable" // the server could not answer for it
   | "excluded" // required (active session or known request), yet reported as outside history
 
@@ -57,7 +56,6 @@ function errorDetail(error: unknown): string {
 export function batchIssue(error: unknown): { issue: PendingDirectoryIssue; detail?: string } {
   if (error instanceof HttpResponseError && error.status === 403) return { issue: "not-owned" }
   if (error instanceof HttpResponseError && error.code === "timeout") return { issue: "timeout" }
-  if (error instanceof HttpResponseError && error.code === "deferred") return { issue: "deferred" }
   if (error instanceof DOMException && error.name === "AbortError") return { issue: "timeout" }
   return { issue: "unavailable", detail: errorDetail(error) }
 }
@@ -86,7 +84,6 @@ const ISSUE_KEYS: Record<PendingDirectoryIssue, string> = {
   unverified: "interruption.recoveryIssue.unverified",
   changed: "interruption.recoveryIssue.changed",
   timeout: "interruption.recoveryIssue.timeout",
-  deferred: "interruption.recoveryIssue.deferred",
   unavailable: "interruption.recoveryIssue.unavailable",
   excluded: "interruption.recoveryIssue.excluded",
 }
