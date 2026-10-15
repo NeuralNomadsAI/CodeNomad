@@ -149,11 +149,16 @@ keeps the carried default row size as `itemSize`: Virtua's one-time median
 re-estimate would otherwise fire later (once a streaming reply outgrows the viewport,
 or after the long-reply hold escapes) and resize every never-measured history row at
 once; near the bottom the browser clamps before Virtua compensates, an `unowned`
-backward jump of many rows. The new instance is also seeded with the real offset by
-one scroll event, since it reads offset 0 until the next one. Gestures and explicit
-navigation supersede restoration, alignment and bottom pins through one function;
-deactivation, session reset and unmount stop every list-owned positioning operation
-(including a restoration in flight) through another.
+backward jump of many rows. When every retained row is measured, the remap refreshes
+that default to their median, so an instance that remounted before estimating cannot
+freeze Virtua's 40px fallback for a whole conversation. A new instance reads offset 0
+until the next scroll event, so a non-zero offset is seeded by one scroll event (the
+remount has already recreated every row). The long-reply hold publishes its escaped
+position itself, since it scrolls nothing. Gestures and explicit navigation supersede
+restoration, alignment and bottom pins through one function; deactivation, session
+reset and unmount stop every list-owned positioning operation (including a
+restoration in flight) through another, and deactivation also releases Virtua's
+queued imperative scroll.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

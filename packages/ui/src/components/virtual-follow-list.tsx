@@ -572,6 +572,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "hold")
     scrollController.recordProgrammaticOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop)
+    // The hold changes the mode without a scroll, and growth below an escaped
+    // reader scrolls nothing either: publish the held position now, as the
+    // follow pin that preceded it did.
+    props.onScroll?.(captureScrollSnapshot())
     return true
   }
 
@@ -1248,6 +1252,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // Includes a restoration in flight: its frames stop at inactivity, and
       // an armed restart or a sticky `restoring` would outlive this session view.
       stopPositioning()
+      // Virtua keeps reasserting a queued imperative target (e.g. the restore
+      // index) after it lands; release it so the hidden list stays put. Only
+      // here: on reset, the next session's positioning replaces that queue.
+      if (pendingVirtuaScroll) {
+        pendingVirtuaScroll = false
+        writeScroll("cancel-virtua", { type: "release" })
+      }
       return
     }
     if (pendingInitialScroll && props.items().length > 0) {
@@ -1335,16 +1346,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
               // Each instance otherwise re-estimates its default row size once
               // newly measured rows outgrow the viewport (e.g. a streaming reply)
               // and resizes every never-measured row at once. A remount already
-              // carries the previous estimate: keep it, so measurement stays the
-              // only size change Virtua has to compensate above a reader.
+              // carries the previous estimate (`cache[1]`, refreshed by the remap):
+              // keep it, so measurement stays the only size change Virtua has to
+              // compensate above a reader. This also applies `bufferSize`
+              // overscan from the first frame, so each remount mounts more rows.
+              // CacheSnapshot is internal to Virtua; its layout and this itemSize
+              // contract are pinned by virtual-follow-measurements.test.ts.
               itemSize={authority.cache?.[1]}
               ref={handle => {
                 setVirtuaHandle(handle)
                 // A new instance reads offset 0 until the next scroll event, so it
                 // would render and measure the head rows instead of the viewport.
-                // Its scroll listener attaches right after this ref: seed it.
+                // Its scroll listener attaches right after this ref: seed it. The
+                // remount has already recreated every row, so the scroll-driven
+                // closing of image previews and quote selections loses nothing.
                 if (handle) queueMicrotask(() => {
-                  if (virtuaHandle() === handle) scrollElement()?.dispatchEvent(new Event("scroll"))
+                  const element = scrollElement()
+                  if (virtuaHandle() === handle && element && element.scrollTop > 0) element.dispatchEvent(new Event("scroll"))
                 })
               }}
               scrollRef={scrollElement()}

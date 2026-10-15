@@ -611,13 +611,16 @@ async function streamUntilHold(page: Page, scope: string) {
     requestAnimationFrame(tick)
   }, `${scope} .message-stream`)
   await page.evaluate(() => (window as any).fixture.start("A"))
+  const stream = page.locator(`${scope} .message-stream`)
   let held = false
   for (let i = 0; i < 200 && !held; i++) {
     await page.evaluate(() => (window as any).fixture.delta("A", "Long streamed paragraph for the hold.\n\n".repeat(2)))
     await frames(page, 2)
-    held = (await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType)) === "escaped"
+    held = await stream.getAttribute("data-follow-mode") === "escaped"
   }
   assert.ok(held, "A long streamed reply must engage the hold")
+  // The hold scrolls nothing, so it must publish the held position itself.
+  assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType), "escaped", "The hold must persist its escaped position")
   for (let i = 0; i < 20; i++) {
     await page.evaluate(() => (window as any).fixture.delta("A", "After hold.\n\n"))
     await frames(page, 2)
@@ -646,7 +649,8 @@ test("the long-reply hold keeps the streaming reply in view when it escapes", as
     const trace = collectScrollTrace(page)
     await trace.enable()
     const topRows = await streamUntilHold(page, scope)
-    const displaced = topRows.filter(key => key && key !== "stream-A" && !/^msg_005[5-9]_A$/.test(key))
+    // A frame without a row at the viewport top is a blank gap: displaced too.
+    const displaced = topRows.filter(key => !key || (key !== "stream-A" && !/^msg_005[5-9]_A$/.test(key)))
     assert.deepEqual(displaced, [], `The hold escape moved the reader away from the streaming tail: ${JSON.stringify({ topRows: [...new Set(topRows)], unowned: unownedMoves(trace.entries) })}`)
   }, { name: "switch", hold: true })
 })
