@@ -83,7 +83,6 @@ export interface MessageSectionProps {
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
-  registerScrollToBottom?: (fn: (() => void) | null) => void
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
@@ -630,15 +629,6 @@ export default function MessageSection(props: MessageSectionProps) {
       return typeof (part as { text?: unknown }).text === "string"
     })
   }
-
-  createEffect(() => {
-    const api = listApi()
-    if (!api) return
-    if (props.registerScrollToBottom) {
-      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
-      onCleanup(() => props.registerScrollToBottom?.(null))
-    }
-  })
 
   // Restore once per activation, when the transcript can show the snapshot.
   // The snapshot is read untracked: persisting the position must not restart it.
@@ -1248,8 +1238,6 @@ export default function MessageSection(props: MessageSectionProps) {
           overscanPx={800}
           streamingActive={streamingActive}
           isActive={isActive}
-          scrollToBottomOnActivate={() => false}
-          initialScrollToBottom={() => false}
           initialAutoScroll={() => isSnapshotAutoFollowing(store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))}
           resetKey={() => props.sessionId}
           followToken={followToken}

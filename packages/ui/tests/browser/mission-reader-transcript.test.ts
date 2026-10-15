@@ -62,20 +62,39 @@ test("a reader for a Mission absent from the loaded map releases the transcript 
   } finally { await page.close() }
 })
 
+const readerMission = { version: 1, id: "reader", projectID: "project", projectCanonical: "/fixture", objective: "Objective", template: "custom",
+  coordinatorSessionId: "ses_fixture", status: "active", actors: [], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false,
+  tasks: [{ id: "task", key: "task-one", title: "Inspect", brief: "Brief", role: "research", status: "completed", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }],
+  reports: [{ id: "report-reader", taskKey: "task-one", sessionId: "ses_fixture", outcome: "completed", summary: "Report opening paragraph.", evidence: [], next: [], createdAt: 1 }] }
+const latestHistoryPainted = (page: Page) => page.waitForFunction(() => [...document.querySelectorAll(".message-stream p")].some(el => {
+  const r = el.getBoundingClientRect(), box = document.querySelector(".message-stream")!.getBoundingClientRect()
+  return el.textContent === "History 59" && r.height > 0 && r.top < box.bottom && r.bottom > box.top
+}))
+
 test("history loaded beneath a reader is followed to its latest message once the reader closes", async () => {
-  const page = await open([{ version: 1, id: "reader", projectID: "project", projectCanonical: "/fixture", objective: "Objective", template: "custom",
-    coordinatorSessionId: "ses_fixture", status: "active", actors: [], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false,
-    tasks: [{ id: "task", key: "task-one", title: "Inspect", brief: "Brief", role: "research", status: "completed", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }],
-    reports: [{ id: "report-reader", taskKey: "task-one", sessionId: "ses_fixture", outcome: "completed", summary: "Report opening paragraph.", evidence: [], next: [], createdAt: 1 }] }])
+  const page = await open([readerMission])
   try {
     await page.evaluate(() => (window as any).fixture.readMission())
     await page.locator(".mission-reader").getByText("Report opening paragraph.", { exact: true }).waitFor()
     await page.evaluate(() => (window as any).fixture.seedHistory())
     assert.equal(await page.locator(".mission-transcript-content").getAttribute("inert"), "")
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
-    await page.waitForFunction(() => [...document.querySelectorAll(".message-stream p")].some(el => {
-      const r = el.getBoundingClientRect(), box = document.querySelector(".message-stream")!.getBoundingClientRect()
-      return el.textContent === "History 59" && r.height > 0 && r.top < box.bottom && r.bottom > box.top
-    }))
+    await latestHistoryPainted(page)
+  } finally { await page.close() }
+})
+
+// The transcript's own restore is the only activation path to its bottom.
+test("a session activated beneath a reader opens at its latest message once the reader closes", async () => {
+  const page = await open([readerMission])
+  try {
+    await page.evaluate(() => (window as any).fixture.seedHistory())
+    await latestHistoryPainted(page)
+    await page.evaluate(() => (window as any).fixture.readMission())
+    await page.locator(".mission-reader").getByText("Report opening paragraph.", { exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixture.switchAway())
+    await page.evaluate(() => (window as any).fixture.return())
+    assert.equal(await page.locator(".mission-transcript-content").getAttribute("inert"), "")
+    await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+    await latestHistoryPainted(page)
   } finally { await page.close() }
 })

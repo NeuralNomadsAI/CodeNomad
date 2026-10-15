@@ -18,8 +18,7 @@ let reachedTop = 0
 let pinCancelled = 0
 const rowHeight = (item: string) => rowHeights()[item] ?? (item === "streaming-tail" ? tailHeight() : item === "row-1" ? headHeight() : 48)
 render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={item => item}
-  initialAutoScroll={() => false} initialScrollToBottom={() => false}
-  isActive={active} scrollToBottomOnActivate={() => false}
+  initialAutoScroll={() => false} isActive={active}
   explicitBottomPinIntent={pinIntent} onExplicitBottomPinCancelled={() => { pinCancelled++ }}
   onUserReachedTop={() => { reachedTop++ }}
   registerApi={value => {

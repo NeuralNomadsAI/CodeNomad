@@ -7,7 +7,7 @@ import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
 import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
 import { missionStore } from "../../stores/missions"
-import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../stores/message-v2/bus"
+import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import PromptContextControls from "../prompt-input/PromptContextControls"
@@ -28,7 +28,6 @@ import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
 import { FilesPreviewView } from "../files-preview-view"
 import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
-import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
@@ -145,7 +144,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       .catch((error) => log.error("Failed to load prompt queue", error)),
   ))
 
-  let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   const [timelineMount, setTimelineMount] = createSignal<HTMLDivElement>()
   createEffect(() => {
@@ -160,27 +158,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return messageStore().getSessionMessageIds(props.sessionId).length
   }
 
-  function shouldScrollToBottomOnActivate() {
-    const current = session()
-    if (!current) return true
-    const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_STREAM_SCROLL_SCOPE)
-    return isSnapshotAutoFollowing(snapshot)
-  }
-
-  function scheduleScrollToBottom(options?: { force?: boolean; sessionId?: string }) {
-    if (!scrollToBottomHandle) return false
-    const targetSessionId = options?.sessionId ?? props.sessionId
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const current = session()
-        if (!current || current.id !== targetSessionId) return
-        if (!options?.force && !shouldScrollToBottomOnActivate()) return
-        scrollToBottomHandle?.()
-      })
-    })
-    return true
-  }
-
+  // The pin intent alone brings a submitted exchange to the bottom.
   function startSubmitBottomPinIntent(
     minItemCount: number,
     options?: { createdMessageCount?: number; preserveObservedStreaming?: boolean },
@@ -201,15 +179,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       observedStreaming: shouldPreserveObservedStreaming ? previous?.observedStreaming === true : false,
     }
     setSubmitBottomPinIntent(intent)
-    return intent
-  }
-
-  function forceSubmittedExchangeToBottom(
-    minItemCount: number,
-    options?: { createdMessageCount?: number; preserveObservedStreaming?: boolean },
-  ) {
-    const intent = startSubmitBottomPinIntent(minItemCount, options)
-    scrollToBottomHandle?.()
     return intent
   }
 
@@ -254,18 +223,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       () => props.sessionId,
       () => setSubmitBottomPinIntent(null),
       { defer: true },
-    ),
-  )
-
-  createEffect(
-    on(
-      () => props.isActive,
-      (isActive, wasActive) => {
-        if (!isActive) return
-        if (wasActive === true) return
-        if (!shouldScrollToBottomOnActivate()) return
-        scheduleScrollToBottom()
-      },
     ),
   )
 
@@ -466,14 +423,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
     const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
-    const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
+    const initialPinIntent = startSubmitBottomPinIntent(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
       await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
       } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
-        forceSubmittedExchangeToBottom(Math.max(submittedExchangeTargetCount, latestMessageCount), {
+        startSubmitBottomPinIntent(Math.max(submittedExchangeTargetCount, latestMessageCount), {
           createdMessageCount: messageCount,
           preserveObservedStreaming: true,
         })
@@ -685,9 +642,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               // Hidden beneath a reader, the stream defers scroll restore/follow
               // and re-applies them, against live geometry, once it is shown again.
               isActive={props.isActive && !readingMission()}
-              registerScrollToBottom={(fn) => {
-                scrollToBottomHandle = fn ?? undefined
-              }}
               showSidebarToggle={props.showSidebarToggle}
               onSidebarToggle={props.onSidebarToggle}
               forceCompactStatusLayout={props.forceCompactStatusLayout}

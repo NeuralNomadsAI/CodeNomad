@@ -10,8 +10,10 @@ describe("session bottom pin intent", () => {
     const start = source.indexOf("async function handleSendMessage(")
     const submit = source.slice(start, source.indexOf("function showQueueError", start))
 
-    assert.match(submit, /const initialPinIntent = forceSubmittedExchangeToBottom/)
+    assert.match(submit, /const initialPinIntent = startSubmitBottomPinIntent/)
     assert.doesNotMatch(submit, /delivery === "queue"/)
+    // The intent starts the pin itself; a second bottom jump would duplicate it.
+    assert.doesNotMatch(source, /scrollToBottom/)
   })
 
   it("targets only the queued user prompt when submitting during active streaming", () => {

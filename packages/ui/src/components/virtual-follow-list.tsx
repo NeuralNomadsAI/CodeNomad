@@ -109,8 +109,6 @@ export interface VirtualFollowListProps<T> {
   streamingActive?: Accessor<boolean>
   isActive?: Accessor<boolean>
   autoPinHoldEnabled?: Accessor<boolean>
-  scrollToBottomOnActivate?: Accessor<boolean>
-  initialScrollToBottom?: Accessor<boolean>
   initialAutoScroll?: Accessor<boolean>
   resetKey?: Accessor<string | number>
   followToken?: Accessor<string | number>
@@ -155,9 +153,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [shiftVirtualItems, setShiftVirtualItems] = createSignal(false)
 
   const isActive = () => props.isActive?.() ?? true
-  const initialScrollToBottom = () => props.initialScrollToBottom?.() ?? true
   const initialAutoScroll = () => props.initialAutoScroll?.() ?? true
-  const scrollToBottomOnActivate = () => props.scrollToBottomOnActivate?.() ?? true
   const streamingActive = () => props.streamingActive?.() ?? false
   const autoPinHoldEnabled = () => props.autoPinHoldEnabled?.() ?? true
   const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
@@ -176,7 +172,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let restartAnchorRestore: (() => void) | undefined
   let cancelRestore: (() => void) | undefined
   let lastResetKey: string | number | undefined = props.resetKey?.()
-  let pendingInitialScroll = true
   let pendingContentRenderedFrame: number | null = null
   let pendingViewportResizeFrame: number | null = null
   let pendingViewportHeightDelta = 0
@@ -1154,14 +1149,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     startExplicitBottomPin(intent)
   }))
 
-  createEffect(on(() => props.items().length, (len) => {
-    if (pendingInitialScroll && isActive() && len > 0) {
-      pendingInitialScroll = false
-      if (initialScrollToBottom()) scrollToBottom(true)
-      return
-    }
-  }, { defer: true }))
-
   createEffect(on(() => props.followToken?.(), () => {
     if (autoScroll()) api.notifyContentRendered()
   }, { defer: true }))
@@ -1250,7 +1237,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     stopPositioning()
     handledBottomPinToken = null
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
-    pendingInitialScroll = true
     windowShiftGeneration += 1
     const items = props.items()
     setShiftVirtualItems(false)
@@ -1262,28 +1248,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }))
 
   createEffect(on(isActive, (active) => {
-    if (!active) {
-      // Includes a restoration in flight: its frames stop at inactivity, and
-      // an armed restart or a sticky `restoring` would outlive this session view.
-      stopPositioning()
-      // Virtua keeps reasserting a queued imperative target (e.g. the restore
-      // index) after it lands; release it so the hidden list stays put. Only
-      // here: on reset, the next session's positioning replaces that queue.
-      // Unlike a gesture, no scroll event is dispatched first: it would publish
-      // an observation and snapshot from an inactive list, and a stale Virtua
-      // offset is harmless while hidden because reactivation restores anew.
-      if (pendingVirtuaScroll) {
-        pendingVirtuaScroll = false
-        writeScroll("cancel-virtua", { type: "release" })
-      }
-      return
+    if (active) return
+    // Includes a restoration in flight: its frames stop at inactivity, and
+    // an armed restart or a sticky `restoring` would outlive this session view.
+    stopPositioning()
+    // Virtua keeps reasserting a queued imperative target (e.g. the restore
+    // index) after it lands; release it so the hidden list stays put. Only
+    // here: on reset, the next session's positioning replaces that queue.
+    // Unlike a gesture, no scroll event is dispatched first: it would publish
+    // an observation and snapshot from an inactive list, and a stale Virtua
+    // offset is harmless while hidden because reactivation restores anew.
+    if (pendingVirtuaScroll) {
+      pendingVirtuaScroll = false
+      writeScroll("cancel-virtua", { type: "release" })
     }
-    if (pendingInitialScroll && props.items().length > 0) {
-      pendingInitialScroll = false
-      if (initialScrollToBottom()) scrollToBottom(true)
-      return
-    }
-    if (autoScroll() && scrollToBottomOnActivate()) scrollToBottom(true)
   }))
 
   createEffect(() => {
