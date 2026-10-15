@@ -360,6 +360,36 @@ for (const streamingSession of ["none", "A", "B"]) test(`retained A-B-A switch r
   }, { name: "switch" })
 })
 
+// Space toggles a focused <summary> (like a button) instead of scrolling, so
+// it must not carry a page amplitude that "reaches" the bottom.
+for (const control of ["summary", "button"] as const) test(`Space on a focused ${control} near the bottom keeps manual reading`, async () => {
+  await open(async page => {
+    await bottom(page)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.mouse.wheel(0, -324)
+    await frames(page, 45)
+    await stream.evaluate((el, control) => {
+      const bounds = el.getBoundingClientRect()
+      const row = Array.from(el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]"))
+        .find(row => { const rect = row.getBoundingClientRect(); return rect.top >= bounds.top && rect.bottom <= bounds.bottom })!
+      const host = control === "summary" ? document.createElement("details") : document.createElement("div")
+      host.innerHTML = control === "summary" ? "<summary data-space-target>Details</summary><p style='height:120px'>Body</p>" : "<button type='button' data-space-target>Act</button>"
+      row.prepend(host)
+    }, control)
+    await frames(page, 30)
+    const before = await readerState(page)
+    assert.equal(before.followModeType, "escaped")
+    assert.ok(before.gap > 40 && before.gap < 500, `Space's page amplitude would reach the bottom from here: ${before.gap}px`)
+    await page.locator("[data-space-target]").evaluate(target => (target as HTMLElement).focus({ preventScroll: true }))
+    await page.keyboard.press(" ")
+    await frames(page, 45)
+    const after = await readerState(page)
+    assert.deepEqual({ followModeType: after.followModeType, latestButton: after.latestButton }, { followModeType: "escaped", latestButton: 1 }, JSON.stringify({ before, after }))
+    assert.ok(after.gap >= before.gap - 2, `Space on a ${control} must not move the reader to the bottom: ${JSON.stringify({ before, after })}`)
+  })
+})
+
 test("streaming at the tail never paints a backward jump", async () => {
   await open(async page => {
     await bottom(page)

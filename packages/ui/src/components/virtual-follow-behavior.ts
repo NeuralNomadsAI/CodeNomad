@@ -17,7 +17,8 @@ export function getPrimaryPointerDragDirection(previousY: number, nextY: number,
 
 export const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 // Space activates these instead of scrolling; pointer presses on them are not scroll intent.
-export const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
+export const INTERACTIVE_KEY_TARGET_SELECTOR = ["button", "a", "summary", "input", "textarea", "select", "[contenteditable='true']",
+  ...["button", "link", "textbox", "checkbox", "switch", "radio", "option", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "treeitem"].map(role => `[role='${role}']`)].join(", ")
 const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
 // Widgets that consume arrows (and Space). Plain buttons and links do not:
 // Chromium scrolls their scroller, so their arrows remain scroll intent.

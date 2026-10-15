@@ -9,6 +9,7 @@ import {
   BOTTOM_FOLLOW_EPSILON_PX,
   canScrollInDirection,
   classifyVirtualItemKeyChange,
+  describeKeyTarget,
   getKeyboardScrollIntent,
   getBottomAnchoredViewportOffset,
   getPrimaryPointerDragDirection,
@@ -65,6 +66,19 @@ describe("virtual follow behavior", () => {
     assert.equal(key("ArrowDown", { arrowWidget: true }), null)
     assert.equal(key(" ", { arrowWidget: true }), null)
     assert.deepEqual(key("PageDown", { arrowWidget: true }), { type: "direction", direction: "down", distance: 537 })
+  })
+
+  it("classifies Space-activated targets so Space on them carries no page amplitude", () => {
+    const target = (selectorMatch: (selector: string) => boolean) => ({ closest: (selector: string) => selectorMatch(selector) ? {} : null }) as unknown as EventTarget
+    const matches = (tag: string, role?: string) => (selector: string) => selector.split(", ").some(part => part === tag || (role !== undefined && part === `[role='${role}']`))
+    for (const [tag, role] of [["summary"], ["button"], ["a"], ["div", "checkbox"], ["div", "switch"], ["div", "radio"], ["div", "option"], ["div", "menuitem"], ["div", "menuitemcheckbox"], ["div", "menuitemradio"], ["div", "tab"], ["div", "treeitem"], ["span", "link"]] as const) {
+      const flags = describeKeyTarget(target(matches(tag, role)))
+      assert.equal(flags.interactive, true, `${tag}${role ? `[role=${role}]` : ""} is activated by Space`)
+      assert.equal(getKeyboardScrollIntent({ key: " ", shiftKey: false, ...flags, viewportHeight: 614, zoom: 1, devicePixelRatio: 1 }), null)
+    }
+    const plain = describeKeyTarget(target(matches("div")))
+    assert.deepEqual(plain, { textEditing: false, interactive: false, arrowWidget: false })
+    assert.deepEqual(getKeyboardScrollIntent({ key: " ", shiftKey: false, ...plain, viewportHeight: 614, zoom: 1, devicePixelRatio: 1 }), { type: "direction", direction: "down", distance: 537 })
   })
 
   it("never over-predicts Chromium's keyboard step as the gesture amplitude", () => {
