@@ -150,8 +150,8 @@ re-estimate would otherwise fire later (once a streaming reply outgrows the view
 or after the long-reply hold escapes) and resize every never-measured history row at
 once; near the bottom the browser clamps before Virtua compensates, an `unowned`
 backward jump of many rows. When every retained row is measured, the remap refreshes
-that default to their median, so an instance that remounted before estimating cannot
-freeze Virtua's 40px fallback for a whole conversation. A new instance reads offset 0
+that default to their median, so a 40px fallback carried by an instance that remounted
+before estimating lasts only until the first remount whose retained rows are all measured. A new instance reads offset 0
 until the next scroll event, so a non-zero offset is seeded by one scroll event (the
 remount has already recreated every row). The long-reply hold publishes its escaped
 position itself, since it scrolls nothing. Gestures and explicit navigation supersede

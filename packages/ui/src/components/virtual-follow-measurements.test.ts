@@ -81,7 +81,8 @@ test("removed pending keys cannot seed an unrelated row at their former index", 
 // Virtua documents its CacheSnapshot as internal: an upgrade that changes
 // this layout or the itemSize semantics must fail here, not in production.
 test("Virtua keeps the carried default for unmeasured rows and never re-estimates it", () => {
-  const layout = createListLayout(3, 210, [[120, -1, 300], 210]) as ReturnType<typeof createListLayout> & { $estimateDefaultSize?: unknown }
+  // createListLayout is untyped: the runtime assertions below pin the contract.
+  const layout = createListLayout(3, 210, [[120, -1, 300], 210])
   assert.equal(layout.$getItemSize(1), 210)
   assert.equal(layout.$getTotalSize(), 630)
   assert.equal(layout.$estimateDefaultSize, undefined)

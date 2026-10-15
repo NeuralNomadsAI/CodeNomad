@@ -650,6 +650,7 @@ test("the long-reply hold keeps the streaming reply in view when it escapes", as
     await trace.enable()
     const topRows = await streamUntilHold(page, scope)
     // A frame without a row at the viewport top is a blank gap: displaced too.
+    // The hold escape does not remount the list, so no blank remount frame is expected.
     const displaced = topRows.filter(key => !key || (key !== "stream-A" && !/^msg_005[5-9]_A$/.test(key)))
     assert.deepEqual(displaced, [], `The hold escape moved the reader away from the streaming tail: ${JSON.stringify({ topRows: [...new Set(topRows)], unowned: unownedMoves(trace.entries) })}`)
   }, { name: "switch", hold: true })
