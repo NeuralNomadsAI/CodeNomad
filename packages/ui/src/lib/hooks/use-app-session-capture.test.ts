@@ -25,6 +25,10 @@ it("resumes capture only after native shutdown cancellation", () => {
   assert.match(capture, /if \(nativeShutdownGeneration !== payload\.generation\) return[\s\S]*nativeShutdownGeneration = null[\s\S]*schedule\(\)/)
 })
 
+it("records unsettled scroll positions in the flushed payload", () => {
+  assert.match(capture, /messageStoreBus\.flushScrollSnapshots\(\)[\s\S]*?if \(timer\) clearTimeout\(timer\)[\s\S]*?const current = mergedState\(\)/)
+})
+
 it("waits for server storage writes during native shutdown", () => {
   assert.match(capture, /nativeShutdown \? \[storage\.flushWrites\(\)\] : \[\]/)
 })

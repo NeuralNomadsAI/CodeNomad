@@ -588,15 +588,25 @@ export default function MessageSection(props: MessageSectionProps) {
   // inactive SessionView unmounts this section before hiding it) and by a
   // state capture's flush.
   let scrollUnsettled = false
-  function persistSettledScroll() {
-    if (!scrollUnsettled) return
+  function persistScroll() {
     scrollUnsettled = false
     persistMessageScrollSnapshot()
   }
+  function persistSettledScroll() {
+    if (scrollUnsettled) persistScroll()
+  }
   onCleanup(messageStoreBus.onScrollSnapshotFlush(persistSettledScroll))
+  // A pinned stream keeps scrolling, so it never settles: persist a follow-mode
+  // change at once rather than when the stream pauses.
+  createEffect(on(() => listState()?.autoScroll(), (following, previous) => {
+    if (following !== undefined && previous !== undefined) persistScroll()
+  }, { defer: true }))
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
   // when `props.sessionId` changes, before the next session is rendered.
+  // Production sections are keyed per session (only the loading placeholder
+  // changes session, and it never scrolls); a retained section whose session
+  // changes after an unsettled scroll keeps its last settled position.
   createEffect(() => {
     const sessionId = props.sessionId
     onCleanup(() => {

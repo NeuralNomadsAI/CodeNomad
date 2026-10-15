@@ -667,10 +667,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "hold")
     scrollController.recordProgrammaticOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop)
-    // The hold changes the mode without a scroll, and growth below an escaped
-    // reader scrolls nothing either: publish the held position as settled now.
-    props.onScroll?.()
-    props.onScrollEnd?.()
+    // The hold changes the mode without a scroll; consumers observing
+    // state.autoScroll persist the held position (as MessageSection does).
     return true
   }
 

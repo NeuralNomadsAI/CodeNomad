@@ -85,6 +85,26 @@ describe("message store scroll snapshots", () => {
     assert.equal(messagesLoaded().has(instanceId), false)
   })
 
+  it("flushes registered scroll persisters until they unsubscribe, isolating failures", () => {
+    const calls: string[] = []
+    const stopFailing = messageStoreBus.onScrollSnapshotFlush(() => {
+      calls.push("failing")
+      throw new Error("flush failure")
+    })
+    const stop = messageStoreBus.onScrollSnapshotFlush(() => calls.push("persist"))
+    try {
+      messageStoreBus.flushScrollSnapshots()
+      assert.deepEqual(calls, ["failing", "persist"])
+      stopFailing()
+      stop()
+      messageStoreBus.flushScrollSnapshots()
+      assert.deepEqual(calls, ["failing", "persist"])
+    } finally {
+      stopFailing()
+      stop()
+    }
+  })
+
   it("replaces a stored position instead of merging a previous anchor into it", () => {
     const instanceId = "scroll-replace-anchor"
     const store = messageStoreBus.getOrCreate(instanceId)
