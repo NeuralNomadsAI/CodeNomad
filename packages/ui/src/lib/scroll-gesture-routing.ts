@@ -23,10 +23,15 @@ function wheelTarget(root: HTMLElement, target: EventTarget | null, dy: number):
   return root
 }
 
-/** Pixels per wheel delta unit for `element`. */
+/** Effective CSS zoom of `element`. The app zooms natively (1 here); CSS zoom still scales input. */
+export function getElementZoom(element: Element) {
+  return element.currentCSSZoom || 1
+}
+
+/** Scroller pixels per wheel delta unit: pixel deltas are page pixels, so 1/zoom under CSS zoom (measured). */
 export function wheelDeltaUnit(event: WheelEvent, element: HTMLElement) {
   return event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? element.clientHeight
-    : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(element).lineHeight) || 16 : 1
+    : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(element).lineHeight) || 16 : 1 / getElementZoom(element)
 }
 
 function middleTargets(root: HTMLElement, target: EventTarget | null) {

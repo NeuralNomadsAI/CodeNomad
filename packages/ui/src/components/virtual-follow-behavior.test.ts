@@ -53,13 +53,37 @@ describe("virtual follow behavior", () => {
   })
 
   it("keeps page navigation available from non-editing interactive descendants", () => {
-    assert.deepEqual(getKeyboardScrollIntent({ key: "PageUp", shiftKey: false, interactive: true, textEditing: false }), {
-      type: "direction",
-      direction: "up",
-    })
-    assert.deepEqual(getKeyboardScrollIntent({ key: "Home", shiftKey: false, interactive: true, textEditing: false }), { type: "top" })
-    assert.equal(getKeyboardScrollIntent({ key: "PageUp", shiftKey: false, interactive: true, textEditing: true }), null)
-    assert.equal(getKeyboardScrollIntent({ key: " ", shiftKey: false, interactive: true, textEditing: false }), null)
+    const key = (key: string, interactive: boolean, textEditing = false) => getKeyboardScrollIntent({ key, shiftKey: false, interactive, textEditing, viewportHeight: 614, zoom: 1 })
+    assert.deepEqual(key("PageUp", true), { type: "direction", direction: "up", distance: 537 })
+    assert.deepEqual(key("Home", true), { type: "top" })
+    assert.equal(key("PageUp", true, true), null)
+    assert.equal(key(" ", true), null)
+  })
+
+  it("carries Chromium's measured keyboard step as the gesture amplitude", () => {
+    const step = (key: string, viewportHeight: number, zoom: number) => {
+      const intent = getKeyboardScrollIntent({ key, shiftKey: false, interactive: false, textEditing: false, viewportHeight, zoom })
+      return intent?.type === "direction" ? intent.distance : undefined
+    }
+    // Measured: PageDown/Space 537px of a 614px viewport (also under CSS zoom), ArrowDown 40/zoom.
+    assert.equal(step("PageDown", 614, 1), 537)
+    assert.equal(step(" ", 614, 1.25), 537)
+    assert.equal(step("ArrowDown", 614, 1), 40)
+    assert.equal(step("ArrowDown", 614, 1.25), 32)
+  })
+
+  it("resumes follow from a downward gesture whose amplitude reaches the bottom laid out now", () => {
+    const reaches = new VirtualScrollController(false)
+    // 300px above the bottom; the landing is observed later, short of a grown bottom.
+    assert.deepEqual(reaches.userGesture("down", 700, metrics(2100), 300).state.mode, { type: "following" })
+
+    const short = new VirtualScrollController(false)
+    assert.deepEqual(short.userGesture("down", 700, metrics(2100), 268).state.mode, { type: "escaped" }, "Stopping 32px above the bottom stays manual")
+
+    const up = new VirtualScrollController(true)
+    assert.deepEqual(up.userGesture("up", 700, metrics(2400), 5000).state.mode, { type: "escaped" })
+    assert.deepEqual(new VirtualScrollController(false).userGesture("down", 700, null, 5000).state.mode, { type: "escaped" })
+    assert.deepEqual(new VirtualScrollController(false).userGesture(null, 700, metrics(2400)).state.mode, { type: "escaped" })
   })
 
   it("waits for Virtua measurements before applying a restored offset", () => {

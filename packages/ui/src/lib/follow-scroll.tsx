@@ -1,15 +1,14 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { BOTTOM_FOLLOW_EPSILON_PX, VirtualScrollController, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { BOTTOM_FOLLOW_EPSILON_PX, INTERACTIVE_KEY_TARGET_SELECTOR, SCROLL_INTENT_KEYS, TEXT_EDITING_KEY_TARGET_SELECTOR, VirtualScrollController, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
 
 const DEFAULT_SCROLL_INTENT_WINDOW_MS = 600
-const DEFAULT_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 
 interface FollowScrollOptions {
   getScrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
   sentinelClassName: string
   intentWindowMs?: number
-  intentKeys?: ReadonlySet<string>
 }
 
 export interface FollowScrollHelpers {
@@ -55,14 +54,15 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     options.setScrollTopSnapshot(lastKnownScrollTop)
   }
 
-  function markUserScrollIntent(direction: "up" | "down" | null) {
+  function markUserScrollIntent(direction: "up" | "down" | null, distance = 0) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    scrollController.setUserIntent(direction, now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS))
+    const container = scrollContainerRef
+    // Upward intent takes ownership immediately, even if native middle-button
+    // autoscroll waits longer than the intent deadline before its first scroll
+    // event; a downward gesture reaching the bottom resumes follow (shared rule).
+    const result = scrollController.userGesture(direction, now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS), container ? getMetrics(container) : null, distance)
+    setAutoScroll(isAutoFollowing(result.state.mode))
     if (direction === "up") {
-      // Take ownership immediately, even if native middle-button autoscroll
-      // waits longer than the intent deadline before its first scroll event.
-      scrollController.setFollow(false)
-      setAutoScroll(false)
       suppressNextScrollHandling = false
       if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
       if (pendingAnchorScroll !== null) cancelAnimationFrame(pendingAnchorScroll)
@@ -75,21 +75,28 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       detachScrollIntentListeners()
       detachScrollIntentListeners = undefined
     }
-    const intentKeys = options.intentKeys ?? DEFAULT_SCROLL_INTENT_KEYS
     const handlePointerIntent = (event: WheelEvent | PointerEvent | TouchEvent) => {
-      const direction = event instanceof WheelEvent
-        ? (event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
-        : event instanceof PointerEvent && isMiddleButtonScrollIntent(event.button) ? "up" : null
-      markUserScrollIntent(direction)
+      if (event instanceof WheelEvent) {
+        markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null, event.deltaY * wheelDeltaUnit(event, element))
+        return
+      }
+      markUserScrollIntent(event instanceof PointerEvent && isMiddleButtonScrollIntent(event.button) ? "up" : null)
     }
     const handleKeyIntent = (event: KeyboardEvent) => {
-      if (intentKeys.has(event.key)) {
-        const direction =
-          event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home" || (event.shiftKey && (event.key === " " || event.key === "Spacebar"))
-            ? "up"
-            : "down"
-        markUserScrollIntent(direction)
-      }
+      if (event.defaultPrevented || !SCROLL_INTENT_KEYS.has(event.key)) return
+      const target = event.target as HTMLElement | null
+      const intent = getKeyboardScrollIntent({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        interactive: Boolean(target?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)),
+        textEditing: Boolean(target?.closest(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+        viewportHeight: element.clientHeight,
+        zoom: getElementZoom(element),
+      })
+      if (!intent) return
+      // Home/End scroll natively here; End reaches the bottom whatever its distance.
+      if (intent.type === "direction") markUserScrollIntent(intent.direction, intent.distance)
+      else markUserScrollIntent(intent.type === "top" ? "up" : "down", intent.type === "top" ? 0 : Number.POSITIVE_INFINITY)
     }
     element.addEventListener("wheel", handlePointerIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)

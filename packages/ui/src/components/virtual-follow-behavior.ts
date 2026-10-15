@@ -15,26 +15,37 @@ export function getPrimaryPointerDragDirection(previousY: number, nextY: number,
   return nextY < previousY ? "up" : "down"
 }
 
+export const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
+export const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
+export const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
+
 export type KeyboardScrollIntent =
   | { type: "top" }
   | { type: "bottom" }
-  | { type: "direction"; direction: "up" | "down" }
+  | { type: "direction"; direction: "up" | "down"; distance: number }
 
+/**
+ * `distance` is Chromium's step in the scroller's own pixels (measured): a
+ * page is 0.875 of the viewport, a line 40 page pixels, so 40/zoom under CSS zoom.
+ */
 export function getKeyboardScrollIntent(input: {
   key: string
   shiftKey: boolean
   interactive: boolean
   textEditing: boolean
+  viewportHeight: number
+  zoom: number
 }): KeyboardScrollIntent | null {
   if (input.textEditing) return null
   if (input.key === "End") return { type: "bottom" }
   if (input.key === "Home") return { type: "top" }
   if (input.interactive && input.key !== "PageUp" && input.key !== "PageDown") return null
+  const distance = input.key.startsWith("Arrow") ? 40 / input.zoom : Math.floor(input.viewportHeight * 0.875)
   if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && (input.key === " " || input.key === "Spacebar"))) {
-    return { type: "direction", direction: "up" }
+    return { type: "direction", direction: "up", distance }
   }
   if (input.key === "ArrowDown" || input.key === "PageDown" || input.key === " " || input.key === "Spacebar") {
-    return { type: "direction", direction: "down" }
+    return { type: "direction", direction: "down", distance }
   }
   return null
 }
@@ -390,6 +401,22 @@ export class VirtualScrollController {
   setUserIntent(direction: ScrollDirection, until: number) {
     this.state.userIntentDirection = direction
     this.state.userIntentUntil = until
+  }
+
+  /**
+   * Records a user gesture before it scrolls. Upward intent escapes at once. A
+   * downward gesture whose amplitude (`distance`, in scroller pixels) reaches
+   * the bottom laid out now resumes follow at once: the browser clamps a wheel
+   * to an earlier frame's bottom, and animates keys towards the bottom captured
+   * when they start, so streamed growth leaves the landing short of the bottom.
+   */
+  userGesture(direction: ScrollDirection, until: number, metrics: ScrollControllerMetrics | null, distance = 0): ScrollControllerResult {
+    this.setUserIntent(direction, until)
+    if (direction === "up") return this.setFollow(false)
+    if (direction === "down" && metrics && isAtBottomForMode(this.state.mode, { ...metrics, offset: metrics.offset + distance })) {
+      return this.setFollow(true)
+    }
+    return this.result(noFollowEffect)
   }
 
   clearExpiredUserIntent(now: number) {

@@ -125,27 +125,43 @@ async function assertAnchorHeld(page: Page, samples: Array<{ time: number; ancho
   assert.ok(late.every((sample: any) => Math.abs(sample.anchorOffset - expected) < tolerance), `Post-layout restore cycle: expected=${expected}; ${JSON.stringify(late)}`)
 }
 
-for (const targetGap of [64, 32]) test(`manual reading ${targetGap}px from bottom does not resume follow`, async () => {
+// A gesture's predicted landing (its amplitude) must not overshoot the real
+// one: CSS zoom scales wheel pixels by 1/zoom, and a page key moves Chromium's
+// page step, so stopping above the bottom stays manual.
+for (const [gesture, targetGap, zoom] of [["wheel", 64, 1], ["wheel", 32, 1], ["wheel", 32, 1.25], ["PageDown", 32, 1]] as const) test(`manual reading ${targetGap}px from bottom does not resume follow (${gesture} zoom=${zoom})`, async () => {
   await open(async page => {
     await bottom(page)
-    await page.locator(".message-stream").hover()
-    await page.mouse.wheel(0, -80)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.mouse.wheel(0, -800)
     await frames(page, 45)
     assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType), "escaped")
-    const gap = await page.locator(".message-stream").evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
-    await page.evaluate(() => { (window as any).scrollObservations = [] })
-    await page.mouse.wheel(0, gap - targetGap)
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    // Page pixels: the native wheel moves deltaY / zoom scroller pixels.
+    if (gesture === "wheel") {
+      await page.evaluate(() => { (window as any).scrollObservations = [] })
+      await page.mouse.wheel(0, (gap - targetGap) * zoom)
+    } else {
+      const pageStep = await stream.evaluate(el => Math.floor(el.clientHeight * 0.875))
+      await page.mouse.wheel(0, (gap - pageStep - targetGap) * zoom)
+      await frames(page, 45)
+      await stream.focus()
+      await page.evaluate(() => { (window as any).scrollObservations = [] })
+      await page.keyboard.press("PageDown")
+    }
     await frames(page, 45)
     const observations = await page.evaluate(() => (window as any).scrollObservations)
-    assert.ok(observations.some((sample: any) => Math.abs(sample.gap - targetGap) < 2), `The native wheel must stop at ${targetGap}px: ${JSON.stringify(observations)}`)
+    assert.ok(observations.some((sample: any) => Math.abs(sample.gap - targetGap) < 2), `The native ${gesture} must stop at ${targetGap}px: ${JSON.stringify(observations)}`)
     const state = await page.evaluate(() => (window as any).fixture.snapshot().scroll)
     assert.equal(state.followModeType, "escaped", `Proximity to the bottom is not explicit follow: ${JSON.stringify(state)}`)
     assert.equal(await latestButton(page).count(), 1, "A manual reader above the true bottom keeps the latest button")
-  })
+  }, { zoom })
 })
 
-// CSS zoom quantizes scroll offsets to 1/zoom px; the reached bottom keeps a margin for it.
-for (const [deviceScaleFactor, zoom] of [[1, 1], [1.5, 1.1], [1, 0.75]]) test(`manual reading resumes follow once the wheel reaches the true bottom (dpr=${deviceScaleFactor} zoom=${zoom})`, async () => {
+// Smoke coverage only: these geometries land within 1px of the reported bottom,
+// so they do not pin SCROLL_EDGE_TOLERANCE_PX (rendered geometry depends on the
+// installed fonts). The measured CSS-zoom residuals in virtual-follow-behavior.test.ts do.
+for (const [deviceScaleFactor, zoom] of [[1, 1], [1.5, 1.1], [1, 0.75]]) test(`the true bottom stays reachable by wheel (smoke, dpr=${deviceScaleFactor} zoom=${zoom})`, async () => {
   await open(async page => {
     await bottom(page)
     await page.locator(".message-stream").hover()
@@ -158,11 +174,12 @@ for (const [deviceScaleFactor, zoom] of [[1, 1], [1.5, 1.1], [1, 0.75]]) test(`m
   }, { deviceScaleFactor, zoom })
 })
 
-// A wheel is clamped to the bottom laid out when it was made, so streamed
-// growth observed before its scroll leaves it short of the new bottom. The
-// reply starts short so its later outgrowing of the viewport (a separate
-// virtualizer re-estimation) cannot coincide with the wheel landing.
-for (const [deltaY, zoom] of [[600, 1], [5000, 1], [600, 1.1]]) test(`a wheel to the growing streaming tail resumes follow (deltaY=${deltaY} zoom=${zoom})`, async () => {
+// A wheel is clamped to the bottom laid out when it was made, and a page key
+// animates towards the bottom captured when it starts, so streamed growth
+// leaves either landing short of the new bottom. The reply starts short so its
+// later outgrowing of the viewport (a separate virtualizer re-estimation)
+// cannot coincide with the landing.
+for (const [gesture, zoom] of [["wheel 600", 1], ["wheel 5000", 1], ["wheel 600", 1.1], ["PageDown", 1], ["PageDown", 1.25]] as const) test(`a ${gesture} to the growing streaming tail resumes follow (zoom=${zoom})`, async () => {
   await open(async page => {
     await bottom(page)
     await page.evaluate(() => (window as any).fixture.start())
@@ -170,16 +187,19 @@ for (const [deltaY, zoom] of [[600, 1], [5000, 1], [600, 1.1]]) test(`a wheel to
       await page.evaluate(() => (window as any).fixture.delta("Streaming paragraph text.\n\n".repeat(2)))
       await frames(page, 2)
     }
-    await page.locator(".message-stream").hover()
+    const stream = page.locator(".message-stream")
+    await stream.hover()
     await page.mouse.wheel(0, -300)
     await frames(page, 30)
     assert.equal((await readerState(page)).followModeType, "escaped")
+    if (gesture === "PageDown") await stream.focus()
     const pump = page.evaluate(() => new Promise<void>(resolve => {
       let count = 0
       const tick = () => { (window as any).fixture.delta("More streaming text.\n\n"); if (++count < 60) requestAnimationFrame(tick); else resolve() }
       requestAnimationFrame(tick)
     }))
-    await page.mouse.wheel(0, deltaY)
+    if (gesture === "PageDown") await page.keyboard.press("PageDown")
+    else await page.mouse.wheel(0, gesture === "wheel 600" ? 600 : 5000)
     await pump
     await frames(page, 10)
     const state = await readerState(page)
@@ -208,6 +228,36 @@ test("nested follow-scroll output resumes only at its true bottom", async () => 
     await page.mouse.wheel(0, 100)
     await frames(page, 10)
     assert.equal(await innerFollow(), true, "Reaching the output's true bottom resumes follow")
+  }, { name: "nested" })
+})
+
+// Tool/reasoning output shares the transcript's gesture rule: reaching a
+// growing output's bottom by wheel or key resumes its follow.
+for (const gesture of ["wheel", "PageDown"] as const) test(`a ${gesture} to growing nested output resumes its follow`, async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
+    await output.hover()
+    await page.mouse.wheel(0, -150)
+    await frames(page, 10)
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().innerFollow), false)
+    if (gesture === "PageDown") await output.focus()
+    const pump = page.evaluate(() => new Promise<void>(resolve => {
+      let count = 0
+      const tick = () => { (window as any).fixture.growOutput(20); if (++count < 60) requestAnimationFrame(tick); else resolve() }
+      requestAnimationFrame(tick)
+    }))
+    if (gesture === "PageDown") await page.keyboard.press("PageDown")
+    else await page.mouse.wheel(0, 600)
+    await pump
+    await frames(page, 10)
+    const innerFollow = await page.evaluate(() => (window as any).fixture.snapshot().innerFollow)
+    const gap = await output.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.equal(innerFollow, true, `The output must follow its growing tail again (gap ${gap}px)`)
+    assert.ok(gap <= 2, `The resumed output must stay at its tail: ${gap}px`)
   }, { name: "nested" })
 })
 

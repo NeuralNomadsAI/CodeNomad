@@ -1,9 +1,9 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { attachScrollGestureRouting, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
+import { attachScrollGestureRouting, getElementZoom, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, INTERACTIVE_KEY_TARGET_SELECTOR, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, TEXT_EDITING_KEY_TARGET_SELECTOR, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -15,9 +15,6 @@ const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_FRAMES = 30
 const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
-const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
-const INTERACTIVE_KEY_TARGET_SELECTOR = "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='textbox']"
-const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
 
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
@@ -197,7 +194,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function dispatchFollowEvent(event: FollowEvent) {
     switch (event.type) {
-      case "user-scroll": return syncControllerResult(scrollController.observeViewport(getManualMetrics(event.atBottom), performance.now(), hasProgrammaticScrollIntent()))
       case "jump-top": return syncControllerResult(scrollController.jumpTop(event.immediate))
       case "jump-bottom": return syncControllerResult(scrollController.jumpBottom(event.immediate, event.explicit))
       case "jump-key": return syncControllerResult(scrollController.jumpKey(event.key, event.block, event.smooth))
@@ -230,22 +226,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     },
   })
 
-  /** `distance` is the gesture's known downward amplitude in pixels, if any. */
+  /** `distance` is the gesture's known amplitude in scroller pixels, if any. */
   function markUserScrollIntent(direction: "up" | "down" | null, distance = 0) {
     programmaticScrollUntil = 0
     props.onScrollIntent?.(direction)
     cancelActiveScrollRestore()
-    scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
     if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
-    if (direction === "up") {
-      dispatchFollowEvent({ type: "user-scroll", direction: "up", atBottom: isActuallyAtBottom() })
-    } else if (direction === "down" && isActuallyAtBottom(distance)) {
-      // A gesture long enough to reach the bottom laid out now resumes follow at
-      // once: the browser may clamp it to an earlier frame's bottom while content
-      // streams, leaving its landing short of the true bottom.
-      dispatchFollowEvent({ type: "user-scroll", direction: "down", atBottom: true })
-    }
     const element = scrollElement()
+    syncControllerResult(scrollController.userGesture(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS, element ? getDomMetrics(element) : null, distance))
     if (element && pendingVirtuaScroll) {
       // Replace an outstanding imperative operation once, not on every wheel
       // or key repeat: scrollBy(0) itself creates a new measurement-time pin.
@@ -268,7 +256,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function getCurrentMetrics(): ScrollControllerMetrics {
     const element = scrollElement()
-    if (!element) return getManualMetrics(false)
+    if (!element) return getManualMetrics()
     return getDomMetrics(element)
   }
 
@@ -282,21 +270,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }
 
-  function getManualMetrics(atBottom: boolean): ScrollControllerMetrics {
+  function getManualMetrics(): ScrollControllerMetrics {
     const clientHeight = 1000
     return {
       offset: 0,
-      scrollHeight: atBottom ? clientHeight : clientHeight * 2,
+      scrollHeight: clientHeight * 2,
       clientHeight,
       sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
   }
 
-  function isActuallyAtBottom(distance = 0) {
+  function isActuallyAtBottom() {
     const element = scrollElement()
     if (!element) return false
-    const metrics = getDomMetrics(element)
-    return isAtBottomForMode(followMode(), { ...metrics, offset: metrics.offset + distance })
+    return isAtBottomForMode(followMode(), getDomMetrics(element))
   }
 
   function scrollToOffset(offset: number, atBottom: boolean) {
@@ -849,7 +836,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
       const direction = nextY > previousY ? "up" : nextY < previousY ? "down" : null
       if (direction && nestedScrollerConsumes(event.target, direction)) return
-      markUserScrollIntent(direction, previousY - nextY)
+      markUserScrollIntent(direction, (previousY - nextY) / getElementZoom(element))
     }
     const handleTouchEnd = () => {
       lastTouchY = null
@@ -863,6 +850,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         shiftKey: event.shiftKey,
         interactive: Boolean(target?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)),
         textEditing: Boolean(target?.closest(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+        viewportHeight: element.clientHeight,
+        zoom: getElementZoom(element),
       })
       if (!intent) return
       const direction = intent.type === "top" ? "up" : intent.type === "bottom" ? "down" : intent.direction
@@ -877,7 +866,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         jumpToTop(true)
         return
       }
-      markUserScrollIntent(intent.direction)
+      markUserScrollIntent(intent.direction, intent.distance)
     }
     const detachGestureRouting = attachScrollGestureRouting(element)
     element.addEventListener("wheel", handleWheelIntent, { passive: true })
