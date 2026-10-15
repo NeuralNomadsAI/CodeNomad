@@ -360,8 +360,6 @@ for (const streamingSession of ["none", "A", "B"]) test(`retained A-B-A switch r
   }, { name: "switch" })
 })
 
-// Space toggles a focused <summary> (like a button) instead of scrolling, so
-// it must not carry a page amplitude that "reaches" the bottom.
 // Unlike Space, a pointer press on a <summary> still starts middle-button
 // autoscroll and text-selection drags, so their upward movement must escape a
 // streaming follow instead of fighting the pin.
@@ -405,6 +403,8 @@ for (const gesture of ["middle-button autoscroll", "selection drag"] as const) t
   })
 })
 
+// Space toggles a focused <summary> (like a button) instead of scrolling, so
+// it must not carry a page amplitude that "reaches" the bottom.
 for (const control of ["summary", "button"] as const) test(`Space on a focused ${control} near the bottom keeps manual reading`, async () => {
   await open(async page => {
     await bottom(page)
