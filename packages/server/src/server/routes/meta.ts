@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
 import { isLoopbackHost, isWildcardHost } from "../network-host"
- 
+import { serverOperatingSystemName } from "../os-name"
 
 interface RouteDeps {
   serverMeta: ServerMeta
@@ -17,7 +17,7 @@ function buildMetaResponse(meta: ServerMeta): ServerMeta {
 
   return {
     ...meta,
-    system: { platform: process.platform, arch: process.arch },
+    system: { platform: process.platform, arch: process.arch, name: serverOperatingSystemName() },
     localPort,
     remotePort: remote?.port,
     listeningMode: isWildcardHost(meta.host) || !isLoopbackHost(meta.host) ? "all" : "local",

@@ -258,6 +258,26 @@ test("About carries the single version and updates, with the network card last",
   } finally { await page.close() }
 })
 
+test("copied diagnostics carry the OpenCode versions and the server's readable OS release", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  await setup(page, "tauri")
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(path === "/api/meta"
+      ? { ...baseMeta, system: { platform: "win32", arch: "x64", name: "Windows 11 (10.0.26200)" } }
+      : path === "/api/opencode/update" ? { state: "ready", currentVersion: "2.0.29", daemonVersion: "2.0.28" } : {}) })
+  })
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => [...document.querySelectorAll(".settings-info-value")].some(e => e.textContent === "Windows 11 (10.0.26200)"))
+    await page.getByRole("button", { name: "Copy to clipboard", exact: true }).click()
+    await page.waitForFunction(() => !!(window as any).copiedReport)
+    const report = await page.evaluate(() => (window as any).copiedReport as string)
+    assert.match(report, /OpenCode Version: 2\.0\.29\nRunning service: 2\.0\.28/)
+    assert.match(report, /Server operating system: Windows 11 \(10\.0\.26200\)/)
+  } finally { await page.close() }
+})
+
 test("older or unreachable servers never borrow the client platform", async () => {
   const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
   await setup(page, "web")

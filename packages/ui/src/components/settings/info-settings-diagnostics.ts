@@ -25,6 +25,8 @@ export interface DiagnosticLabels {
   remoteListener: string
   workspaceRoot: string
   candidateAddresses: string
+  opencodeVersion: string
+  opencodeService: string
   modes: Record<DiagnosticListeningMode, string>
   scopes: Record<NetworkAddress["scope"], string>
 }
@@ -32,6 +34,7 @@ export interface DiagnosticLabels {
 export type DiagnosticListeningMode = ServerMeta["listeningMode"] | "specific"
 
 export function getServerOperatingSystem(meta: ServerMeta | null): string {
+  if (meta?.system?.name) return meta.system.name
   switch (meta?.system?.platform) {
     case "win32": return "Windows"
     case "darwin": return "macOS"
@@ -100,14 +103,19 @@ export function buildDiagnosticReport(
   runtime: DiagnosticRuntime,
   labels: DiagnosticLabels,
   generatedAt = new Date(),
+  opencode: Pick<BugReportVersions, "opencodeInstalled" | "opencodeDaemon"> = {},
 ): string {
   const addresses = meta ? getDiagnosticAddresses(meta) : []
   const listeningMode = meta ? labels.modes[getDiagnosticListeningMode(meta)] : "—"
+  const { opencodeInstalled: installed, opencodeDaemon: daemon } = opencode
   const lines = [
     labels.reportTitle,
     "============================",
     `${labels.generated}: ${generatedAt.toISOString()}`,
     `${labels.serverVersion}: ${meta?.serverVersion ?? "—"}`,
+    `${labels.opencodeVersion}: ${installed ?? daemon ?? "—"}`,
+    // The running service only adds information when it differs from the installed CLI.
+    ...(daemon && installed && daemon !== installed ? [`${labels.opencodeService}: ${daemon}`] : []),
     `${labels.serverOs}: ${getServerOperatingSystem(meta)}`,
     `${labels.serverArch}: ${meta?.system?.arch ?? "—"}`,
     `${labels.uiVersion}: ${meta?.ui?.version ?? "—"}`,

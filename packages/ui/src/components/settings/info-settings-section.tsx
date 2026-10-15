@@ -84,6 +84,8 @@ export const InfoSettingsSection: Component = () => {
     remoteListener: t("settings.info.connectivity.remoteListener"),
     workspaceRoot: t("settings.info.server.root"),
     candidateAddresses: t("remoteAccess.sections.addresses.label"),
+    opencodeVersion: t("instanceInfo.labels.opencodeVersion"),
+    opencodeService: t("settings.opencode.setup.daemon"),
     modes: {
       local: t("settings.info.connectivity.mode.local"),
       all: t("settings.info.connectivity.mode.all"),
@@ -158,8 +160,11 @@ export const InfoSettingsSection: Component = () => {
 
   const osDisplay = createMemo(() => describeClientOs(navigator as ClientNavigator, osHints() ?? null))
 
+  // Copy, download and Report a bug share the installed CLI and running service versions.
+  const opencodeVersions = () => ({ opencodeInstalled: openCodeSetupStatus()?.currentVersion, opencodeDaemon: openCodeSetupStatus()?.daemonVersion })
+
   const handleCopy = async () => {
-    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels())
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels(), new Date(), opencodeVersions())
     const ok = await copyToClipboard(report)
     if (ok) setCopyFeedback("success")
     else setCopyFeedback("error")
@@ -169,15 +174,14 @@ export const InfoSettingsSection: Component = () => {
   void readBugReportTemplateStatus()
   if (!openCodeSetupStatus()) void refreshOpenCodeSetup()
   const handleReportBug = () => {
-    const opencode = openCodeSetupStatus()
     const environment = buildBugReportEnvironment(meta() ?? null, osDisplay(), runtimeEnv, {
-      opencodeInstalled: opencode?.currentVersion, opencodeDaemon: opencode?.daemonVersion, userAgent: navigator.userAgent,
+      ...opencodeVersions(), userAgent: navigator.userAgent,
     })
     void openExternalUrl(buildBugReportUrl(environment, currentBugReportTemplateStatus()), "bug-report")
   }
 
   const handleDownload = () => {
-    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels())
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels(), new Date(), opencodeVersions())
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
     downloadTextFile(`codenomad-diagnostics-${ts}.txt`, report)
   }

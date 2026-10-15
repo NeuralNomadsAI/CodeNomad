@@ -853,8 +853,9 @@ export interface ServerMeta {
   /** Reachable direct-access addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
-  /** CodeNomad backend OS and Node runtime architecture, never the UI or OpenCode host. */
-  system?: { platform: string; arch: string }
+  /** CodeNomad backend OS and Node runtime architecture, never the UI or OpenCode host.
+   * `name` is the readable release (e.g. "Windows 11 (10.0.26200)"); older servers omit it. */
+  system?: { platform: string; arch: string; name?: string }
   ui?: UiMeta
   support?: SupportMeta
   /** Effective update feed (saved `server.updateFeed`, else derived from the installed build label). */

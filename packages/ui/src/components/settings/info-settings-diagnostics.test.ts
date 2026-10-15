@@ -22,6 +22,8 @@ const labels = {
   remoteListener: "Remote listener",
   workspaceRoot: "Workspace root",
   candidateAddresses: "Candidate addresses",
+  opencodeVersion: "OpenCode Version",
+  opencodeService: "Running service",
   modes: { local: "local", all: "all", specific: "specific" },
   scopes: { external: "external", internal: "internal", loopback: "loopback" },
 }
@@ -61,6 +63,25 @@ describe("buildDiagnosticReport", () => {
     assert.match(report, /Server operating system: —/)
     assert.match(report, /Server architecture: —/)
     assert.match(report, /Client operating system: Windows x64/)
+  })
+
+  it("includes the OpenCode version, and the running service only when it differs", () => {
+    const runtime = { host: "tauri", platform: "desktop", windowContext: "local" }
+    const at = new Date("2026-08-10T12:00:00.000Z")
+    const same = buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.29" })
+    assert.match(same, /OpenCode Version: 2\.0\.29/)
+    assert.doesNotMatch(same, /Running service/)
+    const differing = buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.28" })
+    assert.match(differing, /OpenCode Version: 2\.0\.29\nRunning service: 2\.0\.28/)
+    assert.match(buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeDaemon: "2.0.28" }), /OpenCode Version: 2\.0\.28/)
+    assert.match(buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at), /OpenCode Version: —/)
+  })
+
+  it("prefers the server's readable OS release over its platform family", () => {
+    const named = { ...meta, system: { platform: "win32", arch: "x64", name: "Windows 11 (10.0.26200)" } }
+    assert.equal(getServerOperatingSystem(named), "Windows 11 (10.0.26200)")
+    assert.match(buildDiagnosticReport(named, "Windows 11 x64", { host: "tauri", platform: "desktop", windowContext: "local" }, labels),
+      /Server operating system: Windows 11 \(10\.0\.26200\)/)
   })
 
   it("formats native platform names and preserves unfamiliar server platforms", () => {
