@@ -46,6 +46,12 @@ test("folders sharing a name keep their parent so each one stays visible", () =>
     { directory: "/repo/.codenomad/worktrees/app", issue: "missing" },
   ] }, "repo", none, t)
   assert.equal(message, "interruption.recoveryIssue.missing(directories=worktrees/app, other/app;detail=)")
+  // Same name and parent: the full paths keep both folders visible and counted.
+  const nested = describePendingRecovery({ kind: "directories", directories: [
+    { directory: "/repo/.codenomad/worktrees/app", issue: "missing" },
+    { directory: "/repo/sub/.codenomad/worktrees/app", issue: "missing" },
+  ] }, "repo", none, t).message
+  assert.equal(nested, "interruption.recoveryIssue.missing(directories=/repo/.codenomad/worktrees/app, /repo/sub/.codenomad/worktrees/app;detail=)")
 })
 
 test("a refused batch keeps each folder's reported status and reason", () => {
