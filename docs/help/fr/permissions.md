@@ -73,6 +73,6 @@ Désactiver Yolo ne révoque pas une décision déjà acceptée et n’annule pa
 
 1. Vérifiez l’indicateur de connexion et reconnectez-vous au même backend/projet.
 2. Laissez la récupération réconcilier les demandes natives en attente ; les demandes connues et brouillons restent conservés si la couverture est incomplète.
-3. Si l'avertissement **récupération incomplète des questions et permissions** apparaît, son message indique la cause, les dossiers et les sessions concernés. Corrigez cette cause (par exemple une worktree supprimée, ou une session qui travaille hors de ce projet) ; le passage de récupération suivant réessaie automatiquement.
+3. Si l’avertissement **récupération incomplète des questions et permissions** apparaît, son message indique la cause, les dossiers et les sessions concernés. Corrigez cette cause (par exemple un worktree supprimé, ou une session qui travaille hors de ce projet) ; le passage de récupération suivant réessaie automatiquement.
 
 La récupération ne charge pas tous les worktrees inactifs pour énumérer les demandes. Une réponse incomplète n’est pas une file vide faisant autorité, et l’avertissement n’autorise pas à répéter un prompt, une réponse ou une approbation. Recharger la configuration peut annuler des Forms/autorisations natifs ; ne l’utilisez pas comme bouton d’actualisation habituel des demandes. Voir [Dépannage](troubleshooting.md) et [Configuration d’OpenCode](opencode.md).
