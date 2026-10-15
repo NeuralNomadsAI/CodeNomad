@@ -7,7 +7,7 @@ import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry, WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
+import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
@@ -74,6 +74,11 @@ import { clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
+import { getInstanceLabel } from "../lib/instance-label"
+import {
+  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf,
+  type PendingRecoveryCause, type RecoverySnapshot,
+} from "./pending-recovery-cause"
 import { loadInstanceMetadata, loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
 import {
   addFormToQueue,
@@ -271,7 +276,23 @@ const failedPendingRecoveries = new Map<string, number>()
 // A single incomplete scan usually recovers on the next 30-second liveness pass.
 // Warn only when recovery stays incomplete across consecutive attempts.
 const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
-function markPendingRecovery(instanceId: string, incomplete: boolean, notify = false): void {
+function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause): void {
+  const instance = instances().get(instanceId)
+  log.warn("Pending request recovery is incomplete", { instanceId, cause })
+  // Name the sessions that made these directories required: active or holding a request.
+  const sessionTitlesIn = (directories: readonly string[]) => {
+    const wanted = new Set(directories.map(normalizeWorkspacePath))
+    return Array.from(sessions().get(instanceId)?.values() ?? []).filter((session) => session.location?.directory
+      && wanted.has(normalizeWorkspacePath(session.location.directory))
+      && (session.status !== "idle" || session.pendingPermission || session.pendingForm))
+      .map((session) => session.title || session.id)
+  }
+  const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
+  showToastNotification({ title, message, variant: "warning" })
+}
+
+// A cause marks an attempt that counts toward the warning; without one, the state only changes.
+function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: PendingRecoveryCause): void {
   setIncompletePendingRecovery((previous) => {
     if (previous.has(instanceId) === incomplete) return previous
     const next = new Set(previous)
@@ -284,12 +305,12 @@ function markPendingRecovery(instanceId: string, incomplete: boolean, notify = f
     failedPendingRecoveries.delete(instanceId)
     return
   }
-  if (!notify) return
+  if (!cause) return
   const failures = (failedPendingRecoveries.get(instanceId) ?? 0) + 1
   failedPendingRecoveries.set(instanceId, failures)
   if (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && !notifiedPendingRecovery.has(instanceId)) {
     notifiedPendingRecovery.add(instanceId)
-    showToastNotification({ message: tGlobal("interruption.recoveryIncomplete"), variant: "warning" })
+    notifyPendingRecovery(instanceId, cause)
   }
 }
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
@@ -654,7 +675,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     log.error("Failed to hydrate instance data", error)
     if (initialHydrations.get(descriptor.id) === hydration
       && instances().get(descriptor.id)?.client === client
-      && successfulPendingRecoveries.get(descriptor.id) === recovered) markPendingRecovery(descriptor.id, true, true)
+      && successfulPendingRecoveries.get(descriptor.id) === recovered) markPendingRecovery(descriptor.id, true, hydrationCause(error))
   })
 }
 
@@ -733,7 +754,7 @@ function getPendingRequestLocations(instanceId: string, rootDirectory?: string, 
 }
 
 function pendingSnapshotResults<T>(
-  snapshot: Extract<WorkspacePendingRequestsResponse, { supported: true }>,
+  snapshot: Extract<RecoverySnapshot, { supported: true }>,
   select: (entry: { permissions: PermissionRequest[]; forms: FormWithLocation[] }) => T[],
 ): PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>[] {
   return snapshot.directories.flatMap<PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>>((entry) => {
@@ -743,18 +764,19 @@ function pendingSnapshotResults<T>(
       ...locations.map((location) => ({ status: "fulfilled" as const, value: {
         location: location.location, response: { location: location.location, data: select(location), complete: entry.status === "ok" },
       } })),
-      ...(entry.status === "error" ? [{ status: "rejected" as const, reason: new Error("Pending directory snapshot unavailable") }] : []),
+      ...(entry.status === "error" ? [{ status: "rejected" as const, reason: new PendingRecoveryError({ kind: "directories",
+        directories: [{ directory: entry.directory, issue: entry.reason ?? "unavailable", detail: entry.detail }] }) }] : []),
     ]
   })
 }
 
-async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean): Promise<WorkspacePendingRequestsResponse> {
+async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean): Promise<RecoverySnapshot> {
   const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
   const required = requiredDirectories()
   const directories = [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
     .flatMap((location) => location.directory ? [location.directory] : []))]
-  const snapshot: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
+  const snapshot: Extract<RecoverySnapshot, { supported: true }> = { supported: true, directories: [] }
   for (let offset = 0; offset < directories.length;) {
     if (!isCurrent()) throw pendingRequestSyncSuperseded
     if (deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
@@ -782,19 +804,20 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
       const currentRequired = requiredDirectories()
       const reported = new Set(next.directories.map((entry) => normalizeWorkspacePath(entry.directory)))
       for (const directory of batch) if (!reported.has(normalizeWorkspacePath(directory))) {
-        snapshot.directories.push({ directory, status: "error" })
+        snapshot.directories.push({ directory, status: "error", reason: "unavailable" })
       }
       for (const entry of next.directories) {
         if (entry.status !== "excluded") snapshot.directories.push(entry)
         else if (!optional.includes(entry.directory) || currentRequired.has(normalizeWorkspacePath(entry.directory))) {
-          snapshot.directories.push({ directory: entry.directory, status: "error" })
+          snapshot.directories.push({ directory: entry.directory, status: "error", reason: "excluded" })
         }
         // Excluded historical hints never authorize clearing a known queue.
       }
     } catch (error) {
       if (error === pendingDiscoveryDeferred) throw error
       if (!isCurrent()) throw pendingRequestSyncSuperseded
-      snapshot.directories.push(...batch.map((directory) => ({ directory, status: "error" as const })))
+      const { issue, detail } = batchIssue(error)
+      snapshot.directories.push(...batch.map((directory) => ({ directory, status: "error" as const, reason: issue, detail })))
     }
   }
   return snapshot
@@ -804,7 +827,7 @@ async function syncPendingPermissions(
   instanceId: string,
   propagateErrors = false,
   isCurrent: () => boolean = () => true,
-  snapshot?: Promise<WorkspacePendingRequestsResponse>,
+  snapshot?: Promise<RecoverySnapshot>,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
   const instance = instances().get(instanceId)
@@ -816,7 +839,7 @@ async function syncPendingPermissions(
     const scannedLocations = new Set<string>()
     const pending = await snapshot
     if (!isCurrent()) throw pendingRequestSyncSuperseded
-    if (!pending?.supported && !targetLocations) throw new Error("Loaded-only pending requests unavailable; retain existing queues")
+    if (!pending?.supported && !targetLocations) throw new PendingRecoveryError({ kind: "unsupported" })
     if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
     const locations = targetLocations ?? []
     const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.permissions) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
@@ -876,7 +899,7 @@ async function syncPendingPermissions(
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) {
       if (failures.some((error) => error !== pendingDiscoveryDeferred)) log.warn("Pending permission scan was partial", { instanceId, failedLocations: failures.length })
-      if (propagateErrors) throw failures[0]
+      if (propagateErrors) throw combinePendingFailures(failures)
     }
   } catch (error) {
     if (error !== pendingDiscoveryDeferred) log.warn("Failed to sync pending permissions", { instanceId, error })
@@ -888,7 +911,7 @@ async function syncPendingForms(
   instanceId: string,
   propagateErrors = false,
   isCurrent: () => boolean = () => true,
-  snapshot?: Promise<WorkspacePendingRequestsResponse>,
+  snapshot?: Promise<RecoverySnapshot>,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
   const instance = instances().get(instanceId)
@@ -900,7 +923,7 @@ async function syncPendingForms(
     const scannedLocations = new Set<string>()
     const pending = await snapshot
     if (!isCurrent()) throw pendingRequestSyncSuperseded
-    if (!pending?.supported && !targetLocations) throw new Error("Loaded-only pending requests unavailable; retain existing queues")
+    if (!pending?.supported && !targetLocations) throw new PendingRecoveryError({ kind: "unsupported" })
     if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
     const locations = targetLocations ?? []
     const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.forms) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
@@ -949,7 +972,7 @@ async function syncPendingForms(
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) {
       if (failures.some((error) => error !== pendingDiscoveryDeferred)) log.warn("Pending form scan was partial", { instanceId, failedLocations: failures.length })
-      if (propagateErrors) throw failures[0]
+      if (propagateErrors) throw combinePendingFailures(failures)
     }
   } catch (error) {
     if (error !== pendingDiscoveryDeferred) log.warn("Failed to sync pending forms", { instanceId, error })
@@ -990,14 +1013,15 @@ async function runPendingRequestSync(
       }
       return
     } catch (error) {
-      if (isCurrent()) markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded)
+      if (isCurrent()) markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded
+        ? recoveryCauseOf(error) : undefined)
       if (error === pendingDiscoveryDeferred) { resumePendingDiscovery(); return }
       if (error !== pendingRequestSyncSuperseded) throw error
     }
   }
   if (!token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
     if (instances().get(instanceId)?.client === startingClient) {
-      markPendingRecovery(instanceId, true, true)
+      markPendingRecovery(instanceId, true, { kind: "unstable" })
     }
     throw new Error("Pending request sync did not stabilize")
   }

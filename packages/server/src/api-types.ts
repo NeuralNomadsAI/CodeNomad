@@ -151,13 +151,21 @@ export interface WorkspacePendingRequestLocation {
   forms: FormInfo[]
 }
 
+/** Why a directory's pending requests could not be verified; shown to the user. */
+export type PendingDirectoryErrorReason =
+  | "not-owned" // outside this workspace's ownership
+  | "deleting" // its worktree is being deleted
+  | "missing" // the owned directory no longer exists
+  | "unverified" // Git/filesystem ownership checks failed
+  | "changed" // ownership or repository changed during the native read
+
 export type WorkspacePendingRequestsResponse = { supported: false } | {
   supported: true
   directories: Array<{
     directory: string
     status: "ok"
     locations: WorkspacePendingRequestLocation[]
-  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }
+  } | { directory: string; status: "error"; reason?: PendingDirectoryErrorReason; locations?: WorkspacePendingRequestLocation[] }
     // An optional historical hint is outside current ownership; never empty queue authority.
     | { directory: string; status: "excluded"; locations?: never }>
 }

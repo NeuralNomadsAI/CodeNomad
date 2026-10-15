@@ -7,6 +7,7 @@ import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { keepTemporaryInstance } from "../stores/temporary-instances"
 import { hotkeyLabel, matchesHotkey } from "../lib/hotkeys"
+import { getInstanceLabel } from "../lib/instance-label"
 
 interface InstanceTabProps {
   instance: Instance
@@ -15,13 +16,6 @@ interface InstanceTabProps {
   onClose: () => void
   /** Receives the label currently shown, used as the rename default. */
   onRename: (label: string) => void
-}
-
-function getPathBasename(path: string): string {
-  // Instance folders can be POSIX-like (/Users/...) on macOS/Linux or Windows-like (C:\Users\...).
-  // Normalize by trimming trailing separators and then splitting on both '/' and '\\'.
-  const normalized = path.replace(/[\\/]+$/, "")
-  return normalized.split(/[\\/]/).pop() || path
 }
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
@@ -60,7 +54,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
         return null
     }
   })
-  const tabLabel = createMemo(() => props.instance.projectName?.trim() || getPathBasename(props.instance.folder))
+  const tabLabel = createMemo(() => getInstanceLabel(props.instance))
   const requestRename = () => props.onRename(tabLabel())
   // The menu restores focus to the tab when it closes; open the dialog after
   // that so the dialog keeps focus on its input.

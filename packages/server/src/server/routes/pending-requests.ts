@@ -113,6 +113,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       // A candidate whose ownership cannot be (re)established reports its own
       // non-authoritative error; it neither fails the batch nor counts as empty.
       const failed = new Set<string>()
+      // Reported reasons for post-read failures: a deletion that began during the read,
+      // or a native placement outside this workspace. Others changed during the read.
+      const deleting = new Set<string>()
+      const foreignPlacement = new Set<string>()
       const bootstrap = manager.getServiceLocation(id)
       const style = manager.getServicePathStyle(id)
       const nativePath = style === "win32" ? path.win32 : style === "posix" ? path.posix : undefined
@@ -184,27 +188,31 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
                 const proof = await outsideHistory(candidate, workspaceCommon)
                 return proof
                   ? { candidate, status: "excluded" as const, outside: { submitted: candidate, proof } }
-                  : { candidate, status: "error" as const }
+                  : { candidate, status: "error" as const, reason: host ? "not-owned" as const : "unverified" as const }
               }
               return { candidate, status: "excluded" as const, missing: { submitted: candidate, host, ...owned } }
             }
             const identity = directory === root ? rootIdentity : directory && await manager.getWorktreeIdentityForPath(id, directory)
             const host = directory && await manager.getHostPathForServicePath(id, directory)
-            if (!directory || !identity || !host || deps.worktreeDeletionFence.isBlocked(identity)) return { candidate, status: "error" as const }
+            if (!directory) return { candidate, status: "error" as const, reason: "not-owned" as const }
+            if (!identity || !host) return { candidate, status: "error" as const, reason: "unverified" as const }
+            if (deps.worktreeDeletionFence.isBlocked(identity)) return { candidate, status: "error" as const, reason: "deleting" as const }
             // An owned optional path whose checkout is already gone is excluded history,
             // still fenced by its identity and revalidated as absent after RPC.
-            if (directory !== root && optional.has(candidate) && await missingHost(host)) {
-              return { candidate, status: "excluded" as const, missing: { submitted: candidate, directory, identity, host } }
+            if (directory !== root && await missingHost(host)) {
+              return optional.has(candidate)
+                ? { candidate, status: "excluded" as const, missing: { submitted: candidate, directory, identity, host } }
+                : { candidate, status: "error" as const, reason: "missing" as const }
             }
             // Ownership is the workspace manager's, as for prompts and live events, so a
             // nested checkout of another repository inside the opened folder recovers too.
             // Its own repository is recorded: a change during RPC still fences it.
             const common = directory === root ? undefined : await readCommon(host).catch(() => undefined)
-            if (directory !== root && !common) return { candidate, status: "error" as const }
+            if (directory !== root && !common) return { candidate, status: "error" as const, reason: "unverified" as const }
             return { candidate, status: "ok" as const, owned: { submitted: candidate, directory, identity, common } }
           } catch (error) {
             isolate(error)
-            return { candidate, status: "error" as const }
+            return { candidate, status: "error" as const, reason: "unverified" as const }
           }
         }))
         for (const entry of candidates) {
@@ -214,7 +222,9 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
               if (entry.outside) outside.push(entry.outside)
               else missing.push(entry.missing)
             }
-            result.directories.push({ directory: entry.candidate, status: entry.status })
+            result.directories.push(entry.status === "error"
+              ? { directory: entry.candidate, status: entry.status, reason: entry.reason }
+              : { directory: entry.candidate, status: entry.status })
           }
         }
       }
@@ -280,7 +290,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           } catch (error) { isolate(error); failed.add(entry.submitted) }
         }
         // A deletion that began during the awaits above still fences publication.
-        for (const candidate of [...resolved, ...missing]) if (deps.worktreeDeletionFence.isBlocked(candidate.identity)) failed.add(candidate.submitted)
+        for (const candidate of [...resolved, ...missing]) if (deps.worktreeDeletionFence.isBlocked(candidate.identity)) {
+          failed.add(candidate.submitted)
+          deleting.add(candidate.submitted)
+        }
         assertCurrent()
       }
       assertCurrent()
@@ -350,7 +363,10 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
         assertCurrent()
         for (const original of resolved.filter((candidate) => candidate.directory === entry.directory)) {
           if (locations) result.directories.push({ directory: original.submitted, status: "ok", locations })
-          else failed.add(original.submitted)
+          else {
+            failed.add(original.submitted)
+            foreignPlacement.add(original.submitted)
+          }
         }
       }
       record("placement")
@@ -365,7 +381,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (!placementRejected && !failed.size) markLoadedPendingSupported(connection, true)
       result.directories = [
         ...result.directories.filter((entry) => !failed.has(entry.directory)),
-        ...[...failed].map((directory) => ({ directory, status: "error" as const })),
+        ...[...failed].map((directory) => ({ directory, status: "error" as const,
+          reason: deleting.has(directory) ? "deleting" as const : foreignPlacement.has(directory) ? "not-owned" as const : "changed" as const })),
       ]
       return result
     } catch {
