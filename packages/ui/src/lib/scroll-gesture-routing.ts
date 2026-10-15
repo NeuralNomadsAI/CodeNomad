@@ -1,3 +1,5 @@
+import { canScrollInDirection } from "../components/virtual-follow-behavior"
+
 const WHEEL_GESTURE_IDLE_MS = 180
 const MIDDLE_DEAD_ZONE_PX = 8
 
@@ -14,11 +16,17 @@ function wheelTarget(root: HTMLElement, target: EventTarget | null, dy: number):
   let node = target instanceof Element ? target : null
   while (node && node !== root) {
     if (node instanceof HTMLElement) {
-      if (scrollAxes(node).y && (dy < 0 ? node.scrollTop > 0 : node.scrollTop + node.clientHeight < node.scrollHeight - 1)) return node
+      if (scrollAxes(node).y && canScrollInDirection(node, dy < 0 ? "up" : "down")) return node
     }
     node = node.parentElement
   }
   return root
+}
+
+/** Pixels per wheel delta unit for `element`. */
+export function wheelDeltaUnit(event: WheelEvent, element: HTMLElement) {
+  return event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? element.clientHeight
+    : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(element).lineHeight) || 16 : 1
 }
 
 function middleTargets(root: HTMLElement, target: EventTarget | null) {
@@ -62,8 +70,7 @@ export function attachScrollGestureRouting(root: HTMLElement): () => void {
     event.preventDefault()
     event.stopPropagation()
     owner.dispatchEvent(new WheelEvent("wheel", { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode, bubbles: true }))
-    const unit = event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? owner.clientHeight
-      : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(owner).lineHeight) || 16 : 1
+    const unit = wheelDeltaUnit(event, owner)
     owner.scrollBy({ left: event.deltaX * unit, top: event.deltaY * unit, behavior: "instant" })
   }
 

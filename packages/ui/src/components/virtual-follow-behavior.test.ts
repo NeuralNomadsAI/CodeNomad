@@ -12,8 +12,8 @@ import {
   getKeyboardScrollIntent,
   getBottomAnchoredViewportOffset,
   getPrimaryPointerDragDirection,
+  SCROLL_EDGE_TOLERANCE_PX,
   ScrollRestoreTokenGuard,
-  shouldAdvanceBottomPin,
   shouldNavigateAtBoundary,
   VirtualScrollController,
   hasReachedBottom,
@@ -218,9 +218,10 @@ describe("virtual follow behavior", () => {
   })
 
   it("never moves a bottom pin upward while measurements settle", () => {
-    assert.equal(shouldAdvanceBottomPin(2400, 2200), false)
-    assert.equal(shouldAdvanceBottomPin(2400, 2401), false)
-    assert.equal(shouldAdvanceBottomPin(2400, 2500), true)
+    const viewport = (scrollTop: number, maxOffset: number) => ({ scrollTop, scrollHeight: maxOffset + 600, clientHeight: 600 })
+    assert.equal(canScrollInDirection(viewport(2400, 2200), "down"), false)
+    assert.equal(canScrollInDirection(viewport(2400, 2401), "down"), false)
+    assert.equal(canScrollInDirection(viewport(2400, 2500), "down"), true)
   })
 
   it("restarts bottom settlement when Virtua discovers a later maximum", () => {
@@ -362,11 +363,18 @@ describe("virtual follow behavior", () => {
     assert.equal(isAtBottom(metrics(bottomOffset)), true)
   })
 
-  it("reaches the true bottom only within a sub-pixel rounding tolerance", () => {
+  it("reaches the true bottom only within the scroll-edge rounding tolerance", () => {
     assert.equal(hasReachedBottom(metrics(2400)), true)
-    assert.equal(hasReachedBottom(metrics(2399.5)), true)
-    assert.equal(hasReachedBottom(metrics(2399)), true)
-    assert.equal(hasReachedBottom(metrics(2398.9)), false)
+    assert.equal(hasReachedBottom(metrics(2400 - SCROLL_EDGE_TOLERANCE_PX)), true)
+    assert.equal(hasReachedBottom(metrics(2400 - SCROLL_EDGE_TOLERANCE_PX - 0.1)), false)
+    assert.ok(SCROLL_EDGE_TOLERANCE_PX < 32, "Stopping 32px above the bottom must remain manual reading")
+  })
+
+  it("counts viewports clamped at their bottom under fractional CSS zoom as at the true bottom", () => {
+    // Measured in Chromium after a wheel clamped at the bottom: CSS zoom 1.1 and 0.75.
+    assert.equal(hasReachedBottom(metrics(15102.7265625, 15718, 614)), true)
+    assert.equal(hasReachedBottom(metrics(15690.6669921875, 16317, 625)), true)
+    assert.equal(canScrollInDirection({ scrollTop: 15102.7265625, scrollHeight: 15718, clientHeight: 614 }, "down"), false)
   })
 
   it("applies the proximity tolerance only while following", () => {

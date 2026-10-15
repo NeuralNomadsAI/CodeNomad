@@ -45,8 +45,8 @@ async function frames(page: Page, count = 30) {
   await page.evaluate(`new Promise(resolve => { let count = ${count}; const next = () => --count ? requestAnimationFrame(next) : resolve(); requestAnimationFrame(next) })`)
 }
 
-async function open(run: (page: Page) => Promise<void>, { name = "session", history = 60, hasTouch = false }: { name?: FixtureName; history?: number; hasTouch?: boolean } = {}) {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US", hasTouch })
+async function open(run: (page: Page) => Promise<void>, { name = "session", history = 60, hasTouch = false, hold = false, deviceScaleFactor = 1, zoom = 1 }: { name?: FixtureName; history?: number; hasTouch?: boolean; hold?: boolean; deviceScaleFactor?: number; zoom?: number } = {}) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US", hasTouch, deviceScaleFactor })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   // tsx preserves callback names with this helper when Playwright serializes them.
@@ -69,7 +69,8 @@ async function open(run: (page: Page) => Promise<void>, { name = "session", hist
   try {
     await page.goto(`${url}?name=${name}`)
     await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings({ holdLongAssistantReplies: false, locale: 'en' }) })()`)
+    if (zoom !== 1) await page.evaluate(zoom => { document.documentElement.style.zoom = String(zoom) }, zoom)
+    await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings({ holdLongAssistantReplies: ${hold}, locale: 'en' }) })()`)
     if (name === "session" || name === "switch") {
       await page.evaluate(count => (window as any).fixture.seedHistory(count), history)
       await page.waitForFunction(last => document.querySelector(".message-stream")?.textContent?.includes(`History ${last}`), name === "switch" ? 59 : history - 1)
@@ -143,7 +144,8 @@ for (const targetGap of [64, 32]) test(`manual reading ${targetGap}px from botto
   })
 })
 
-test("manual reading resumes follow once the wheel reaches the true bottom", async () => {
+// CSS zoom quantizes scroll offsets to 1/zoom px; the reached bottom keeps a margin for it.
+for (const [deviceScaleFactor, zoom] of [[1, 1], [1.5, 1.1], [1, 0.75]]) test(`manual reading resumes follow once the wheel reaches the true bottom (dpr=${deviceScaleFactor} zoom=${zoom})`, async () => {
   await open(async page => {
     await bottom(page)
     await page.locator(".message-stream").hover()
@@ -153,7 +155,37 @@ test("manual reading resumes follow once the wheel reaches the true bottom", asy
     await page.mouse.wheel(0, 400)
     await frames(page, 45)
     assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType), "following")
-  })
+  }, { deviceScaleFactor, zoom })
+})
+
+// A wheel is clamped to the bottom laid out when it was made, so streamed
+// growth observed before its scroll leaves it short of the new bottom. The
+// reply starts short so its later outgrowing of the viewport (a separate
+// virtualizer re-estimation) cannot coincide with the wheel landing.
+for (const [deltaY, zoom] of [[600, 1], [5000, 1], [600, 1.1]]) test(`a wheel to the growing streaming tail resumes follow (deltaY=${deltaY} zoom=${zoom})`, async () => {
+  await open(async page => {
+    await bottom(page)
+    await page.evaluate(() => (window as any).fixture.start())
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => (window as any).fixture.delta("Streaming paragraph text.\n\n".repeat(2)))
+      await frames(page, 2)
+    }
+    await page.locator(".message-stream").hover()
+    await page.mouse.wheel(0, -300)
+    await frames(page, 30)
+    assert.equal((await readerState(page)).followModeType, "escaped")
+    const pump = page.evaluate(() => new Promise<void>(resolve => {
+      let count = 0
+      const tick = () => { (window as any).fixture.delta("More streaming text.\n\n"); if (++count < 60) requestAnimationFrame(tick); else resolve() }
+      requestAnimationFrame(tick)
+    }))
+    await page.mouse.wheel(0, deltaY)
+    await pump
+    await frames(page, 10)
+    const state = await readerState(page)
+    assert.deepEqual({ followModeType: state.followModeType, latestButton: state.latestButton }, { followModeType: "following", latestButton: 0 }, JSON.stringify(state))
+    assert.ok(state.gap <= 2, `The resumed reader must stay at the streaming tail: ${state.gap}px`)
+  }, { zoom })
 })
 
 test("nested follow-scroll output resumes only at its true bottom", async () => {
@@ -260,6 +292,62 @@ test("streaming at the tail never paints a backward jump", async () => {
     const backwards = samples.slice(1).filter((sample, i) => sample.anchorOffset !== null && samples[i].anchorOffset !== null && sample.anchorOffset > samples[i].anchorOffset! + 2)
     assert.deepEqual(backwards, [], "Streaming moved a following reader backward")
   })
+})
+
+/** Streams into A from the bottom until the long-reply hold escapes follow; returns the per-frame top row. */
+async function streamUntilHold(page: Page, scope: string) {
+  await bottom(page, scope)
+  await page.evaluate(stream => {
+    const w = window as any
+    w.topRows = []
+    const tick = () => {
+      const el = document.querySelector(stream)!, bounds = el.getBoundingClientRect()
+      const row = Array.from(el.querySelectorAll("[data-virtual-follow-key]")).find(row => { const rect = row.getBoundingClientRect(); return rect.top <= bounds.top && rect.bottom > bounds.top })
+      w.topRows.push(row?.getAttribute("data-virtual-follow-key"))
+      if (!w.stopTopRows) requestAnimationFrame(tick)
+    }
+    w.stopTopRows = false
+    requestAnimationFrame(tick)
+  }, `${scope} .message-stream`)
+  await page.evaluate(() => (window as any).fixture.start("A"))
+  let held = false
+  for (let i = 0; i < 200 && !held; i++) {
+    await page.evaluate(() => (window as any).fixture.delta("A", "Long streamed paragraph for the hold.\n\n".repeat(2)))
+    await frames(page, 2)
+    held = (await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType)) === "escaped"
+  }
+  assert.ok(held, "A long streamed reply must engage the hold")
+  for (let i = 0; i < 20; i++) {
+    await page.evaluate(() => (window as any).fixture.delta("A", "After hold.\n\n"))
+    await frames(page, 2)
+  }
+  return page.evaluate(() => { (window as any).stopTopRows = true; return (window as any).topRows as Array<string | undefined> })
+}
+
+test("the long-reply hold persists while streaming and the latest button resumes", async () => {
+  const scope = '[data-session-id="A"]'
+  await open(async page => {
+    await streamUntilHold(page, scope)
+    const held = await readerState(page, scope)
+    assert.deepEqual({ followModeType: held.followModeType, latestButton: held.latestButton }, { followModeType: "escaped", latestButton: 1 }, JSON.stringify(held))
+    await bottom(page, scope)
+    const resumed = await readerState(page, scope)
+    assert.deepEqual({ followModeType: resumed.followModeType, latestButton: resumed.latestButton }, { followModeType: "following", latestButton: 0 }, JSON.stringify(resumed))
+    assert.ok(resumed.gap <= 1, `The latest button must reach the streaming tail: ${resumed.gap}px`)
+  }, { name: "switch", hold: true })
+})
+
+// Documents a pre-existing displacement (also on the pre-#967 base): on the
+// frame the hold escapes, Virtua re-estimates never-measured history rows and
+// the view lands around msg_0030_A instead of the held streaming reply. It is
+// diagnosed with the scroll trace in a follow-up and intentionally not fixed here.
+test("the long-reply hold keeps the streaming reply in view when it escapes", { todo: "hold escape displaces the reader to older history (follow-up)" }, async () => {
+  const scope = '[data-session-id="A"]'
+  await open(async page => {
+    const topRows = await streamUntilHold(page, scope)
+    const displaced = topRows.filter(key => key && key !== "stream-A" && !/^msg_005[5-9]_A$/.test(key))
+    assert.deepEqual(displaced, [], `The hold escape moved the reader away from the streaming tail: ${JSON.stringify(topRows)}`)
+  }, { name: "switch", hold: true })
 })
 
 for (const streaming of [false, true]) test(`remount retains an intra-message anchor without oscillating (streaming=${streaming})`, async () => {

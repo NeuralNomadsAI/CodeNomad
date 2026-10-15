@@ -1,7 +1,6 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
-export const BOTTOM_REACHED_EPSILON_PX = 1
 export const ANCHOR_RESTORE_MAX_FRAMES = 300
 export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
@@ -53,10 +52,6 @@ export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDe
   return Math.max(0, offset + viewportHeightDelta)
 }
 
-export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boolean {
-  return maxOffset > offset + 1
-}
-
 export interface BottomPinSettlementState {
   stableFrames: number
   lastMaxOffset: number | null
@@ -76,12 +71,18 @@ export function advanceBottomPinSettlement(
   }
 }
 
+// scrollHeight/clientHeight are rounded to integers while CSS zoom quantizes
+// offsets to 1/zoom px: a viewport clamped at its bottom was measured 1.27px
+// (zoom 1.1) and 1.33px (zoom 0.75) above the reported bottom.
+export const SCROLL_EDGE_TOLERANCE_PX = 2
+
+/** The single scroll-edge test; a viewport within the tolerance is at its true bottom. */
 export function canScrollInDirection(
   metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
   direction: "up" | "down",
 ): boolean {
   if (direction === "up") return metrics.scrollTop > 0
-  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - 1
+  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - SCROLL_EDGE_TOLERANCE_PX
 }
 
 export function shouldNavigateAtBoundary(input: {
@@ -356,7 +357,7 @@ export function isAtBottom(metrics: ScrollControllerMetrics) {
 }
 
 export function hasReachedBottom(metrics: ScrollControllerMetrics) {
-  return getDistanceFromBottom(metrics) <= BOTTOM_REACHED_EPSILON_PX
+  return !canScrollInDirection({ scrollTop: metrics.offset, scrollHeight: metrics.scrollHeight, clientHeight: metrics.clientHeight }, "down")
 }
 
 /** The proximity tolerance only maintains an active follow pin; a manual reader is at the bottom only at the true bottom. */
