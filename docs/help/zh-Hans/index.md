@@ -4,7 +4,7 @@
 
 ## 请先阅读 {#read-this-first}
 
-CodeNomad 将工作区连接到一个共享的 OpenCode 后台服务。会话和消息属于 OpenCode；标签页、输入框草稿和布局属于 CodeNomad 客户端。关闭标签页不等于停止工作区，关闭 CodeNomad 也不等于停止 OpenCode。
+CodeNomad 将工作区连接到一个共享的 OpenCode 后台服务。会话和消息属于 OpenCode；标签页、输入框草稿和布局属于 CodeNomad 客户端。关闭标签页会在 CodeNomad 中关闭该项目，但会话继续在 OpenCode 中运行，重新打开项目即可再次找到。关闭 CodeNomad 也不等于停止 OpenCode。
 
 1. 查看[主机要求](install.md#requirements)和 [OpenCode 设置](opencode.md)。
 2. [打开项目](projects.md)，然后选择对话的智能体、模型和思考控件。
@@ -41,7 +41,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 对话 / 会话 | 与其目录关联的原生 OpenCode 历史记录和执行。 |
 | 会话族 | 一个对话及其递归子会话；涉及移动、活动、Yolo 和任务控件。 |
 | 工作树 | 选择用于浏览或放置会话的、归属已确认的仓库检出目录。浏览它不会移动对话。 |
-| Location | OpenCode 按目录划分的原生运行时上下文；显式执行**停止工作区**会释放其资源，而非停止共享守护进程。 |
+| Location | OpenCode 按目录划分的原生运行时上下文；关闭项目标签页时 CodeNomad 不会卸载它，其生命周期由 OpenCode 管理。 |
 | CodeNomad 后端 | 提供工作区、Git、认证和客户端连接的服务器。其账户和环境决定后端的文件系统访问权限。 |
 | 配置 | 服务器配置目录中的 CodeNomad 设置；全局/项目 OpenCode 设置各有其原生作用域。 |
 | 窗口 | 拥有各自的标签页、导航、草稿和恢复视图。原生历史记录是共享的，并非为每个窗口复制。 |

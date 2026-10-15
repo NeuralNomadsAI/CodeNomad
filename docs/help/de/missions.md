@@ -95,7 +95,8 @@ Auch die Erstellungszeit begrenzt zulässige tägliche Arbeit; der Start eines n
 
 | Komponente | Bedeutung des Schließens |
 | --- | --- |
-| CodeNomad-Tab/-Fenster | Trennt die Ansicht; stoppt weder native Arbeit noch OpenCode-Dienst. |
+| CodeNomad-Projekt-Tab | Schließt das Projekt in CodeNomad; native Arbeit läuft in OpenCode weiter und ist nach erneutem Öffnen des Projekts wieder verfügbar. |
+| CodeNomad-Fenster | Trennt die Ansicht; stoppt weder native Arbeit noch OpenCode-Dienst. |
 | CodeNomad-Backend | Stoppt OpenCode nicht. Einmalige CodeNomad-Koordination hängt von der Backend-Präsenz ab; nehmen Sie keine weitere Verfügbarkeit neuer einmaliger Vergaben/Steuerung bei geschlossenem Backend an. |
 | Laufender täglicher Zeitplan | Uhr und Durchlauf laufen im OpenCode-Plugin/-Dienst, auch bei geschlossener CodeNomad-Oberfläche und Backend. Ausführungshost und OpenCode-Dienst müssen weiterlaufen. |
 | OpenCode-Dienstneustart | Verliert prozesslokale Zeitplanjobs. Ein auf laufend gesetzter Zeitplan wird **Unterbrochen** bis zu einem ausdrücklichen **Fortsetzen**; erneutes Öffnen von CodeNomad aktiviert ihn nicht wieder. |

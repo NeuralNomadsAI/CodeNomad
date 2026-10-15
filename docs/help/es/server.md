@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 Los comandos se ejecutan en primer plano. Cerrar la terminal o enviar Ctrl+C detiene ese backend y su conexión de Control remoto. `--launch` solo abre un navegador; no convierte el servidor en un daemon. Para disponibilidad desatendida, ejecuta el mismo comando bajo el gestor de procesos/servicios del sistema operativo con configuración, directorio de trabajo, entorno y política de reinicio explícitos. No pongas secretos en registros de servicio ni en un archivo público de unidad.
 
-Cerrar un navegador no detiene un backend independiente que se ejecuta por separado. Cerrar una pestaña de proyecto desconecta la vista; **Detener espacio de trabajo** descarga esa Location y sus recursos de OpenCode, no el daemon compartido. Apagar el backend también deja el servicio OpenCode en ejecución. Las funciones dependientes del backend no están disponibles hasta que vuelva CodeNomad; consulta [Misiones](missions.md) para la duración separada de la programación nativa.
+Cerrar un navegador no detiene un backend independiente que se ejecuta por separado. Cerrar una pestaña de proyecto cierra el proyecto en CodeNomad, que deja de seguirlo; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. No se descarga la Location nativa ni se detiene el daemon compartido. Apagar el backend también deja el servicio OpenCode en ejecución. Las funciones dependientes del backend no están disponibles hasta que vuelva CodeNomad; consulta [Misiones](missions.md) para la duración separada de la programación nativa.
 
 ## Direcciones y puertos {#addresses}
 

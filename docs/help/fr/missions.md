@@ -95,7 +95,8 @@ La date de création limite aussi les jours admissibles ; démarrer un nouveau p
 
 | Composant | Ce que signifie sa fermeture |
 | --- | --- |
-| Onglet/fenêtre CodeNomad | Détache la vue ; n’arrête pas le travail natif ni le service OpenCode. |
+| Onglet de projet CodeNomad | Ferme le projet dans CodeNomad ; le travail natif continue dans OpenCode et se retrouve en rouvrant le projet. |
+| Fenêtre CodeNomad | Détache la vue ; n’arrête pas le travail natif ni le service OpenCode. |
 | Backend CodeNomad | N’arrête pas OpenCode. La coordination ponctuelle CodeNomad dépend de sa présence ; ne supposez pas que de nouvelles affectations/commandes ponctuelles restent disponibles lorsqu’il est fermé. |
 | Programme quotidien actif | Son horloge et l’exécution des passages fonctionnent dans le plugin/service OpenCode, y compris avec l’interface et le backend CodeNomad fermés. L’hôte d’exécution et le service OpenCode doivent rester actifs. |
 | Redémarrage du service OpenCode | Perd les tâches de planification propres au processus. Un programme censé être actif devient **Interrompue** jusqu’à un **Reprendre** explicite ; rouvrir CodeNomad ne le réarme pas. |

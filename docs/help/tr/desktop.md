@@ -6,7 +6,7 @@
 2. Ayrı bir uygulama penceresi için yerel **Pencere → Yeni pencere** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
 3. **Ayarlar → Gelişmiş** bölümünde, başka bir başlatmanın yeni bir pencere açmak yerine en son kullanılan pencereye odaklanması gerekiyorsa **İkinci başlatmada mevcut pencereye odaklan** öğesini etkinleştirin.
 
-Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Bir pencereyi veya uygulama sekmesini kapatmak o hizmeti durdurmaz. **Workspace'i Durdur** ayrı bir paylaşılan eylemdir; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
+Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Sekmeyi kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. Pencereyi kapatmak da hizmeti durdurmaz; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
 
 ## Tercihler ve başlangıç geri yüklemesi {#preferences-startup}
 

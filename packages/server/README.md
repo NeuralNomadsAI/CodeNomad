@@ -251,7 +251,7 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 
 CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Allowed profile environment variables and the current `NODE_EXTRA_CA_CERTS` are passed when starting a missing daemon; connecting to an existing daemon does not change its process environment. Separately, CodeNomad applies the profile's complete execution-host environment to the native session before each prompt, custom command, or session shell request, including removal of previously configured values. Legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. See [Session Environment](../../dev-docs/SESSION_ENVIRONMENT.md). WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
 
-Explicit **Stop Workspace** evicts that location and its resources from the global service without stopping the daemon. Closing a UI tab or native window only detaches local state and never evicts. Backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service.
+Closing a project tab deletes its logical CodeNomad workspace record without evicting the native Location or stopping sessions. Separate occurrences of the same folder are independent. The `workspace.stopped` broadcast closes any other window's tab displaying that record, with a notification only in that other window. Whole-window close, quit and renderer reload do not delete records; backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service. Reopening the project finds its native sessions again.
 
 ### Event Delivery
 

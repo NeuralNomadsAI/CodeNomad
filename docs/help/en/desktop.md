@@ -6,7 +6,7 @@
 2. Use native **Window → New Window** (`Ctrl+Shift+N` or `Cmd+Shift+N`) for a separate application window.
 3. In **Settings → Advanced**, enable **Focus existing window on second launch** if another launch should focus the most recently used window rather than open a new one.
 
-Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a window or app tab is not stopping that service. **Stop Workspace** is a separate shared action; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
+Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
 
 ## Preferences and startup restore {#preferences-startup}
 

@@ -15,9 +15,9 @@ describe("workspace list reconciliation fence", () => {
     const create = source.slice(source.indexOf("async function createInstance"), source.indexOf("function normalizeInstanceFolderPath"))
     assert.ok(create.indexOf("workspaceListReconciliationFence.markMutation(workspace.id)")
       < create.indexOf("upsertWorkspace(committedWorkspace"))
-    const stop = source.slice(source.indexOf("function stopInstance"), source.indexOf("async function fetchLspStatus"))
-    assert.equal(stop.includes("removeInstance(id)"), false)
-    assert.equal(stop.includes("serverApi.deleteWorkspace(id)"), true)
+    const close = source.slice(source.indexOf("function closeWorkspace"), source.indexOf("function getActiveInstance"))
+    assert.equal(close.includes("removeInstance(id)"), false)
+    assert.equal(close.includes("serverApi.deleteWorkspace(id)"), true)
   })
 
   it("rejects stale list entries and absences after lifecycle mutations", () => {

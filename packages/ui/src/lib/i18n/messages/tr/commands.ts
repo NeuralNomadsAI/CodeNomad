@@ -173,7 +173,4 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.keywords": "temizlik, araçlar, akıl yürütme, kaldır, oturum",
   "commands.removeSessionTechnicalParts.description": "Son yanıtları koru, tamamlanmış araç çıktılarını ve akıl yürütmeyi kaldır",
   "commands.removeSessionTechnicalParts.label": "Oturum Araçlarını ve Akıl Yürütmeyi Kaldır",
-  "commands.stopInstance.keywords": "durdur, workspace, sunucu, paylaşılan",
-  "commands.stopInstance.description": "Her pencere için paylaşılan workspace'i durdur",
-  "commands.stopInstance.label": "Workspace'i Durdur",
 } as const

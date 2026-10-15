@@ -20,7 +20,7 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 | Area | Calls | CodeNomad caller |
 |---|---|---|
 | Service | CLI `service status/start/get password`; authenticated `/api/status`, `/api/health`, `/api/info` in order, advancing only on 404; `Service.headers` for probes and API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
-| Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
+| Location | `client.location.get` | shared service wrapper; never evicts native Locations |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
 | Sessions | `list/get/create/fork/remove/update/prompt/command/shell/interrupt` | UI session stores |
 | Session environment | `client.session.environment({ sessionID, variables })` replaces a complete snapshot before prompt/command/shell admission | guarded server proxy; `workspaces/session-environment.ts` builds host/WSL values |

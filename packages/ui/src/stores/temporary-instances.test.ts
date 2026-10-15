@@ -12,6 +12,7 @@ serverApi.patchStateOwner = async (_owner, patch: any) => { patches.push(patch);
 let discardError: Error | undefined
 let createdName: string | undefined
 serverApi.keepTemporaryWorkspace = async (id) => { calls.push(`keep:${id}`) }
+serverApi.deleteWorkspace = async (id) => { calls.push(`delete:${id}`) }
 serverApi.discardTemporaryWorkspace = async (id, options) => {
   // A visible tab has already yielded (or closed, if alone) when the server is asked.
   const tab = !tabOpen(id) ? "closed" : activeAppTabId() === `instance:${id}` ? "active" : "inactive"
@@ -83,7 +84,8 @@ test("keeping clears the temporary mark on every tab of the folder and records t
     const closing = closeTemporaryInstance("keep-a")
     await answer("keep")
     await closing
-    assert.deepEqual(calls, ["keep:keep-a"])
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(calls, ["keep:keep-a", "delete:keep-a"])
     assert.equal(instances().get("keep-a")?.temporary, false)
     assert.equal(instances().get("keep-b")?.temporary, false)
     assert.equal(tabOpen("keep-a"), false)

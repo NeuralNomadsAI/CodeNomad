@@ -95,7 +95,8 @@ creation time ले पनि eligible दैनिक काम सीमि�
 
 | भाग | बन्द गर्दा अर्थ |
 | --- | --- |
-| CodeNomad ट्याब/विन्डो | दृश्य छुट्छ; native काम वा OpenCode सेवा रोकिँदैन। |
+| CodeNomad परियोजना ट्याब | त्यो परियोजना CodeNomad मा बन्द हुन्छ; native काम वा OpenCode सेवा रोकिँदैन। फेरि खोल्दा सत्र भेटिन्छन्। |
+| CodeNomad विन्डो | दृश्य छुट्छ; native काम वा OpenCode सेवा रोकिँदैन। |
 | CodeNomad backend | OpenCode रोकिँदैन। एकपटकको CodeNomad coordination backend उपस्थितिमा निर्भर छ; बन्द हुँदा नयाँ one-time dispatch/control उपलब्ध रहन्छ नमान्नुहोस्। |
 | चलिरहेको daily schedule | clock र passage execution OpenCode plugin/service मा चल्छन्, CodeNomad UI र backend बन्द हुँदासमेत। execution host र OpenCode सेवा चलिरहनुपर्छ। |
 | OpenCode service restart | process-local schedule job हराउँछन्। चल्नुपर्ने schedule **अवरुद्ध** हुन्छ र स्पष्ट **पुनः सुरु गर्नुहोस्** नगरेसम्म त्यस्तै रहन्छ; CodeNomad फेरि खोल्दा rearm हुँदैन। |

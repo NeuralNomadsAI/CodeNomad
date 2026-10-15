@@ -4,7 +4,7 @@ Use this guide to operate the current CodeNomad desktop or browser workspace wit
 
 ## Read this first {#read-this-first}
 
-CodeNomad connects your workspace to one shared OpenCode background service. Sessions and messages belong to OpenCode; tabs, composer drafts and layout belong to the CodeNomad client. Closing a tab is not stopping a workspace, and closing CodeNomad is not stopping OpenCode.
+CodeNomad connects your workspace to one shared OpenCode background service. Sessions and messages belong to OpenCode; tabs, composer drafts and layout belong to the CodeNomad client. Closing a project tab closes that project in CodeNomad, while sessions continue in OpenCode. Reopen the project to find them again. Closing CodeNomad does not stop OpenCode.
 
 1. Check the [host requirements](install.md#requirements) and [OpenCode setup](opencode.md).
 2. [Open a project](projects.md), then choose the conversation's Agent, Model and Thinking controls.
@@ -41,7 +41,7 @@ For precise limits, see [browser previews and SideCars](browser-sidecars.md), [R
 | Conversation / session | Native OpenCode history and execution associated with its directory. |
 | Family | A conversation and its recursive subsessions; relevant to moves, activity, Yolo and Mission controls. |
 | Worktree | An owned repository checkout selected for browsing or session placement. Browsing it does not move a conversation. |
-| Location | OpenCode's directory-scoped native runtime context; explicit **Stop Workspace** releases its resources, not the shared daemon. |
+| Location | OpenCode's directory-scoped native runtime context; CodeNomad never unloads it when a project closes. |
 | CodeNomad backend | The server providing workspace, Git, authentication and client connectivity. Its account and environment determine backend filesystem access. |
 | Configuration | CodeNomad settings under the server's config directory; Global/Project OpenCode settings have their own native scope. |
 | Window | Its own tabs, navigation, drafts and restored view. Native history is shared, not copied for each window. |

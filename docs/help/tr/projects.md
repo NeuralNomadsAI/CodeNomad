@@ -22,25 +22,24 @@ Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** g
 
 Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüzeyi değil, bir kısayoldur: ana sayfadaki son projeleri yeniden adlandırın/kaldırın ve sunucu yer imlerini yönetin. Escape, başlatıcıyı kapatır ve odağı `+`'ye döndürür.
 
-## Bir sekmeyi kapatın veya bir çalışma alanını durdurun {#close-stop}
+## Bir projeyi kapatın {#close-stop}
 
-1. Yalnızca geçerli görünümü kaldırmak için sekmenin kapat düğmesini veya komut paletindeki **Sekmeyi Kapat** öğesini kullanın.
-2. Arka ucun paylaşılan çalışma alanı bağlantısını sonlandırmak için **Workspace'i Durdur** öğesini çalıştırın ve onaylayın.
-3. Gerektiğinde klasörü Gözat veya Son Kullanılanlar aracılığıyla yeniden açın.
+1. Projeyi CodeNomad'de kapatmak için sekmenin kapat düğmesini veya komut paletindeki **Sekmeyi Kapat** öğesini kullanın.
+2. CodeNomad o sekmenin projesini takip etmeyi bırakır; oturumlar OpenCode'da çalışmaya devam eder.
+3. Konuşmaları yeniden bulmak için klasörü Gözat veya Son Kullanılanlar aracılığıyla tekrar açın.
 
 | Eylem | Kapsam ve etki | Ne yapmaz |
 | --- | --- | --- |
-| Sekmeyi Kapat | Bu pencerenin üst düzey sekmesi | Projeyi veya yerel geçmişi silmez; üretimi durdurmak için kullanmayın |
-| Çalışma Alanını Durdur | Bağlı her pencereyi etkileyen paylaşılan çalışma alanı | Sıradan proje dosyalarını silmez veya paylaşılan OpenCode hizmetini durdurmaz |
+| Sekmeyi Kapat | O sekmenin projesini CodeNomad'de kapatır | Proje dosyalarını veya yerel geçmişi silmez; oturumları veya OpenCode hizmetini durdurmaz |
 | Oturumu durdur | Seçilen görüşmenin yürütülmesi | Projeyi kapatmaz veya geçmişini silmez |
 
-Çalışma alanı artık paylaşılmıyorsa Workspace'i Durdur, OpenCode Location bağlamını ve kaynaklarını serbest bırakır. Bunu tek konuşmayı duraklatan bir düğme değil, kesintiye neden olan bir işlem olarak değerlendirin. Yürütmenin bittiğini doğrulamak istiyorsanız görünümü kapatmadan önce ilgili çalıştırmaları açıkça durdurun. Paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
+Aynı klasörün ayrı bir sekmesi etkilenmez. Aynı çalışma alanı başka bir pencerede görüntüleniyorsa oradaki sekme de kapanır ve bir bildirim gösterilir. Projeyi kapatmak OpenCode Location bağlamını kaldırmaz. Yürütmenin bittiğini doğrulamak istiyorsanız kapatmadan önce ilgili çalıştırmaları açıkça durdurun. Paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 
 1. Başlatıcıda **Geçici** öğesini veya ana sayfada **Yeni geçici instance** öğesini seçin.
 2. Boş CodeNomad tarafından yönetilen klasörde çalışın; Git otomatik olarak başlatılmıyor.
-3. Sekmeyi kapatırken veya durdururken **Sakla**, **At** veya **İptal** öğesini seçin. Sekme menüsü ayrıca **Proje olarak sakla** öğesini de sunar.
+3. Sekmeyi kapatırken **Sakla**, **At** veya **İptal** öğesini seçin. Sakla, klasörü ve konuşmaları koruyarak projeyi CodeNomad'de kapatır. Sekme menüsü ayrıca **Proje olarak sakla** öğesini de sunar.
 
 | Seçim | Etki | Kurtarma |
 | --- | --- | --- |

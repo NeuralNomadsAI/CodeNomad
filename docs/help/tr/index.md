@@ -4,7 +4,7 @@ Mevcut CodeNomad masaüstü veya tarayıcı çalışma alanını OpenCode hizmet
 
 ## Önce bunu okuyun {#read-this-first}
 
-CodeNomad çalışma alanınızı tek, paylaşılan OpenCode arka plan hizmetine bağlar. Oturumlar ve mesajlar OpenCode'a; sekmeler, ileti taslakları ve yerleşim CodeNomad istemcisine aittir. Sekme kapatmak çalışma alanını durdurmak değildir; CodeNomad'i kapatmak OpenCode'u durdurmaz.
+CodeNomad çalışma alanınızı tek, paylaşılan OpenCode arka plan hizmetine bağlar. Oturumlar ve mesajlar OpenCode'a; sekmeler, ileti taslakları ve yerleşim CodeNomad istemcisine aittir. Sekmeyi kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. CodeNomad'i kapatmak OpenCode'u durdurmaz.
 
 1. [Ana bilgisayar gereksinimleri](install.md#requirements) ve [OpenCode kurulumu](opencode.md)'yi kontrol edin.
 2. [Bir proje açın](projects.md), ardından görüşmenin Aracı, Model ve Düşünme kontrollerini seçin.
@@ -41,7 +41,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Konuşma / oturum | Yerel OpenCode geçmişi ve dizini ile ilişkili yürütme. |
 | Aile | Konuşma ve tüm alt oturumları; taşıma, etkinlik, Yolo ve Görev kontrolleri açısından önemlidir. |
 | Çalışma ağacı | Göz atma veya oturum yerleştirme için seçilen, sahipliği doğrulanmış depo çalışma kopyası. Göz atmak konuşmayı taşımaz. |
-| Location | OpenCode'un dizin kapsamlı yerel çalışma zamanı bağlamı; açık **Workspace'i Durdur**, paylaşılan arka plan programını değil, kaynaklarını serbest bırakır. |
+| Location | OpenCode'un dizin kapsamlı yerel çalışma zamanı bağlamı; proje sekmesini kapatmak bu bağlamı kaldırmaz veya oturumlarını durdurmaz. |
 | CodeNomad arka uç | Çalışma alanı, Git, kimlik doğrulama ve istemci bağlantısı sağlayan sunucu. Hesabı ve ortamı, arka uç dosya sistemi erişimini belirler. |
 | Yapılandırma | sunucunun yapılandırma dizini altındaki CodeNomad ayarları; Global/Project OpenCode ayarlarının kendi yerel kapsamları vardır. |
 | Pencere | Kendi sekmeleri, gezinmesi, taslakları ve geri yüklenen görünümü. Yerel geçmiş her pencere için kopyalanmaz, paylaşılır. |

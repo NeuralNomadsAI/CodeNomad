@@ -4,7 +4,7 @@ Diese Anleitung beschreibt die Bedienung des aktuellen CodeNomad-Desktop- oder B
 
 ## Zuerst lesen {#read-this-first}
 
-CodeNomad verbindet Ihren Arbeitsbereich mit einem gemeinsam genutzten OpenCode-Hintergrunddienst. Sitzungen und Nachrichten gehören zu OpenCode; Tabs, Eingabeentwürfe und Layout zum CodeNomad-Client. Einen Tab zu schließen beendet keinen Arbeitsbereich, und CodeNomad zu schließen beendet nicht OpenCode.
+CodeNomad verbindet Ihren Arbeitsbereich mit einem gemeinsam genutzten OpenCode-Hintergrunddienst. Sitzungen und Nachrichten gehören zu OpenCode; Tabs, Eingabeentwürfe und Layout zum CodeNomad-Client. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und sind nach erneutem Öffnen des Projekts wieder verfügbar. CodeNomad zu schließen beendet nicht OpenCode.
 
 1. Prüfen Sie die [Host-Anforderungen](install.md#requirements) und die [OpenCode-Einrichtung](opencode.md).
 2. [Öffnen Sie ein Projekt](projects.md) und wählen Sie dann Agent, Modell und Denkaufwand der Unterhaltung.
@@ -41,7 +41,7 @@ Die genauen Grenzen erläutern [Browser-Vorschauen und SideCars](browser-sidecar
 | Unterhaltung / Sitzung | Nativer OpenCode-Verlauf und Ausführung, die einem Verzeichnis zugeordnet sind. |
 | Familie | Eine Unterhaltung mit ihren rekursiven Untersitzungen; relevant für Verschieben, Aktivität, Yolo und Missionssteuerung. |
 | Worktree | Ein zugehöriger Repository-Checkout, der zum Durchsuchen oder als Sitzungsort ausgewählt wurde. Ihn zu durchsuchen verschiebt keine Unterhaltung. |
-| Location | Der verzeichnisbezogene native Laufzeitkontext von OpenCode; **Arbeitsbereich stoppen** gibt dessen Ressourcen frei, nicht den gemeinsamen Daemon. |
+| Location | Der verzeichnisbezogene native Laufzeitkontext von OpenCode; das Schließen eines Projekt-Tabs schließt das Projekt nur in CodeNomad und entfernt keine native Location. |
 | CodeNomad-Backend | Der Server für Arbeitsbereiche, Git, Authentifizierung und Client-Verbindungen. Sein Konto und seine Umgebung bestimmen den Dateisystemzugriff des Backends. |
 | Konfiguration | CodeNomad-Einstellungen im Konfigurationsverzeichnis des Servers; globale/projektbezogene OpenCode-Einstellungen haben ihren eigenen nativen Geltungsbereich. |
 | Fenster | Eigene Tabs, Navigation, Entwürfe und wiederhergestellte Ansicht. Der native Verlauf wird gemeinsam genutzt, nicht für jedes Fenster kopiert. |

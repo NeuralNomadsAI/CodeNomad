@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 आदेश foreground मा चल्छन्। terminal बन्द वा Ctrl+C गर्दा backend र Remote Control जडान रोकिन्छ। `--launch` ले browser मात्र खोल्छ; server daemonize गर्दैन। unattended उपलब्धतामा स्पष्ट configuration, working directory, environment र restart policy सहित OS process/service manager अन्तर्गत उही आदेश चलाउनुहोस्। service log वा सार्वजनिक unit file मा secret नराख्नुहोस्।
 
-browser बन्द गर्दा छुट्टै चलिरहेको standalone backend रोकिँदैन। project tab बन्द गर्दा दृश्य छुट्छ; **कार्यस्थान रोक्नुहोस्** ले OpenCode बाट Location र स्रोत unload गर्छ, साझा daemon होइन। backend shutdown ले पनि OpenCode चलिरहन्छ। CodeNomad नफर्केसम्म backend-dependent सुविधा अनुपलब्ध हुन्छन्; छुट्टै native scheduling आयुका लागि [मिसन](missions.md) हेर्नुहोस्।
+browser बन्द गर्दा छुट्टै चलिरहेको standalone backend रोकिँदैन। project tab बन्द गर्दा त्यो परियोजना CodeNomad मा बन्द हुन्छ र CodeNomad ले त्यो जडान पछ्याउन छोड्छ। OpenCode Location हट्दैन र सत्र चलिरहन्छन्; परियोजना फेरि खोल्दा ती भेटिन्छन्। backend shutdown ले पनि OpenCode चलिरहन्छ। CodeNomad नफर्केसम्म backend-dependent सुविधा अनुपलब्ध हुन्छन्; छुट्टै native scheduling आयुका लागि [मिसन](missions.md) हेर्नुहोस्।
 
 ## ठेगाना र port {#addresses}
 

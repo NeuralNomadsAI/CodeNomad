@@ -15,13 +15,13 @@
 - A CodeNomad workspace must validate through `client.location.get` before becoming ready.
 - Directory-bearing proxy input is untrusted and must resolve to the workspace root or one of its Git worktrees.
 - Session ID alone is insufficient: the proxy fetches the session and verifies `session.location.directory`.
-- Explicit Stop Workspace evicts the native location/resources and removes CodeNomad's logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
+- Closing a project tab immediately detaches it and requests deletion of its logical workspace record; failures notify without automatic retry. Native sessions continue; CodeNomad never evicts Locations. Whole-window close, quit and reload preserve restoration behavior.
 
 ## Shared Lifecycle
 
 - There is one externally owned global service, one server client and one upstream event subscription. CodeNomad uses official host/WSL CLI status/start/password commands, owns no private service state or PID, and never stops the daemon on backend shutdown.
 - WSL requires Windows localhost forwarding, executes lifecycle commands inside Linux, and never uses cross-namespace PID operations.
-- A workspace stop evicts its location; it does not stop a dedicated process or the global daemon.
+- Deleting a workspace removes only CodeNomad's logical record; it never unloads native resources or stops the global daemon.
 - The worktree deletion fence covers OpenCode proxy writes plus CodeNomad file and Git mutations for the same canonical worktree identity.
 - OpenCode owns standard state/database. Allowed configured environment variables are passed when starting a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored. Independently, before each session prompt/command/shell send, the authorized proxy awaits `session.environment` with the profile's complete execution-host snapshot. A failure blocks the send; it is never silently skipped or retried.
 - The native event stream is volatile. Reconnect must reconcile authoritative state; use current `session.*`, `filesystem.changed`, and `config.updated` names rather than obsolete event aliases.

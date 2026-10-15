@@ -27,7 +27,7 @@ CodeNomad 连接到执行主机上的共享 OpenCode 服务。选择 CLI、更�
 
 Windows 上，所选 WSL 可执行文件在其指定发行版中运行。请在那里安装/更新，并使用该发行版内有效的路径。WSL 连接依赖 Windows localhost 转发。Windows CLI 和 WSL CLI 不是可互换的执行环境。
 
-OpenCode 管理其全局服务注册、会话、消息和数据库。CodeNomad 不会按窗口或项目创建私有 OpenCode 数据库。关闭标签页/窗口或关闭 CodeNomad 后端不会停止共享守护进程。**停止工作区**则会卸载 Location 及其资源；参阅[项目](projects.md)。
+OpenCode 管理其全局服务注册、会话、消息和数据库。CodeNomad 不会按窗口或项目创建私有 OpenCode 数据库。关闭项目标签页会在 CodeNomad 中关闭该项目，但不会卸载 Location，会话继续在 OpenCode 中运行。重新打开项目即可再次找到。关闭窗口或关闭 CodeNomad 后端不会停止共享守护进程；参阅[项目](projects.md)。
 
 ## 更新、重启或重新加载 {#maintenance}
 

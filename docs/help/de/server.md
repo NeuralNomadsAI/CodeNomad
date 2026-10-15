@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 Die Befehle laufen im Vordergrund. Terminal-Schließen oder Ctrl+C stoppt dieses Backend und dessen Fernsteuerungsverbindung. `--launch` öffnet nur einen Browser; es macht den Server nicht zum Daemon. Für unbeaufsichtigte Verfügbarkeit führen Sie denselben Befehl über Ihre OS-Prozess-/Dienstverwaltung mit expliziter Konfiguration, Arbeitsverzeichnis, Umgebung und Neustartrichtlinie aus. Schreiben Sie keine Geheimnisse in Dienstlogs oder öffentliche Unit-Dateien.
 
-Browser-Schließen stoppt kein separat laufendes eigenständiges Backend. Projekt-Tab-Schließen trennt die Ansicht; **Arbeitsbereich stoppen** entlädt diese Location samt Ressourcen aus OpenCode, nicht den gemeinsamen Daemon. Auch Backend-Ende lässt den OpenCode-Dienst laufen. Backend-abhängige Funktionen fehlen bis zur Rückkehr von CodeNomad; die separate Lebensdauer nativer Planung erläutert [Missionen](missions.md).
+Browser-Schließen stoppt kein separat laufendes eigenständiges Backend. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad und beendet dessen Verfolgung durch CodeNomad; Sitzungen laufen in OpenCode weiter und sind nach erneutem Öffnen des Projekts wieder verfügbar. Die native Location und der gemeinsame Daemon werden dabei nicht entfernt oder beendet. Auch Backend-Ende lässt den OpenCode-Dienst laufen. Backend-abhängige Funktionen fehlen bis zur Rückkehr von CodeNomad; die separate Lebensdauer nativer Planung erläutert [Missionen](missions.md).
 
 ## Adressen und Ports {#addresses}
 

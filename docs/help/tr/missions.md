@@ -95,7 +95,8 @@ Oluşturulma zamanı da uygun günlük işleri sınırlar; yeni bir zamanlamayı
 
 | Bileşen | Kapatılması ne anlama gelir |
 | --- | --- |
-| CodeNomad sekmesi/penceresi | Görünümü ayırır; OpenCode işlerini veya hizmetini durdurmaz. |
+| CodeNomad proje sekmesi | Projeyi CodeNomad'de kapatır; yerel işler OpenCode'da devam eder ve projeyi yeniden açtığınızda konuşmalar bulunur. |
+| CodeNomad penceresi | Görünümü ayırır; OpenCode işlerini veya hizmetini durdurmaz. |
 | CodeNomad arka ucu | OpenCode'u durdurmaz. Tek seferlik CodeNomad koordinasyonu arka ucun varlığına bağlıdır; kapalıyken yeni tek seferlik iş atama/kontrol olanaklarının kullanılabilir kalacağını varsaymayın. |
 | Çalışan günlük zamanlama | Saat ve çalıştırma yürütmesi, CodeNomad arayüzü ve arka ucu kapalıyken de OpenCode eklentisinde/hizmetinde sürer. Yürütme ana bilgisayarı ve OpenCode hizmeti çalışır durumda kalmalıdır. |
 | OpenCode hizmetinin yeniden başlatılması | Sürece bağlı zamanlama işleri kaybolur. Çalışması istenen zamanlama, açıkça **Sürdür** seçilene kadar **Kesintiye uğradı** durumuna geçer; CodeNomad'i yeniden açmak onu devreye almaz. |

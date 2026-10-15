@@ -3,9 +3,9 @@ import { tGlobal } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { serverEvents } from "../lib/server-events"
 import { showAlertDialog, showChoiceDialog } from "./alerts"
-import { activeAppTabId, closeInstanceTab, getAdjacentAppTabId, getInstanceAppTabId, selectAppTab, selectInstanceTab } from "./app-tabs"
+import { activeAppTabId, closeInstanceTab, detachInstanceTab, getAdjacentAppTabId, getInstanceAppTabId, selectAppTab, selectInstanceTab } from "./app-tabs"
 import { getSessionAttachmentsForInstance } from "./attachments"
-import { createInstance, instances, updateInstance } from "./instances"
+import { closeWorkspace, createInstance, instances, trackWorkspaceClose, updateInstance } from "./instances"
 import { addNamedRecentFolder } from "./preferences"
 import { getSessionDraftPromptsForInstance, getSessions } from "./sessions"
 
@@ -104,9 +104,9 @@ async function discardTemporaryInstance(instanceId: string, quiet = false): Prom
   const wasActive = activeAppTabId() === tabId
   const neighbour = wasActive ? getAdjacentAppTabId(tabId) : null
   if (wasActive && neighbour) selectAppTab(neighbour)
-  else if (wasActive) closeInstanceTab(instanceId)
+  else if (wasActive) detachInstanceTab(instanceId)
   try {
-    await serverApi.discardTemporaryWorkspace(instanceId, quiet ? { onlyIfEmpty: true } : {})
+    await trackWorkspaceClose(instanceId, () => serverApi.discardTemporaryWorkspace(instanceId, quiet ? { onlyIfEmpty: true } : {}))
   } catch (error) {
     if (!isNoLongerTemporary(error)) {
       if (instances().has(instanceId)) {
@@ -120,8 +120,11 @@ async function discardTemporaryInstance(instanceId: string, quiet = false): Prom
     if (!quiet) showFailure("temporaryInstance.discard.failedTitle", error)
     const instance = instances().get(instanceId)
     if (instance) clearTemporaryMark(instance.folder)
+    detachInstanceTab(instanceId)
+    await closeWorkspace(instanceId).catch(() => {})
+    return true
   }
-  closeInstanceTab(instanceId)
+  detachInstanceTab(instanceId)
   return true
 }
 
@@ -135,7 +138,7 @@ function hasUnsentWork(instanceId: string): boolean {
  * A temporary tab cannot be reopened from the recent projects. An untouched
  * one (no conversation, file or unsent draft; the server rechecks the first
  * two) closes and is discarded without asking. Otherwise, or if that quiet
- * discard does not succeed, closing or stopping it asks whether to keep it as
+ * discard does not succeed, closing it asks whether to keep it as
  * a project or discard it. Cancelling leaves the tab open.
  */
 export async function closeTemporaryInstance(instanceId: string): Promise<void> {

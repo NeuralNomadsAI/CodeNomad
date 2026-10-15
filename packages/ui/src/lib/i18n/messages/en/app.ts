@@ -53,11 +53,8 @@ export const appMessages = {
   "app.launchError.fallbackMessage": "Failed to launch workspace",
   "app.launchError.invalidConfig": "OpenCode configuration is invalid",
 
-  "app.stopInstance.confirmMessage": "Stop OpenCode instance? This will stop the server.",
-  "app.stopInstance.title": "Stop instance",
-  "app.stopInstance.confirmLabel": "Stop",
-  "app.stopInstance.cancelLabel": "Keep running",
-  "app.stopInstance.toast.error": "Failed to stop workspace.",
+  "app.closeInstance.toast.error": "Failed to close project.",
+  "app.closeInstance.toast.otherWindow": "{project} was closed from another window.",
 
   "emptyState.logoAlt": "CodeNomad logo",
   "emptyState.brandTitle": "CodeNomad",

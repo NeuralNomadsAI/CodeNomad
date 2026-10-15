@@ -45,7 +45,7 @@ npx codenomad --generate-token --launch
 
 Komutlar ön planda çalışır. Terminalin kapatılması veya Ctrl+C'nin gönderilmesi, arka ucu ve Uzaktan Kontrol bağlantısını durdurur. `--launch` yalnızca bir tarayıcıyı açar; sunucuyu daemonize etmez. Gözetimsiz kullanılabilirlik için aynı komutu işletim sistemi işlem/hizmet yöneticiniz altında açık yapılandırma, çalışma dizini, ortam ve yeniden başlatma politikasıyla çalıştırın. Hizmet günlüklerine veya ortak birim dosyasına sır koymayın.
 
-Tarayıcıyı kapatmak ayrı çalışan bağımsız arka ucu durdurmaz. Proje sekmesini kapatmak görünümü ayırır; **Workspace'i Durdur**, OpenCode'dan ilgili Location ve kaynaklarını kaldırır, paylaşılan daemon'ı durdurmaz. Arka ucu kapatmak da OpenCode hizmetini çalışır bırakır. CodeNomad dönene kadar arka uca bağlı özellikler kullanılamaz; ayrı OpenCode zamanlama ömrü için [Görevler](missions.md) sayfasına bakın.
+Tarayıcıyı kapatmak ayrı çalışan bağımsız arka ucu durdurmaz. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır ve takibini bırakır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. Location bağlamı kaldırılmaz. Arka ucu kapatmak da OpenCode hizmetini çalışır bırakır. CodeNomad dönene kadar arka uca bağlı özellikler kullanılamaz; ayrı OpenCode zamanlama ömrü için [Görevler](missions.md) sayfasına bakın.
 
 ## Adresler ve bağlantı noktaları {#addresses}
 

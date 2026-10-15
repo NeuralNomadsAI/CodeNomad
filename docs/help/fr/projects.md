@@ -22,25 +22,24 @@ Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** cha
 
 Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’interface de gestion : renommez/retirez les projets récents et gérez les serveurs enregistrés depuis l’accueil. Échap ferme le lanceur et rend le focus à `+`.
 
-## Fermer un onglet ou arrêter un espace de travail {#close-stop}
+## Fermer un onglet de projet {#close-stop}
 
-1. Pour retirer seulement la vue actuelle, utilisez le bouton de fermeture de l’onglet ou **Fermer l'onglet** dans la palette de commandes.
-2. Pour terminer la connexion partagée du backend à l’espace de travail, exécutez **Arrêter l'espace de travail** et confirmez.
-3. Rouvrez le dossier via Parcourir ou les dossiers récents au besoin.
+1. Utilisez le bouton de fermeture de l’onglet ou **Fermer l'onglet** dans la palette de commandes pour fermer le projet dans CodeNomad. CodeNomad cesse de suivre cette instance ouverte du projet.
+2. Les sessions continuent de s’exécuter dans OpenCode ; les fichiers du projet et l’historique natif sont conservés.
+3. Rouvrez le dossier via Parcourir ou les dossiers récents pour retrouver les sessions.
 
 | Action | Portée et effet | Ce qu’elle ne fait pas |
 | --- | --- | --- |
-| Fermer l’onglet | Onglet principal de cette fenêtre | Ne supprime pas le projet ni l’historique natif ; ne l’utilisez pas pour arrêter la génération |
-| Arrêter l’espace de travail | Espace de travail partagé, affectant toutes les fenêtres connectées | Ne supprime pas les fichiers ordinaires du projet et n’arrête pas le service OpenCode partagé |
+| Fermer l’onglet | Ferme cette instance ouverte du projet dans CodeNomad | Ne supprime ni fichiers ni sessions natives et n’arrête ni la génération ni le service OpenCode partagé |
 | Arrêter la session | Exécution de la conversation sélectionnée | Ne ferme pas le projet et ne supprime pas son historique |
 
-Arrêter l’espace de travail libère sa Location native lorsqu’elle n’est plus partagée. Considérez cette action comme perturbatrice, pas comme un bouton de pause pour une conversation. Arrêtez explicitement les exécutions concernées avant de fermer si vous devez vérifier qu’elles sont terminées. La maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
+Un autre onglet du même dossier ouvert séparément n’est pas affecté. Si une autre fenêtre affiche la même instance ouverte du projet, son onglet se ferme aussi et cette fenêtre affiche une notification. CodeNomad ne décharge pas la Location native OpenCode. Arrêtez explicitement les exécutions concernées avant de fermer si vous souhaitez les terminer. La maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 
 1. Choisissez **Temporaire** dans le lanceur ou **Nouvelle instance temporaire** sur l’accueil.
 2. Travaillez dans le dossier vide géré par CodeNomad ; Git n’est pas initialisé automatiquement.
-3. À la fermeture ou à l’arrêt de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Le menu de l’onglet propose aussi **Garder comme projet**.
+3. À la fermeture de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Après **Garder**, l’onglet se ferme comme un onglet de projet ordinaire. Le menu de l’onglet propose aussi **Garder comme projet**.
 
 | Choix | Effet | Récupération |
 | --- | --- | --- |

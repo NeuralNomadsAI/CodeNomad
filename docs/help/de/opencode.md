@@ -27,7 +27,7 @@ Auch die erforderlichen Verträge für Sitzungen, Berechtigungen, Forms, Postein
 
 Unter Windows läuft eine ausgewählte WSL-Programmdatei in der gewählten Distribution. Installieren/aktualisieren Sie sie dort und verwenden Sie dort gültige Pfade. WSL-Verbindungen hängen von der Windows-Localhost-Weiterleitung ab. Windows-CLI und WSL-CLI sind keine austauschbaren Ausführungsumgebungen.
 
-OpenCode verwaltet seine globale Dienstregistrierung, Sitzungen, Nachrichten und Datenbank. CodeNomad erstellt keine private OpenCode-Datenbank pro Fenster oder Projekt. Das Schließen eines Tabs/Fensters oder Herunterfahren des CodeNomad-Backends beendet nicht den gemeinsamen Daemon. **Arbeitsbereich stoppen** entfernt stattdessen eine Location und ihre Ressourcen; siehe [Projekte](projects.md).
+OpenCode verwaltet seine globale Dienstregistrierung, Sitzungen, Nachrichten und Datenbank. CodeNomad erstellt keine private OpenCode-Datenbank pro Fenster oder Projekt. Das Schließen eines Tabs/Fensters oder Herunterfahren des CodeNomad-Backends beendet nicht den gemeinsamen Daemon. Das Schließen eines Projekt-Tabs schließt das Projekt nur in CodeNomad, ohne eine native Location zu entfernen. Sitzungen laufen in OpenCode weiter und sind nach erneutem Öffnen des Projekts wieder verfügbar; siehe [Projekte](projects.md).
 
 ## Aktualisieren, neu starten oder neu laden {#maintenance}
 

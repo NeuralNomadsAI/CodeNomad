@@ -53,11 +53,8 @@ export const appMessages = {
   "app.launchError.fallbackMessage": "启动工作区失败",
   "app.launchError.invalidConfig": "OpenCode 配置无效",
 
-  "app.stopInstance.confirmMessage": "停止 OpenCode 实例？这将停止服务器。",
-  "app.stopInstance.title": "停止实例",
-  "app.stopInstance.confirmLabel": "停止",
-  "app.stopInstance.cancelLabel": "继续运行",
-  "app.stopInstance.toast.error": "无法停止工作区。",
+  "app.closeInstance.toast.error": "无法关闭项目。",
+  "app.closeInstance.toast.otherWindow": "{project} 已从另一个窗口关闭。",
 
   "emptyState.logoAlt": "CodeNomad 徽标",
   "emptyState.brandTitle": "CodeNomad",

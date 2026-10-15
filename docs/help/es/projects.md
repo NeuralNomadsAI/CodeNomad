@@ -22,25 +22,24 @@ Las entradas recientes son accesos directos. **Renombrar workspace** cambia su n
 
 Un clic normal sigue abriendo la página de inicio completa. El lanzador es un acceso directo, no la superficie de gestión: renombra/elimina proyectos recientes y gestiona los marcadores de servidores en la página de inicio. Escape cierra el lanzador y devuelve el foco a `+`.
 
-## Cerrar una pestaña o detener un espacio de trabajo {#close-stop}
+## Cerrar una pestaña de proyecto {#close-stop}
 
-1. Para quitar solo la vista actual, usa el botón de cierre de la pestaña o **Cerrar pestaña** en la paleta de comandos.
-2. Para finalizar la conexión compartida del backend al espacio de trabajo, ejecuta **Detener espacio de trabajo** y confirma.
-3. Vuelve a abrir la carpeta desde Buscar carpetas o Carpetas recientes cuando la necesites.
+1. Usa el botón de cierre de la pestaña o **Cerrar pestaña** en la paleta de comandos para cerrar el proyecto en CodeNomad. CodeNomad deja de seguir esa instancia abierta del proyecto.
+2. Las sesiones siguen ejecutándose en OpenCode; los archivos del proyecto y el historial nativo se conservan.
+3. Vuelve a abrir la carpeta desde Buscar carpetas o Carpetas recientes para encontrar de nuevo las sesiones.
 
 | Acción | Ámbito y efecto | Qué no hace |
 | --- | --- | --- |
-| Cerrar pestaña | Pestaña de nivel superior de esta ventana | No elimina el proyecto ni el historial nativo; no la uses para detener la generación |
-| Detener espacio de trabajo | Espacio de trabajo compartido; afecta a todas las ventanas conectadas | No elimina los archivos normales del proyecto ni detiene el servicio compartido de OpenCode |
+| Cerrar pestaña | Cierra esa instancia abierta del proyecto en CodeNomad | No elimina archivos ni sesiones nativas, ni detiene la generación o el servicio compartido de OpenCode |
 | Detener sesión | Ejecución de la conversación seleccionada | No cierra el proyecto ni elimina su historial |
 
-Detener espacio de trabajo libera la Location nativa del espacio de trabajo cuando deja de estar compartida. Trátalo como una acción disruptiva, no como un botón de pausa para una conversación. Detén explícitamente las ejecuciones relevantes antes de cerrar el trabajo si necesitas verificar que la ejecución terminó. El mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
+Otra pestaña de la misma carpeta abierta por separado no se ve afectada. Si otra ventana muestra la misma instancia abierta del proyecto, su pestaña también se cierra y esa ventana muestra una notificación. CodeNomad no descarga la Location nativa de OpenCode. Detén explícitamente las ejecuciones relevantes antes de cerrar si quieres que terminen. El mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 
 1. Elige **Temporal** en el lanzador o **Nueva instancia temporal** en la página de inicio.
 2. Trabaja en la carpeta vacía gestionada por CodeNomad; Git no se inicializa automáticamente.
-3. Al cerrar o detener la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. El menú de la pestaña también ofrece **Conservar como proyecto**.
+3. Al cerrar la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. Tras **Conservar**, la pestaña se cierra como cualquier pestaña de proyecto. El menú de la pestaña también ofrece **Conservar como proyecto**.
 
 | Opción | Efecto | Recuperación |
 | --- | --- | --- |

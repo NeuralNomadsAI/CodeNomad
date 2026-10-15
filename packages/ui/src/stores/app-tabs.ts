@@ -1,6 +1,6 @@
 import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
-import { activeInstanceId, claimRestoreCreatedInstanceForUser, instances, setActiveInstanceId } from "./instances"
+import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 import {
@@ -150,7 +150,14 @@ function attachInstanceTab(instanceId: string, options?: { source?: "restore" })
   if (options?.source !== "restore") publishLocalInstanceTabLifecycle("opened", instanceId)
 }
 
-function closeInstanceTab(instanceId: string, options?: { forceFallbackSelection?: boolean }): void {
+function closeInstanceTab(instanceId: string): void {
+  if (!openInstanceTabIds().has(instanceId)) return
+  detachInstanceTab(instanceId)
+  void closeWorkspace(instanceId).catch(() => {})
+}
+
+/** Local-only removal for server stops, temporary discard and disconnected-dialog dismissal. */
+function detachInstanceTab(instanceId: string, options?: { forceFallbackSelection?: boolean }): void {
   if (!openInstanceTabIds().has(instanceId)) return
   const tabId = getInstanceAppTabId(instanceId)
   const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
@@ -166,7 +173,7 @@ function closeInstanceTab(instanceId: string, options?: { forceFallbackSelection
   else ensureActiveAppTab(fallbackTabId)
 }
 
-onInstanceTabCloseRequested((instanceId) => closeInstanceTab(instanceId, { forceFallbackSelection: true }))
+onInstanceTabCloseRequested((instanceId) => detachInstanceTab(instanceId, { forceFallbackSelection: true }))
 
 function selectSidecarTab(token: string) {
   selectAppTab(getSidecarAppTabId(token))
@@ -265,6 +272,7 @@ export {
   appTabs,
   attachInstanceTab,
   closeInstanceTab,
+  detachInstanceTab,
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,

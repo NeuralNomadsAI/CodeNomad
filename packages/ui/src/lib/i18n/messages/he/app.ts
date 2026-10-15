@@ -53,11 +53,8 @@ export const appMessages = {
   "app.launchError.fallbackMessage": "הפעלת סביבת העבודה נכשלה",
   "app.launchError.invalidConfig": "תצורת OpenCode אינה תקינה",
 
-  "app.stopInstance.confirmMessage": "לעצור את מופע OpenCode? פעולה זו תעצור את השרת.",
-  "app.stopInstance.title": "עצור מופע",
-  "app.stopInstance.confirmLabel": "עצור",
-  "app.stopInstance.cancelLabel": "המשך להריץ",
-  "app.stopInstance.toast.error": "עצירת סביבת העבודה נכשלה.",
+  "app.closeInstance.toast.error": "סגירת הפרויקט נכשלה.",
+  "app.closeInstance.toast.otherWindow": "{project} נסגר מחלון אחר.",
 
   "emptyState.logoAlt": "לוגו CodeNomad",
   "emptyState.brandTitle": "CodeNomad",

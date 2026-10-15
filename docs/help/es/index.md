@@ -4,7 +4,7 @@ Usa esta guía para trabajar en el espacio de trabajo actual de CodeNomad, en es
 
 ## Lee esto primero {#read-this-first}
 
-CodeNomad conecta tu espacio de trabajo a un servicio compartido de OpenCode en segundo plano. Las sesiones y los mensajes pertenecen a OpenCode; las pestañas, los borradores del editor de mensajes y la disposición pertenecen al cliente CodeNomad. Cerrar una pestaña no detiene un espacio de trabajo, y cerrar CodeNomad no detiene OpenCode.
+CodeNomad conecta tu espacio de trabajo a un servicio compartido de OpenCode en segundo plano. Las sesiones y los mensajes pertenecen a OpenCode; las pestañas, los borradores del editor de mensajes y la disposición pertenecen al cliente CodeNomad. Cerrar una pestaña de proyecto cierra el proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. Cerrar CodeNomad no detiene OpenCode.
 
 1. Comprueba los [requisitos del equipo anfitrión](install.md#requirements) y la [configuración de OpenCode](opencode.md).
 2. [Abre un proyecto](projects.md) y elige los controles Agente, Modelo y Razonamiento de la conversación.
@@ -41,7 +41,7 @@ Para conocer los límites exactos, consulta [vistas previas de navegador y SideC
 | Conversación / sesión | Historial y ejecución nativos de OpenCode asociados a su directorio. |
 | Familia | Una conversación y sus subsesiones recursivas; relevante para movimientos, actividad, Yolo y controles de Misiones. |
 | Worktree | Una copia de trabajo propia del repositorio seleccionada para explorar o ubicar sesiones. Explorarla no mueve una conversación. |
-| Location | Contexto de ejecución nativo de OpenCode con ámbito de directorio; **Detener espacio de trabajo** libera explícitamente sus recursos, no el daemon compartido. |
+| Location | Contexto de ejecución nativo de OpenCode con ámbito de directorio; cerrar una pestaña de proyecto solo cierra el proyecto en CodeNomad, sin descargar la Location nativa. |
 | Backend de CodeNomad | El servidor que proporciona el espacio de trabajo, Git, la autenticación y la conectividad de los clientes. Su cuenta y su entorno determinan el acceso del backend al sistema de archivos. |
 | Configuración | Ajustes de CodeNomad en el directorio de configuración del servidor; los ajustes Global/Proyecto de OpenCode tienen su propio ámbito nativo. |
 | Ventana | Sus propias pestañas, navegación, borradores y vista restaurada. El historial nativo se comparte, no se copia para cada ventana. |

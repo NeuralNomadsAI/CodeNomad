@@ -7,7 +7,7 @@
 3. The adapter runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle and validates the authenticated loopback endpoint. WSL requires Windows localhost forwarding and stays inside the Linux namespace.
 4. `client.location.get` validates the directory and returns its native project metadata and directory-only public location.
 5. CodeNomad publishes workspace events on `/api/events` and exposes `/workspaces/:id/instance` as the authorized native API proxy.
-6. Explicit Stop Workspace evicts the location/resources and removes the logical workspace. Ordinary tab/window close only detaches local UI; backend shutdown clears connection state. Neither close nor shutdown stops the daemon.
+6. Closing a project tab deletes that occurrence's logical workspace without evicting its native Location; sessions continue. Other windows displaying the same record close its tab via `workspace.stopped` and notify, unlike the initiating window. Separate occurrences are unaffected. Whole-window close, quit and reload preserve restoration behavior; backend shutdown only clears connection state. Neither close nor shutdown stops the daemon.
 
 ## Prompt, Shell, Instructions, And PTYs
 

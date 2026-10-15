@@ -53,11 +53,8 @@ export const appMessages = {
   "app.launchError.fallbackMessage": "कार्यस्थान सुरु गर्न असफल",
   "app.launchError.invalidConfig": "OpenCode कन्फिगरेसन अमान्य छ",
 
-  "app.stopInstance.confirmMessage": "OpenCode उदाहरण रोक्ने? यसले सर्भर बन्द गर्नेछ।",
-  "app.stopInstance.title": "उदाहरण रोक्नुहोस्",
-  "app.stopInstance.confirmLabel": "रोक्नुहोस्",
-  "app.stopInstance.cancelLabel": "चालु राख्नुहोस्",
-  "app.stopInstance.toast.error": "कार्यस्थान रोक्न असफल भयो।",
+  "app.closeInstance.toast.error": "परियोजना बन्द गर्न असफल भयो।",
+  "app.closeInstance.toast.otherWindow": "{project} अर्को विन्डोबाट बन्द गरियो।",
 
   "emptyState.logoAlt": "CodeNomad लोगो",
   "emptyState.brandTitle": "CodeNomad",

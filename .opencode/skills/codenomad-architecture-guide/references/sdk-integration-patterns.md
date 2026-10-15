@@ -8,7 +8,7 @@ OpenCode owns standard state/database. Allowed configured environment variables 
 
 ## Locations And Directories
 
-Workspace creation calls `client.location.get({ location: { directory } })` and records the returned directory. Its `project` field supplies project metadata. Public locations have no workspace selector. Explicit Stop Workspace calls `client.debug.location.evict` before removing the logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
+Workspace creation calls `client.location.get({ location: { directory } })` and records the returned directory. Its `project` field supplies project metadata. Public locations have no workspace selector. Closing a project tab deletes that occurrence's logical backend record only; sessions continue in OpenCode. CodeNomad never calls native location eviction. Whole-window close, quit and reload preserve restoration behavior.
 
 The technical minimum is 2.0.27 for the reproduced native Effect/Schema boundary; recommendation remains independently tracked. Native plugins share the daemon's runtime through the common build settings. Preserve historical `workspaceID` validation internally: obsolete public selectors must be rejected rather than erased from imports, cursors, pending Forms or move rollback. See `dev-docs/OPENCODE_V2_COMPATIBILITY.md` for current qualification and `dev-docs/OPENCODE_V2_POST_BETA.md` for the historical transition record.
 

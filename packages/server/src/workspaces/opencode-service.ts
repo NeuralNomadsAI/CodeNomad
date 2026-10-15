@@ -121,18 +121,6 @@ export class OpenCodeSharedService {
     return result
   }
 
-  async evictLocation(
-    location: LocationRef,
-    requestOptions?: RequestOptions,
-    serviceOptions?: OpenCodeSharedServiceOptions,
-  ): Promise<void> {
-    await this.withClient(serviceOptions, (client) => client.debug.location.evict({
-      location: {
-        directory: location.directory,
-      },
-    }, { ...locationRequestOptions(location), ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}) }), requestOptions)
-  }
-
   async subscribe(requestOptions?: RequestOptions, serviceOptions?: OpenCodeSharedServiceOptions): Promise<AsyncIterable<OpenCodeEvent>> {
     let connection: ServiceConnection | undefined
     try {

@@ -53,11 +53,8 @@ export const appMessages = {
   "app.launchError.fallbackMessage": "ワークスペースの起動に失敗しました",
   "app.launchError.invalidConfig": "OpenCode の設定が無効です",
 
-  "app.stopInstance.confirmMessage": "OpenCode インスタンスを停止しますか？サーバーが停止します。",
-  "app.stopInstance.title": "インスタンスを停止",
-  "app.stopInstance.confirmLabel": "停止",
-  "app.stopInstance.cancelLabel": "実行を続ける",
-  "app.stopInstance.toast.error": "ワークスペースの停止に失敗しました。",
+  "app.closeInstance.toast.error": "プロジェクトを閉じられませんでした。",
+  "app.closeInstance.toast.otherWindow": "{project} は別のウィンドウから閉じられました。",
 
   "emptyState.logoAlt": "CodeNomad ロゴ",
   "emptyState.brandTitle": "CodeNomad",

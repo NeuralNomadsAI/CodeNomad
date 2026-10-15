@@ -27,7 +27,7 @@ The required session, permission, Form, inbox and session-environment contracts 
 
 On Windows, a selected WSL executable runs inside its chosen distribution. Install/update it there and use paths meaningful inside that distribution. WSL connectivity depends on Windows localhost forwarding. A Windows CLI and a WSL CLI are not interchangeable execution environments.
 
-OpenCode owns its global service registration, sessions, messages and database. CodeNomad does not create a private OpenCode database per window or project. Closing a tab/window, or shutting down the CodeNomad backend, does not stop the shared daemon. **Stop Workspace** instead evicts a Location and its resources; see [Projects](projects.md).
+OpenCode owns its global service registration, sessions, messages and database. CodeNomad does not create a private OpenCode database per window or project. Closing a project tab closes that project in CodeNomad; sessions continue in OpenCode and reappear when you reopen the project. CodeNomad never unloads native Locations. Closing a whole window, quitting or reloading preserves project connections for restoration; neither those actions nor backend shutdown stops the shared daemon. See [Projects](projects.md).
 
 ## Update, restart or reload {#maintenance}
 

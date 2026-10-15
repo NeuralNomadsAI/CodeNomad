@@ -95,7 +95,8 @@ La fecha de creación también limita el trabajo diario elegible; iniciar una pr
 
 | Componente | Qué significa cerrarlo |
 | --- | --- |
-| Pestaña/ventana de CodeNomad | Desconecta la vista; no detiene el trabajo nativo ni el servicio OpenCode. |
+| Pestaña de proyecto de CodeNomad | Cierra el proyecto en CodeNomad; el trabajo nativo sigue en OpenCode y vuelve a aparecer al reabrir el proyecto. |
+| Ventana de CodeNomad | Desconecta la vista; no detiene el trabajo nativo ni el servicio OpenCode. |
 | Backend de CodeNomad | No detiene OpenCode. La coordinación puntual de CodeNomad depende de la presencia del backend; no supongas que se pueden seguir enviando/controlando tareas puntuales mientras está cerrado. |
 | Programación diaria en ejecución | Su reloj y la ejecución de sus pasadas se ejecutan en el plugin/servicio OpenCode, incluso con la interfaz y el backend de CodeNomad cerrados. El equipo de ejecución y el servicio OpenCode deben seguir funcionando. |
 | Reinicio del servicio OpenCode | Pierde los trabajos de programación locales del proceso. Una programación que debía ejecutarse pasa a **Interrumpido** hasta una **Reanudar** explícita; reabrir CodeNomad no la reactiva. |

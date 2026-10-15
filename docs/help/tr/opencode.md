@@ -27,7 +27,7 @@ Gerekli oturum, izin, Form, gelen kutusu ve oturum-ortam sözleşmelerinin de me
 
 Windows'ta seçilen bir WSL yürütülebilir dosyası, seçilen dağıtımın içinde çalışır. Oraya yükleyin/güncelleyin ve bu dağıtımda anlamlı olan yolları kullanın. WSL bağlantısı Windows localhost yönlendirmesine bağlıdır. Windows CLI ve WSL CLI, birbirinin yerine kullanılabilen yürütme ortamları değildir.
 
-OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Bir sekmeyi/pencereyi kapatmak veya CodeNomad arka ucunu kapatmak, paylaşılan arka plan programını durdurmaz. **Workspace'i Durdur** bunun yerine Location bağlamını ve kaynaklarını çıkarır; bkz. [Projeler](projects.md).
+OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Sekmeyi kapatmak Location bağlamını kaldırmadan projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. Pencereyi veya CodeNomad arka ucunu kapatmak paylaşılan arka plan programını durdurmaz; bkz. [Projeler](projects.md).
 
 ## Güncelleme, yeniden başlatma veya yeniden yükleme {#maintenance}
 

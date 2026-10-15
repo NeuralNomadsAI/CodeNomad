@@ -295,10 +295,8 @@ describe("OpenCodeSharedService", () => {
     assert.equal(baseUrl, "http://127.0.0.1:4321/")
   })
 
-  it("formats auth, validates locations, and evicts through the official debug API", async () => {
+  it("formats auth and rejects non-directory location selectors", async () => {
     let clientHeaders: HeadersInit | undefined
-    let evicted: unknown
-    let evictionSignal: AbortSignal | undefined
     const service = createService({
       makeClient: (options) => {
         clientHeaders = options.headers
@@ -307,30 +305,18 @@ describe("OpenCodeSharedService", () => {
             directory: "/repo",
             project: { id: "project", directory: "/repo", canonical: "/repo" },
           }) },
-          debug: { location: { evict: async (input: unknown, request?: { signal?: AbortSignal }) => {
-            evicted = input
-            evictionSignal = request?.signal
-          } } },
         } as unknown as OpenCodeClient
       },
     })
     const options = lifecycleOptions("host:test", lifecycleFor(endpoint))
-    const signal = new AbortController().signal
 
     assert.deepEqual(await service.headers(options), { authorization: "Basic proxy" })
     await assert.rejects(
       service.validateLocation({ directory: "/repo", workspaceID: "foreign" }, undefined, options),
       /identified by directory/,
     )
-    await service.evictLocation(
-      { directory: "/repo" },
-      { signal },
-      options,
-    )
 
     assert.deepEqual(clientHeaders, { authorization: "Basic proxy" })
-    assert.deepEqual(evicted, { location: { directory: "/repo" } })
-    assert.equal(evictionSignal, signal)
   })
 })
 

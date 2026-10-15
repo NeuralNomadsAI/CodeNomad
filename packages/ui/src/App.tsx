@@ -9,7 +9,6 @@ import FolderSelectionView from "./components/folder-selection-view"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
-import { showConfirmDialog } from "./stores/alerts"
 import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
@@ -57,7 +56,6 @@ import { recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
   instances,
-  stopInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   reconcilePendingSessionIndicators,
@@ -96,6 +94,7 @@ import {
   activeAppTabId,
   appTabs,
   closeInstanceTab,
+  detachInstanceTab,
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
@@ -590,30 +589,10 @@ const App: Component = () => {
     const instanceId = disconnectedInstance()?.id
     try {
       await acknowledgeDisconnectedInstance()
-      if (instanceId) closeInstanceTab(instanceId)
+      if (instanceId) detachInstanceTab(instanceId)
     } catch (error) {
       log.error("Failed to finalize disconnected instance", error)
     }
-  }
-
-  async function handleStopInstance(instanceId: string) {
-    if (instances().get(instanceId)?.temporary) {
-      await closeTemporaryInstance(instanceId)
-      return
-    }
-    const confirmed = await showConfirmDialog(
-      t("app.stopInstance.confirmMessage"),
-      {
-        title: t("app.stopInstance.title"),
-        variant: "warning",
-        confirmLabel: t("app.stopInstance.confirmLabel"),
-        cancelLabel: t("app.stopInstance.cancelLabel"),
-      },
-    )
-
-    if (!confirmed) return
-
-    await stopInstance(instanceId)
   }
 
   async function handleNewSession(instanceId: string) {
@@ -699,7 +678,6 @@ const App: Component = () => {
     handleNewInstanceRequest,
     handleNewTemporaryInstance: () => handleNewTemporaryInstance(),
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
-    handleStopInstance,
     handleNewSession,
     handleCloseSession,
     getActiveInstance: activeInstance,

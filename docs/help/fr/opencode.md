@@ -27,7 +27,7 @@ Les contrats requis de session, permission, Form, boîte de réception et enviro
 
 Sous Windows, un exécutable WSL sélectionné s’exécute dans la distribution choisie. Installez/mettez-le à jour là-bas et utilisez des chemins valides dans cette distribution. La connectivité WSL dépend du transfert localhost de Windows. Une CLI Windows et une CLI WSL ne sont pas des environnements d’exécution interchangeables.
 
-OpenCode possède l’enregistrement global de son service, ses sessions, messages et base de données. CodeNomad ne crée pas une base OpenCode privée par fenêtre ou projet. Fermer un onglet/une fenêtre ou arrêter le backend CodeNomad n’arrête pas le démon partagé. **Arrêter l'espace de travail** évince plutôt une Location et ses ressources ; voir [Projets](projects.md).
+OpenCode possède l’enregistrement global de son service, ses sessions, messages et base de données. CodeNomad ne crée pas une base OpenCode privée par fenêtre ou projet. Fermer un onglet/une fenêtre ou arrêter le backend CodeNomad n’arrête pas le démon partagé. Fermer un onglet de projet ferme uniquement le projet dans CodeNomad, sans décharger la Location native. Les sessions continuent dans OpenCode et se retrouvent en rouvrant le projet ; voir [Projets](projects.md).
 
 ## Mettre à jour, redémarrer ou recharger {#maintenance}
 

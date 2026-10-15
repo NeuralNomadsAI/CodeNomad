@@ -27,7 +27,7 @@ CodeNomad कार्यान्वयन होस्टको साझा O
 
 Windows मा चयनित WSL executable रोजिएको वितरणभित्र चल्छ। त्यहीं स्थापना/अपडेट गर्नुहोस् र त्यस वितरणभित्र अर्थपूर्ण मार्ग प्रयोग गर्नुहोस्। WSL जडान Windows localhost forwarding मा निर्भर छ। Windows CLI र WSL CLI साट्न मिल्ने कार्यान्वयन वातावरण होइनन्।
 
-OpenCode को global service registration, सत्र, सन्देश र database OpenCode कै हुन्। CodeNomad ले विन्डो वा परियोजनापिच्छे निजी OpenCode database बनाउँदैन। ट्याब/विन्डो वा CodeNomad ब्याकएन्ड बन्द गर्दा साझा daemon रोकिँदैन। **कार्यस्थान रोक्नुहोस्** ले भने Location र स्रोत हटाउँछ; [परियोजना](projects.md) हेर्नुहोस्।
+OpenCode को global service registration, सत्र, सन्देश र database OpenCode कै हुन्। CodeNomad ले विन्डो वा परियोजनापिच्छे निजी OpenCode database बनाउँदैन। परियोजना ट्याब बन्द गर्दा त्यो परियोजना CodeNomad मा बन्द हुन्छ, तर Location हट्दैन र सत्र OpenCode मा चलिरहन्छन्। परियोजना फेरि खोल्दा ती भेटिन्छन्। विन्डो वा CodeNomad ब्याकएन्ड बन्द गर्दा साझा daemon रोकिँदैन; [परियोजना](projects.md) हेर्नुहोस्।
 
 ## अपडेट, पुनःसुरुवात वा reload {#maintenance}
 

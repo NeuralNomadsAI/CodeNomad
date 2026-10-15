@@ -54,7 +54,6 @@ export interface UseCommandsOptions {
   handleNewInstanceRequest: () => void
   handleNewTemporaryInstance: () => Promise<void>
   handleCloseActiveTab: () => Promise<void>
-  handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
   getActiveInstance: () => Instance | null
@@ -144,19 +143,6 @@ export function useCommands(options: UseCommandsOptions) {
       shortcutId: "close-instance",
       action: async () => {
         await options.handleCloseActiveTab()
-      },
-    })
-
-    commandRegistry.register({
-      id: "stop-instance",
-      label: () => tGlobal("commands.stopInstance.label"),
-      description: () => tGlobal("commands.stopInstance.description"),
-      category: "Instance",
-      keywords: () => splitKeywords("commands.stopInstance.keywords"),
-      disabled: () => !activeInstance(),
-      action: async () => {
-        const instance = activeInstance()
-        if (instance) await options.handleStopInstance(instance.id)
       },
     })
 

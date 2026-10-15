@@ -104,7 +104,7 @@ test("registered-only event ownership retains clone, nested-folder, alias and in
     settings: { getOwner: () => ({ environmentVariables: {} }) } as any,
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "Fixture" }) } as any,
     sharedService: { existingConnection: () => connection, client: async () => client, validateLocation: async (location: LocationRef) => client.location.get({ location }),
-      headers: async () => ({}), evictLocation: async () => {}, shutdown: async () => {} } as any,
+      headers: async () => ({}), shutdown: async () => {} } as any,
   })
   t.after(async () => { await manager.shutdown(); rmSync(root, { recursive: true, force: true }) })
   const { workspace } = await manager.create(path.join(repo, "nested"))

@@ -91,7 +91,7 @@ import {
   type FormWithLocation,
 } from "./forms"
 import { invalidateFilesystemCaches } from "../lib/filesystem-events"
-import { detachInstanceTabMembership, requestInstanceTabClose } from "./app-tab-membership"
+import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
@@ -1345,6 +1345,14 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped": {
+      const instance = instances().get(event.workspaceId)
+      if (event.reason === "deleted" && instance && openInstanceTabIds().has(event.workspaceId)
+        && !workspaceCloseRequests.has(event.workspaceId)) {
+        showToastNotification({
+          message: tGlobal("app.closeInstance.toast.otherWindow", { project: getInstanceLabel(instance) }),
+          variant: "info",
+        })
+      }
       requestInstanceTabClose(event.workspaceId)
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
       // Clear the instance after this event batch has unmounted its tab: clearing
@@ -1780,31 +1788,35 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-const stopInstanceRequests = new Map<string, Promise<void>>()
+const workspaceCloseRequests = new Map<string, Promise<void>>()
 
-function stopInstance(id: string): Promise<void> {
+/** Normal close and temporary discard share in-flight deduplication and window provenance. */
+function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promise<void> {
+  const pending = workspaceCloseRequests.get(id)
+  if (pending) return pending
+  const request = Promise.resolve().then(operation).finally(() => workspaceCloseRequests.delete(id))
+  workspaceCloseRequests.set(id, request)
+  return request
+}
+
+function closeWorkspace(id: string): Promise<void> {
   const instance = instances().get(id)
   if (!instance) return Promise.resolve()
-  const pending = stopInstanceRequests.get(id)
+  const pending = workspaceCloseRequests.get(id)
   if (pending) return pending
 
-  const request = serverApi.deleteWorkspace(id)
+  return trackWorkspaceClose(id, () => serverApi.deleteWorkspace(id))
     .catch((error) => {
-      log.error("Failed to stop workspace", error)
+      log.error("Failed to close workspace", error)
       try {
         showToastNotification({
-          message: tGlobal("app.stopInstance.toast.error"),
+          message: tGlobal("app.closeInstance.toast.error"),
           variant: "error",
         })
       } finally {
         throw error
       }
     })
-    .finally(() => {
-      stopInstanceRequests.delete(id)
-    })
-  stopInstanceRequests.set(id, request)
-  return request
 }
 
 function getActiveInstance(): Instance | null {
@@ -2378,7 +2390,8 @@ export {
   waitForInstanceWorkspaceMetadataHydration,
   getExistingInstanceForFolder,
   updateProjectNameForFolder,
-  stopInstance,
+  closeWorkspace,
+  trackWorkspaceClose,
   getActiveInstance,
   addLog,
   clearLogs,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it } from "node:test"
+import toast from "solid-toast"
 
 import { serverApi } from "../lib/api-client.ts"
 import type { Instance } from "../types/instance.ts"
@@ -8,6 +9,7 @@ import {
   appTabs,
   attachInstanceTab,
   closeInstanceTab,
+  detachInstanceTab,
   setAppTabOrder,
   selectInstanceTab,
 } from "./app-tabs.ts"
@@ -20,7 +22,11 @@ import {
 } from "./app-session-snapshot-merge.ts"
 import type { RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
-import { addInstance, instances, removeInstance, stopInstance, updateInstance } from "./instances.ts"
+import { releaseAppSessionRestoreGate } from "./app-session-restore-gate"
+import { acknowledgeDisconnectedInstance, addInstance, disconnectedInstance, getExistingInstanceForFolder, instances, removeInstance, updateInstance } from "./instances.ts"
+import { sseManager } from "../lib/sse-manager"
+import { clearToastHistory, getToastHistory } from "../lib/notifications.tsx"
+import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events.ts"
 import { createTextAttachment } from "../types/attachment.ts"
 import { getAttachments, hydrateSessionAttachments } from "./attachments.ts"
@@ -60,6 +66,15 @@ function captureTabs(): RestorableSessionState {
 }
 
 describe("renderer-local workspace tabs", () => {
+  const originalDelete = serverApi.deleteWorkspace
+  const originalToast = toast.custom
+  beforeEach(() => {
+    releaseAppSessionRestoreGate()
+    serverApi.deleteWorkspace = async () => {}
+    clearToastHistory()
+    toast.custom = () => "test-toast"
+  })
+  afterEach(() => { serverApi.deleteWorkspace = originalDelete; toast.custom = originalToast })
   it("keeps catalog additions and updates closed until explicitly attached", () => {
     const first = instance("catalog-first")
     const second = instance("catalog-second")
@@ -80,18 +95,26 @@ describe("renderer-local workspace tabs", () => {
     }
   })
 
-  it("closes locally without deleting and does not resurrect a reused id", () => {
+  it("closes immediately, deletes once and leaves another occurrence of the folder alone", async () => {
     const workspace = instance("local-close")
     const originalDelete = serverApi.deleteWorkspace
     let deletes = 0
     serverApi.deleteWorkspace = async () => { deletes += 1 }
     addInstance(workspace)
+    const other = { ...instance("other-occurrence"), folder: workspace.folder }
+    addInstance(other)
+    attachInstanceTab(other.id)
     try {
       selectInstanceTab(workspace.id)
       closeInstanceTab(workspace.id)
+      closeInstanceTab(workspace.id)
       assert.equal(instances().has(workspace.id), true)
       assert.equal(appTabs().some((tab) => tab.id === `instance:${workspace.id}`), false)
-      assert.equal(deletes, 0)
+      await Promise.resolve()
+      assert.equal(deletes, 1)
+      assert.ok(instances().has(other.id))
+      assert.ok(appTabs().some((tab) => tab.id === `instance:${other.id}`))
+      assert.equal(activeAppTabId(), `instance:${other.id}`)
 
       removeInstance(workspace.id)
       selectInstanceTab(workspace.id)
@@ -100,6 +123,7 @@ describe("renderer-local workspace tabs", () => {
     } finally {
       serverApi.deleteWorkspace = originalDelete
       removeInstance(workspace.id, { authoritative: false })
+      removeInstance(other.id, { authoritative: false })
     }
   })
 
@@ -205,12 +229,13 @@ describe("renderer-local workspace tabs", () => {
       assert.equal(instances().has(stopped.id), true)
       await Promise.resolve()
       assert.equal(instances().has(stopped.id), false)
+      assert.equal(getToastHistory()[0]?.message, tGlobal("app.closeInstance.toast.otherWindow", { project: "stopped-active" }))
     } finally {
       for (const candidate of [closed, stopped, left, right]) removeInstance(candidate.id, { authoritative: false })
     }
   })
 
-  it("uses explicit stop as the delete path and retains state when delete fails", async () => {
+  it("reports a failed close, keeps its record reachable and never retries automatically", async () => {
     const workspace = instance("failed-stop")
     const originalDelete = serverApi.deleteWorkspace
     let deletes = 0
@@ -221,20 +246,68 @@ describe("renderer-local workspace tabs", () => {
     addInstance(workspace)
     selectInstanceTab(workspace.id)
     try {
-      const first = stopInstance(workspace.id)
-      const second = stopInstance(workspace.id)
-      assert.equal(first, second)
-      await assert.rejects(first, /stop failed/)
+      closeInstanceTab(workspace.id)
+      await new Promise((resolve) => setImmediate(resolve))
       assert.equal(deletes, 1)
       assert.equal(instances().has(workspace.id), true)
-      assert.equal(appTabs().some((tab) => tab.id === `instance:${workspace.id}`), true)
+      assert.equal(appTabs().some((tab) => tab.id === `instance:${workspace.id}`), false)
+      assert.equal(getExistingInstanceForFolder(workspace.folder)?.id, workspace.id)
+      assert.equal(getToastHistory()[0]?.message, tGlobal("app.closeInstance.toast.error"))
 
       serverApi.deleteWorkspace = async () => { deletes += 1 }
-      await stopInstance(workspace.id)
+      selectInstanceTab(workspace.id)
+      closeInstanceTab(workspace.id)
+      await new Promise((resolve) => setImmediate(resolve))
       assert.equal(deletes, 2)
     } finally {
       serverApi.deleteWorkspace = originalDelete
       removeInstance(workspace.id, { authoritative: false })
     }
+  })
+
+  it("does not notify the initiating window or delete again on its stop event", async () => {
+    const workspace = instance("initiated-close")
+    addInstance(workspace)
+    selectInstanceTab(workspace.id)
+    let deletes = 0
+    serverApi.deleteWorkspace = async () => {
+      deletes += 1
+      ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: workspace.id, reason: "deleted" })
+    }
+    try {
+      closeInstanceTab(workspace.id)
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(deletes, 1)
+      assert.deepEqual(getToastHistory(), [])
+      assert.equal(instances().has(workspace.id), false)
+    } finally { removeInstance(workspace.id, { authoritative: false }) }
+  })
+
+  it("does not notify for shutdown or for records not displayed in this window", async () => {
+    for (const [id, reason, attached] of [["shutdown", "stopped", true], ["hidden", "deleted", false]] as const) {
+      addInstance(instance(id))
+      if (attached) attachInstanceTab(id)
+      ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: id, reason })
+      await Promise.resolve()
+      assert.deepEqual(getToastHistory(), [])
+      removeInstance(id, { authoritative: false })
+    }
+  })
+
+  it("keeps disconnected-dialog dismissal local without issuing another delete", async () => {
+    const workspace = instance("disconnected")
+    let deletes = 0
+    serverApi.deleteWorkspace = async () => { deletes += 1 }
+    addInstance(workspace)
+    selectInstanceTab(workspace.id)
+    try {
+      sseManager.onConnectionLost?.(workspace.id, "unavailable")
+      assert.equal(disconnectedInstance()?.id, workspace.id)
+      await acknowledgeDisconnectedInstance()
+      detachInstanceTab(workspace.id)
+      assert.equal(disconnectedInstance(), null)
+      assert.equal(appTabs().length, 0)
+      assert.equal(deletes, 0)
+    } finally { removeInstance(workspace.id, { authoritative: false }) }
   })
 })

@@ -95,7 +95,8 @@
 
 | 组件 | 关闭意味着什么 |
 | --- | --- |
-| CodeNomad 标签页/窗口 | 分离视图；不停止原生工作或 OpenCode 服务。 |
+| CodeNomad 项目标签页 | 在 CodeNomad 中关闭该项目；不停止原生工作或 OpenCode 服务，重新打开即可再次找到会话。 |
+| CodeNomad 窗口 | 分离视图；不停止原生工作或 OpenCode 服务。 |
 | CodeNomad 后端 | 不停止 OpenCode。一次性 CodeNomad 协调依赖后端存在；不要假定关闭后仍可派发/控制新的一次性任务。 |
 | 运行中的每日日程 | 时钟和运行执行在 OpenCode 插件/服务中进行，包括 CodeNomad 界面和后端都关闭时。执行主机和 OpenCode 服务必须持续运行。 |
 | OpenCode 服务重启 | 丢失进程内日程作业。期望运行的日程变为**已中断**，直到显式**继续**；重新打开 CodeNomad 不会重新启用它。 |

@@ -27,7 +27,7 @@ También deben estar disponibles los contratos requeridos de sesiones, permisos,
 
 En Windows, un ejecutable WSL seleccionado se ejecuta dentro de su distribución elegida. Instálalo/actualízalo allí y usa rutas que tengan sentido dentro de esa distribución. La conectividad WSL depende del reenvío de localhost de Windows. Una CLI de Windows y una CLI de WSL no son entornos de ejecución intercambiables.
 
-OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña/ventana o apagar el backend de CodeNomad no detiene el daemon compartido. **Detener espacio de trabajo**, en cambio, libera una Location y sus recursos; consulta [Proyectos](projects.md).
+OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña/ventana o apagar el backend de CodeNomad no detiene el daemon compartido. Cerrar una pestaña de proyecto solo cierra el proyecto en CodeNomad, sin descargar la Location nativa. Las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto; consulta [Proyectos](projects.md).
 
 ## Actualizar, reiniciar o recargar {#maintenance}
 

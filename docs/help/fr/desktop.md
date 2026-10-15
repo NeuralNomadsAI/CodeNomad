@@ -6,7 +6,7 @@
 2. Utilisez le menu natif **Fenêtre → Nouvelle fenêtre** (`Ctrl+Shift+N` ou `Cmd+Shift+N`) pour une fenêtre d’application séparée.
 3. Dans **Paramètres → Avancé**, activez **Focaliser la fenêtre existante au second lancement** si un autre lancement doit focaliser la dernière fenêtre utilisée au lieu d’en ouvrir une nouvelle.
 
-Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer une fenêtre ou un onglet n’arrête pas ce service. **Arrêter l'espace de travail** est une action partagée distincte ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
+Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer une fenêtre ou un onglet n’arrête pas ce service. Fermer un onglet de projet ferme le projet dans CodeNomad ; les sessions continuent dans OpenCode et se retrouvent en rouvrant le projet ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
 
 ## Préférences et restauration au démarrage {#preferences-startup}
 

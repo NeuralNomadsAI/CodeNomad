@@ -22,25 +22,24 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 
 Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellstarter ist ein Direktzugriff, keine Verwaltungsoberfläche: Benennen/entfernen Sie zuletzt verwendete Projekte und verwalten Sie Server-Lesezeichen auf der Startseite. Escape schließt den Schnellstarter und setzt den Fokus auf `+` zurück.
 
-## Tab schließen oder Arbeitsbereich stoppen {#close-stop}
+## Projekt-Tab schließen {#close-stop}
 
-1. Um nur die aktuelle Ansicht zu entfernen, verwenden Sie die Schließen-Schaltfläche des Tabs oder **Tab schließen** in der Befehlspalette.
-2. Um die gemeinsame Arbeitsbereichsverbindung des Backends zu beenden, führen Sie **Arbeitsbereich stoppen** aus und bestätigen Sie.
-3. Öffnen Sie den Ordner bei Bedarf über die Ordnersuche oder zuletzt verwendete Einträge erneut.
+1. Verwenden Sie die Schließen-Schaltfläche des Tabs oder **Tab schließen** in der Befehlspalette, um das Projekt in CodeNomad zu schließen. CodeNomad verfolgt diese geöffnete Projektinstanz nicht mehr.
+2. Sitzungen laufen in OpenCode weiter; die Projektdateien und der native Verlauf bleiben erhalten.
+3. Öffnen Sie den Ordner bei Bedarf über die Ordnersuche oder zuletzt verwendete Einträge erneut, um die Sitzungen wiederzufinden.
 
 | Aktion | Geltungsbereich und Wirkung | Was sie nicht tut |
 | --- | --- | --- |
-| Tab schließen | Oberster Tab dieses Fensters | Löscht weder Projekt noch nativen Verlauf; nicht zum Beenden einer Generierung verwenden |
-| Arbeitsbereich stoppen | Gemeinsamer Arbeitsbereich, betrifft alle verbundenen Fenster | Löscht keine normalen Projektdateien und beendet nicht den gemeinsamen OpenCode-Dienst |
+| Tab schließen | Schließt diese geöffnete Projektinstanz in CodeNomad | Löscht keine Projektdateien oder nativen Sitzungen und beendet keine Generierung oder den gemeinsamen OpenCode-Dienst |
 | Sitzung stoppen | Ausführung der ausgewählten Unterhaltung | Schließt weder Projekt noch löscht es dessen Verlauf |
 
-Arbeitsbereich stoppen gibt die native Location des Arbeitsbereichs frei, sobald sie nicht mehr gemeinsam genutzt wird. Betrachten Sie dies als Eingriff, nicht als Pausentaste für eine Unterhaltung. Stoppen Sie relevante Ausführungen ausdrücklich vor dem Schließen, wenn Sie das Ende der Ausführung überprüfen müssen. Die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
+Ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt. Zeigt ein anderes Fenster dieselbe geöffnete Projektinstanz, schließt sich dessen Tab ebenfalls; dort erscheint eine Benachrichtigung. CodeNomad entfernt dabei keine native OpenCode-Location. Stoppen Sie relevante Ausführungen ausdrücklich vor dem Schließen, wenn sie beendet werden sollen. Die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
 1. Wählen Sie **Temporär** im Schnellstarter oder **Neue temporäre Instanz** auf der Startseite.
 2. Arbeiten Sie im leeren, von CodeNomad verwalteten Ordner; Git wird nicht automatisch initialisiert.
-3. Wählen Sie beim Schließen oder Stoppen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Das Tab-Menü bietet auch **Als Projekt behalten**.
+3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Nach **Behalten** schließt sich der Tab wie ein normaler Projekt-Tab. Das Tab-Menü bietet auch **Als Projekt behalten**.
 
 | Auswahl | Wirkung | Wiederherstellung |
 | --- | --- | --- |

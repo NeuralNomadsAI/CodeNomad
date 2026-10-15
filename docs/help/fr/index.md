@@ -4,7 +4,7 @@ Ce guide explique comment utiliser l’espace de travail CodeNomad actuel, sur o
 
 ## À lire en premier {#read-this-first}
 
-CodeNomad relie votre espace de travail à un service OpenCode partagé en arrière-plan. Les sessions et les messages appartiennent à OpenCode ; les onglets, brouillons de saisie et dispositions appartiennent au client CodeNomad. Fermer un onglet n’arrête pas un espace de travail, et fermer CodeNomad n’arrête pas OpenCode.
+CodeNomad relie votre espace de travail à un service OpenCode partagé en arrière-plan. Les sessions et les messages appartiennent à OpenCode ; les onglets, brouillons de saisie et dispositions appartiennent au client CodeNomad. Fermer un onglet de projet ferme le projet dans CodeNomad ; les sessions continuent dans OpenCode et se retrouvent en rouvrant le projet. Fermer CodeNomad n’arrête pas OpenCode.
 
 1. Vérifiez les [prérequis de l’hôte](install.md#requirements) et la [configuration d’OpenCode](opencode.md).
 2. [Ouvrez un projet](projects.md), puis choisissez les réglages Agent, Modèle et Réflexion de la conversation.
@@ -41,7 +41,7 @@ Pour les limites précises, consultez [aperçus navigateur et SideCars](browser-
 | Conversation / session | Historique et exécution natifs OpenCode associés à leur répertoire. |
 | Famille | Conversation et ses sous-sessions récursives ; intervient dans les déplacements, l’activité, Yolo et les commandes des Missions. |
 | Worktree | Copie de travail détenue d’un dépôt, sélectionnée pour la navigation ou l’emplacement des sessions. La parcourir ne déplace pas une conversation. |
-| Location | Contexte d’exécution natif OpenCode propre à un répertoire ; **Arrêter l'espace de travail** libère ses ressources, pas le démon partagé. |
+| Location | Contexte d’exécution natif OpenCode propre à un répertoire ; fermer un onglet de projet ferme uniquement le projet dans CodeNomad, sans décharger la Location native. |
 | Backend CodeNomad | Serveur fournissant l’espace de travail, Git, l’authentification et la connectivité des clients. Son compte et son environnement déterminent l’accès au système de fichiers du backend. |
 | Configuration | Paramètres CodeNomad dans le répertoire de configuration du serveur ; les paramètres OpenCode Global/Projet ont leur propre portée native. |
 | Fenêtre | Ses propres onglets, navigation, brouillons et vue restaurée. L’historique natif est partagé, pas copié pour chaque fenêtre. |

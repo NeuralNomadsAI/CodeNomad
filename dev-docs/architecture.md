@@ -24,9 +24,9 @@ OpenCode owns the daemon's standard state and database. Configured allowed envir
 1. Validate the directory with `client.location.get`.
 2. Store the returned `LocationRef` and publish the logical workspace.
 3. Reuse the shared service for every additional directory.
-4. On explicit **Stop Workspace**, evict the location and its resources from the global service, then remove CodeNomad's logical workspace.
+4. Closing a project tab deletes that occurrence's logical workspace record through `DELETE /api/workspaces/:id`, without any native eviction. Sessions continue in OpenCode.
 
-Workspaces are not OpenCode processes and do not own ports or PIDs. Closing an ordinary tab or native window only detaches local UI state and never evicts the location.
+Workspaces are not OpenCode processes and do not own ports or PIDs. Separate tabs opened on the same folder have independent records. Other windows displaying the deleted record close its tab via `workspace.stopped` and notify; the initiating window stays quiet. Whole-window close, quit, renderer reload and backend shutdown keep their existing restoration behavior. CodeNomad never evicts native Locations.
 
 ## Native Profiles, Windows, And Client State
 
