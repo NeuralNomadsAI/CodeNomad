@@ -92,7 +92,8 @@ test("a session reactivated beneath a reader is restored to its latest message o
     assert.equal(await page.locator(".mission-transcript-content").getAttribute("inert"), "")
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
     await latestHistoryPainted(page)
-    // The applied restore records the position it reached.
+    // The persisted position still describes a following reader at the bottom
+    // (recorded before the reader opened and on unmount, not by this restore).
     await page.waitForFunction(() => {
       const scroll = (window as any).fixture.snapshot().scroll
       return scroll?.atBottom === true && scroll.followModeType === "following"
