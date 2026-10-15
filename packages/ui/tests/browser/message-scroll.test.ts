@@ -329,8 +329,10 @@ for (const [gesture, zoom] of [["wheel 600", 1], ["wheel 5000", 1], ["wheel 600"
     else await page.mouse.wheel(0, gesture === "wheel 600" ? 600 : 5000)
     await pump
     await frames(page, 10)
-    // The pinned stream never settles: resuming follow is persisted at once, without a flush.
-    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType), "following")
+    // The pinned stream never settles: resuming follow is persisted without a
+    // flush, once at the bottom, so it restores as following.
+    const resumed = await page.evaluate(() => (window as any).fixture.snapshot().scroll)
+    assert.deepEqual({ followModeType: resumed.followModeType, atBottom: resumed.atBottom }, { followModeType: "following", atBottom: true }, JSON.stringify(resumed))
     const state = await readerState(page)
     assert.deepEqual({ followModeType: state.followModeType, latestButton: state.latestButton }, { followModeType: "following", latestButton: 0 }, JSON.stringify(state))
     assert.ok(state.gap <= 2, `The resumed reader must stay at the streaming tail: ${state.gap}px`)
@@ -489,16 +491,22 @@ for (const transition of ["switch", "unmount", "flush"] as const) test(`an unset
     assert.ok(Math.abs(persisted.anchorOffset - reached.anchorOffset!) <= 2, JSON.stringify({ persisted, reached }))
   }
   await open(async page => {
+    await page.evaluate(scope => document.querySelector(`${scope} .message-stream`)!.addEventListener("scroll", () => { (window as any).lastScrollAt = Date.now() }, { passive: true }), scope)
     await page.locator(`${scope} .message-stream`).hover()
     await page.mouse.wheel(0, -900)
-    await frames(page, 45)
+    // Settles without a flush: wait for a write after the last scroll event,
+    // not a frame count.
+    await page.waitForFunction(`window.fixture.snapshot().scroll.updatedAt > window.lastScrollAt
+      && Math.abs(window.fixture.snapshot().scroll.scrollTop - document.querySelector(${JSON.stringify(`${scope} .message-stream`)}).scrollTop) <= 1`, undefined, { timeout: 3000 })
     const settled = await page.evaluate(`({ persisted: window.fixture.snapshot().scroll, reached: (${live})(${JSON.stringify(scope)}) })`) as any
     assertAnchored(settled.persisted, settled.reached)
-    await page.mouse.wheel(0, -600)
-    await frames(page, 3)
+    // Scroll again and transition in the scroll event's task, before the
+    // scroll-end timer can fire, whatever the load.
     const result = await page.evaluate(`(async () => {
       const fixture = window.fixture
       const { messageStoreBus } = await import("/src/stores/message-v2/bus.ts")
+      const stream = document.querySelector(${JSON.stringify(`${scope} .message-stream`)})
+      await new Promise(resolve => { stream.addEventListener("scroll", resolve, { once: true }); stream.scrollTop -= 600 })
       const reached = (${live})(${JSON.stringify(scope)})
       const pending = fixture.snapshot().scroll.scrollTop
       if (${JSON.stringify(transition)} === "switch") fixture.switchTo("B")
