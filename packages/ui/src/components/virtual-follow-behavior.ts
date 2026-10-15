@@ -283,7 +283,6 @@ export interface ScrollControllerMetrics {
 export interface ScrollControllerState {
   mode: FollowMode
   lastObservedOffset: number
-  lastObservedAtBottom: boolean
   userIntentDirection: ScrollDirection
   userIntentUntil: number
   restoring: boolean
@@ -297,7 +296,6 @@ export interface ScrollControllerResult {
 export interface ScrollControllerSnapshot {
   mode: FollowMode
   lastObservedOffset: number
-  lastObservedAtBottom: boolean
   userIntentDirection: ScrollDirection
   userIntentUntil: number
   restoring: boolean
@@ -407,7 +405,6 @@ export class VirtualScrollController {
     this.state = {
       mode: initialFollow ? { type: "following" } : { type: "escaped" },
       lastObservedOffset: 0,
-      lastObservedAtBottom: false,
       userIntentDirection: null,
       userIntentUntil: 0,
       restoring: false,
@@ -457,7 +454,6 @@ export class VirtualScrollController {
     const next = transitionFollowMode(this.state.mode, { type: "reset", follow })
     this.state.mode = next.mode
     this.state.lastObservedOffset = 0
-    this.state.lastObservedAtBottom = false
     this.state.userIntentDirection = null
     this.state.userIntentUntil = 0
     this.state.restoring = false
@@ -505,7 +501,6 @@ export class VirtualScrollController {
     const atBottom = isAtBottom(metrics)
 
     this.state.lastObservedOffset = offset
-    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
     this.clearExpiredUserIntent(now)
 
     const hasFreshIntent = now <= this.state.userIntentUntil
@@ -534,7 +529,6 @@ export class VirtualScrollController {
 
     const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom: isAtBottomForMode(this.state.mode, metrics) })
     this.state.mode = next.mode
-    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
     return this.result(next.effect)
   }
 
@@ -545,9 +539,8 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
-  recordProgrammaticOffset(offset: number, atBottom: boolean) {
+  recordProgrammaticOffset(offset: number) {
     this.state.lastObservedOffset = offset
-    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
   }
 
   private result(effect: FollowEffect): ScrollControllerResult {

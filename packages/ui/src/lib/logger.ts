@@ -1,8 +1,10 @@
 import debug from "debug"
 
-export type LoggerNamespace = "sse" | "api" | "session" | "actions" | "foreground-refresh"
+export type LoggerNamespace = "sse" | "api" | "session" | "actions" | "foreground-refresh" | "scroll"
 
 interface Logger {
+  /** Check before building costly entries (layout reads, allocations) for a disabled namespace. */
+  readonly enabled: boolean
   log: (...args: unknown[]) => void
   info: (...args: unknown[]) => void
   warn: (...args: unknown[]) => void
@@ -22,7 +24,7 @@ export interface LoggerControls {
   disableAllLoggers: () => void
 }
 
-const KNOWN_NAMESPACES: LoggerNamespace[] = ["sse", "api", "session", "actions", "foreground-refresh"]
+const KNOWN_NAMESPACES: LoggerNamespace[] = ["sse", "api", "session", "actions", "foreground-refresh", "scroll"]
 const STORAGE_KEY = "opencode:logger:namespaces"
 
 const namespaceLoggers = new Map<LoggerNamespace, Logger>()
@@ -73,6 +75,7 @@ function buildLogger(namespace: LoggerNamespace): Logger {
     baseLogger(level, ...args)
   }
   return {
+    get enabled() { return base.enabled },
     log: (...args: any[]) => baseLogger(...args),
     info: (...args: any[]) => baseLogger(...args),
     warn: (...args: any[]) => formatAndLog("[warn]", args),

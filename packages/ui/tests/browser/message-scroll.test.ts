@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { SCROLL_REASONS } from "../../src/components/virtual-scroll-trace"
 import { createFixtureCache } from "./fixture-cache"
 
 // Scroll ownership regressions over the real SessionView/VirtualFollowList:
@@ -124,6 +125,62 @@ async function assertAnchorHeld(page: Page, samples: Array<{ time: number; ancho
   const late = await page.evaluate(time => (window as any).scrollObservations.filter((sample: any) => sample.time >= time && sample.anchorOffset !== null), samples[settle].time)
   assert.ok(late.every((sample: any) => Math.abs(sample.anchorOffset - expected) < tolerance), `Post-layout restore cycle: expected=${expected}; ${JSON.stringify(late)}`)
 }
+
+type ScrollTraceEntry = { kind: "write" | "observe" | "mode" } & Record<string, any>
+
+/** Parses the `scroll` logger's JSON lines; the namespace stays disabled until `enable`. */
+function collectScrollTrace(page: Page) {
+  const entries: ScrollTraceEntry[] = []
+  page.on("console", message => {
+    // debug's browser output interleaves %c colour directives.
+    const match = /scroll (?:%c)?(write|observe|mode) (\{.*\})/.exec(message.text())
+    if (match) entries.push({ kind: match[1] as ScrollTraceEntry["kind"], ...JSON.parse(match[2]) })
+  })
+  return { entries, enable: () => page.evaluate(() => (window as any).codenomadLogger.enableLogger("scroll")) }
+}
+
+test("the scroll trace attributes every transcript write to a closed reason", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    const stream = page.locator(".message-stream")
+    await bottom(page)
+    assert.deepEqual(trace.entries, [], "The trace is silent until enabled")
+    assert.equal(await stream.getAttribute("data-scroll-write"), null, "No trace state is published while disabled")
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    await trace.enable()
+    await stream.hover()
+    await page.mouse.wheel(0, -800)
+    await frames(page, 45)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped")
+    await stream.focus()
+    await page.keyboard.press("End")
+    await frames(page, 30)
+    await page.evaluate(() => (window as any).fixture.start())
+    for (let i = 0; i < 6; i++) {
+      await page.evaluate(() => (window as any).fixture.delta("Traced streaming paragraph.\n\n".repeat(3)))
+      await frames(page, 4)
+    }
+    await page.evaluate(() => { (window as any).fixture.switchAway(); (window as any).fixture.return() })
+    await frames(page, 60)
+    const writes = trace.entries.filter(entry => entry.kind === "write")
+    assert.ok(writes.length > 0, "The scenario writes the transcript position")
+    for (const write of writes) {
+      assert.ok((SCROLL_REASONS as readonly string[]).includes(write.reason), `Unlabelled write: ${JSON.stringify(write)}`)
+      assert.ok(["offset", "dom", "native", "index", "release"].includes(write.op), JSON.stringify(write))
+      assert.equal(write.session, "browser-session")
+      assert.equal(typeof write.from, "number")
+    }
+    const reasons = new Set(writes.map(write => write.reason))
+    for (const reason of ["jump-bottom", "content-grew", "explicit-pin"]) assert.ok(reasons.has(reason), `Missing ${reason}: ${[...reasons]}`)
+    const modes = trace.entries.filter(entry => entry.kind === "mode").map(({ from, to, source }) => `${from}>${to}:${source}`)
+    assert.ok(modes.includes("following>escaped:user-gesture"), JSON.stringify(modes))
+    assert.ok(modes.includes("escaped>following:jump-bottom"), JSON.stringify(modes))
+    assert.ok(trace.entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.intent === "up"), "The wheel is observed as an unowned user scroll")
+    const live = page.locator(".message-stream")
+    assert.equal(await live.getAttribute("data-scroll-write"), writes.at(-1)!.reason)
+    assert.equal(await live.getAttribute("data-follow-mode"), (await readerState(page)).followModeType)
+  })
+})
 
 // A gesture's predicted landing (its amplitude) must not overshoot the real
 // one: CSS zoom scales wheel pixels by 1/zoom, and a page key moves Chromium's
@@ -487,10 +544,12 @@ test("the long-reply hold persists while streaming and the latest button resumes
   }, { name: "switch", hold: true })
 })
 
-// Documents a pre-existing displacement (also on the pre-#967 base): on the
-// frame the hold escapes, Virtua re-estimates never-measured history rows and
-// the view lands around msg_0030_A instead of the held streaming reply. It is
-// diagnosed with the scroll trace in a follow-up and intentionally not fixed here.
+// Documents a pre-existing displacement (also on the pre-#967 base). The scroll
+// trace shows no transcript write in that frame: an `unowned` move where Virtua's
+// one-time default-size estimate (armed per Virtualizer instance, fired once newly
+// measured rows exceed the viewport, i.e. as the reply outgrows it like the hold)
+// shrinks never-measured history rows. The browser clamps to the new maximum and
+// Virtua's jump compensation is applied on top, landing around msg_0030_A.
 test("the long-reply hold keeps the streaming reply in view when it escapes", { todo: "hold escape displaces the reader to older history (follow-up)" }, async () => {
   const scope = '[data-session-id="A"]'
   await open(async page => {

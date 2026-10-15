@@ -1,4 +1,5 @@
 import type { SessionSearchMatch } from "../lib/session-search"
+import { isScrollTraceEnabled, traceScroll } from "./virtual-scroll-trace"
 
 export interface SearchRange { range: Range; active: boolean }
 
@@ -48,7 +49,11 @@ export function collectSearchRanges(root: HTMLElement, query: string, active?: S
   return result
 }
 
-/** Reveal the actual occurrence through nested code/tool and transcript scrollers. */
+/**
+ * Reveal the actual occurrence through nested code/tool and transcript scrollers.
+ * Its occurrence-level centering bypasses VirtualFollowList's `writeScroll`:
+ * preserve the nested-to-outer, one-shot reveal without starting an alignment pin.
+ */
 export function revealSearchRange(range: Range): void {
   const node = range.startContainer
   if (!node.isConnected) return
@@ -60,7 +65,14 @@ export function revealSearchRange(range: Range): void {
     const vertical = parent.scrollHeight > parent.clientHeight && (/auto|scroll|overlay/.test(style.overflowY) || parent === document.scrollingElement)
     const horizontal = parent.scrollWidth > parent.clientWidth && /auto|scroll|overlay/.test(style.overflowX)
     if (vertical && (rect.top < top || rect.bottom > top + parent.clientHeight)) {
+      const from = isScrollTraceEnabled() ? parent.scrollTop : undefined
       parent.scrollTop += (rect.top + rect.bottom) / 2 - top - parent.clientHeight / 2
+      if (from !== undefined) traceScroll("write", {
+        reason: "search-reveal", writer: "external", from, to: parent.scrollTop,
+        mode: parent.dataset.followMode, transcript: parent.classList.contains("message-stream"),
+        key: node.parentElement?.closest<HTMLElement>("[data-virtual-follow-key]")?.dataset.virtualFollowKey,
+        at: Math.round(performance.now()),
+      })
     }
     if (horizontal && (rect.left < left || rect.right > left + parent.clientWidth)) {
       parent.scrollLeft += rect.left < left ? rect.left - left : rect.right - left - parent.clientWidth

@@ -109,6 +109,36 @@ paging until release. A wheel gesture at an already-clamped boundary can request
 the adjacent window even when no DOM scroll event is emitted. First/latest controls
 also account for off-window messages, not just the local scroll offset.
 
+### Transcript scroll ownership and trace
+
+`VirtualFollowList.writeScroll(reason, op)` is the only transcript position write.
+Reasons come from the closed `SCROLL_REASONS` list in `virtual-scroll-trace.ts`; the
+same call opens the programmatic window, records synchronous targets and keeps
+imperative Virtua operations cancellable by the next gesture. Follow-mode changes go
+through `syncControllerResult` with a reason as well. Outside it remain user gestures
+(including wheel re-emission and middle-button autoscroll), Virtua's own size
+compensation, browser clamping, search-result reveals and the pre-registration
+timeline `scrollIntoView` fallback.
+
+Search reveals keep their one-shot occurrence centering through nested scrollers
+(not a 30-frame element-alignment pin). They emit `writer: "external"` with reason
+`search-reveal`; the pre-registration native smooth fallback emits
+`timeline-fallback`. Neither changes the list's programmatic marking. SessionView's
+activation/submission handles and MessageSection's paging, restoration and message
+navigation already use the list API and therefore reach `writeScroll`.
+
+Enable the trace with `codenomadLogger.enableLogger("scroll")` (persisted until
+disabled), then read DevTools or the `codenomad.inspect` console diagnostics. Each line
+is `write`, `mode` or `observe` JSON with session, offsets, scroll height and mode. An
+`observe` move that no write claimed is `unowned`; `intent` distinguishes a user
+gesture from Virtua/browser movement. A recent synchronous write claims only its
+actual landing offset, not unrelated moves during its 120ms programmatic window
+(`during` retains that recent reason); asynchronous Virtua/smooth operations are
+attributed by that window and must be correlated with their preceding `write`.
+The trace is observational, not a proof of native/virtualizer ownership. While enabled, `.message-stream` also carries
+`data-scroll-write` (last reason); `data-follow-mode` is always present. Disabled, the
+trace performs no layout read or allocation.
+
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
 and viewport anchor stability during streaming and distant jumps.

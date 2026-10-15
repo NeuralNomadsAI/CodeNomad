@@ -164,7 +164,7 @@ describe("virtual follow behavior", () => {
 
   it("explicit bottom jumps override stale upward user intent", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2200, false)
+    controller.recordProgrammaticOffset(2200)
     controller.setUserIntent("up", 700)
 
     const jump = controller.jumpBottom(true, true)
@@ -195,7 +195,7 @@ describe("virtual follow behavior", () => {
 
   it("does not resume follow on directionless scroll above bottom", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2220, false)
+    controller.recordProgrammaticOffset(2220)
 
     const result = controller.observeViewport(metrics(2220), 100, false)
 
@@ -205,7 +205,7 @@ describe("virtual follow behavior", () => {
 
   it("does not resume follow from pixel distance alone", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2100, false)
+    controller.recordProgrammaticOffset(2100)
     controller.setUserIntent("down", 700)
 
     const result = controller.observeViewport(metrics(2220), 100, false)
@@ -216,7 +216,7 @@ describe("virtual follow behavior", () => {
 
   it("does not resume follow when downward movement stops inside the proximity tolerance", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2300, false)
+    controller.recordProgrammaticOffset(2300)
     controller.setUserIntent("down", 700)
 
     const result = controller.observeViewport(metrics(2368), 100, false)
@@ -228,7 +228,7 @@ describe("virtual follow behavior", () => {
 
   it("resumes follow only when downward movement reaches exact bottom", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2300, false)
+    controller.recordProgrammaticOffset(2300)
     controller.setUserIntent("down", 700)
 
     const result = controller.observeViewport(metrics(2400), 100, false)
@@ -239,7 +239,7 @@ describe("virtual follow behavior", () => {
 
   it("lets fresh user upward movement escape even during a programmatic window", () => {
     const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
+    controller.recordProgrammaticOffset(2400)
     controller.setUserIntent("up", 700)
 
     const result = controller.observeViewport(metrics(2200), 100, true)
@@ -249,7 +249,7 @@ describe("virtual follow behavior", () => {
 
   it("keeps fresh upward intent escaped even if a programmatic scroll later moves down to bottom", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2200, false)
+    controller.recordProgrammaticOffset(2200)
     controller.setUserIntent("up", 700)
 
     const result = controller.observeViewport(metrics(2400), 100, true)
@@ -259,7 +259,7 @@ describe("virtual follow behavior", () => {
 
   it("repins an off-bottom correction during the programmatic window", () => {
     const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
+    controller.recordProgrammaticOffset(2400)
 
     const result = controller.observeViewport(metrics(2200), 100, true)
 
@@ -356,7 +356,7 @@ describe("virtual follow behavior", () => {
 
   it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2200, false)
+    controller.recordProgrammaticOffset(2200)
     controller.setUserIntent("down", 700)
 
     const result = controller.observeViewport(metrics(2400), 100, true)
@@ -366,7 +366,7 @@ describe("virtual follow behavior", () => {
 
   it("repins after an unowned virtualizer measurement correction", () => {
     const controller = new VirtualScrollController(true)
-    controller.recordProgrammaticOffset(2400, true)
+    controller.recordProgrammaticOffset(2400)
 
     const result = controller.observeViewport(metrics(2200), 1000, false)
 
@@ -376,7 +376,7 @@ describe("virtual follow behavior", () => {
 
   it("does not rejoin escaped mode from measurement-only downward movement", () => {
     const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2200, false)
+    controller.recordProgrammaticOffset(2200)
 
     const result = controller.observeViewport(metrics(2400), 1000, false)
 
@@ -387,7 +387,7 @@ describe("virtual follow behavior", () => {
   it("keeps hold-driven escape stable across later viewport measurements", () => {
     const controller = new VirtualScrollController(true)
     controller.setFollow(false)
-    controller.recordProgrammaticOffset(2200, false)
+    controller.recordProgrammaticOffset(2200)
 
     const result = controller.observeViewport(metrics(2400), 1000, false)
 

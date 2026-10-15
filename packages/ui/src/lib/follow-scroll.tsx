@@ -41,10 +41,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       container.scrollTop = container.scrollHeight
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop, true)
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop)
     } else {
       container.scrollTop = lastKnownScrollTop
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop, isAtBottom(container))
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop)
     }
   }
 
@@ -130,7 +130,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       }
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop, isAtBottom(container))
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop)
     })
   }
 
@@ -141,10 +141,6 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       clientHeight: container.clientHeight,
       sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
-  }
-
-  function isAtBottom(container: HTMLDivElement) {
-    return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_EPSILON_PX
   }
 
   function updateFollowModeFromScroll(containerOverride?: HTMLDivElement) {

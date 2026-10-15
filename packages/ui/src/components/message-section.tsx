@@ -14,6 +14,7 @@ import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./
 import { getTimelineRecordSignature } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
+import { isScrollTraceEnabled, traceScroll } from "./virtual-scroll-trace"
 import { useConfig } from "../stores/preferences"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
@@ -277,9 +278,17 @@ export default function MessageSection(props: MessageSectionProps) {
         api.scrollToKey(segment.messageId, { block: "start" })
         return
       }
+      // Only before the list registers its API, so outside its `writeScroll`.
       if (typeof document === "undefined") return
       const anchor = document.getElementById(getMessageAnchorId(segment.messageId))
+      const stream = isScrollTraceEnabled() ? anchor?.closest<HTMLElement>(".message-stream") : null
+      const from = stream?.scrollTop
       anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
+      if (anchor && isScrollTraceEnabled()) traceScroll("write", {
+        reason: "timeline-fallback", writer: "external", from, to: stream?.scrollTop,
+        mode: stream?.dataset.followMode, behavior: "smooth", target: segment.messageId,
+        session: props.sessionId, at: Math.round(performance.now()),
+      })
     }
 
     setActiveSegmentId(segment.id)
