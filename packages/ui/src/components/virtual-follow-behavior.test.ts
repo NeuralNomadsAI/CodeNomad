@@ -16,7 +16,9 @@ import {
   shouldAdvanceBottomPin,
   shouldNavigateAtBoundary,
   VirtualScrollController,
+  hasReachedBottom,
   isAtBottom,
+  isAtBottomForMode,
   isAutoFollowing,
   isMiddleButtonScrollIntent,
   isScrollRestoreGenerationCurrent,
@@ -158,6 +160,18 @@ describe("virtual follow behavior", () => {
 
     const result = controller.observeViewport(metrics(2220), 100, false)
 
+    assert.deepEqual(result.state.mode, { type: "escaped" })
+    assert.deepEqual(result.effect, { type: "none" })
+  })
+
+  it("does not resume follow when downward movement stops inside the proximity tolerance", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2300, false)
+    controller.setUserIntent("down", 700)
+
+    const result = controller.observeViewport(metrics(2368), 100, false)
+
+    assert.equal(isAtBottom(metrics(2368)), true)
     assert.deepEqual(result.state.mode, { type: "escaped" })
     assert.deepEqual(result.effect, { type: "none" })
   })
@@ -346,6 +360,19 @@ describe("virtual follow behavior", () => {
     assert.equal(isAtBottom(metrics(bottomOffset - BOTTOM_FOLLOW_EPSILON_PX - 0.1)), false)
     assert.equal(isAtBottom(metrics(bottomOffset - BOTTOM_FOLLOW_EPSILON_PX)), true)
     assert.equal(isAtBottom(metrics(bottomOffset)), true)
+  })
+
+  it("reaches the true bottom only within a sub-pixel rounding tolerance", () => {
+    assert.equal(hasReachedBottom(metrics(2400)), true)
+    assert.equal(hasReachedBottom(metrics(2399.5)), true)
+    assert.equal(hasReachedBottom(metrics(2399)), true)
+    assert.equal(hasReachedBottom(metrics(2398.9)), false)
+  })
+
+  it("applies the proximity tolerance only while following", () => {
+    assert.equal(isAtBottomForMode({ type: "following" }, metrics(2368)), true)
+    assert.equal(isAtBottomForMode({ type: "escaped" }, metrics(2368)), false)
+    assert.equal(isAtBottomForMode({ type: "escaped" }, metrics(2399.5)), true)
   })
 
   it("treats fractional distance inside the tolerance as at-bottom", () => {

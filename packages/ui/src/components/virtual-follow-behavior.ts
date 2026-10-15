@@ -1,6 +1,7 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
+export const BOTTOM_REACHED_EPSILON_PX = 1
 export const ANCHOR_RESTORE_MAX_FRAMES = 300
 export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
@@ -354,6 +355,15 @@ export function isAtBottom(metrics: ScrollControllerMetrics) {
   return getDistanceFromBottom(metrics) <= metrics.sentinelMarginPx
 }
 
+export function hasReachedBottom(metrics: ScrollControllerMetrics) {
+  return getDistanceFromBottom(metrics) <= BOTTOM_REACHED_EPSILON_PX
+}
+
+/** The proximity tolerance only maintains an active follow pin; a manual reader is at the bottom only at the true bottom. */
+export function isAtBottomForMode(mode: FollowMode, metrics: ScrollControllerMetrics) {
+  return isAutoFollowing(mode) ? isAtBottom(metrics) : hasReachedBottom(metrics)
+}
+
 export class VirtualScrollController {
   private state: ScrollControllerState
 
@@ -470,7 +480,7 @@ export class VirtualScrollController {
       return this.result(noFollowEffect)
     }
 
-    const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom })
+    const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom: isAtBottomForMode(this.state.mode, metrics) })
     this.state.mode = next.mode
     this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
     return this.result(next.effect)

@@ -432,6 +432,7 @@ export default function MessageSection(props: MessageSectionProps) {
   let scrollRestoreGeneration = 0
   let pagingWindow = false
   let pagingWindowController: AbortController | null = null
+  let pagingWindowGesture: "up" | "down" | null = null
   let anchorRestoreController: AbortController | null = null
   const [navigationPending, setNavigationPending] = createSignal(false)
   function cancelWindowNavigation() {
@@ -444,6 +445,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     pagingWindowController?.abort()
     pagingWindowController = null
+    pagingWindowGesture = null
     pagingWindow = false
     setNavigationPending(false)
   }
@@ -940,6 +942,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const generation = scrollRestoreGeneration
     const controller = new AbortController()
     pagingWindowController = controller
+    pagingWindowGesture = direction === "older" || direction === "oldest" ? "up" : direction === "around" ? null : "down"
     const isCurrent = () => isActive()
       && api === listApi()
       && pagingWindowController === controller
@@ -975,6 +978,7 @@ export default function MessageSection(props: MessageSectionProps) {
       await waitTwoFrames()
       if (!isCurrent()) return
       pagingWindowController = null
+      pagingWindowGesture = null
       pagingWindow = false
       setNavigationPending(false)
       const activeMessageId = api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey()
@@ -991,6 +995,7 @@ export default function MessageSection(props: MessageSectionProps) {
     } finally {
       if (pagingWindowController === controller) {
         pagingWindowController = null
+        pagingWindowGesture = null
         pagingWindow = false
         setNavigationPending(false)
       }
@@ -1246,9 +1251,11 @@ export default function MessageSection(props: MessageSectionProps) {
             persistMessageScrollSnapshot({ snapshot })
           }}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
-          onScrollIntent={() => {
+          onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)
-            if (navigationPending()) cancelWindowNavigation()
+            // An opposite directional gesture supersedes pending history paging
+            // before it can position; taps and the requesting gesture do not.
+            if (navigationPending() || (direction && pagingWindowGesture && direction !== pagingWindowGesture)) cancelWindowNavigation()
           }}
           onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
           onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}

@@ -3,7 +3,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { attachScrollGestureRouting } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -291,7 +291,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function isActuallyAtBottom() {
     const element = scrollElement()
     if (!element) return false
-    return isAtBottom(getDomMetrics(element))
+    return isAtBottomForMode(followMode(), getDomMetrics(element))
   }
 
   function scrollToOffset(offset: number, atBottom: boolean) {
@@ -370,10 +370,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     const offset = handle.scrollOffset
     const metrics = getDomMetrics(element, handle, offset)
-    const atBottom = isAtBottom(metrics)
     const atTop = offset <= TOP_SCROLL_EPSILON_PX
     const hasItems = props.items().length > 0
-    setShowScrollBottomButton(hasItems && !atBottom)
     setShowScrollTopButton(hasItems && !atTop)
 
     const now = performance.now()
@@ -387,6 +385,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const restoring = result.state.restoring
     const intent = result.state.userIntentDirection
     const hasFreshIntent = now <= result.state.userIntentUntil
+    const atBottom = isAtBottomForMode(result.state.mode, metrics)
+    setShowScrollBottomButton(hasItems && !isAutoFollowing(result.state.mode) && !atBottom)
     // A boundary callback may synchronously start a historical load and escape
     // follow mode. Publish this observation before handing it that authority.
     syncControllerResult(result)
@@ -580,7 +580,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const scrollHeight = element.scrollHeight
     const clientHeight = element.clientHeight
     const maxScrollTop = Math.max(scrollHeight - clientHeight, 0)
-    const atBottom = isAtBottom(getDomMetrics(element, handle, scrollTop))
+    const atBottom = isAtBottomForMode(followMode(), getDomMetrics(element, handle, scrollTop))
     const snapshot: VirtualFollowScrollSnapshot = {
       scrollTop,
       scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 0,
@@ -685,7 +685,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           restartAnchorRestore = () => {
             if (!isCurrent()) return
             stabilizer.restartStability()
-            scrollToAnchorIndex(snapshot.anchorKey!)
+            // A mounted anchor with a saved inner offset has one target, which
+            // the frame loop corrects. Reissuing the index would fight it.
+            const mounted = itemElements.get(snapshot.anchorKey!)?.isConnected && typeof snapshot.anchorOffset === "number"
+            if (!mounted) scrollToAnchorIndex(snapshot.anchorKey!)
           }
           retryAnchorRestore(snapshot, stabilizer, isCurrent, finish)
           return
