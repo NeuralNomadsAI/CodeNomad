@@ -38,3 +38,36 @@ test("reader settlement sleeps between layouts and cannot resurrect cancelled ow
     globalThis.cancelAnimationFrame = previousCancel
   }
 })
+
+test("an explicit hold aligns at once, follows later layouts and releases a lost anchor", () => {
+  const previousFrame = globalThis.requestAnimationFrame, previousCancel = globalThis.cancelAnimationFrame
+  const frames = new Map<number, FrameRequestCallback>()
+  let sequence = 0, aligned = 0, held = true
+  globalThis.requestAnimationFrame = fn => { frames.set(++sequence, fn); return sequence }
+  globalThis.cancelAnimationFrame = id => { frames.delete(id) }
+  const drain = () => {
+    while (frames.size) {
+      const pending = [...frames.values()]; frames.clear()
+      pending.forEach(fn => fn(0))
+    }
+  }
+  try {
+    const reader = createVirtualReaderSettlement({
+      enabled: () => true,
+      getAnchor: () => ({ key: "visible", offset: 0 }),
+      align: () => { aligned++; return held },
+    })
+    reader.hold({ key: "revealed", offset: 8 })
+    assert.equal(aligned, 1, "The first correction is synchronous")
+    drain(); assert.equal(aligned, 12)
+    assert.equal(reader.capture().anchor?.key, "revealed", "A window shift retains the held anchor")
+    reader.notify(); drain(); assert.equal(aligned, 24)
+    held = false
+    reader.notify(); drain(); assert.equal(aligned, 25)
+    assert.equal(reader.capture().anchor?.key, "visible", "A lost anchor returns to the visible reader")
+    reader.notify(); assert.equal(frames.size, 0)
+  } finally {
+    globalThis.requestAnimationFrame = previousFrame
+    globalThis.cancelAnimationFrame = previousCancel
+  }
+})

@@ -1,11 +1,15 @@
-interface VirtualItemAnchor { key: string; offset: number }
+/** `element` holds a descendant of the keyed row (an in-place reveal) instead of the row itself. */
+interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement }
+
+const SETTLE_FRAMES = 12
 
 /** A retained reader owns its anchor until a gesture/navigation changes it.
  * Only layout notifications schedule work; an idle reader has no running RAF.
+ * `align` returns false when its anchor can no longer be held.
  */
 export function createVirtualReaderSettlement(options: {
   getAnchor: () => VirtualItemAnchor | undefined
-  align: (anchor: VirtualItemAnchor) => void
+  align: (anchor: VirtualItemAnchor) => boolean | void
   enabled: () => boolean
 }) {
   let anchor: VirtualItemAnchor | undefined
@@ -20,13 +24,12 @@ export function createVirtualReaderSettlement(options: {
   }
   const tick = () => {
     frame = undefined
-    if (!anchor || !options.enabled()) return cancel()
-    options.align(anchor)
+    if (!anchor || !options.enabled() || options.align(anchor) === false) return cancel()
     if (--remaining > 0) frame = requestAnimationFrame(tick)
   }
   const notify = () => {
     if (!anchor) return
-    remaining = 12
+    remaining = SETTLE_FRAMES
     if (frame === undefined) frame = requestAnimationFrame(tick)
   }
   return {
@@ -37,6 +40,13 @@ export function createVirtualReaderSettlement(options: {
       if (!next?.anchor || next.generation !== generation) return
       anchor = next.anchor
       notify()
+    },
+    /** Takes ownership of `next` at once: aligns it now, then like a settled reader. */
+    hold: (next: VirtualItemAnchor) => {
+      cancel()
+      anchor = next
+      remaining = SETTLE_FRAMES
+      tick()
     },
   }
 }

@@ -20,6 +20,8 @@ const fixtures = {
   list: "navigation",
   // Tool-output-style follow-scroll container nested in a VirtualFollowList.
   nested: "nested-scroll",
+  // Bare VirtualFollowList with one tall, resizable reply row.
+  tall: "tall-append",
 } as const
 type FixtureName = keyof typeof fixtures
 
@@ -733,4 +735,198 @@ for (const gesture of ["none", "same", "tap", "click", "horizontal", "newer"] as
     assert.equal(after.state.followModeType, "escaped", "Entering older history must not retain follow")
     assert.equal(after.state.atBottom, true, "An older page is entered at its bottom")
   }, { history: 620, hasTouch: gesture === "tap" })
+})
+
+type FrameSample = { frame: number; time: number; top: number; gap: number; mode?: string; anchorOffset: number | null }
+
+/**
+ * For `count` frames, samples the painted stream (the previous frame's writes
+ * and layout) and then runs `step(frame)`. `window.pumpFrame` reports progress
+ * so a gesture can be timed against it; `window.traceKey` selects the anchor.
+ */
+function pump(page: Page, count: number, step = "") {
+  return page.evaluate(({ count, step }) => new Promise<FrameSample[]>(resolve => {
+    const w = window as any, run = new Function("frame", step), samples: FrameSample[] = []
+    w.pumpFrame = 0
+    const next = () => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!, row = w.traceKey ? el.querySelector(`[data-virtual-follow-key="${w.traceKey}"]`) : null
+      samples.push({ frame: w.pumpFrame, time: performance.now(), top: el.scrollTop, gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: el.dataset.followMode, anchorOffset: row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null })
+      run(w.pumpFrame)
+      if (++w.pumpFrame === count) resolve(samples); else requestAnimationFrame(next)
+    }
+    requestAnimationFrame(next)
+  }), { count, step })
+}
+
+/** Writes that move the reader towards the bottom. */
+const BOTTOM_WRITES = ["jump-bottom", "explicit-pin", "content-grew", "observe", "viewport-resize"]
+
+/** Index of the last user-gesture escape in the trace, or -1. */
+function lastEscape(entries: ScrollTraceEntry[]) {
+  return entries.map(entry => entry.kind === "mode" && entry.to === "escaped" && entry.source === "user-gesture").lastIndexOf(true)
+}
+
+const SETTLE_STEP = "if (frame === 0) window.fixture.settle().then(s => { window.settlement = { s, frame: window.pumpFrame } });"
+
+async function wheelToTop(page: Page) {
+  await page.locator(".message-stream").hover()
+  await page.mouse.wheel(0, -100000)
+  await page.waitForFunction(() => document.querySelector(".message-stream")!.scrollTop === 0)
+  await frames(page)
+}
+
+// Bottom pins (settleAtBottom, intent pins) own the bottom until they settle;
+// a gesture or a restoration ends that ownership for good.
+test("an upward wheel cancels a settling bottom pin and later growth never repins it", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    await wheelToTop(page)
+    await trace.enable()
+    const pumped = pump(page, 70, `${SETTLE_STEP} window.fixture.resizeReply(3200 + frame * 40)`)
+    await page.waitForFunction(() => (window as any).pumpFrame >= 15)
+    await page.mouse.wheel(0, -600)
+    const samples = await pumped
+    await frames(page, 10)
+    const settlement = await page.evaluate(() => (window as any).settlement)
+    const diagnostics = JSON.stringify({ settlement, samples: samples.map(({ frame, top, gap, mode }) => ({ frame, top, gap, mode })) })
+    assert.ok(samples.some(sample => sample.frame < 15 && sample.gap <= 2), `The pin must reach the growing bottom before the wheel: ${diagnostics}`)
+    assert.equal(settlement?.s, "cancelled", diagnostics)
+    const escape = lastEscape(trace.entries)
+    assert.ok(escape >= 0, `The wheel must escape the pin: ${JSON.stringify(trace.entries.filter(entry => entry.kind === "mode"))}`)
+    const repins = trace.entries.slice(escape).filter(entry => entry.kind === "write" && BOTTOM_WRITES.includes(entry.reason))
+    assert.deepEqual(repins, [], `No bottom write may follow the escape: ${diagnostics}`)
+    const escaped = samples.slice(samples.findIndex(sample => sample.frame >= 15 && sample.mode === "escaped"))
+    assert.ok(escaped.length > 10 && escaped.every(sample => sample.mode === "escaped"), `The reader must stay escaped: ${diagnostics}`)
+    assert.ok(escaped.every((sample, i) => i === 0 || sample.top <= escaped[i - 1].top + 2), `Growth moved the escaped reader down: ${diagnostics}`)
+    const final = await page.locator(".message-stream").evaluate(el => ({ gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: (el as HTMLElement).dataset.followMode }))
+    assert.ok(final.mode === "escaped" && final.gap > 300, `The reader was repinned: ${JSON.stringify(final)}; ${diagnostics}`)
+  }, { name: "tall" })
+})
+
+test("settleAtBottom outlasts late growth and settles following at the true bottom", async () => {
+  await open(async page => {
+    await wheelToTop(page)
+    const samples = await pump(page, 45, `${SETTLE_STEP} if (frame >= 4 && frame <= 9) window.fixture.resizeReply(3200 + (frame - 3) * 150)`)
+    await frames(page, 10)
+    const settlement = await page.evaluate(() => (window as any).settlement)
+    const final = await page.locator(".message-stream").evaluate(el => ({ gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: (el as HTMLElement).dataset.followMode }))
+    const diagnostics = JSON.stringify({ settlement, final, samples: samples.map(({ frame, gap, mode }) => ({ frame, gap, mode })) })
+    assert.equal(settlement?.s, "settled", diagnostics)
+    assert.ok(settlement.frame > 9, `The pin must settle after the last growth: ${diagnostics}`)
+    assert.ok(final.gap <= 2 && final.mode === "following", diagnostics)
+    assert.deepEqual(samples.filter(sample => sample.frame >= 12 && sample.gap > 2), [], `The late growth left the bottom: ${diagnostics}`)
+  }, { name: "tall" })
+})
+
+test("an explicit bottom-pin intent reaches the real bottom, stays cancelled for its token and restarts on a new one", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    const state = () => page.evaluate(() => {
+      const w = window as any, el = document.querySelector<HTMLElement>(".message-stream")!
+      const last = el.querySelector(`[data-virtual-follow-key="row-${w.fixture.itemCount() - 1}"]`)
+      return { items: w.fixture.itemCount(), gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: el.dataset.followMode, cancelled: w.fixture.pinCancelled(), lastBottom: last ? last.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom : null }
+    })
+    const atBottom = (value: Awaited<ReturnType<typeof state>>) => value.mode === "following" && value.gap <= 2 && value.lastBottom !== null && Math.abs(value.lastBottom) <= 2
+    await page.locator(".message-stream").hover()
+    await trace.enable()
+
+    // minItemCount above the row count: the pin outlasts progressive appends.
+    const first = await pump(page, 40, "if (frame === 0) window.fixture.pin('first', 205); if (frame % 4 === 1 && window.fixture.itemCount() < 205) window.fixture.append()")
+    await frames(page, 20)
+    const reached = await state()
+    assert.ok(reached.items === 205 && reached.cancelled === 0 && atBottom(reached), `The pin must reach the real bottom after the appends: ${JSON.stringify({ reached, first: first.map(({ frame, gap, mode }) => ({ frame, gap, mode })) })}`)
+
+    // A wheel cancels the active pin and notifies once; re-emitting its token is inert.
+    await page.evaluate(() => (window as any).fixture.pin("second", 1000))
+    await frames(page, 10)
+    await page.mouse.wheel(0, -600)
+    await frames(page, 30)
+    const cancelled = await state()
+    assert.deepEqual({ mode: cancelled.mode, cancelled: cancelled.cancelled }, { mode: "escaped", cancelled: 1 }, JSON.stringify(cancelled))
+    const escape = lastEscape(trace.entries)
+    assert.ok(escape >= 0, JSON.stringify(trace.entries.filter(entry => entry.kind === "mode")))
+    const reemitted = await pump(page, 30, "if (frame === 0) window.fixture.pin('second', 1000); if (frame % 3 === 1) window.fixture.append()")
+    await frames(page, 10)
+    const inert = await state()
+    const diagnostics = JSON.stringify({ cancelled, inert, reemitted: reemitted.map(({ frame, gap, mode }) => ({ frame, gap, mode })) })
+    assert.deepEqual(trace.entries.slice(escape).filter(entry => entry.kind === "write" && entry.reason === "explicit-pin"), [], `A re-emitted cancelled token must not pin: ${diagnostics}`)
+    assert.equal(inert.cancelled, 1, `Cancellation must be notified exactly once: ${diagnostics}`)
+    assert.equal(inert.mode, "escaped", diagnostics)
+    assert.ok(reemitted.every(sample => sample.gap >= cancelled.gap - 2) && inert.gap > cancelled.gap, `The escaped reader moved towards the bottom: ${diagnostics}`)
+
+    // A new token pins again, through further appends.
+    const restartAt = trace.entries.length
+    const restarted = await pump(page, 30, "if (frame === 0) window.fixture.pin('third', window.fixture.itemCount() + 3); if (frame % 4 === 1 && frame < 12) window.fixture.append()")
+    await frames(page, 20)
+    const final = await state()
+    const finalDiagnostics = JSON.stringify({ inert, final, restarted: restarted.map(({ frame, gap, mode }) => ({ frame, gap, mode })) })
+    assert.ok(trace.entries.slice(restartAt).some(entry => entry.kind === "write" && entry.reason === "explicit-pin"), `A new token must pin again: ${finalDiagnostics}`)
+    assert.ok(final.items === inert.items + 3 && final.cancelled === 1 && atBottom(final), `The new pin must reach the real bottom: ${finalDiagnostics}`)
+  }, { name: "list" })
+})
+
+// Desired behavior: an explicit restoration supersedes an active bottom pin and
+// reports itself applied only once its anchor has landed.
+test("restoring an escaped anchor during settleAtBottom wins over the pin", async () => {
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page)
+    await page.locator(".message-stream").hover()
+    // Virtua's settled scrollToKey index still reasserts over the first wheel.
+    for (let i = 0; i < 2; i++) {
+      await page.mouse.wheel(0, 100)
+      await frames(page, 45)
+    }
+    const target = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.ok(target.anchorKey && target.anchorOffset !== 0 && !target.atBottom && target.followModeType === "escaped", JSON.stringify(target))
+    await traceAnchor(page, target.anchorKey)
+    await trace.enable()
+    await page.evaluate(target => { const w = window as any; w.restoreTarget = target; w.applied = []; w.restoreCancelled = 0 }, target)
+    // Growth restarts anchor stability, so it stops early enough to observe the finish.
+    const samples = await pump(page, 90, `${SETTLE_STEP}
+      if (frame % 2 === 1 && frame < 30) window.fixture.append()
+      if (frame === 6) {
+        window.restoreAt = performance.now()
+        window.fixture.restore(window.restoreTarget, {
+          onApplied: () => {
+            const el = document.querySelector(".message-stream"), row = el.querySelector('[data-virtual-follow-key="' + window.restoreTarget.anchorKey + '"]')
+            window.applied.push({ frame: window.pumpFrame, anchorOffset: row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null })
+          },
+          onCancelled: () => { window.restoreCancelled++ },
+        })
+      }`)
+    await frames(page, 20)
+    const result = await page.evaluate(() => { const w = window as any; return { applied: w.applied, cancelled: w.restoreCancelled, settlement: w.settlement, restoreAt: w.restoreAt } })
+    const diagnostics = JSON.stringify({ target, result, samples: samples.map(({ frame, gap, mode, anchorOffset }) => ({ frame, gap, mode, anchorOffset })) })
+    assert.equal(result.applied.length, 1, diagnostics)
+    assert.ok(result.applied[0].anchorOffset !== null && Math.abs(result.applied[0].anchorOffset - target.anchorOffset) <= 2, `onApplied must follow the anchor landing: ${diagnostics}`)
+    assert.equal(result.settlement?.s, "interrupted", `The restoration must interrupt the pin: ${diagnostics}`)
+    const held = samples.filter(sample => sample.frame > result.applied[0].frame)
+    assert.ok(held.length > 0 && held.every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - target.anchorOffset) <= 2), `The restored anchor must hold: ${diagnostics}`)
+    // Trace times are rounded: a same-frame write just before the restoration rounds up to it.
+    const pins = trace.entries.filter(entry => entry.kind === "write" && entry.reason === "explicit-pin" && entry.at > Math.ceil(result.restoreAt))
+    assert.deepEqual(pins, [], `The pin wrote after the restoration: ${diagnostics}`)
+    assert.equal(result.cancelled, 0, diagnostics)
+  }, { name: "list" })
+})
+
+test("alignElement holds its target while a row above grows and clamps an out-of-view offset", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.nearTail())
+    await frames(page)
+    await traceAnchor(page, "row-180")
+    const samples = await pump(page, 45, "if (frame === 0) window.fixture.align('row-180', 8); if (frame >= 2 && frame <= 20) window.fixture.resizeRow('row-179', 48 + (frame - 1) * 12)")
+    const grown = await page.locator('[data-virtual-follow-key="row-179"]').evaluate(row => row.getBoundingClientRect().height)
+    const diagnostics = JSON.stringify({ grown, samples: samples.map(({ frame, top, anchorOffset }) => ({ frame, top, anchorOffset })) })
+    assert.equal(grown, 48 + 19 * 12, `The row above must stay mounted and grow: ${diagnostics}`)
+    assert.deepEqual(samples.filter(sample => sample.frame >= 1 && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 8) > 2)), [], `The aligned target moved: ${diagnostics}`)
+    await page.evaluate(() => (window as any).fixture.align("row-180", 5000))
+    await frames(page, 45)
+    const clamped = await page.locator('[data-virtual-follow-key="row-180"]').evaluate(row => {
+      const el = row.closest(".message-stream")!, bounds = el.getBoundingClientRect(), rect = row.getBoundingClientRect()
+      return { top: rect.top - bounds.top, bottom: rect.bottom - bounds.top, clientHeight: el.clientHeight }
+    })
+    assert.ok(clamped.top >= 0 && clamped.bottom <= clamped.clientHeight + 1, `An offset beyond the viewport must land in view: ${JSON.stringify(clamped)}`)
+  }, { name: "list" })
 })

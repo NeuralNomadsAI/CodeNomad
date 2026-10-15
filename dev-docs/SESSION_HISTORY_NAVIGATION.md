@@ -121,7 +121,7 @@ compensation, browser clamping, search-result reveals and the pre-registration
 timeline `scrollIntoView` fallback.
 
 Search reveals keep their one-shot occurrence centering through nested scrollers
-(not a 30-frame element-alignment pin). They emit `writer: "external"` with reason
+(not an element-alignment hold). They emit `writer: "external"` with reason
 `search-reveal`; the pre-registration native smooth fallback emits
 `timeline-fallback`. Neither changes the list's programmatic marking. SessionView's
 activation/submission handles and MessageSection's paging, restoration and message
@@ -160,6 +160,16 @@ restoration, alignment and bottom pins through one function; deactivation, sessi
 reset and unmount stop every list-owned positioning operation (including a
 restoration in flight) through another, and deactivation also releases Virtua's
 queued imperative scroll.
+
+One bottom loop (`bottomPin`) keeps the bottom, and only while following: leaving
+follow ends it. Ordinary following re-pins for two frames after each bottom write;
+an explicit pin (send intent, latest paging, restoration at the bottom) lasts until
+enough rows exist and the bottom stays put, within a frame deadline. Layout changes
+apply restoration, then an explicit pin, then the long-reply hold, then follow; a
+restoration requested during a pin supersedes it (the pin settles `interrupted`) and
+reports `onApplied` only after its own landing. In-place reveals (`alignElement`)
+are reader-settlement holds on the revealed element, and settlement, alignment and
+anchor restoration share one anchor measurement.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
