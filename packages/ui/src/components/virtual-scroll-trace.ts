@@ -19,8 +19,8 @@ export const SCROLL_REASONS = [
   "cancel-virtua", "window-shift",
   // Mode-only sources.
   "user-gesture", "thumb-drag", "set-follow", "reset",
-  // External writers retained to preserve occurrence-level/native reveal behavior.
-  "search-reveal", "timeline-fallback",
+  // External writer retained to preserve occurrence-level reveal behavior.
+  "search-reveal",
 ] as const
 
 export type ScrollReason = typeof SCROLL_REASONS[number]

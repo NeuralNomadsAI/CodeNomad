@@ -699,6 +699,31 @@ test("deactivating during a restoration leaves following intact after reactivati
   }, { name: "list" })
 })
 
+// A session without a snapshot opens at its bottom once. Persisting the first
+// gesture's position must not restart that restore under the reader.
+test("the first gesture after a snapshot-less restore is not restored again", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.switchAway())
+    await page.evaluate(`(async () => {
+      const { messageStoreBus } = await import('/src/stores/message-v2/bus.ts')
+      messageStoreBus.getOrCreate('browser-instance').clearScrollSnapshots()
+    })()`)
+    await page.evaluate(() => (window as any).fixture.return())
+    await page.locator(".message-stream").waitFor()
+    await frames(page, 90)
+    await traceAnchor(page, "msg_0059")
+    await page.locator(".message-stream").hover()
+    await page.mouse.wheel(0, -600)
+    await frames(page, 60)
+    const offsets: number[] = await page.evaluate(() => (window as any).scrollObservations.map((sample: any) => sample.anchorOffset).filter((offset: number | null) => offset !== null))
+    assert.ok(offsets.length > 0, "The gesture must scroll the transcript")
+    // Scrolling up only moves later rows down; a restore jumps them back.
+    const reversals = offsets.slice(1).filter((offset, i) => offset < offsets[i] - 2)
+    assert.deepEqual(reversals, [], `A restore moved the reader during its gesture: ${JSON.stringify(offsets)}`)
+    assert.equal((await readerState(page)).followModeType, "escaped")
+  })
+})
+
 function topReader() {
   const el = document.querySelector(".message-stream")!, bounds = el.getBoundingClientRect()
   const row = Array.from(el.querySelectorAll("[data-virtual-follow-key]")).find(row => { const rect = row.getBoundingClientRect(); return rect.top <= bounds.top && rect.bottom > bounds.top })

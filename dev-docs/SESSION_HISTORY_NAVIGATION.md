@@ -117,15 +117,14 @@ same call opens the programmatic window, records synchronous targets and keeps
 imperative Virtua operations cancellable by the next gesture. Follow-mode changes go
 through `syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
-compensation, browser clamping, search-result reveals and the pre-registration
-timeline `scrollIntoView` fallback.
+compensation, browser clamping and search-result reveals.
 
 Search reveals keep their one-shot occurrence centering through nested scrollers
 (not an element-alignment hold). They emit `writer: "external"` with reason
-`search-reveal`; the pre-registration native smooth fallback emits
-`timeline-fallback`. Neither changes the list's programmatic marking. SessionView's
+`search-reveal` and do not change the list's programmatic marking. SessionView's
 activation/submission handles and MessageSection's paging, restoration and message
-navigation already use the list API and therefore reach `writeScroll`.
+navigation (timeline and search alike, through `navigateToMessage`) use the list API
+and therefore reach `writeScroll`.
 
 Enable the trace with `codenomadLogger.enableLogger("scroll")` (persisted until
 disabled), then read DevTools or the `codenomad.inspect` console diagnostics. Each line

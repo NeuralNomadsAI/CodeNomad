@@ -322,6 +322,41 @@ test("global timeline jumps over 1200 messages in one bounded window and restore
   } finally { await f.close() }
 })
 
+// A jump's page commit stores its intended position before the list reaches
+// it. Cancelling after that commit must store the reader's actual position at
+// once, not only after a later scroll event happens to persist it.
+test("cancelling a committed timeline jump stores the reader's actual position", async () => {
+  const f = await fixture()
+  const readStoredPosition = `(() => {
+    const scroll = { ...window.fixture.snapshot().scroll }
+    const stream = document.querySelector('.message-stream')
+    const row = stream.querySelector('[data-virtual-follow-key="' + scroll.anchorKey + '"]')
+    return { scroll, offset: row ? row.getBoundingClientRect().top - stream.getBoundingClientRect().top : null }
+  })()`
+  try {
+    await f.page.evaluate(`(async () => {
+      const { messageStoreBus } = await import('/src/stores/message-v2/bus.ts')
+      const stop = messageStoreBus.onScrollSnapshotChanged((_instance, _session, _scope, snapshot) => {
+        if (snapshot.anchorKey !== ${JSON.stringify(navigationMessageId(250))}) return
+        stop()
+        queueMicrotask(() => {
+          document.querySelector('.history-navigation-status button').click()
+          window.cancelledPosition = ${readStoredPosition}
+        })
+      })
+    })()`)
+    await clickTimeline(f.page, 250)
+    await f.page.waitForFunction(() => Boolean((window as any).cancelledPosition))
+    await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
+    await f.page.evaluate(`new Promise(resolve => { let count = 30; const next = () => --count ? requestAnimationFrame(next) : resolve(); requestAnimationFrame(next) })`)
+    const states = { cancelled: await f.page.evaluate(() => (window as any).cancelledPosition), settled: await f.page.evaluate(readStoredPosition) }
+    for (const [when, state] of Object.entries(states)) {
+      assert.ok(state.offset !== null && Math.abs(state.offset - state.scroll.anchorOffset) < 4, `Stored position (${when}) is not the reader's: ${JSON.stringify(state)}`)
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("latest timeline intent supersedes a slow far jump, including a resident destination", async () => {
   const f = await fixture()
   try {

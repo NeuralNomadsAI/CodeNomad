@@ -50,15 +50,17 @@ export function collectSearchRanges(root: HTMLElement, query: string, active?: S
 }
 
 /**
- * Reveal the actual occurrence through nested code/tool and transcript scrollers.
- * Its occurrence-level centering bypasses VirtualFollowList's `writeScroll`:
- * preserve the nested-to-outer, one-shot reveal without starting an alignment pin.
+ * Reveal the actual occurrence through nested code/tool scrollers, up to the
+ * transcript. The transcript has already placed its message; it moves only for
+ * an occurrence that message placement leaves out of view. That centering
+ * bypasses VirtualFollowList's `writeScroll` and is traced as `search-reveal`.
  */
 export function revealSearchRange(range: Range): void {
   const node = range.startContainer
   if (!node.isConnected) return
   const document = node.ownerDocument!
-  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+  const transcript = node.parentElement?.closest(".message-stream")
+  for (let parent = node.parentElement; parent; parent = parent === transcript ? null : parent.parentElement) {
     const style = document.defaultView!.getComputedStyle(parent)
     const rect = range.getBoundingClientRect(), bounds = parent.getBoundingClientRect()
     const top = bounds.top + parent.clientTop, left = bounds.left + parent.clientLeft
