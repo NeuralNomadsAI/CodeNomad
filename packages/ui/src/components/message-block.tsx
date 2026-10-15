@@ -561,11 +561,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     })))
   const pendingFormToolTargets = () => props.pendingFormToolTargets?.() ?? localPendingFormToolTargets()
   const technicalCleanupPartKeys = () => props.technicalCleanupPartKeys?.() ?? new Set<string>()
-  const handleContentRendered = () => {
-    props.onContentRendered?.()
-    accountSessionTranscript(props.instanceId, props.sessionId)
-  }
-
   onCleanup(() => accountSessionTranscript(props.instanceId, props.sessionId))
 
   createEffect(() => {
@@ -979,7 +974,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       (item() as ContentDisplayItem).startPartId,
                       hovered,
                     )}
-                    onContentRendered={handleContentRendered}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
@@ -997,7 +992,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                         store={props.store}
                         messageId={(item() as ToolDisplayItem).messageId}
                         partId={(item() as ToolDisplayItem).partId}
-                        onContentRendered={handleContentRendered}
+                        onContentRendered={props.onContentRendered}
                       />
                     </div>
                   </Show>
@@ -1025,7 +1020,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
                         : undefined}
                       technicalCleanupPartKeys={technicalCleanupPartKeys}
-                      onContentRendered={handleContentRendered}
+                      onContentRendered={props.onContentRendered}
                     />
                   </Show>
                 </Match>
@@ -1050,7 +1045,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
-                    onContentRendered={handleContentRendered}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "system"}>
@@ -1067,7 +1062,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item() as CompactionDisplayItem).messageId}
-                    onContentRendered={handleContentRendered}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "reasoning"}>
@@ -1082,7 +1077,6 @@ export default function MessageBlock(props: MessageBlockProps) {
                     status={resolvedBlock().status}
                     showAgentMeta={(item() as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
-                    onContentRendered={handleContentRendered}
                     activePartId={activeSearchMatch()?.partId}
                     showHeader={technicalGroupStartsHere((item() as ReasoningDisplayItem).technicalGroup)}
                     expanded={(item() as ReasoningDisplayItem).technicalGroup
@@ -1606,7 +1600,6 @@ function ReasoningGroupCard(props: {
   status: MessageRecord["status"]
   showAgentMeta?: boolean
   defaultExpanded?: boolean
-  onContentRendered?: () => void
   activePartId?: string
   showHeader?: boolean
   expanded?: Accessor<boolean>
@@ -1666,7 +1659,6 @@ function ReasoningGroupCard(props: {
       status={props.status}
       showAgentMeta={props.showAgentMeta}
       defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
-      onContentRendered={props.onContentRendered}
       forceExpanded={props.activePartId === item.partId}
       technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))}
     />
@@ -1738,7 +1730,6 @@ interface ReasoningCardProps {
   status: MessageRecord["status"]
   showAgentMeta?: boolean
   defaultExpanded?: boolean
-  onContentRendered?: () => void
   forceExpanded?: boolean
   technicalCleanupSelected: Accessor<boolean>
 }
@@ -1747,11 +1738,9 @@ function ReasoningStreamOutput(props: {
   text: Accessor<string>
   scrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
-  onContentRendered?: () => void
   ariaLabel: string
 }) {
   let preRef: HTMLPreElement | undefined
-  let pendingRenderNotificationFrame: number | null = null
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -1759,31 +1748,14 @@ function ReasoningStreamOutput(props: {
     sentinelClassName: "reasoning-scroll-sentinel",
   })
 
-  const notifyContentRendered = () => {
-    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-    }
-    pendingRenderNotificationFrame = requestAnimationFrame(() => {
-      pendingRenderNotificationFrame = null
-      props.onContentRendered?.()
-    })
-  }
-
+  // The transcript's ResizeObserver handles any height change: a frame-delayed
+  // notification always arrived after it.
   createEffect(() => {
     const nextText = props.text()
     if (preRef && preRef.textContent !== nextText) {
       preRef.textContent = nextText
     }
     followScroll.restoreAfterRender()
-    notifyContentRendered()
-  })
-
-  onCleanup(() => {
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-      pendingRenderNotificationFrame = null
-    }
   })
 
   return (
@@ -1976,7 +1948,6 @@ function ReasoningCard(props: ReasoningCardProps) {
               text={reasoningBody}
               scrollTopSnapshot={scrollTopSnapshot}
               setScrollTopSnapshot={setScrollTopSnapshot}
-              onContentRendered={props.onContentRendered}
               ariaLabel={t("messageBlock.reasoning.detailsAriaLabel")}
             />
           </div>

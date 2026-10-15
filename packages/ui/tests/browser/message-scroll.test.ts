@@ -95,9 +95,15 @@ async function bottom(page: Page, scope = "") {
   await frames(page)
 }
 
+// The store records a scroll once it settles (a pinned stream keeps scrolling);
+// flush to read the position a state capture would persist now.
 async function readerState(page: Page, scope = "") {
   const gap = await page.locator(`${scope} .message-stream`).evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
-  const followModeType = await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType)
+  const followModeType = await page.evaluate(async () => {
+    const { messageStoreBus } = await import("/src/stores/message-v2/bus.ts" as any)
+    messageStoreBus.flushScrollSnapshots()
+    return (window as any).fixture.snapshot().scroll.followModeType
+  })
   return { gap, followModeType, latestButton: await latestButton(page, scope).count() }
 }
 
@@ -457,6 +463,34 @@ for (const reader of ["manual-32", "following"] as const) for (const transition 
     assert.deepEqual({ followModeType: after.followModeType, latestButton: after.latestButton }, expected, JSON.stringify({ before, after }))
     assert.ok(Math.abs(after.gap - before.gap) < 2, `Reader moved from ${before.gap}px to ${after.gap}px above the bottom`)
     if (reader === "following") assert.ok(after.gap <= 1, `Following reader left the bottom: ${after.gap}px`)
+  }, { name: transition === "switch" ? "switch" : "session" })
+})
+
+// Scrolling persists once settled; a session switch or unmount (both unmount
+// the section) or a state-capture flush before then records the reached position.
+for (const transition of ["switch", "unmount", "flush"] as const) test(`an unsettled scroll is persisted on ${transition}`, async () => {
+  const scope = transition === "switch" ? '[data-session-id="A"]' : ""
+  await open(async page => {
+    await page.locator(`${scope} .message-stream`).hover()
+    await page.mouse.wheel(0, -900)
+    await frames(page, 45)
+    await page.mouse.wheel(0, -600)
+    await frames(page, 3)
+    const result = await page.evaluate(async ({ scope, transition }) => {
+      const fixture = (window as any).fixture
+      const read = () => fixture.snapshot().scroll
+      const { messageStoreBus } = await import("/src/stores/message-v2/bus.ts" as any)
+      const top = document.querySelector(`${scope} .message-stream`)!.scrollTop
+      const pending = read().scrollTop
+      if (transition === "switch") fixture.switchTo("B")
+      else if (transition === "unmount") fixture.switchAway()
+      else messageStoreBus.flushScrollSnapshots()
+      return { top, pending, persisted: read() }
+    }, { scope, transition })
+    assert.ok(Math.abs(result.pending - result.top) > 100, `The scroll had already settled: ${JSON.stringify(result)}`)
+    assert.ok(Math.abs(result.persisted.scrollTop - result.top) <= 1, JSON.stringify(result))
+    assert.equal(result.persisted.followModeType, "escaped")
+    assert.ok(result.persisted.anchorKey)
   }, { name: transition === "switch" ? "switch" : "session" })
 })
 

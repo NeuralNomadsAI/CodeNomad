@@ -123,7 +123,9 @@ export interface VirtualFollowListProps<T> {
   scrollToBottomAriaLabel?: Accessor<string>
   onScrollElementChange?: (element: HTMLDivElement | undefined) => void
   onShellElementChange?: (element: HTMLDivElement | undefined) => void
-  onScroll?: (snapshot?: VirtualFollowScrollSnapshot) => void
+  onScroll?: () => void
+  /** Virtua's settled-scroll notification: no scroll for 150 ms and no active touch. */
+  onScrollEnd?: () => void
   onJumpTop?: () => void
   onJumpBottom?: () => void
   onUserReachedTop?: () => void
@@ -602,7 +604,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function handleScroll() {
     readerSettlement.notify()
     updateScrollStateFromDom()
-    props.onScroll?.(captureScrollSnapshot())
+    props.onScroll?.()
 
     const handle = virtuaHandle()
     const element = scrollElement()
@@ -666,9 +668,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "hold")
     scrollController.recordProgrammaticOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop)
     // The hold changes the mode without a scroll, and growth below an escaped
-    // reader scrolls nothing either: publish the held position now, as the
-    // follow pin that preceded it did.
-    props.onScroll?.(captureScrollSnapshot())
+    // reader scrolls nothing either: publish the held position as settled now.
+    props.onScroll?.()
+    props.onScrollEnd?.()
     return true
   }
 
@@ -1375,6 +1377,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 ...authority.probes.filter(index => index < virtualItems().length),
               ])]}
               onScroll={handleScroll}
+              onScrollEnd={props.onScrollEnd}
             >
               {(item, index) => {
                 const key = props.getKey(item, index())

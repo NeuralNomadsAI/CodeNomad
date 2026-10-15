@@ -24,6 +24,7 @@ class MessageStoreBus {
   private scrollSnapshotHandlers = new Set<
     (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   >()
+  private scrollSnapshotFlushHandlers = new Set<() => void>()
   private scrollSnapshotSeeds = new Map<string, MessageScrollSnapshotSeed[]>()
 
   registerInstance(instanceId: string, store?: InstanceMessageStore): InstanceMessageStore {
@@ -106,6 +107,24 @@ class MessageStoreBus {
     this.scrollSnapshotHandlers.add(handler)
     return () => {
       this.scrollSnapshotHandlers.delete(handler)
+    }
+  }
+
+  /** Views persisting scroll positions lazily register here so a state capture can record them first. */
+  onScrollSnapshotFlush(handler: () => void): () => void {
+    this.scrollSnapshotFlushHandlers.add(handler)
+    return () => {
+      this.scrollSnapshotFlushHandlers.delete(handler)
+    }
+  }
+
+  flushScrollSnapshots(): void {
+    for (const handler of this.scrollSnapshotFlushHandlers) {
+      try {
+        handler()
+      } catch (error) {
+        log.error("Failed to flush scroll snapshot", error)
+      }
     }
   }
 

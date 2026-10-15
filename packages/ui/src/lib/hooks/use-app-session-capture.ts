@@ -171,6 +171,8 @@ export function useAppSessionCapture() {
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined
     if (nativeShutdown) nativeShutdownGeneration = nativeShutdownGenerationRequest
+    // Record a scroll that has not settled yet; it may reschedule the capture cleared below.
+    messageStoreBus.flushScrollSnapshots()
     if (timer) clearTimeout(timer)
     timer = null
     if (enabled()) {

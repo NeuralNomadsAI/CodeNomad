@@ -547,14 +547,14 @@ export default function MessageSection(props: MessageSectionProps) {
     return true
   }
 
-  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean; snapshot?: VirtualFollowScrollSnapshot }) {
+  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean }) {
     if (navigation().kind !== "idle") return
 
     const sessionId = options?.sessionId ?? props.sessionId
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const captured = options?.snapshot ?? listApi()?.captureScrollSnapshot()
+      const captured = listApi()?.captureScrollSnapshot()
       // Only the bottom or an anchored row identifies the reader. A capture with
       // neither (rows already torn down at unmount) keeps the last good position.
       const snapshot = captured && (captured.atBottom || captured.anchorKey !== undefined) ? overlayWindowOnSnapshot(captured) : undefined
@@ -582,6 +582,18 @@ export default function MessageSection(props: MessageSectionProps) {
     }
 
   }
+
+  // A scroll persists once Virtua reports it settled, not on every event. An
+  // unsettled position is still recorded on unmount by the cleanup below (an
+  // inactive SessionView unmounts this section before hiding it) and by a
+  // state capture's flush.
+  let scrollUnsettled = false
+  function persistSettledScroll() {
+    if (!scrollUnsettled) return
+    scrollUnsettled = false
+    persistMessageScrollSnapshot()
+  }
+  onCleanup(messageStoreBus.onScrollSnapshotFlush(persistSettledScroll))
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
   // when `props.sessionId` changes, before the next session is rendered.
@@ -1250,10 +1262,11 @@ export default function MessageSection(props: MessageSectionProps) {
             const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"][data-assistant-text-block="true"]`))
             return candidates[candidates.length - 1] ?? null
           }}
-          onScroll={(snapshot) => {
+          onScroll={() => {
             clearQuoteSelection()
-            persistMessageScrollSnapshot({ snapshot })
+            scrollUnsettled = true
           }}
+          onScrollEnd={persistSettledScroll}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
           onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)

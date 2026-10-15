@@ -7,39 +7,23 @@ import { createStableAnsiStreamUpdater } from "../ansi-render"
 import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
 import { getBashToolSearchText } from "../search-text"
 
+// Output changes need no transcript notification: its ResizeObserver handles
+// any height change, and a frame-delayed notification always arrived after it.
 function RunningBashOutput(props: {
   content: Accessor<string>
   scrollHelpers?: ToolScrollHelpers
-  onContentRendered?: () => void
 }) {
   let preRef: HTMLPreElement | undefined
-  let pendingRenderNotificationFrame: number | null = null
   const updater = createStableAnsiStreamUpdater()
-
-  const notifyContentRendered = () => {
-    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-    }
-    pendingRenderNotificationFrame = requestAnimationFrame(() => {
-      pendingRenderNotificationFrame = null
-      props.onContentRendered?.()
-    })
-  }
 
   createEffect(() => {
     const element = preRef
     if (!element) return
     updater.update(element, props.content())
     props.scrollHelpers?.restoreAfterRender()
-    notifyContentRendered()
   })
 
   onCleanup(() => {
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-      pendingRenderNotificationFrame = null
-    }
     preRef = undefined
     updater.reset()
   })
@@ -59,32 +43,10 @@ function RunningBashOutput(props: {
 function FinalAnsiOutput(props: {
   html: string
   scrollHelpers?: ToolScrollHelpers
-  onContentRendered?: () => void
 }) {
-  let pendingRenderNotificationFrame: number | null = null
-
-  const notifyContentRendered = () => {
-    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-    }
-    pendingRenderNotificationFrame = requestAnimationFrame(() => {
-      pendingRenderNotificationFrame = null
-      props.onContentRendered?.()
-    })
-  }
-
   createEffect(() => {
     props.html
     props.scrollHelpers?.restoreAfterRender()
-    notifyContentRendered()
-  })
-
-  onCleanup(() => {
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-      pendingRenderNotificationFrame = null
-    }
   })
 
   return (
@@ -113,7 +75,6 @@ function BashToolBody(props: {
   toolState: Accessor<ToolState | undefined>
   renderMarkdown: (options: { content: string }) => ReturnType<ToolRenderer["renderBody"]>
   scrollHelpers?: ToolScrollHelpers
-  onContentRendered?: () => void
 }) {
   const state = createMemo(() => props.toolState())
 
@@ -165,12 +126,12 @@ function BashToolBody(props: {
         fallback={
           <Show when={finalAnsiHtml()} fallback={finalMarkdown() ? props.renderMarkdown({ content: finalMarkdown()! as string }) : null}>
             {(html) => (
-              <FinalAnsiOutput html={html()} scrollHelpers={props.scrollHelpers} onContentRendered={props.onContentRendered} />
+              <FinalAnsiOutput html={html()} scrollHelpers={props.scrollHelpers} />
             )}
           </Show>
         }
       >
-        <RunningBashOutput content={renderedContent} scrollHelpers={props.scrollHelpers} onContentRendered={props.onContentRendered} />
+        <RunningBashOutput content={renderedContent} scrollHelpers={props.scrollHelpers} />
       </Show>
     </Show>
   )
@@ -206,7 +167,7 @@ export const bashRenderer: ToolRenderer = {
     if (!hasCopyText) return undefined
     return { language: "bash", getCopyText: () => getBashCopyText(state), hasCopyText: true, wrapToggle: true, suppressInnerHeader: true }
   },
-  renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
-    return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />
+  renderBody({ toolState, renderMarkdown, scrollHelpers }) {
+    return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} />
   },
 }

@@ -358,6 +358,8 @@ test("cancelling a committed timeline jump stores the reader's actual position",
     await f.page.waitForFunction(() => Boolean((window as any).cancelledPosition))
     await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
     await f.page.evaluate(`new Promise(resolve => { let count = 30; const next = () => --count ? requestAnimationFrame(next) : resolve(); requestAnimationFrame(next) })`)
+    // Later movement is recorded once it settles; flush to read what a capture would persist now.
+    await f.page.evaluate(`import('/src/stores/message-v2/bus.ts').then(({ messageStoreBus }) => messageStoreBus.flushScrollSnapshots())`)
     const states = { cancelled: await f.page.evaluate(() => (window as any).cancelledPosition), settled: await f.page.evaluate(readStoredPosition) }
     for (const [when, state] of Object.entries(states)) {
       const actual = state.scroll.anchorKey !== undefined
