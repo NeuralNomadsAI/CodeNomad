@@ -2,10 +2,16 @@
 interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement }
 
 const SETTLE_FRAMES = 12
+// An in-place reveal is held for the former element-alignment window, counted
+// from the alignment request: later layout never extends it.
+const HOLD_FRAMES = 30
 
 /** A retained reader owns its anchor until a gesture/navigation changes it.
- * Only layout notifications schedule work; an idle reader has no running RAF.
- * `align` returns false when its anchor can no longer be held.
+ * Only layout notifications schedule its work; an idle reader has no running RAF.
+ * A held element (`hold`) is measured and re-aligned on every frame of its fixed
+ * window, like the former element alignment: layout lands after animation frames,
+ * so waiting for its notification would paint the displaced frame first. `align`
+ * returns false when an anchor can no longer be held.
  */
 export function createVirtualReaderSettlement(options: {
   getAnchor: () => VirtualItemAnchor | undefined
@@ -26,32 +32,17 @@ export function createVirtualReaderSettlement(options: {
     frame = undefined
     if (!anchor || !options.enabled() || options.align(anchor) === false) return cancel()
     if (--remaining > 0) frame = requestAnimationFrame(tick)
+    else if (anchor.element) cancel()
   }
+  /** Layout changed or a scroll was observed: re-arms a retained reader. A held element's window is fixed. */
   const notify = () => {
-    if (!anchor) return
+    if (!anchor || anchor.element) return
     remaining = SETTLE_FRAMES
     if (frame === undefined) frame = requestAnimationFrame(tick)
   }
   return {
     cancel,
-    /** Layout changed: re-arms the anchor. */
     notify,
-    /**
-     * A scroll was observed. It re-arms a retained reader. A held element follows
-     * layout only: a scroll that `isForeign` attributes to someone else (focus,
-     * find-in-page, assistive technology, unlike Virtua's compensation) is the
-     * reader moving on and releases the hold, even while layout is in flux.
-     * Returns whether it released one.
-     */
-    scrolled: (isForeign: (held: HTMLElement) => boolean) => {
-      if (!anchor?.element) {
-        notify()
-        return false
-      }
-      if (!isForeign(anchor.element)) return false
-      cancel()
-      return true
-    },
     /** The held element anchor, if any. */
     held: () => anchor?.element ? anchor : undefined,
     capture: () => ({ anchor: anchor ?? options.getAnchor(), generation }),
@@ -60,11 +51,11 @@ export function createVirtualReaderSettlement(options: {
       anchor = next.anchor
       notify()
     },
-    /** Takes ownership of `next` at once: aligns it now, then like a settled reader. */
+    /** Takes ownership of `next` at once: aligns it now, then on every frame of its window. */
     hold: (next: VirtualItemAnchor) => {
       cancel()
       anchor = next
-      remaining = SETTLE_FRAMES
+      remaining = HOLD_FRAMES
       tick()
     },
   }

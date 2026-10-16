@@ -174,17 +174,17 @@ follow without a gesture. A new send intent also cancels MessageSection's pendin
 window paging, which would otherwise leave follow after the send.
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
-element. A hold re-aligns on layout notifications only (including viewport and
-`beforeItems` resizes), never because of a scroll; its requested offset is kept and
-clamped into the current viewport only when applied. Gestures and navigation end it,
-as do focus moving outside its row (Tab, assistive technology) and a foreign scroll,
-even while layout is still changing: one that moves the viewport while the element
-keeps its content position (find-in-page, an external `scrollIntoView`). Virtua's
-compensation moves both together and keeps the hold. A Virtua index request still
-pending from an earlier key navigation re-runs on every measurement while they keep
-coming (for instance during streaming); a hold re-targets it at the held element,
-and releases it when the hold ends, as a gesture does. Settlement, alignment and
-anchor restoration share one anchor measurement.
+element, with the former element alignment's lifetime: the element is measured and
+re-aligned on every frame of a fixed 30-frame window counted from the request, which
+layout never extends. Within it, viewport and `beforeItems` resizes re-align the
+element instead of dropping it, and its requested offset is kept and clamped into
+the current viewport only when applied. Gestures, navigation and focus moving
+outside its row (Tab, assistive technology) end it at once, and so does losing the
+element (an unmounted row). Any other scroll during the window is corrected like
+layout, as before. Settlement, alignment and anchor restoration share one anchor
+measurement. Pre-existing: a Virtua index request still pending from an earlier key
+navigation re-runs on every measurement while they keep coming (for instance during
+streaming) and can re-place its row; only a gesture replaces it.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

@@ -39,17 +39,21 @@ test("reader settlement sleeps between layouts and cannot resurrect cancelled ow
   }
 })
 
-test("an explicit hold aligns at once, follows later layouts and releases a lost anchor", () => {
+test("an element hold aligns at once, then on every frame of a window layout never extends", () => {
   const previousFrame = globalThis.requestAnimationFrame, previousCancel = globalThis.cancelAnimationFrame
   const frames = new Map<number, FrameRequestCallback>()
   let sequence = 0, aligned = 0, held = true
   globalThis.requestAnimationFrame = fn => { frames.set(++sequence, fn); return sequence }
   globalThis.cancelAnimationFrame = id => { frames.delete(id) }
-  const drain = () => {
-    while (frames.size) {
+  /** Runs `count` animation frames; returns how many ran before the queue emptied. */
+  const step = (count: number) => {
+    let ran = 0
+    while (ran < count && frames.size) {
       const pending = [...frames.values()]; frames.clear()
       pending.forEach(fn => fn(0))
+      ran++
     }
+    return ran
   }
   try {
     const reader = createVirtualReaderSettlement({
@@ -60,25 +64,23 @@ test("an explicit hold aligns at once, follows later layouts and releases a lost
     const element = {} as HTMLElement
     reader.hold({ key: "revealed", offset: 8, element })
     assert.equal(aligned, 1, "The first correction is synchronous")
-    drain(); assert.equal(aligned, 12)
+    step(5); assert.equal(aligned, 6, "Each frame of the window re-measures the element")
     assert.equal(reader.capture().anchor?.key, "revealed", "A window shift retains the held anchor")
-    reader.scrolled(() => false); assert.equal(frames.size, 0, "A scroll does not re-arm a held element")
-    reader.notify(); drain(); assert.equal(aligned, 24)
-    reader.notify(); reader.scrolled(() => false)
-    assert.equal(reader.held()?.element, element, "Layout in flux keeps the hold through its own compensation")
-    drain(); assert.equal(aligned, 36)
-    held = false
-    reader.notify(); drain(); assert.equal(aligned, 37)
-    assert.equal(reader.capture().anchor?.key, "visible", "A lost anchor returns to the visible reader")
+    step(15); reader.notify()
+    // 1 + 20 frames so far: the window ends after 30, whatever layout or scrolling does.
+    assert.equal(step(100), 9, "Layout notifications never extend the window")
+    assert.equal(aligned, 30)
+    assert.equal(reader.held(), undefined, "The hold ends with its window")
     reader.notify(); assert.equal(frames.size, 0)
-    held = true
     reader.hold({ key: "revealed", offset: 8, element })
-    reader.scrolled(() => true)
-    assert.equal(reader.held(), undefined, "Even with frames pending, a foreign scroll releases the hold")
-    assert.equal(frames.size, 0)
-    reader.settle(reader.capture()); drain()
+    held = false
+    reader.notify(); step(1)
+    assert.equal(reader.held(), undefined, "A lost element releases the hold")
+    assert.equal(reader.capture().anchor?.key, "visible", "Then the visible reader is captured again")
+    held = true
+    reader.settle(reader.capture()); step(100)
     const before = aligned
-    reader.scrolled(() => true); assert.equal(frames.size, 1, "A retained reader re-arms on scroll"); drain()
+    reader.notify(); assert.equal(frames.size, 1, "A retained reader re-arms on layout or scroll"); step(100)
     assert.equal(aligned, before + 12)
   } finally {
     globalThis.requestAnimationFrame = previousFrame

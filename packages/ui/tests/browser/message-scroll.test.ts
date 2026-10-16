@@ -911,23 +911,26 @@ test("restoring an escaped anchor during settleAtBottom wins over the pin", asyn
   }, { name: "list" })
 })
 
-// The hold outlives the old 30-frame alignment window: late growth above and a
-// viewport resize (composer growth) re-align the target instead of dropping it.
-test("alignElement holds its target through late growth above and a viewport resize, and clamps an out-of-view offset", async () => {
+// An in-place reveal is held for the former 30-frame alignment window, counted
+// from the request: growth above and a viewport resize (composer growth) within it
+// re-align the target; layout after it is no longer corrected.
+test("alignElement holds its target through growth and a viewport resize within its window, then lets go", async () => {
   await open(async page => {
-    // Virtua's index request from this key navigation is still pending: the hold
-    // re-targets it rather than letting it re-place row-180 at the top.
+    const trace = collectScrollTrace(page)
     await page.evaluate(() => (window as any).fixture.nearTail())
     await frames(page)
     await traceAnchor(page, "row-180")
-    const samples = await pump(page, 90, `if (frame === 0) window.fixture.align('row-180', 8)
-      if (frame >= 2 && frame <= 20) window.fixture.resizeRow('row-179', 48 + (frame - 1) * 12)
-      if (frame >= 45 && frame <= 55) window.fixture.resizeRow('row-179', 276 + (frame - 44) * 20)
-      if (frame === 70) document.getElementById('root').style.height = '560px'`)
-    const grown = await page.locator('[data-virtual-follow-key="row-179"]').evaluate(row => row.getBoundingClientRect().height)
-    const diagnostics = JSON.stringify({ grown, samples: samples.map(({ frame, top, anchorOffset }) => ({ frame, top, anchorOffset })) })
-    assert.equal(grown, 276 + 11 * 20, `The row above must stay mounted and grow: ${diagnostics}`)
-    assert.deepEqual(samples.filter(sample => sample.frame >= 1 && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 8) > 2)), [], `The aligned target moved: ${diagnostics}`)
+    await trace.enable()
+    const samples = await pump(page, 70, `if (frame === 0) window.fixture.align('row-180', 8)
+      if (frame >= 2 && frame <= 14) window.fixture.resizeRow('row-179', 48 + (frame - 1) * 12)
+      if (frame === 18) document.getElementById('root').style.height = '560px'
+      if (frame === 45) window.lateAt = performance.now()
+      if (frame >= 45 && frame <= 55) window.fixture.resizeRow('row-179', 204 + (frame - 44) * 20)`)
+    const lateAt = await page.evaluate(() => (window as any).lateAt)
+    const late = trace.entries.filter(entry => entry.kind === "write" && entry.reason === "align-element" && entry.at > Math.ceil(lateAt))
+    const diagnostics = JSON.stringify({ late, samples: samples.map(({ frame, top, anchorOffset }) => ({ frame, top, anchorOffset })) })
+    assert.deepEqual(samples.filter(sample => sample.frame >= 1 && sample.frame <= 40 && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 8) > 2)), [], `The aligned target moved within its window: ${diagnostics}`)
+    assert.deepEqual(late, [], `Layout after the window must not re-align: ${diagnostics}`)
     await page.evaluate(() => (window as any).fixture.align("row-180", 5000))
     await frames(page, 45)
     const clamped = await page.locator('[data-virtual-follow-key="row-180"]').evaluate(row => {
@@ -950,8 +953,8 @@ function injectOffscreenButton(page: Page, id: string, side: "below" | "above") 
   }, { id, side })
 }
 
-// An in-place reveal holds its revealed part against layout, never against the
-// reader: focus moving elsewhere or a scroll nobody wrote releases it.
+// An in-place reveal holds its revealed part against layout for a bounded window;
+// focus moving elsewhere (Tab, assistive technology) releases it at once.
 test("alignElement then Tab to an off-screen control keeps it visible and focused", async () => {
   await open(async page => {
     const trace = collectScrollTrace(page)
@@ -981,74 +984,56 @@ test("alignElement then Tab to an off-screen control keeps it visible and focuse
   }, { name: "list" })
 })
 
-test("an element hold yields at once to a scroll nobody wrote, even after later layout", async () => {
+// Virtua compensating a row above keeps the hold, which within its window still
+// corrects layout that Virtua does not compensate (a visible row above the element).
+test("a hold survives Virtua's compensation above and corrects visible growth within its window", async () => {
   await open(async page => {
     const trace = collectScrollTrace(page)
     await page.evaluate(() => (window as any).fixture.middle())
     await frames(page)
-    await page.evaluate(() => (window as any).fixture.align("row-110", 8))
-    // Within the hold's correcting frames (and the old 30-frame alignment loop).
-    await frames(page, 4)
-    await traceAnchor(page, "row-110")
-    await trace.enable()
-    // Find-in-page and assistive technology scroll without a recognised gesture.
-    await page.locator(".message-stream").evaluate(el => { el.scrollTop -= 150 })
-    await frames(page, 10)
-    const below = await injectOffscreenButton(page, "spare", "below")
-    assert.ok(below)
-    await page.evaluate(key => (window as any).fixture.resizeRow(key, 200), below)
-    const samples = await pump(page, 30)
-    const realigned = trace.entries.filter(entry => entry.kind === "write" && entry.reason === "align-element")
-    const diagnostics = JSON.stringify({ realigned, samples: samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })) })
-    assert.deepEqual(realigned, [], diagnostics)
-    assert.ok(samples.every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - 158) <= 2), diagnostics)
-  }, { name: "list" })
-})
-
-// Streaming below the held row keeps its frames armed; a foreign scroll still wins.
-test("a hold yields to a foreign scroll while rows below keep growing", async () => {
-  await open(async page => {
-    const trace = collectScrollTrace(page)
-    await page.evaluate(() => (window as any).fixture.middle())
-    await frames(page)
-    await page.evaluate(() => (window as any).fixture.align("row-110", 8))
-    await frames(page, 20)
-    const below = await injectOffscreenButton(page, "spare", "below")
-    assert.ok(below)
-    await traceAnchor(page, "row-110")
-    await page.evaluate(key => { (window as any).growKey = key }, below)
-    await trace.enable()
-    const samples = await pump(page, 40, `window.fixture.resizeRow(window.growKey, 48 + frame * 10)
-      if (frame === 4) { window.foreignAt = performance.now(); document.querySelector('.message-stream').scrollTop -= 150 }`)
-    const foreignAt = await page.evaluate(() => (window as any).foreignAt)
-    // The foreign scroll runs inside a frame, before the hold's own frame in it:
-    // any later align-element write would be the hold undoing it.
-    const realigned = trace.entries.filter(entry => entry.kind === "write" && entry.reason === "align-element" && entry.at >= Math.floor(foreignAt))
-    const diagnostics = JSON.stringify({ realigned, samples: samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })) })
-    assert.deepEqual(realigned, [], diagnostics)
-    assert.ok(samples.filter(sample => sample.frame > 5).every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - 158) <= 2), diagnostics)
-  }, { name: "list" })
-})
-
-// Virtua compensating a row above keeps an idle hold, which then still corrects
-// later layout that Virtua does not compensate (a visible row above the element).
-test("an idle hold survives Virtua's compensation above and still corrects later visible growth", async () => {
-  await open(async page => {
-    const trace = collectScrollTrace(page)
-    await page.evaluate(() => (window as any).fixture.middle())
-    await frames(page)
-    await page.evaluate(() => (window as any).fixture.align("row-108", 300))
-    await frames(page, 40)
     await traceAnchor(page, "row-108")
-    const above = await injectOffscreenButton(page, "spare", "above")
-    assert.ok(above)
-    await page.evaluate(key => { (window as any).aboveKey = key }, above)
     await trace.enable()
-    const samples = await pump(page, 60, `if (frame >= 2 && frame <= 6) window.fixture.resizeRow(window.aboveKey, 48 + (frame - 1) * 40)
-      if (frame === 30) window.fixture.resizeRow('row-106', 160)`)
-    const diagnostics = JSON.stringify({ samples: samples.map(({ frame, top, anchorOffset }) => ({ frame, top, anchorOffset })) })
-    assert.deepEqual(samples.filter(sample => (sample.frame < 30 || sample.frame > 33) && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 300) > 2)), [], diagnostics)
+    const samples = await pump(page, 40, `if (frame === 0) window.fixture.align('row-108', 300)
+      if (frame === 1) {
+        const el = document.querySelector('.message-stream'), top = el.getBoundingClientRect().top
+        window.aboveKey = [...el.querySelectorAll('[data-virtual-follow-key]')].reverse().find(row => row.getBoundingClientRect().bottom < top - 5)?.dataset.virtualFollowKey
+      }
+      if (frame >= 2 && frame <= 6) window.fixture.resizeRow(window.aboveKey, 48 + (frame - 1) * 40)
+      if (frame === 12) window.fixture.resizeRow('row-106', 160)`)
+    const diagnostics = JSON.stringify({ above: await page.evaluate(() => (window as any).aboveKey), samples: samples.map(({ frame, top, anchorOffset }) => ({ frame, top, anchorOffset })) })
+    assert.ok(await page.evaluate(() => (window as any).aboveKey), diagnostics)
+    assert.deepEqual(samples.filter(sample => sample.frame >= 1 && (sample.frame < 12 || sample.frame > 15) && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 300) > 2)), [], diagnostics)
     assert.ok(trace.entries.some(entry => entry.kind === "write" && entry.reason === "align-element"), `The hold must correct the visible growth: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+// The hold exists for a partly scrolled row that grows (message-block reveal):
+// here the held row is cut by the viewport top and grows below the held element,
+// so Virtua compensates a row that starts above the viewport.
+for (const start of [1, 12]) test(`a row cut by the viewport top that grows below the held element keeps it in place (growth from frame ${start})`, async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.resizeRow("row-105", 600))
+    await frames(page)
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-virtual-follow-key="row-105"] > div')!
+      const spacer = document.createElement("div"); spacer.style.height = "300px"
+      const held = document.createElement("span"); held.id = "held"; held.textContent = "held"
+      row.append(spacer, held)
+    })
+    await traceAnchor(page, "row-105")
+    const samples = await pump(page, 45, `if (frame === 0) window.fixture.alignElement('#held', 100)
+      if (frame >= ${start} && frame < ${start + 15}) window.fixture.resizeRow('row-105', 600 + (frame - ${start} + 1) * 30)`)
+    const held = await page.evaluate(() => {
+      const el = document.querySelector(".message-stream")!, target = document.getElementById("held")!
+      return Math.round(target.getBoundingClientRect().top - el.getBoundingClientRect().top)
+    })
+    const rowTop = samples.find(sample => sample.frame === 1)?.anchorOffset
+    const diagnostics = JSON.stringify({ held, samples: samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })) })
+    assert.ok(rowTop !== null && rowTop !== undefined && rowTop < 0, `The held row must be cut by the viewport top: ${diagnostics}`)
+    assert.deepEqual(samples.filter(sample => sample.frame >= 1 && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - rowTop) > 2)), [], diagnostics)
+    assert.ok(Math.abs(held - 100) <= 2, diagnostics)
   }, { name: "list" })
 })
 
@@ -1057,26 +1042,16 @@ test("a viewport resize clamps an alignment only while it lasts", async () => {
     await page.evaluate(() => (window as any).fixture.middle())
     await frames(page)
     await traceAnchor(page, "row-110")
-    const samples = await pump(page, 60, `if (frame === 0) window.fixture.align('row-110', 640)
+    // 530 px stays partly visible in the shrunk viewport: a row entirely outside it
+    // can be unmounted by Virtua, and a lost element ends the hold.
+    const samples = await pump(page, 30, `if (frame === 0) window.fixture.align('row-110', 530)
       if (frame === 10) document.getElementById('root').style.height = '560px'
-      if (frame === 30) document.getElementById('root').style.height = '700px'`)
+      if (frame === 15) window.clamped = document.querySelector('.message-stream').clientHeight - 48
+      if (frame === 20) document.getElementById('root').style.height = '700px'`)
+    const clamped = await page.evaluate(() => (window as any).clamped)
     const at = (frame: number) => samples.find(sample => sample.frame === frame)?.anchorOffset
-    const diagnostics = JSON.stringify(samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })))
-    assert.ok(Math.abs(at(8)! - 640) <= 2 && Math.abs(at(25)! - 512) <= 2 && Math.abs(at(55)! - 640) <= 2, diagnostics)
-  }, { name: "list" })
-})
-
-// A key navigation's index request stays pending in Virtua while measurements keep
-// coming (streaming); a reveal right after it must not be re-placed by it.
-test("a hold after a key navigation keeps its element while Virtua's pending request re-runs", async () => {
-  await open(async page => {
-    await traceAnchor(page, "row-108")
-    const samples = await pump(page, 60, `window.fixture.resizeRow('row-199', 48 + frame * 10)
-      if (frame === 0) window.fixture.middle()
-      if (frame === 2) window.fixture.align('row-108', 100)
-      if (frame >= 10 && frame <= 20) window.fixture.resizeRow('row-104', 48 + (frame - 9) * 20)`)
-    const diagnostics = JSON.stringify(samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })))
-    assert.deepEqual(samples.filter(sample => sample.frame > 3 && (sample.anchorOffset === null || Math.abs(sample.anchorOffset - 100) > 2)), [], diagnostics)
+    const diagnostics = JSON.stringify({ clamped, samples: samples.map(({ frame, anchorOffset }) => ({ frame, anchorOffset })) })
+    assert.ok(clamped < 525 && Math.abs(at(8)! - 530) <= 2 && Math.abs(at(17)! - clamped) <= 2 && Math.abs(at(27)! - 530) <= 2, diagnostics)
   }, { name: "list" })
 })
 
