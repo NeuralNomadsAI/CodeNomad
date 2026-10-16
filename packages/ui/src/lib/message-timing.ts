@@ -5,7 +5,7 @@ function getPositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
-function getTimeValue(source: unknown, key: "created" | "updated" | "completed" | "end" | "start"): number | undefined {
+function getTimeValue(source: unknown, key: "created" | "updated" | "completed" | "end" | "start" | "ran"): number | undefined {
   return getPositiveNumber((source as any)?.time?.[key])
 }
 
@@ -28,12 +28,18 @@ export function getMessageDurationMs(messageInfo?: MessageInfo, _status?: Messag
   return getDurationBetween(getTimeValue(messageInfo, "created"), getMessageCompletedAt(messageInfo))
 }
 
+// Part timing comes only from OpenCode. V2 parts carry time.created/completed
+// (tools add time.ran when execution starts); V1 parts used time.start/end.
 export function getPartStartedAt(part?: ClientPart): number | undefined {
-  return getTimeValue(part, "start") ?? getTimeValue(part, "created")
+  return getTimeValue(part, "ran") ?? getTimeValue(part, "start") ?? getTimeValue(part, "created")
+}
+
+export function getPartEndedAt(part?: ClientPart): number | undefined {
+  return getTimeValue(part, "completed") ?? getTimeValue(part, "end")
 }
 
 export function getPartDurationMs(part?: ClientPart): number | undefined {
-  return getDurationBetween(getTimeValue(part, "start"), getTimeValue(part, "end"))
+  return getDurationBetween(getPartStartedAt(part), getPartEndedAt(part))
 }
 
 export function inferReasoningDurationMs(

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { formatElapsedClock, getMessageDurationMs, inferReasoningDurationMs } from "./message-timing.ts"
+import { formatElapsedClock, getMessageDurationMs, getPartDurationMs, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "./message-timing.ts"
 
 describe("message timing helpers", () => {
   it("formats elapsed durations as clock values without unit suffixes", () => {
@@ -38,6 +38,18 @@ describe("message timing helpers", () => {
     const reasoningPart = { id: "reasoning-1", type: "reasoning", time: { start: 1_000, end: 4_500 } } as any
     const duration = inferReasoningDurationMs([reasoningPart], reasoningPart)
     assert.equal(duration, 3_500)
+  })
+
+  it("uses OpenCode V2 created/completed reasoning times and ran/completed tool times", () => {
+    const reasoningPart = { id: "reasoning-2", type: "reasoning", time: { created: 1_000, completed: 4_000 } } as any
+    assert.equal(inferReasoningDurationMs([reasoningPart], reasoningPart), 3_000)
+    // A tool's duration is its execution, from ran, not the streaming of its input.
+    const tool = { id: "tool-1", type: "tool", time: { created: 1_000, ran: 2_500, completed: 6_500 } } as any
+    assert.equal(getPartStartedAt(tool), 2_500)
+    assert.equal(getPartEndedAt(tool), 6_500)
+    assert.equal(getPartDurationMs(tool), 4_000)
+    assert.equal(getPartDurationMs({ type: "tool", time: { created: 1_000 } } as any), undefined, "still running")
+    assert.equal(getPartStartedAt({ type: "tool", time: { created: 1_000 } } as any), 1_000)
   })
 
   it("does not infer reasoning duration from message completion or fallback fields", () => {

@@ -21,7 +21,8 @@ import { useI18n, type I18nContextValue } from "../lib/i18n"
 import { hotkeyLabel } from "../lib/hotkeys"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
-import { formatElapsedClock, inferReasoningDurationMs } from "../lib/message-timing"
+import { formatElapsedClock, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
+import { PartDuration } from "./part-duration"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { applySearchHighlights, clearSearchHighlights, type SearchRevealRequest } from "./search-highlights"
 import type { AlignInTranscript } from "./search-highlight-ranges"
@@ -1890,6 +1891,11 @@ function ReasoningCard(props: ReasoningCardProps) {
             <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
               {reasoningTitle()}
             </span>
+            <PartDuration
+              startedAt={getPartStartedAt(props.part)}
+              endedAt={getPartEndedAt(props.part)}
+              running={props.status === "streaming" || props.status === "sending"}
+            />
           </span>
         </button>
 

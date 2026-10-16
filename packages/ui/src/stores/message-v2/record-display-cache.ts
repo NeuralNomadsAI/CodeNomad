@@ -83,7 +83,8 @@ export function buildRecordDisplayData(instanceId: string, record: MessageRecord
           id: part.id,
           type: "reasoning",
           text: extractReasoningTextForRender(part),
-          time: time ? { start: time.start, end: time.end, created: time.created } : undefined,
+          // V2 reasoning carries created/completed; V1 used start/end.
+          time: time ? { start: time.start, end: time.end, created: time.created, completed: time.completed } : undefined,
           revision: entry.revision,
         } as ClientPartWithRevision)
         continue
