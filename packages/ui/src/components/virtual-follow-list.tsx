@@ -716,11 +716,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const containerRect = element.getBoundingClientRect()
     const candidates = []
     // Read the rendered rows, not itemElements: a list being unmounted has
-    // already dropped those entries while its rows remain laid out.
-    for (const row of element.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")) {
-      if (row.closest(".message-stream") !== element) continue
-      const rect = row.getBoundingClientRect()
-      candidates.push({ key: row.dataset.virtualFollowKey!, top: rect.top, bottom: rect.bottom })
+    // already dropped those entries while its rows remain laid out. Rows sit at
+    // scroller > Virtua root > item > row; never walk their content.
+    for (const root of element.children) for (const item of root.children) {
+      const row = item.firstElementChild
+      const key = row instanceof HTMLElement ? row.dataset.virtualFollowKey : undefined
+      if (key === undefined) continue
+      const rect = row!.getBoundingClientRect()
+      candidates.push({ key, top: rect.top, bottom: rect.bottom })
     }
     const handle = virtuaHandle()
     const index = handle?.findItemIndex(handle.scrollOffset)

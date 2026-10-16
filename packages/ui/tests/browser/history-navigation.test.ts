@@ -66,7 +66,6 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
   const reads = new Set<Promise<unknown>>()
   let indexGate: Promise<void> | undefined, releaseIndex: (() => void) | undefined
   let hold: { messageID: string; release: () => void; promise: Promise<void> } | undefined
-  let nextWindowHold: { release: () => void; promise: Promise<void> } | undefined
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", async route => {
     const request = route.request(), method = request.url().split("/").at(-1)
@@ -98,9 +97,6 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     if (method === "window") {
       windows.push(input.target)
       if (input.target.messageID === hold?.messageID) await hold!.promise
-      const held = nextWindowHold
-      nextWindowHold = undefined
-      if (held) await held.promise
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
@@ -125,14 +121,7 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
       hold = { messageID: navigationMessageId(index), release, promise }
       return release
     },
-    /** Holds the next window read, whatever its target. */
-    holdNextWindow: () => {
-      let release!: () => void
-      const promise = new Promise<void>(done => { release = done })
-      nextWindowHold = { release, promise }
-      return release
-    },
-    close: async () => { hold?.release(); nextWindowHold?.release(); releaseIndex?.(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close(); await rm(databaseDirectory, { recursive: true, force: true }) },
+    close: async () => { hold?.release(); releaseIndex?.(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close(); await rm(databaseDirectory, { recursive: true, force: true }) },
   }
 }
 
@@ -419,12 +408,18 @@ test("a jump cancelled before hydration still restores the saved passage", async
   } finally { await f.close() }
 })
 
-// The page commit replaces the stored position with its destination. Once the
-// jump is cancelled, the pending restore must still return to the saved passage.
-test("a jump cancelled after its page commit, before hydration, still restores the saved passage", async () => {
+// The page commit replaces the stored position and window with its
+// destination. Once the jump is cancelled, the pending restore must still
+// return to the saved position: a passage, the latest bottom, or (none saved)
+// the latest bottom too, reopening the latest window the commit replaced.
+for (const saved of ["passage", "latest bottom", "none"] as const) test(`a jump cancelled after its page commit, before hydration, still restores the saved position (${saved})`, async () => {
   const f = await fixture(false, false, true)
   try {
-    await seedSavedPosition(f.page, navigationMessageId(1450))
+    if (saved === "passage") await seedSavedPosition(f.page, navigationMessageId(1450))
+    if (saved === "latest bottom") await f.page.evaluate(`(async () => {
+      const { messageStoreBus } = await import('/src/stores/message-v2/bus.ts')
+      messageStoreBus.getOrCreate('navigation').setScrollSnapshot('s', 'message-stream', { scrollTop: 100, atBottom: true, followModeType: 'following', windowIsLatest: true })
+    })()`)
     await f.page.evaluate(`(async () => {
       const { messageStoreBus } = await import('/src/stores/message-v2/bus.ts')
       const stop = messageStoreBus.onScrollSnapshotChanged((_instance, _session, _scope, snapshot) => {
@@ -437,8 +432,47 @@ test("a jump cancelled after its page commit, before hydration, still restores t
     await f.page.waitForFunction(() => (window as any).fixture.snapshot().window?.kind === "history")
     await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
     await f.page.evaluate(() => (window as any).fixture.releaseMessages())
-    await assertPassageAtTop(f.page, 1450)
-    assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(1450))
+    if (saved === "passage") {
+      await assertPassageAtTop(f.page, 1450)
+      assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(1450))
+    } else {
+      await f.page.waitForFunction(() => {
+        const state = (window as any).fixture.snapshot()
+        const stream = document.querySelector(".message-stream")!
+        return state.window?.kind === "latest" && state.ids.includes("msg_01499")
+          && stream.scrollHeight - stream.clientHeight - stream.scrollTop <= 1
+      })
+      await waitFrames(f.page, 30)
+      const state = await snapshot(f.page)
+      assert.equal(state.window.kind, "latest", "the latest window must replace the cancelled one")
+      assert.ok(state.scroll.atBottom && state.scroll.windowIsLatest, `the stored position must be the latest bottom: ${JSON.stringify(state.scroll)}`)
+      assert.ok(await f.page.locator('.message-stream [data-virtual-follow-key="msg_01499"]').count(), "the latest message must be shown")
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// A restore loading its saved anchor positions the list itself: reaching the
+// bottom meanwhile must not page beyond the window that restore brings in.
+test("reaching the bottom while a restore loads its anchor does not page newer", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await seedSavedPosition(f.page, navigationMessageId(250))
+    const release = f.hold(250)
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.waitForFunction(() => document.querySelector(".message-stream [data-virtual-follow-key]"))
+    for (let i = 0; i < 100 && !f.windows.some(target => target.messageID === navigationMessageId(250)); i++) await waitFrames(f.page, 3)
+    const box = (await f.page.locator(".message-stream").boundingBox())!
+    await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+    // The anchor arrives about 500 ms later, while that downward intent is
+    // still fresh (600 ms), so its window swap is observed as reaching the bottom.
+    await f.page.mouse.wheel(0, 1000000)
+    await waitFrames(f.page, 30)
+    release()
+    await assertPassageAtTop(f.page, 250)
+    await waitFrames(f.page, 30)
+    assert.deepEqual(f.windows.map(target => target.messageID), [navigationMessageId(250)], "no newer page may be requested")
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
@@ -536,17 +570,17 @@ test("unmounting during a held older page stores the reader's position", async (
   const f = await fixture()
   try {
     await f.page.evaluate(() => (window as any).fixture.holdNextList())
-    const releaseWindow = f.holdNextWindow()
     const box = (await f.page.locator(".message-stream").boundingBox())!
     await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
     await f.page.mouse.wheel(0, -1000000)
-    await f.page.waitForFunction(() => (window as any).fixture.listPending(), undefined, { timeout: 5000 }).catch(() => {})
+    // The older page is a native list read: it must be the held request.
+    await f.page.waitForFunction(() => (window as any).fixture.listPending(), undefined, { timeout: 5000 })
     await waitFrames(f.page, 30)
+    assert.ok(await f.page.evaluate(() => (window as any).fixture.listPending()), "the older page must still be held")
     assert.ok(Math.abs((await rowOffset(f.page, 1300))!) < 2, "the reader must be at the top of the latest page")
     await f.page.evaluate(() => (window as any).fixture.switchAway())
     assert.equal((await snapshot(f.page)).scroll.anchorKey, navigationMessageId(1300))
     await f.page.evaluate(() => (window as any).fixture.releaseList())
-    releaseWindow()
     await waitFrames(f.page, 30)
     await f.page.evaluate(() => (window as any).fixture.return())
     await assertPassageAtTop(f.page, 1300)

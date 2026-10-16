@@ -58,11 +58,12 @@ interface RestoringNavigation { kind: "restoring"; sessionId: string; loading: A
  * Pages the history window; `gesture` is the scroll direction that requested it.
  * `restored` records whether the activation restore had positioned the list
  * before paging began, and `positioned` whether paging has positioned it since.
- * Before the restore, `saved` keeps the stored position the page commit replaces.
+ * Before the restore, `saved` keeps the stored position the page commit
+ * replaces (`null`: none was stored).
  */
 interface PagingNavigation {
   kind: "paging"; sessionId: string; controller: AbortController; gesture: "up" | "down" | null; around: boolean
-  restored: boolean; positioned: boolean; saved?: ScrollSnapshot
+  restored: boolean; positioned: boolean; saved?: ScrollSnapshot | null
 }
 /** One owner positions the transcript: the activation's restore, then history paging. */
 type TranscriptNavigation = { kind: "unrestored" } | RestoringNavigation | PagingNavigation | { kind: "idle" }
@@ -454,21 +455,25 @@ export default function MessageSection(props: MessageSectionProps) {
     // Paging that never positioned a list the activation had not restored yet
     // leaves that restore pending, unless the caller positions the list now; its
     // unpositioned list has nothing to persist. A failed or cancelled jump thus
-    // falls back to the saved position, put back over its page commit, and that
-    // restore then owns the retry banner.
+    // falls back to the saved position, put back over its page commit (none
+    // saved stands for the latest bottom), and that restore then reloads the
+    // saved position's window and owns the retry banner. A saved bottom of a
+    // historical window carries no anchor to reload, so it is not covered.
     if (!paging.restored && !paging.positioned) {
-      if (!positioning && paging.saved) {
-        const resolvedStore = store()
-        if (resolvedStore.getScrollSnapshot(paging.sessionId, MESSAGE_SCROLL_CACHE_SCOPE) !== paging.saved) {
-          const { updatedAt: _updatedAt, ...saved } = paging.saved
-          resolvedStore.setScrollSnapshot(paging.sessionId, MESSAGE_SCROLL_CACHE_SCOPE, saved)
-        }
+      const resolvedStore = store()
+      const current = resolvedStore.getScrollSnapshot(paging.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+      if (!positioning && paging.saved !== undefined && current !== (paging.saved ?? undefined)) {
+        const { updatedAt: _updatedAt, ...saved } = paging.saved
+          ?? { scrollTop: 0, atBottom: true, followModeType: "following" as const, windowIsLatest: true, updatedAt: 0 }
+        resolvedStore.setScrollSnapshot(paging.sessionId, MESSAGE_SCROLL_CACHE_SCOPE, saved)
       }
       setNavigation(positioning ? { kind: "idle" } : { kind: "unrestored" })
       return
     }
     setNavigation({ kind: "idle" })
     // A committed page records its intended position in the store; record the reader's actual one.
+    // Known follow-up: on a session switch 0-1 frames after a jump lands, capture is not allowed and the
+    // last good position predates the jump (as before this navigation state).
     persistMessageScrollSnapshot({ sessionId: paging.sessionId, allowCapture: paging.sessionId === props.sessionId, requireActive: false })
   }
 
@@ -658,18 +663,28 @@ export default function MessageSection(props: MessageSectionProps) {
       if (applied) persistMessageScrollSnapshot()
     }
     // Without a snapshot, the latest page opens at its bottom.
-    const snapshot: VirtualFollowScrollSnapshot = store().getScrollSnapshot(restoreSessionId, MESSAGE_SCROLL_CACHE_SCOPE)
-      ?? { scrollTop: 0, atBottom: true, followModeType: "following" }
+    const stored = store().getScrollSnapshot(restoreSessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+    const snapshot: VirtualFollowScrollSnapshot = stored ?? { scrollTop: 0, atBottom: true, followModeType: "following" }
     const restore = async () => {
       setOlderMessageLoadFailed(false)
       let restoredSnapshot = snapshot
-      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)) {
+      const loadsAnchor = !snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)
+      // The bottom of the latest page (or no position) reopens that page first
+      // when a cancelled jump left a historical window in its place.
+      const loadsLatest = snapshot.atBottom && stored?.windowIsLatest !== false && props.onLoadLatestMessages
+        && !isLatestWindow(store().getMessageWindow(restoreSessionId))
+      if (loadsAnchor || loadsLatest) {
         try {
-          if (props.onLoadMessageAnchor) {
+          if (loadsLatest) {
+            const controller = new AbortController()
+            restoring.loading = controller
+            try { await props.onLoadLatestMessages!(controller.signal) }
+            finally { if (restoring.loading === controller) restoring.loading = null }
+          } else if (props.onLoadMessageAnchor) {
             const controller = new AbortController()
             restoring.loading = controller
             try {
-              try { await props.onLoadMessageAnchor(snapshot.anchorKey, controller.signal) }
+              try { await props.onLoadMessageAnchor(snapshot.anchorKey!, controller.signal) }
               catch (error) {
                 if (!(error instanceof MissingHistoryAnchorError) || !props.onLoadLatestMessages || !isCurrentRestore()) throw error
                 await props.onLoadLatestMessages(controller.signal)
@@ -912,6 +927,9 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!api || !isActive()) return
     const previous = navigation()
     if (previous.kind === "paging" && direction !== "around" && direction !== "latest") return
+    // A restore loading its anchor replaces the window and positions the list
+    // itself; a boundary gesture meanwhile must not page beyond that window.
+    if (previous.kind === "restoring" && previous.loading && (direction === "older" || direction === "newer")) return
     const restored = previous.kind === "idle" || (previous.kind === "paging" && (previous.restored || previous.positioned))
     const load = direction === "around"
       ? props.onLoadMessageAnchor && anchorMessageId ? (signal?: AbortSignal) => props.onLoadMessageAnchor!(anchorMessageId, signal) : undefined
@@ -931,7 +949,7 @@ export default function MessageSection(props: MessageSectionProps) {
     // Before the restore, keep the position a page commit would replace (a
     // superseded jump already kept it).
     const saved = restored ? undefined
-      : previous.kind === "paging" ? previous.saved : store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+      : previous.kind === "paging" ? previous.saved : store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? null
     // Paging positions the list itself.
     cancelWindowNavigation(true)
     claimSearchReveal()
