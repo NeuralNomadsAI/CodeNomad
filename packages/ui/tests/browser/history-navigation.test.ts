@@ -534,9 +534,24 @@ async function sampleRowOffsets(page: Page, index: number, frames: number, gestu
   return page.evaluate(() => (window as any).rowSamples) as Promise<Array<number | null>>
 }
 
-// A resident jump's Virtua index request re-places its row on each measurement
-// while rows keep mounting. A gesture right after the click, before the jump
-// settles, must win at once and for good.
+/**
+ * Records every `data-scroll-write` value of the transcript from now on into
+ * `window.scrollWrites`, so a short-lived write reason cannot be missed.
+ */
+const recordScrollWrites = (page: Page) => page.evaluate(() => {
+  const element = document.querySelector(".message-stream")!, seen: Array<string | null> = (window as any).scrollWrites = []
+  new MutationObserver(records => {
+    // Each record's new value is the next one's old value, the last is current.
+    for (const [index, record] of records.entries()) if (index) seen.push(record.oldValue)
+    seen.push(element.getAttribute("data-scroll-write"))
+  }).observe(element, { attributeFilter: ["data-scroll-write"], attributeOldValue: true })
+})
+const sawScrollWrite = (page: Page, reason: string) =>
+  page.waitForFunction(reason => (window as any).scrollWrites.includes(reason), reason)
+
+// A resident jump writes its row's offset to the DOM, then holds that row while
+// rows keep mounting. A gesture right after the click, before the jump settles,
+// must win at once and for good.
 for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} right after a resident timeline jump wins over the jump`, async () => {
   const f = await fixture()
   try {
@@ -545,9 +560,10 @@ for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} right aft
     const stream = f.page.locator(".message-stream[tabindex]")
     const box = (await stream.boundingBox())!
     const amplitude = gesture === "wheel" ? 300 : await stream.evaluate(element => element.clientHeight * 0.875)
+    await recordScrollWrites(f.page)
     await clickTimeline(f.page, 1350)
-    // The click has issued its index request; its landing has not settled.
-    await f.page.waitForFunction(() => document.querySelector(".message-stream")?.getAttribute("data-scroll-write") === "jump-key")
+    // The click has written its jump; its landing has not settled.
+    await sawScrollWrite(f.page, "jump-key")
     await waitFrames(f.page, 2)
     const samples = await sampleRowOffsets(f.page, 1350, 90, async () => {
       if (gesture === "wheel") {
@@ -567,6 +583,87 @@ for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} right aft
     await waitFrames(f.page, 30)
     const settled = await rowOffset(f.page, 1350)
     assert.ok(settled === null || settled >= amplitude / 2, `the ${gesture} must hold: ${settled} ${detail}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+/** Grows the streaming reply by a paragraph on every frame until `window.tailStreaming` is cleared. */
+const streamTail = (page: Page) => page.evaluate(`(() => {
+  window.tailStreaming = true
+  const next = () => {
+    if (!window.tailStreaming) return
+    window.fixture.stream("\\n\\nA streamed paragraph that grows the live reply.")
+    requestAnimationFrame(next)
+  }
+  requestAnimationFrame(next)
+})()`)
+
+// During streaming a Virtua operation would live on every measurement and
+// reassert its target over a wheel; a resident jump's landing must leave none,
+// so a wheel right after it wins for good while the tail keeps growing.
+test("a wheel right after a resident timeline jump during streaming wins for good", async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    await f.page.evaluate(() => (window as any).codenomadLogger.enableLogger("scroll"))
+    await f.page.evaluate(() => (window as any).fixture.status("working"))
+    await streamTail(f.page)
+    await waitFrames(f.page, 30)
+    const rail = f.page.locator(".message-timeline")
+    await rail.hover()
+    await rail.evaluate(element => { element.scrollTop = element.scrollHeight * 1350 / 1500 })
+    await f.page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(1350)}"]`).waitFor()
+    const box = (await f.page.locator(".message-stream[tabindex]").boundingBox())!
+    await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+    await recordScrollWrites(f.page)
+    // Pause the stream 100 ms before the jump, so the jump's write outlives the
+    // last measurement by that much.
+    await f.page.evaluate(`new Promise(resolve => {
+      window.tailStreaming = false
+      setTimeout(() => { document.querySelector('.message-timeline-segment[data-message-id="${navigationMessageId(1350)}"]').click(); resolve() }, 100)
+    })`)
+    await sawScrollWrite(f.page, "jump-key")
+    // The wheel comes more than 150 ms after that measurement, within 150 ms of
+    // the jump; the stream resumes at once.
+    await f.page.waitForTimeout(80)
+    const samples = await sampleRowOffsets(f.page, 1350, 90, async () => {
+      await f.page.mouse.wheel(0, -300)
+      await streamTail(f.page)
+    })
+    const detail = JSON.stringify({ samples: samples.map(offset => offset === null ? null : Math.round(offset)) })
+    const won = samples.findIndex(offset => offset !== null && offset >= 150)
+    assert.ok(won >= 0 && won < 30, `the wheel must win within 30 frames: ${detail}`)
+    const reverted = samples.slice(won).findIndex(offset => offset !== null && offset < 150)
+    assert.equal(reverted, -1, `the stream must not restore the jump's offset after the wheel: ${detail}`)
+    assert.ok((await snapshot(f.page)).ids.includes("msg_streaming"), "the reply streamed throughout")
+    assert.deepEqual(f.errors, [])
+  } finally {
+    await f.page.evaluate(() => { (window as any).tailStreaming = false }).catch(() => {})
+    await f.close()
+  }
+})
+
+// A settled jump leaves the reader in charge: a later programmatic scroll or
+// a focus move (keyboard, assistive technology) must keep its new position.
+for (const move of ["scrollIntoView", "focus"] as const) test(`a ${move} after a settled resident timeline jump keeps its position`, async () => {
+  const f = await fixture()
+  try {
+    await clickTimeline(f.page, 1350)
+    await assertPassageAtTop(f.page, 1350)
+    await waitFrames(f.page, 90)
+    // Row 1356 lies just below the viewport, mounted in the overscan.
+    const moved = await f.page.evaluate(`(() => {
+      const stream = document.querySelector('.message-stream'), row = stream.querySelector('[data-virtual-follow-key="${navigationMessageId(1356)}"]')
+      const before = stream.scrollTop
+      if (${JSON.stringify(move)} === 'scrollIntoView') row.scrollIntoView()
+      else row.querySelector('button').focus()
+      return { delta: stream.scrollTop - before, offset: row.getBoundingClientRect().top - stream.getBoundingClientRect().top }
+    })()`) as { delta: number; offset: number }
+    assert.ok(moved.delta > 0, `the ${move} must scroll the transcript: ${JSON.stringify(moved)}`)
+    await waitFrames(f.page, 60)
+    const offsets = { moved, row1356: await rowOffset(f.page, 1356), row1350: await rowOffset(f.page, 1350) }
+    assert.ok(offsets.row1356 !== null && Math.abs(offsets.row1356 - moved.offset) < 2,
+      `the jump's anchor must not pull back the ${move}: ${JSON.stringify(offsets)}`)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

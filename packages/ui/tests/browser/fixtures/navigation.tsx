@@ -16,6 +16,7 @@ let api: VirtualFollowListApi | undefined
 let snapshot: VirtualFollowScrollSnapshot | undefined
 let reachedTop = 0
 let pinCancelled = 0
+let steps = 0
 const rowHeight = (item: string) => rowHeights()[item] ?? (item === "streaming-tail" ? tailHeight() : item === "row-1" ? headHeight() : 48)
 render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={item => item}
   initialAutoScroll={() => false} isActive={active}
@@ -30,8 +31,8 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
   follow: () => { api?.scrollToBottom({ immediate: true }); api?.setAutoScroll(true) },
-  middle: () => api?.scrollToKey("row-100", { block: "start" }),
-  nearTail: () => api?.scrollToKey("row-180", { block: "start" }),
+  middle: () => api?.scrollToKey("row-100"),
+  nearTail: () => api?.scrollToKey("row-180"),
   align: (key = "row-180", offset = 8) => {
     const row = api?.getScrollElement()?.querySelector<HTMLElement>(`[data-virtual-follow-key="${key}"]`)
     if (row) api?.alignElement(row, offset)
@@ -40,6 +41,12 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
     setItems(current => [...current.slice(1), "streaming-tail"])
     // Metadata/inbox reprojection may publish the same IDs before settlement.
     queueMicrotask(() => setItems(current => current.slice()))
+  },
+  // An agent step: a new reply joins the tail, the oldest row leaves the window.
+  step: () => {
+    const key = `step-${++steps}`
+    setItems(current => [...current.slice(1), key])
+    return key
   },
   growTail: setTailHeight,
   resizeHead: setHeadHeight,

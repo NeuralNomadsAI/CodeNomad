@@ -733,7 +733,6 @@ export default function MessageSection(props: MessageSectionProps) {
       retryAnchorRestore = null
 
       api.restoreScrollSnapshot(restoredSnapshot, {
-        behavior: "auto",
         fallback: () => {
           if (!isCurrentRestore()) return
           api.setAutoScroll(true)
@@ -825,7 +824,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string) {
-    api.scrollToKey(messageId, { block: "start" })
+    api.scrollToKey(messageId)
     if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
     else claimSearchReveal()
   }

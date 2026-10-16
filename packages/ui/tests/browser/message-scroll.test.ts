@@ -9,7 +9,8 @@ import { createFixtureCache } from "./fixture-cache"
 
 // Scroll ownership regressions over the real SessionView/VirtualFollowList:
 // a manual reader is never repinned by proximity and is restored exactly, a
-// restored anchor has one imperative target, and only an opposite gesture
+// restoration or key jump positions by DOM writes (no Virtua operation) that
+// a later gesture or reveal supersedes, and only an opposite gesture
 // supersedes pending history paging.
 const fixtures = {
   // SessionView with a held history request (session.tsx bootstrap).
@@ -331,6 +332,196 @@ for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} while a r
   }, { name: "list" })
 })
 
+// A Virtua operation lives until 150 ms without a measurement and reasserts its
+// target on the next one: wheels around that idle point after a rolling window
+// (which once left such an operation) must both hold as the tail grows again.
+test("two wheels after a rolling window and a pause in tail growth both hold", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.nearTail())
+    await frames(page, 30)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.evaluate(() => (window as any).fixture.roll())
+    await frames(page, 4)
+    // The tail grows for 10 frames, then again from the second wheel on;
+    // row-180 is sampled every frame until 45 frames after that wheel.
+    const sampling = page.evaluate(() => new Promise<{ samples: Array<{ time: number; offset: number | null }>; wheels: number[]; measured: number }>(resolve => {
+      const w = window as any, samples: Array<{ time: number; offset: number | null }> = [], wheels: number[] = []
+      addEventListener("wheel", event => { wheels.push(event.timeStamp) }, { capture: true, passive: true })
+      new ResizeObserver(() => { if (wheels.length === 0) w.lastMeasured = performance.now() }).observe(document.querySelector('[data-virtual-follow-key="streaming-tail"]')!)
+      let height = 48, grown = 0, after = 0
+      const next = () => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!, row = el.querySelector('[data-virtual-follow-key="row-180"]')
+        samples.push({ time: performance.now(), offset: row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null })
+        if (grown < 10) {
+          w.fixture.growTail(height += 12)
+          w.grown = ++grown
+        } else if (wheels.length >= 2 && after++ < 10) w.fixture.growTail(height += 12)
+        if (after >= 45) resolve({ samples, wheels, measured: w.lastMeasured })
+        else requestAnimationFrame(next)
+      }
+      requestAnimationFrame(next)
+    }))
+    await page.waitForFunction(() => (window as any).grown === 10)
+    // Wheel #1 135 ms after the last measurement, wheel #2 40 ms later (less the input dispatch).
+    const waitUntil = (at: string) => page.evaluate(`new Promise(resolve => setTimeout(resolve, Math.max(0, ${at} - 3 - performance.now())))`)
+    await frames(page, 2)
+    await waitUntil("window.lastMeasured + 135")
+    await page.mouse.wheel(0, -100)
+    await waitUntil("window.lastMeasured + 175")
+    await page.mouse.wheel(0, -100)
+    const { samples, wheels, measured } = await sampling
+    const first = samples.findIndex(sample => sample.time >= wheels[0])
+    const baseline = samples[first - 1]?.offset
+    const offsets = samples.slice(first - 1).map(sample => sample.offset === null ? null : Math.round(sample.offset))
+    const diagnostics = JSON.stringify({ wheels: wheels.map(time => Math.round(time - measured)), baseline, offsets })
+    assert.ok(baseline !== null && baseline !== undefined && wheels.length === 2, diagnostics)
+    // Later than 150 ms, wheel #1 would meet no live operation and probe nothing.
+    assert.ok(wheels[0] - measured >= 100 && wheels[0] - measured < 150, `Wheel #1 must precede Virtua's idle point: ${diagnostics}`)
+    const reversals = offsets.slice(1).filter((offset, i) => offset === null || offsets[i] === null || offset < offsets[i]! - 2)
+    assert.deepEqual(reversals, [], `A wheel was undone: ${diagnostics}`)
+    assert.ok(offsets.slice(-30).every(offset => offset !== null && offset - baseline >= 150), `Both wheels must hold: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+// Virtua renews a live imperative operation on every item or viewport
+// measurement: a viewport resize after a rolling window must leave nothing
+// that reapplies the roll's offset over a later wheel.
+test("a wheel after a rolling window and a viewport resize lands and holds", async () => {
+  await open(async page => {
+    await varyRowHeights(page)
+    await frames(page, 10)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page, 60)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    // Rows far above are re-rendered at new heights, so the wheel measures them.
+    await page.evaluate(() => { for (let i = 0; i < 80; i++) (window as any).fixture.resizeRow(`row-${i}`, 30 + (i * 53) % 90) })
+    await frames(page, 10)
+    // Frame 0 rolls the window, the container shrinks 60 px about 80 ms after
+    // the roll settles, and the content position is sampled until 75 frames
+    // after the wheel as the always-mounted last row's viewport offset: every
+    // re-measured row is above it, so Virtua's compensation, which moves
+    // scrollTop but not the content, leaves it unchanged.
+    const sampling = page.evaluate(() => new Promise<{ samples: Array<{ time: number; offset: number | null }>; wheels: number[]; rolled: number; resized: number }>(resolve => {
+      const w = window as any, samples: Array<{ time: number; offset: number | null }> = [], wheels: number[] = []
+      addEventListener("wheel", event => { wheels.push(event.timeStamp) }, { capture: true, passive: true })
+      let rolled = 0, resized = 0, after = 0
+      const next = () => {
+        const now = performance.now(), el = document.querySelector<HTMLElement>(".message-stream")!, row = el.querySelector('[data-virtual-follow-key="streaming-tail"]')
+        samples.push({ time: now, offset: row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null })
+        if (!rolled) {
+          w.fixture.roll()
+          w.rolledAt = rolled = now
+        } else if (!resized && now >= rolled + 96) {
+          document.getElementById("root")!.style.height = "640px"
+          resized = now
+        }
+        if ((wheels.length && ++after >= 75) || samples.length >= 300) resolve({ samples, wheels, rolled, resized })
+        else requestAnimationFrame(next)
+      }
+      requestAnimationFrame(next)
+    }))
+    await page.waitForFunction(() => (window as any).rolledAt !== undefined)
+    // The wheel reaches the page about 190 ms after the roll (less the input dispatch).
+    await page.evaluate("new Promise(resolve => setTimeout(resolve, Math.max(0, window.rolledAt + 186 - performance.now())))")
+    await page.mouse.wheel(0, -600)
+    const { samples, wheels, rolled, resized } = await sampling
+    const first = samples.findIndex(sample => sample.time >= wheels[0])
+    const baseline = samples[first - 1]?.offset
+    const offsets = samples.slice(first - 1).map(sample => sample.offset === null ? null : Math.round(sample.offset))
+    const diagnostics = JSON.stringify({ resized: Math.round(resized - rolled), wheel: Math.round(wheels[0] - rolled), baseline, offsets })
+    assert.ok(first > 0 && baseline !== null && baseline !== undefined && resized > 0 && resized < wheels[0] && offsets.length > 60, diagnostics)
+    const landed = offsets.findIndex(offset => offset !== null && offset - baseline >= 300)
+    assert.ok(landed >= 0 && landed < 30, `The wheel must land: ${diagnostics}`)
+    const reversals = offsets.slice(1).filter((offset, i) => offset === null || offsets[i] === null || offset < offsets[i]! - 2)
+    assert.deepEqual(reversals, [], `The wheel was undone: ${diagnostics}`)
+    assert.ok(offsets.slice(-30).every(offset => offset !== null && offset - baseline >= 300), `The wheel must hold: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+// Rolling windows under an escaped reader leave positioning to DOM writes and
+// Virtua's own compensation (scrollBy away from the edges). An imperative
+// Virtua operation (scrollTo) would outlive its call and reassert its target.
+test("a run that rolls the window under an escaped reader starts no imperative Virtua operation", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.nearTail())
+    await frames(page, 30)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.mouse.wheel(0, -400)
+    await frames(page, 30)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped")
+    // Four steps, each growing its reply for 12 frames, then 30 idle frames.
+    const calls = await page.evaluate(() => new Promise<Array<{ method: string; caller: string }>>(resolve => {
+      const w = window as any, calls: Array<{ method: string; caller: string }> = []
+      const originals = { scrollTo: Element.prototype.scrollTo, scrollBy: Element.prototype.scrollBy }
+      for (const method of ["scrollTo", "scrollBy"] as const) (Element.prototype as any)[method] = function (this: Element, ...args: unknown[]) {
+        // The caller's frame, under this wrapper's.
+        if (this.classList.contains("message-stream")) calls.push({ method, caller: (new Error().stack ?? "").split("\n")[2]?.trim() ?? "" })
+        return (originals[method] as any).apply(this, args)
+      }
+      let frame = 0, key = ""
+      const next = () => {
+        if (frame < 48) {
+          if (frame % 12 === 0) key = w.fixture.step()
+          w.fixture.resizeRow(key, 48 + (frame % 12) * 24)
+        }
+        if (++frame < 78) requestAnimationFrame(next)
+        else {
+          Object.assign(Element.prototype, originals)
+          resolve(calls)
+        }
+      }
+      requestAnimationFrame(next)
+    }))
+    // Vite serves Virtua's Solid source, or an optimized `deps/virtua_*.js` chunk.
+    const virtua = calls.filter(call => /\/node_modules\/virtua\/|\/deps\/virtua[^/]*\.js/.test(call.caller))
+    const sites: Record<string, number> = {}
+    for (const { method, caller } of calls) {
+      const site = `${method} ${/[^/]+:\d+:\d+/.exec(caller)?.[0] ?? caller}`
+      sites[site] = (sites[site] ?? 0) + 1
+    }
+    const diagnostics = JSON.stringify(sites)
+    assert.ok(virtua.length > 0, `Virtua's compensation must be observed: ${diagnostics}`)
+    assert.equal(virtua.filter(call => call.method === "scrollTo").length, 0, `Virtua scrollTo calls during the run: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+// Rows leaving a rolling window's head never accumulate in the DOM: a long run
+// mounts the viewport, Virtua's overscan and the measurement probes, plus at
+// most a few retired rows still awaiting their zero-height measurement.
+for (const escaped of [false, true]) test(`sixty rolling windows keep the mounted rows bounded (escaped=${escaped})`, async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    if (escaped) {
+      await page.evaluate(() => (window as any).fixture.nearTail())
+      await frames(page, 30)
+      await stream.hover()
+      await page.mouse.wheel(0, -400)
+    } else await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 30)
+    await page.evaluate(() => new Promise<void>(resolve => {
+      let frame = 0
+      const next = () => {
+        if (frame % 3 === 0) (window as any).fixture.step()
+        if (++frame < 180) requestAnimationFrame(next)
+        else resolve()
+      }
+      requestAnimationFrame(next)
+    }))
+    await frames(page, 60)
+    const mounted = await stream.evaluate(el => ({ rows: el.querySelectorAll("[data-virtual-follow-key]").length, retired: el.querySelectorAll("[data-virtual-follow-retired]").length, height: el.clientHeight }))
+    // 48 px rows: the viewport and 400 px of overscan on each side, a partial
+    // row at both edges, the 8 head and 8 tail measurement probes, and the
+    // few retired rows allowed below.
+    const retiredLimit = 3, bound = Math.ceil((mounted.height + 2 * 400) / 48) + 2 + 16 + retiredLimit
+    assert.ok(mounted.rows <= bound, `Mounted rows must stay bounded: ${JSON.stringify({ ...mounted, bound })}`)
+    assert.ok(mounted.retired <= retiredLimit, `Retired rows must collapse: ${JSON.stringify(mounted)}`)
+    assert.equal(await stream.getAttribute("data-follow-mode"), escaped ? "escaped" : "following")
+  }, { name: "list" })
+})
+
 const varyRowHeights = (page: Page) => page.evaluate(() => { for (let i = 0; i < 200; i++) (window as any).fixture.resizeRow(`row-${i}`, 30 + (i * 37) % 90) })
 
 for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} one frame after a key placement wins immediately and for good`, async () => {
@@ -345,6 +536,35 @@ for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} one frame
       key: "row-100", start: "window.fixture.middle()", delay: 1, amplitude,
       gesture: () => gesture === "wheel" ? page.mouse.wheel(0, -amplitude) : page.keyboard.press("PageUp"),
     })
+  }, { name: "list" })
+})
+
+// A settled key jump leaves nothing that owns the reader: focus moving to a
+// row below (Tab, assistive technology) or scrollIntoView keeps the position
+// the browser revealed instead of being pulled back to the jump's row.
+for (const reveal of ["focus", "scrollIntoView"] as const) test(`a ${reveal} below a settled key jump keeps its position`, async () => {
+  await open(async page => {
+    // A jump row taller than the viewport stays mounted and visible after the reveal.
+    await page.evaluate(() => (window as any).fixture.resizeRow("row-100", 800))
+    await frames(page, 10)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page, 90)
+    const stream = page.locator(".message-stream")
+    const jumped = await stream.evaluate(el => el.scrollTop)
+    const revealed = await stream.evaluate((el, reveal) => {
+      const row = el.querySelector<HTMLElement>('[data-virtual-follow-key="row-101"]')!
+      if (reveal === "focus") {
+        row.tabIndex = -1
+        row.focus()
+      } else row.scrollIntoView({ block: "end" })
+      return el.scrollTop
+    }, reveal)
+    assert.ok(revealed - jumped > 24, `The ${reveal} must scroll row-101 into view: jump at ${jumped}, revealed at ${revealed}`)
+    const samples = await sampleAnchor(page, { key: "row-101", stream: ".message-stream", count: 60 })
+    const top = await stream.evaluate(el => el.scrollTop), height = await stream.evaluate(el => el.clientHeight)
+    const hidden = samples.filter(sample => sample.anchorOffset === null || sample.anchorOffset < 0 || sample.anchorOffset > height - 24)
+    assert.deepEqual(hidden.map(sample => sample.anchorOffset), [], `row-101 must stay visible: jump at ${jumped}, revealed at ${revealed}, now ${top}`)
+    assert.ok(Math.abs(top - revealed) < 2, `The reveal must keep its position: jump at ${jumped}, revealed at ${revealed}, now ${top}`)
   }, { name: "list" })
 })
 

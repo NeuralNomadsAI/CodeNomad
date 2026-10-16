@@ -119,21 +119,29 @@ is a DOM write: the list never issues Virtua's imperative operations
 its fixed target on every item or viewport measurement until 150 ms after the last
 one; the rows a gesture mounts, or a streaming tail, keep re-arming it, and nothing
 public cancels it, so it would undo any gesture or later write made meanwhile. Key
-jumps and anchor restoration therefore write the offset Virtua would target for the
-row (`writeIndex`, from its own item offsets) and let a list stabilizer settle the
-row once measured (the reader settlement for jumps, the restoration's own loop), both
-cancelled by every gesture. A restored anchor that has shrunk since its capture is
+jumps (always to the row's top) and anchor restoration therefore write the offset
+Virtua would target for the row (`writeIndex`, from its own item offsets) and let a
+list stabilizer settle the row once measured, both cancelled by every gesture: a
+jump's row is held like an in-place reveal (below), for the same bounded window, and
+then released, so a later focus, Tab or `scrollIntoView` is never pulled back to it;
+the restoration keeps its own loop. A restored anchor that has shrunk since its capture is
 kept partly visible: Virtua mounts no overscan above the viewport after a downward
 scroll, so a row held entirely above it would be unmounted and re-placed in a loop.
-A rolling window must leave Virtua's shift mode at once (it compensates every later
-measurement, a streaming tail below the reader included, until scrolling idles, and
-each compensation postpones that). Only an imperative operation does, so this is the
-list's one Virtua operation (a smooth one would instead defer Virtua's compensation
-into item offsets). While it may live (until 150 ms without a measurement of the
-list's content), every list write and scroll event retargets it to the DOM offset, so
-its reapplication never undoes a wheel, a key scroll or a later write; an instant
-write to the current offset leaves a running smooth scroll alone (checked in
-Chromium). Follow-mode changes go through
+A rolling window (the store keeps the latest 200 messages, so each agent step in a
+long session drops the oldest) never enters Virtua's shift mode, which compensates
+every later measurement until scrolling idles and can only be left through an
+imperative operation. Rows leaving the head are instead retired in place: they stay
+in Virtua's data as an empty prefix (a key and a size, no content), so Virtua only
+sees the data grow, measures them at zero, and its ordinary resize anchoring keeps
+the reader in place. Callers never see them: `renderItem` receives live indexes, and
+key lookups, the active row and anchors skip them. Retired rows stay mounted only
+until Virtua has measured them at zero (a watermark advanced two frames after each
+roll), so the DOM stays bounded; their keys and sizes accumulate until the next reset
+(page navigation, a disjoint window, an emptied list or a session change), a few
+bytes per step. Limits: a retired row still partly visible at the viewport top is
+compensated only when scrolling down, as Virtua's anchoring does for any shrinking
+row (shift mode compensated it fully); in a hidden (`display:none`) list the retired
+rows are measured, and compensated, when it is shown again. Follow-mode changes go through
 `syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
 compensation, browser clamping and search-result reveals inside nested scrollers.
@@ -205,7 +213,8 @@ activation restore: a send before hydration keeps the bottom over a saved passag
 and does so even if the prompt is then rejected (the saved passage is not restored).
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
-element, with the former element alignment's lifetime: the element is measured and
+element, and key jumps hold their row the same way at offset 0. Both have the former
+element alignment's lifetime and are released afterwards: the element is measured and
 re-aligned on every frame of a fixed 30-frame window counted from the request, which
 layout never extends. Within it, viewport and `beforeItems` resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
@@ -213,13 +222,19 @@ the current viewport only when applied. Gestures, navigation and focus moving to
 another element inside the transcript scroller (Tab, assistive technology) end it at
 once, and so does losing the element (an unmounted row); focus leaving the
 transcript (e.g. to the composer) does not. Any other scroll during the window is
-corrected like layout, as before. While a hold is active, a window shift retains the
+corrected like layout, as before. While a hold is active, a rolling window retains the
 hold rather than the visible top anchor, so no reader stays retained after it
 expires. Settlement, alignment and anchor restoration share one anchor measurement.
 Known follow-ups: a search reveal is aligned one frame after its row's highlights
 are painted, so that frame can show the message top; and Virtua renders the rows of
 a jump's new offset only at its next scroll event, so a session switch within that
 frame finds no anchor to capture and keeps the position from before the jump.
+A hold whose reply grows while its pane is hidden (review P2-3) lands at the top only
+in the switch fixture: native events for an inactive session invalidate its message
+load, and that fixture's `message.list` omits the in-flight reply, so the reload drops
+the hold's anchor and restoration waits `ANCHOR_RESTORE_MAX_FRAMES` before its pixel
+fallback. With the reply listed, the hold returns exactly; but the latest button's
+reload then re-engages the long-reply hold at once, a product decision left open.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

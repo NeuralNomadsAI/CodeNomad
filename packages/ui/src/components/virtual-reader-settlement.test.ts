@@ -72,6 +72,13 @@ test("an element hold aligns at once, then on every frame of a window layout nev
     assert.equal(aligned, 30)
     assert.equal(reader.held(), undefined, "The hold ends with its window")
     reader.notify(); assert.equal(frames.size, 0)
+    // A jump holds its row the same way, then lets later focus or reveals stand.
+    reader.hold({ key: "jumped", offset: 0 })
+    assert.equal(reader.held()?.key, "jumped")
+    step(10); reader.notify()
+    assert.equal(step(100), 19, "Layout notifications never extend a row hold either")
+    assert.equal(reader.held(), undefined, "A row hold ends with its window")
+    reader.notify(); assert.equal(frames.size, 0, "A released row is no longer retained")
     reader.hold({ key: "revealed", offset: 8, element })
     held = false
     reader.notify(); step(1)
