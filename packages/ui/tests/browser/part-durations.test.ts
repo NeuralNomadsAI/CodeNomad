@@ -54,6 +54,11 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
     const reasoning = (messageId: string) => page.locator(`.message-reasoning-card[data-part-id="${messageId}-reasoning-0"] .message-reasoning-header .part-duration`)
     await reasoning("finished-message").waitFor()
     assert.equal(await reasoning("finished-message").innerText(), "0:03", "V2 reasoning created → completed")
+    // An untitled step keeps its generic title; the duration is shown once, by the clock.
+    const untitled = page.locator('.message-reasoning-card[data-part-id="untitled-message-reasoning-0"] .message-reasoning-header')
+    assert.equal(await untitled.locator(".part-duration").innerText(), "0:02")
+    assert.equal(await untitled.locator(".message-reasoning-title").innerText(), "Thoughts")
+    assert.match(await untitled.locator(".message-reasoning-title").getAttribute("title") ?? "", /Thought for 2 seconds/)
 
     const runningTool = page.locator('.tool-call[data-part-id="running-tool"] .tool-call-header .part-duration')
     assert.equal(await runningTool.getAttribute("data-live"), "true")
@@ -65,6 +70,32 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
       return text.split(":").reduce((total, part) => total * 60 + Number(part), 0) > start
     }, before, { timeout: 5000 })
     if (process.env.CODENOMAD_DURATION_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_DURATION_CAPTURE })
+
+    // Short of room, the status word goes before the title truncates; the icon,
+    // duration, tooltip and accessible name stay.
+    const header = page.locator('.tool-call[data-part-id="finished-tool"] .tool-call-header')
+    const label = header.locator(".tool-call-header-status-label")
+    const title = header.locator(".tool-call-summary-title")
+    const truncated = () => title.evaluate(element => element.scrollWidth > element.clientWidth + 0.5)
+    assert.ok(await label.isVisible())
+    assert.equal(await truncated(), false)
+    await page.setViewportSize({ width: 320, height: 900 })
+    await label.waitFor({ state: "hidden" })
+    assert.ok(await finishedTool.isVisible())
+    assert.equal(await header.locator(".tool-call-header-status-icon").filter({ visible: true }).count(), 1)
+    assert.equal(await header.locator(".tool-call-header-status").getAttribute("aria-label"), "Completed")
+    assert.equal(await header.locator(".tool-call-header-status").getAttribute("title"), "Completed")
+    assert.equal(await truncated(), false, "the word goes first, so the title stays whole here")
+    if (process.env.CODENOMAD_DURATION_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_DURATION_CAPTURE.replace(/\.png$/, "-narrow.png") })
+    // Narrower still, the title truncates after the word has gone.
+    await page.setViewportSize({ width: 250, height: 900 })
+    await page.waitForFunction(() => {
+      const title = document.querySelector('.tool-call[data-part-id="finished-tool"] .tool-call-summary-title')
+      return Boolean(title && title.scrollWidth > title.clientWidth + 0.5)
+    })
+    assert.equal(await label.isVisible(), false)
+    await page.setViewportSize({ width: 1100, height: 900 })
+    await label.waitFor({ state: "visible" })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

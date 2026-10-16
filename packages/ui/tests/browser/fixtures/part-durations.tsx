@@ -18,8 +18,14 @@ const now = Date.now()
 const finished = { id: "finished-message", type: "assistant", agent: "build", model,
   time: { created: 1_000, completed: 9_000 }, content: [
     { type: "reasoning", text: "**Plan**\n\nLook at the file.", time: { created: 1_000, completed: 4_000 } },
-    { type: "tool", id: "finished-tool", name: "shell", time: { created: 4_000, ran: 4_500, completed: 8_500 },
-      state: { status: "completed", input: { command: "npm test" }, content: [{ type: "text", text: "ok" }] } },
+    { type: "tool", id: "finished-tool", name: "read", time: { created: 4_000, ran: 4_500, completed: 8_500 },
+      state: { status: "completed", input: { path: "packages/ui/src/components/settings/info-settings-diagnostics.ts" },
+        content: [{ type: "text", text: "ok" }] } },
+  ] }
+const untitled = { id: "untitled-message", type: "assistant", agent: "build", model,
+  time: { created: 9_500, completed: 12_000 }, content: [
+    { type: "reasoning", text: "Untitled reasoning without a heading.", time: { created: 10_000, completed: 12_000 } },
+    { type: "text", text: "Done." },
   ] }
 const running = { id: "running-message", type: "assistant", agent: "build", model,
   time: { created: now - 6_000 }, content: [
@@ -30,7 +36,7 @@ const running = { id: "running-message", type: "assistant", agent: "build", mode
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, location: { directory: "/fixture" }, time: { created: 1, updated: now } }) },
-  message: { list: async () => ({ data: [finished, running], cursor: {} }) },
+  message: { list: async () => ({ data: [finished, untitled, running], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
@@ -44,7 +50,7 @@ await applyUiSettings({ locale: "en", showThinkingBlocks: true, showMessageTimel
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: {} } })
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <main style={{ display: "flex", height: "800px", width: "1000px" }}>
+  <main style={{ display: "flex", height: "800px", width: "min(1000px, 100vw)" }}>
     <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={true} />
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

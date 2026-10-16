@@ -1822,7 +1822,8 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const thoughtDurationTitle = () => reasoningDurationTitle(t, props.durationMs)
 
-  const reasoningTitle = () => extractedTitle() || thoughtDurationTitle()
+  // The visible clock already shows the duration; "Thought for…" stays in the tooltip.
+  const reasoningTitle = () => extractedTitle() || t("messageBlock.reasoning.thoughtsFallback")
 
   const reasoningMetaTooltip = () => {
     const parts: string[] = [thoughtDurationTitle()]
