@@ -32,7 +32,7 @@ export function createVirtualReaderSettlement(options: {
     frame = undefined
     if (!anchor || !options.enabled() || options.align(anchor) === false) return cancel()
     if (--remaining > 0) frame = requestAnimationFrame(tick)
-    else if (anchor.element) cancel()
+    else if (anchor?.element) cancel()
   }
   /** Layout changed or a scroll was observed: re-arms a retained reader. A held element's window is fixed. */
   const notify = () => {

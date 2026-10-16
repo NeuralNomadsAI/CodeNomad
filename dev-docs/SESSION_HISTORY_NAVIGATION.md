@@ -178,13 +178,17 @@ element, with the former element alignment's lifetime: the element is measured a
 re-aligned on every frame of a fixed 30-frame window counted from the request, which
 layout never extends. Within it, viewport and `beforeItems` resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
-the current viewport only when applied. Gestures, navigation and focus moving
-outside its row (Tab, assistive technology) end it at once, and so does losing the
-element (an unmounted row). Any other scroll during the window is corrected like
-layout, as before. Settlement, alignment and anchor restoration share one anchor
-measurement. Pre-existing: a Virtua index request still pending from an earlier key
-navigation re-runs on every measurement while they keep coming (for instance during
-streaming) and can re-place its row; only a gesture replaces it.
+the current viewport only when applied. Gestures, navigation and focus moving to
+another element inside the transcript scroller (Tab, assistive technology) end it at
+once, and so does losing the element (an unmounted row); focus leaving the
+transcript (e.g. to the composer) does not. Any other scroll during the window is
+corrected like layout, as before. While a hold is active, a window shift retains the
+hold rather than the visible top anchor, so no reader stays retained after it
+expires. Settlement, alignment and anchor restoration share one anchor measurement.
+Pre-existing: a Virtua index request still pending from an earlier key navigation
+re-runs on every measurement while they keep coming (for instance during streaming)
+and can re-place its row; a gesture, another index navigation, a restoration or
+deactivation replaces it.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

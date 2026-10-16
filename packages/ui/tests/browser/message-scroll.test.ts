@@ -966,8 +966,11 @@ test("alignElement then Tab to an off-screen control keeps it visible and focuse
       ;(window as any).fixture.alignElement("#origin", 400)
       origin.focus({ preventScroll: true })
     })
-    // Tab right away, while the hold is still correcting (the old loop ran 30 frames).
+    // Tab while the hold is still correcting (the old loop ran 30 frames). Let the
+    // row's re-render after the alignment write land first, or it removes the control.
+    await frames(page, 2)
     assert.ok(await injectOffscreenButton(page, "next", "below"))
+    assert.ok(await page.evaluate(() => document.getElementById("next")?.isConnected), "The Tab target must still be mounted")
     await trace.enable()
     await page.keyboard.press("Tab")
     await frames(page, 30)
