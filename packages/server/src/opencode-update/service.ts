@@ -11,7 +11,7 @@ import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import type { Endpoint } from "@opencode/client/service"
 import { bundledNpm } from "./npm-runtime"
 import { isRetiredInstallation } from "./retired-installation"
-import { installSharedOpenCode, sharedInstallPrefix } from "./shared-installation"
+import { installSharedOpenCode, LegacyReplacementError, sharedInstallationPlan, sharedInstallPrefix } from "./shared-installation"
 import { InstallationBusyError } from "./installation-lock"
 import type { OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
 import { parseWslUncPath } from "../workspaces/spawn"
@@ -22,13 +22,17 @@ const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 type ServiceAction = "start" | "restart" | "reload"
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
+export type UpgradeOptions = { replaceLegacy?: boolean }
+export type InstallationNotice = Pick<OpenCodeUpdateStatus, "legacyReplacement" | "foreignInstallation">
 
 export interface OpenCodeUpdateServiceDeps {
   resolveBinary: () => ResolvedBinary
   probeBinary: (path: string) => ReturnType<typeof probeBinaryVersion> | Promise<ReturnType<typeof probeBinaryVersion>>
   resolveLatestVersion: () => Promise<string>
   canUpgradeBinary: (binary: ResolvedBinary) => boolean
-  upgradeBinary: (binary: ResolvedBinary, target: string) => Promise<UpgradeResult>
+  upgradeBinary: (binary: ResolvedBinary, target: string, options: UpgradeOptions) => Promise<UpgradeResult>
+  /** Legacy npm replacement and untouched foreign installations for an upgradable binary. */
+  inspectInstallation?: (binary: ResolvedBinary) => InstallationNotice
   lifecycle?: (binary: ResolvedBinary) => Promise<OpenCodeServiceLifecycle>
   reconnect?: (binary: ResolvedBinary) => Promise<void>
   admitActivation?: (binary: ResolvedBinary) => void
@@ -43,7 +47,9 @@ export class OpenCodeUpdateError extends Error {
       | "unsupported_binary"
       | "update_check_failed"
       | "upgrade_failed"
-      | "upgrade_verification_failed",
+      | "upgrade_verification_failed"
+      | "legacy_replacement_required"
+      | "legacy_removed_install_failed",
     message: string,
   ) {
     super(message)
@@ -70,9 +76,13 @@ export class OpenCodeUpdateService {
       : currentVersion && !isBelowOpenCodeMinimum(currentVersion) ? "ready" : "update_required"
     const updateAvailable = latestVersion && (!currentVersion || comparableVersion(currentVersion))
       ? !currentVersion || compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0 : null
+    const notice = this.deps.inspectInstallation?.(binary) ?? {}
+    // An unusable foreign command is never repaired, but OpenCode 2 can still
+    // be installed beside it.
+    const installable = !invalid || foreignInstallationOf(notice, binary)
     const status: OpenCodeUpdateStatus = {
-      currentVersion, latestVersion, updateAvailable,
-      canUpgrade: !invalid && Boolean(updateAvailable || needsSharedInstallation(binary)) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
+      currentVersion, latestVersion, updateAvailable, ...notice,
+      canUpgrade: installable && Boolean(updateAvailable || needsSharedInstallation(binary)) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
       minimumVersion: MINIMUM_OPENCODE_VERSION, recommendedVersion: RECOMMENDED_OPENCODE_VERSION,
       versionAssessment: "untested", state, binaryPath: binary.path,
       installationSource: binary.source, needsSharedInstallation: needsSharedInstallation(binary),
@@ -184,21 +194,23 @@ export class OpenCodeUpdateService {
     return this.getStatus()
   }
 
-  upgrade(): Promise<OpenCodeUpdateResponse> {
+  upgrade(options: UpgradeOptions = {}): Promise<OpenCodeUpdateResponse> {
     const binary = this.deps.resolveBinary()
     const existing = inFlightUpgrades.get(binary.path)
     if (existing) return existing
 
-    const pending = this.performUpgrade(binary).finally(() => {
+    const pending = this.performUpgrade(binary, options).finally(() => {
       if (inFlightUpgrades.get(binary.path) === pending) inFlightUpgrades.delete(binary.path)
     })
     inFlightUpgrades.set(binary.path, pending)
     return pending
   }
 
-  private async performUpgrade(binary: ResolvedBinary): Promise<OpenCodeUpdateResponse> {
+  private async performUpgrade(binary: ResolvedBinary, options: UpgradeOptions): Promise<OpenCodeUpdateResponse> {
     const probe = await this.deps.probeBinary(binary.path)
-    const currentVersion = probe.missing ? null : await this.readCurrentVersion(binary.path, probe)
+    const notice = this.deps.inspectInstallation?.(binary) ?? {}
+    const currentVersion = probe.missing || (!probe.valid && foreignInstallationOf(notice, binary))
+      ? null : await this.readCurrentVersion(binary.path, probe)
     const latestVersion = await this.readLatestVersion()
     assertSupportedOpenCode(latestVersion)
 
@@ -217,9 +229,13 @@ export class OpenCodeUpdateService {
       )
     }
 
+    if (notice.legacyReplacement && !options.replaceLegacy) {
+      throw new OpenCodeUpdateError("legacy_replacement_required", "Replacing OpenCode 1.x requires explicit confirmation")
+    }
+
     try {
       const targetVersion = currentVersion && compareOpenCodeVersionStrings(currentVersion, latestVersion) > 0 ? currentVersion : latestVersion
-      const result = await this.deps.upgradeBinary(binary, targetVersion)
+      const result = await this.deps.upgradeBinary(binary, targetVersion, { replaceLegacy: options.replaceLegacy === true })
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
@@ -233,6 +249,7 @@ export class OpenCodeUpdateService {
       return { success: true, version: installedVersion }
     } catch (error) {
       if (error instanceof OpenCodeUpdateError || error instanceof InstallationBusyError) throw error
+      if (error instanceof LegacyReplacementError) throw new OpenCodeUpdateError(error.code, error.message)
       throw new OpenCodeUpdateError(
         "upgrade_failed",
         error instanceof Error ? error.message : "OpenCode upgrade failed",
@@ -299,6 +316,11 @@ export function createOpenCodeUpdateService(
   workspaceManager: WorkspaceManager,
 ): OpenCodeUpdateService {
   const binaryResolver = new BinaryResolver(settings)
+  // Explicit custom executables and WSL selections are never installed over.
+  const defaultSelection = (binary: ResolvedBinary) => {
+    const configured = settings.getOwner("config", "server").opencodeBinary
+    return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2" || (typeof configured === "string" && isRetiredInstallation(configured)))
+  }
   return new OpenCodeUpdateService({
     resolveBinary: () => {
       const binary = binaryResolver.resolveDefault()
@@ -306,12 +328,18 @@ export function createOpenCodeUpdateService(
     },
     probeBinary: probeBinaryVersionAsync,
     resolveLatestVersion: resolveLatestOpenCodeVersion,
-    canUpgradeBinary: binary => {
-      const configured = settings.getOwner("config", "server").opencodeBinary
-      return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2" || (typeof configured === "string" && isRetiredInstallation(configured))) && Boolean(bundledNpm()) && Boolean(sharedInstallPrefix())
+    canUpgradeBinary: binary => defaultSelection(binary) && Boolean(bundledNpm()) && Boolean(sharedInstallPrefix()),
+    inspectInstallation: binary => {
+      if (!defaultSelection(binary)) return {}
+      const plan = sharedInstallationPlan()
+      return {
+        ...(plan.prefix && plan.legacy ? { legacyReplacement: { path: plan.legacy.command, version: plan.legacy.version } } : {}),
+        ...(plan.foreign ? { foreignInstallation: { path: plan.foreign.command, source: plan.foreign.source,
+          ...(plan.foreign.version ? { version: plan.foreign.version } : {}), ...(plan.foreign.packageId ? { packageId: plan.foreign.packageId } : {}) } } : {}),
+      }
     },
-    upgradeBinary: async (_binary, version) => {
-      await installSharedOpenCode(version)
+    upgradeBinary: async (_binary, version, options) => {
+      await installSharedOpenCode(version, { replaceLegacy: options.replaceLegacy })
       return { success: true, version }
     },
     lifecycle: binary => workspaceManager.setupServiceOptions(binary.path).then(options => options.lifecycle),
@@ -334,4 +362,8 @@ function comparableVersion(version: string): boolean {
 
 function needsSharedInstallation(binary: ResolvedBinary): boolean {
   return binary.source === "user"
+}
+
+function foreignInstallationOf(notice: InstallationNotice, binary: ResolvedBinary): boolean {
+  return notice.foreignInstallation?.path === binary.path
 }

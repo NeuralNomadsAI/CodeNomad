@@ -43,6 +43,20 @@
   display: none;
 }
 
+.opencode-installation-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border-base);
+}
+
+.opencode-installation-notice,
+.opencode-installation-text {
+  overflow-wrap: anywhere;
+}
+
 .opencode-setup-details {
   border-top: 1px solid var(--border-base);
   padding-top: 0.75rem;

@@ -9,6 +9,8 @@ import { withInstallationLock } from "./installation-lock"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
+const validV2 = () => ({ valid: true, version: "2.0.30" })
+
 async function npmFixture(prefix: string, version: string) {
   const binary = npmExecutable(prefix)
   await mkdir(path.dirname(binary), { recursive: true })
@@ -110,7 +112,7 @@ test("standalone opencode commands and custom npm prefixes are discovered withou
   const home = await mkdtemp(path.join(os.tmpdir(), "shared-opencode-prefix-"))
   try {
     const prefix = path.join(home, "custom npm")
-    const host = { home, env: { PATH: "", NPM_CONFIG_PREFIX: prefix } }
+    const host = { home, env: { PATH: "", NPM_CONFIG_PREFIX: prefix }, probeForeign: validV2 }
     assert.equal(userNpmPrefix(host), prefix)
     await npmFixture(prefix, "2.0.12")
     assert.equal(resolveDefaultInstallation(host).path, npmExecutable(prefix))
@@ -170,7 +172,7 @@ test("PATH executable precedence wins over npm shims in the same prefix", async 
       await writeFile(standalone, "standalone", { mode: 0o755 })
       await symlink(npmExecutable(prefix), path.join(directory, "opencode"))
     }
-    const host = { home, env: { PATH: directory } }
+    const host = { home, env: { PATH: directory }, probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(host).path, standalone)
     assert.equal(sharedInstallPrefix(host), undefined)
     if (process.platform !== "win32") {
@@ -178,8 +180,8 @@ test("PATH executable precedence wins over npm shims in the same prefix", async 
       await mkdir(sibling)
       const unrelated = path.join(sibling, "opencode2")
       await writeFile(unrelated, "standalone", { mode: 0o755 })
-      assert.equal(resolveDefaultInstallation({ home, env: { PATH: sibling } }).path, unrelated)
-      assert.equal(sharedInstallPrefix({ home, env: { PATH: sibling } }), undefined)
+      assert.equal(resolveDefaultInstallation({ home, env: { PATH: sibling }, probeForeign: validV2 }).path, unrelated)
+      assert.equal(sharedInstallPrefix({ home, env: { PATH: sibling }, probeForeign: validV2 }), undefined)
     }
   } finally { await rm(home, { recursive: true, force: true }) }
 })
@@ -198,7 +200,7 @@ test("custom Windows command wrapper in an npm prefix wins over the package alia
     await writeFile(standalone, "standalone")
     const command = path.join(prefix, "opencode2.cmd")
     await writeFile(command, `@echo off\r\n"${standalone}" %*\r\n`)
-    const host = { home, env: { PATH: prefix } }
+    const host = { home, env: { PATH: prefix }, probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(host).path, command)
     assert.equal(sharedInstallPrefix(host), undefined)
   } finally { await rm(home, { recursive: true, force: true }) }
@@ -209,7 +211,7 @@ test("non-npm PATH executables are reused without allowing npm to shadow them", 
   try {
     const binary = path.join(home, process.platform === "win32" ? "opencode2.exe" : "opencode2")
     await writeFile(binary, "custom", { mode: 0o755 })
-    const options = { home, env: { PATH: home }, npm: "fixture-npm.js" }
+    const options = { home, env: { PATH: home }, npm: "fixture-npm.js", probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(options).path, binary)
     assert.equal(sharedInstallPrefix(options), undefined)
     await assert.rejects(installSharedOpenCode("2.0.27", options), /not a writable npm installation/)

@@ -608,8 +608,8 @@ export const serverApi = {
   fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>("/api/opencode/update")
   },
-  updateOpenCode(): Promise<OpenCodeUpdateResponse> {
-    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
+  updateOpenCode(options: { replaceLegacy?: boolean } = {}): Promise<OpenCodeUpdateResponse> {
+    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST", body: JSON.stringify({ replaceLegacy: options.replaceLegacy === true }) })
   },
   startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })

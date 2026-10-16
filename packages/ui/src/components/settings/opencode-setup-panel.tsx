@@ -3,6 +3,8 @@ import { useI18n } from "../../lib/i18n"
 import { showConfirmDialog } from "../../stores/alerts"
 import { serverSettings } from "../../stores/preferences"
 import { OpenCodeSetupProgress } from "./opencode-setup-progress"
+import { OpenCodeInstallationNotice } from "./opencode-installation-notice"
+import type { OpenCodeUpdateStatus } from "../../../../server/src/api-types"
 import { openCodeSetupStatus as status, openCodeSetupBusy as busy, openCodeSetupError, openCodeSetupCheckError,
   openCodeSetupChecking as checking, openCodeSetupAction as action, openCodeSetupFeedback, openCodeInstallationError,
   isOpenCodeConnected, canContinueOpenCodeSetup, continueOpenCodeSetup,
@@ -11,9 +13,10 @@ import { openCodeSetupStatus as status, openCodeSetupBusy as busy, openCodeSetup
 export function OpenCodeSetupPanel(props: ParentProps = {}) {
   const { t } = useI18n()
   const [restartPending, setRestartPending] = createSignal(false)
+  const [confirmPending, setConfirmPending] = createSignal(false)
   let disposed = false
   onCleanup(() => { disposed = true })
-  const disabled = () => busy() || checking() || restartPending()
+  const disabled = () => busy() || checking() || restartPending() || confirmPending()
   const restartForTroubleshooting = async () => {
     if (disabled() || openCodeSetupCheckError() || !status()?.canRestart) return
     const binary = serverSettings().opencodeBinary
@@ -30,6 +33,32 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
       if (!disposed) setRestartPending(false)
     }
   }
+  // Replacing OpenCode 1.x removes an npm package: always confirm it, and fence
+  // the confirmation against a changed executable, status or concurrent action.
+  const install = async () => {
+    const legacy = status()?.legacyReplacement
+    if (!legacy) return void runOpenCodeSetup("install")
+    if (disabled() || !status()?.canUpgrade) return
+    const binary = serverSettings().opencodeBinary
+    setConfirmPending(true)
+    try {
+      const confirmed = await showConfirmDialog(t("settings.opencode.setup.legacy.confirm", { version: legacy.version }), {
+        title: t("settings.opencode.setup.legacy.title", { version: legacy.version }), variant: "warning",
+        confirmLabel: t("settings.opencode.setup.legacy.action", { version: legacy.version }), cancelLabel: t("alertDialog.actions.cancel"),
+      })
+      const current = status()
+      if (!confirmed || disposed || binary !== serverSettings().opencodeBinary || busy() || checking()
+        || !current?.canUpgrade || current.legacyReplacement?.path !== legacy.path) return
+      await runOpenCodeSetup("install", { replaceLegacy: true })
+    } finally {
+      if (!disposed) setConfirmPending(false)
+    }
+  }
+  const installLabel = (data: OpenCodeUpdateStatus) => data.legacyReplacement
+    ? t("settings.opencode.setup.legacy.action", { version: data.legacyReplacement.version })
+    : data.foreignInstallation && data.installationSource !== "managed" ? t("settings.opencode.setup.foreign.install")
+      : data.needsSharedInstallation ? t("settings.opencode.setup.sharedInstall")
+        : data.state === "missing" ? t("settings.opencode.setup.install") : t("settings.opencode.update.action", { version: data.latestVersion ?? "" })
   const progress = () => checking() ? "settings.opencode.update.checking"
     : action() === "install" ? "settings.opencode.update.updating"
       : action() ? `settings.opencode.setup.progress.${action()}` : undefined
@@ -65,8 +94,8 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <p class="settings-toggle-caption">{t("settings.opencode.setup.untested", { version: data().daemonVersion ?? data().currentVersion ?? "" })}</p>
         </Show>
         <div class="settings-info-actions">
-          <Show when={data().canUpgrade}><button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void runOpenCodeSetup("install")}>
-            {action() === "install" ? t("settings.opencode.update.updating") : data().needsSharedInstallation ? t("settings.opencode.setup.sharedInstall") : data().state === "missing" ? t("settings.opencode.setup.install") : t("settings.opencode.update.action", { version: data().latestVersion ?? "" })}
+          <Show when={data().canUpgrade}><button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void install()}>
+            {action() === "install" ? t("settings.opencode.update.updating") : installLabel(data())}
           </button></Show>
           <Show when={data().state === "ready" && !isOpenCodeConnected() && data().serviceState !== "restart_required" && data().serviceState !== "incompatible"}>
             <button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void runOpenCodeSetup("start")}>{t("settings.opencode.setup.connect")}</button>
@@ -79,6 +108,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
         <Show when={data().canUpgrade && (data().state === "missing" || data().needsSharedInstallation)}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.sharedInstallDescription")}</p>
         </Show>
+        <OpenCodeInstallationNotice status={data()} />
       </>}
     </Show>
     <Show when={openCodeSetupCheckError()}><p class="settings-error-message" role="alert">{t("settings.opencode.setup.serviceError")}</p></Show>

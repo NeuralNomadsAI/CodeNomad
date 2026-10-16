@@ -901,6 +901,94 @@ test("settings distinguish manual updates and failed registry checks from an up-
   } finally { await page.close() }
 })
 
+test("OpenCode 1.x npm replacement is confirmed explicitly and a failure after removal stays retryable", async () => {
+  const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
+  const posts: unknown[] = []
+  let phase: "legacy" | "removed" | "installed" = "legacy"
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      posts.push(request.postDataJSON())
+      if (phase === "legacy") { phase = "removed"; return route.fulfill({ status: 502, json: { success: false, error: "legacy_removed_install_failed" } }) }
+      phase = "installed"
+      return route.fulfill({ json: { success: true, version: "2.0.30" } })
+    }
+    return route.fulfill({ json: {
+      state: phase === "installed" ? "ready" : phase === "legacy" ? "update_required" : "missing",
+      currentVersion: phase === "installed" ? "2.0.30" : phase === "legacy" ? "1.18.10" : null, latestVersion: "2.0.30",
+      updateAvailable: phase !== "installed", canUpgrade: phase !== "installed", minimumVersion: "2.0.27", recommendedVersion: "2.0.29",
+      binaryPath: phase === "removed" ? "opencode2" : "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", installationSource: phase === "removed" ? undefined : "path",
+      ...(phase === "legacy" ? { legacyReplacement: { path: "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", version: "1.18.10" } } : {}),
+      versionAssessment: phase === "installed" ? "untested" : "incompatible", target: "host", canRestart: false,
+      serviceState: phase === "installed" ? "ready" : undefined, daemonVersion: phase === "installed" ? "2.0.30" : undefined,
+    } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    const replace = panel.getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true })
+    await replace.waitFor()
+    await panel.getByText(/OpenCode 1\.18\.10 was installed with npm/).waitFor()
+    assert.equal(await panel.getByText(/Select a supported executable/).count(), 0, "a replaceable npm installation is never a manual dead end")
+    await replace.click()
+    const dialog = page.getByRole("dialog", { name: "Replace OpenCode 1.18.10?", exact: true })
+    await dialog.getByText(/imports OpenCode 1\.x conversations itself/).waitFor()
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-legacy-confirm.png") })
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    assert.deepEqual(posts, [], "dismissing the confirmation never installs")
+    await replace.click()
+    await dialog.getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true }).click()
+    await page.getByRole("alert").filter({ hasText: /OpenCode 1\.x was removed, but OpenCode 2 could not be installed/ }).waitFor()
+    assert.deepEqual(posts, [{ replaceLegacy: true }])
+    const retry = panel.getByRole("button", { name: "Install and start OpenCode", exact: true })
+    await retry.click()
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.deepEqual(posts, [{ replaceLegacy: true }, { replaceLegacy: false }], "retry is an ordinary installation, never an automatic replay")
+    assert.equal(await page.getByRole("alert").count(), 0)
+  } finally { await page.close() }
+})
+
+test("an older winget OpenCode stays untouched while OpenCode 2 is installed beside it", async () => {
+  const page = await browser.newPage()
+  const posts: unknown[] = []
+  let installed = false
+  const foreignInstallation = { path: "C:/Users/fixture/AppData/Local/Microsoft/WinGet/Links/opencode.exe", version: "1.19.0", source: "winget", packageId: "SST.opencode" }
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      posts.push(request.postDataJSON()); installed = true
+      return route.fulfill({ json: { success: true, version: "2.0.30" } })
+    }
+    return route.fulfill({ json: { state: installed ? "ready" : "update_required", currentVersion: installed ? "2.0.30" : "1.19.0",
+      latestVersion: "2.0.30", updateAvailable: !installed, canUpgrade: !installed, minimumVersion: "2.0.27", recommendedVersion: "2.0.29",
+      binaryPath: installed ? "C:/Users/fixture/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe" : foreignInstallation.path,
+      installationSource: installed ? "managed" : "path", foreignInstallation, versionAssessment: installed ? "untested" : "incompatible",
+      target: "host", canRestart: false, serviceState: installed ? "ready" : undefined, daemonVersion: installed ? "2.0.30" : undefined } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    const install = panel.getByRole("button", { name: "Install OpenCode 2 for CodeNomad", exact: true })
+    await install.waitFor()
+    const notice = panel.getByRole("note")
+    await notice.getByText(/OpenCode 1\.19\.0 was found at .*WinGet.*does not modify this installation/).waitFor()
+    await notice.getByText("This older version was installed with winget.", { exact: true }).waitFor()
+    await notice.getByText(/alongside the older version/).waitFor()
+    await notice.getByText(/may still start the older version/).waitFor()
+    assert.equal(await notice.locator("code").innerText(), "winget uninstall SST.opencode")
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-winget-alongside.png"), fullPage: true })
+    await install.click()
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0, "installing beside a foreign OpenCode needs no removal confirmation")
+    assert.deepEqual(posts, [{ replaceLegacy: false }])
+    await panel.getByText(/uses its OpenCode 2 installation in your user npm folder/).waitFor()
+    assert.equal(await notice.getByText(/alongside the older version/).count(), 0)
+    await notice.getByText(/may still start the older version/).waitFor()
+    assert.equal(await install.count(), 0)
+  } finally { await page.close() }
+})
+
 test("user npm PATH repair is available at the current version and installation conflicts retain explicit retry", async () => {
   const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
   let migrated = false, attempts = 0, connects = 0

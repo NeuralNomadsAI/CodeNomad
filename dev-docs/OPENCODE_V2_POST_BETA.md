@@ -108,6 +108,43 @@ saved private selections resolve through current discovery, and validation/launc
 reject that tree. No migration or automatic deletion is performed. Native user data
 under `~/.local/share/opencode` is unrelated and remains owned by OpenCode.
 
+### Older OpenCode installations
+
+Only a verified `@opencode/cli` npm installation is updated via npm. OpenCode 1.x
+is published as `opencode-ai`; both packages declare an `opencode` bin, and npm's
+bin-links refuses (EEXIST) to link one package's shim over another's without
+`--force`, so installing 2.x beside a 1.x shim in the same prefix cannot succeed.
+CodeNomad recognizes the 1.x shim only by the package manifest (`opencode-ai`,
+version below the minimum) and the shim's actual target. The setup panel then
+offers an explicit "Replace OpenCode 1.x with OpenCode 2" action; after
+confirmation and under the prefix lock, bundled npm uninstalls `opencode-ai` from
+that prefix (after the Windows running-image preflight) and the ordinary
+installation path installs and verifies `@opencode/cli`. A failure after removal
+is reported as `legacy_removed_install_failed`; the next attempt is an ordinary
+installation, never an automatic replay. The data directory is untouched: OpenCode
+2 uses the same `opencode.db` and its server imports 1.x sessions itself at
+startup (upstream `V1Migration`, present since 2.0.0); CodeNomad converts nothing.
+
+Foreign installations (winget, Homebrew, curl, manual) are never modified. When
+the PATH command cannot run or reports a comparable version below the minimum,
+OpenCode 2 is installed in the user npm prefix beside it, and resolution prefers
+that verified installation (`installationSource: "managed"`) over the PATH
+command. The UI says the terminal `opencode` may still start the older version.
+winget portable packages are identified from default locations only:
+`%LOCALAPPDATA%\Microsoft\WinGet\Links` or `%ProgramFiles%\WinGet\Links`
+(symlink, or hardlink/copy fallback), or a target under a default `WinGet\Packages`
+root. The package ID (for example `SST.opencode`) is shown with an optional manual
+`winget uninstall` hint only when the resolved
+`<PackageIdentifier>_Microsoft.Winget.Source_8wekyb3d8bbwe` directory proves it.
+A valid foreign OpenCode 2 or custom-labelled build keeps PATH precedence.
+
+`node --import tsx scripts/test-opencode-legacy-replacement-native.mjs` installs the
+published `opencode-ai` (default 1.18.10, `CODENOMAD_FIXTURE_LEGACY_VERSION`) into
+an isolated prefix/cache/home, checks that plain npm installation of
+`@opencode/cli` fails with EEXIST and leaves 1.x in place, then performs the
+confirmed replacement and verifies the installed 2.x command. It never runs a
+service.
+
 An exclusive `.codenomad-opencode-install.lock` in the npm prefix serializes
 CodeNomad backends; the version is re-probed under that lock. A competing backend
 gets a retryable conflict. A lock left after a crash is deliberately not stolen

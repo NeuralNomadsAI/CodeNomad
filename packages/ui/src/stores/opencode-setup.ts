@@ -7,7 +7,9 @@ export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
 export const [openCodeSetupBusy, setOpenCodeSetupBusy] = createSignal(false)
 export const [openCodeSetupError, setOpenCodeSetupError] = createSignal(false)
 export const [openCodeSetupCheckError, setOpenCodeSetupCheckError] = createSignal(false)
-export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<"installation_busy" | "installation_in_use">()
+const INSTALLATION_ERRORS = ["installation_busy", "installation_in_use", "legacy_replacement_required", "legacy_removed_install_failed"] as const
+type OpenCodeInstallationError = typeof INSTALLATION_ERRORS[number]
+export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<OpenCodeInstallationError>()
 export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
 export const [openCodeSetupAction, setOpenCodeSetupAction] = createSignal<OpenCodeSetupAction>()
 export const [openCodeSetupPhase, setOpenCodeSetupPhase] = createSignal<OpenCodeSetupAction | "check">()
@@ -121,7 +123,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
   return request.promise
 }
 
-export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean } = {}): Promise<OpenCodeUpdateStatus | undefined> {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean; replaceLegacy?: boolean } = {}): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
@@ -133,7 +135,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
   setOpenCodeSetupError(false)
   setOpenCodeInstallationError(undefined)
   try {
-    if (action === "install") await serverApi.updateOpenCode()
+    if (action === "install") await serverApi.updateOpenCode({ replaceLegacy: options.replaceLegacy })
     if (epoch !== generation) return
     // Installation can leave an older shared daemon running. Re-read first so
     // restart remains a separate explicit action, never an implicit interruption.
@@ -160,8 +162,8 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
       await refreshOpenCodeSetup(true)
       if (epoch !== generation) return
       setOpenCodeSetupError(true)
-      if (error instanceof Error && (error.message === "installation_busy" || error.message === "installation_in_use")) {
-        setOpenCodeInstallationError(error.message)
+      if (error instanceof Error && (INSTALLATION_ERRORS as readonly string[]).includes(error.message)) {
+        setOpenCodeInstallationError(error.message as OpenCodeInstallationError)
       }
     }
   } finally {

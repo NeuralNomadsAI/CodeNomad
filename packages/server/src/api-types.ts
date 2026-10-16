@@ -617,8 +617,13 @@ export interface OpenCodeUpdateStatus {
   incompatibilityReason?: "plugin_runtime" | "step_timestamp" | "canonical_api" | "session_environment"
   state: "missing" | "update_required" | "ready" | "error"
   binaryPath: string
-  installationSource?: "path" | "user"
+  /** `managed`: the user npm OpenCode 2 is preferred over an older PATH command. */
+  installationSource?: "path" | "user" | "managed"
   needsSharedInstallation?: boolean
+  /** OpenCode 1.x npm package that the install action replaces after explicit confirmation. */
+  legacyReplacement?: { path: string; version: string }
+  /** Older or unusable OpenCode found on PATH; CodeNomad never modifies it. */
+  foreignInstallation?: { path: string; version?: string; source: "winget" | "other"; packageId?: string }
   daemonVersion?: string
   serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
   canReload?: boolean

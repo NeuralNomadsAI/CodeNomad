@@ -10,7 +10,7 @@ interface RouteDeps {
 }
 
 function statusCode(error: OpenCodeUpdateError): number {
-  if (error.code === "unsupported_binary") return 409
+  if (error.code === "unsupported_binary" || error.code === "legacy_replacement_required") return 409
   if (error.code === "binary_unavailable") return 422
   return 502
 }
@@ -43,9 +43,11 @@ export function registerOpenCodeUpdateRoutes(app: FastifyInstance, deps: RouteDe
     }
   })
 
-  app.post("/api/opencode/update", async (_request, reply) => {
+  app.post("/api/opencode/update", async (request, reply) => {
     try {
-      return await deps.service.upgrade()
+      // Only an explicit, confirmed request may remove OpenCode 1.x from npm.
+      const replaceLegacy = (request.body as { replaceLegacy?: unknown } | undefined)?.replaceLegacy === true
+      return await deps.service.upgrade({ replaceLegacy })
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to update OpenCode")
       const failure = requestError(error, "upgrade_failed")

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
 import type { Logger } from "../../logger"
-import type { OpenCodeUpdateService } from "../../opencode-update/service"
+import { OpenCodeUpdateError, type OpenCodeUpdateService } from "../../opencode-update/service"
 import { registerOpenCodeUpdateRoutes } from "./opencode-update"
 import { InstallationBusyError } from "../../opencode-update/installation-lock"
 
@@ -31,12 +31,31 @@ test("does not pass request-controlled binary paths to the update service", asyn
 
   await app.inject({ method: "GET", url: "/api/opencode/update?binary=untrusted.cmd" })
   await app.inject({ method: "POST", url: "/api/opencode/update", payload: { binary: "untrusted.cmd" } })
+  await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: "true" } })
+  await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: true } })
 
   assert.deepEqual(calls, [
     { method: "status", args: [] },
-    { method: "upgrade", args: [] },
+    { method: "upgrade", args: [{ replaceLegacy: false }] },
+    { method: "upgrade", args: [{ replaceLegacy: false }] },
+    { method: "upgrade", args: [{ replaceLegacy: true }] },
   ])
   await app.close()
+})
+
+test("legacy replacement outcomes expose localized error codes", async () => {
+  for (const [code, status] of [["legacy_replacement_required", 409], ["legacy_removed_install_failed", 502]] as const) {
+    const app = Fastify()
+    registerOpenCodeUpdateRoutes(app, {
+      service: { upgrade: async () => { throw new OpenCodeUpdateError(code, "private host path") } } as unknown as OpenCodeUpdateService,
+      logger: { warn() {} } as unknown as Logger,
+    })
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/opencode/update" })
+      assert.equal(response.statusCode, status)
+      assert.deepEqual(response.json(), { success: false, error: code })
+    } finally { await app.close() }
+  }
 })
 
 test("service activation accepts only exclusive explicit restart/reload intents", async () => {

@@ -7,6 +7,7 @@ import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support
 import { rememberRuntime } from "../opencode/compatibility/runtime"
 import type { Endpoint } from "@opencode/client/service"
 import { probeBinaryVersion } from "../workspaces/spawn"
+import { LegacyReplacementError } from "./shared-installation"
 
 function deps(overrides: Partial<OpenCodeUpdateServiceDeps> = {}): OpenCodeUpdateServiceDeps {
   let version = "0.0.0-beta-19271"
@@ -96,6 +97,57 @@ test("user npm PATH repair remains available without an update and never downgra
     assert.equal((await service.getStatus()).needsSharedInstallation, false)
     assert.equal((await service.getStatus()).canUpgrade, false)
   }
+})
+
+test("OpenCode 1.x npm replacement requires explicit consent and reports failure after removal", async () => {
+  let version = "1.18.10", replaced = false
+  const requests: Array<{ replaceLegacy?: boolean }> = []
+  const legacyReplacement = { path: "C:/npm/opencode.cmd", version: "1.18.10" }
+  const service = new OpenCodeUpdateService(deps({
+    probeBinary: () => ({ valid: true, version }),
+    inspectInstallation: () => replaced ? {} : { legacyReplacement },
+    upgradeBinary: async (_binary, target, options) => {
+      requests.push(options)
+      // The first consented attempt fails after removing 1.x.
+      if (requests.length === 1) throw new LegacyReplacementError("legacy_removed_install_failed", "registry offline")
+      version = target; replaced = true
+      return { success: true, version: target }
+    },
+  }))
+  const status = await service.getStatus()
+  assert.equal(status.canUpgrade, true)
+  assert.deepEqual(status.legacyReplacement, legacyReplacement)
+  await assert.rejects(service.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_replacement_required")
+  await assert.rejects(service.upgrade({ replaceLegacy: false }), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_replacement_required")
+  assert.deepEqual(requests, [], "no installer runs without consent")
+  await assert.rejects(service.upgrade({ replaceLegacy: true }), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_removed_install_failed")
+  assert.deepEqual(await service.upgrade({ replaceLegacy: true }), { success: true, version: minimum })
+  assert.deepEqual(requests, [{ replaceLegacy: true }, { replaceLegacy: true }])
+  assert.equal((await service.getStatus()).legacyReplacement, undefined)
+})
+
+test("an unusable foreign command still offers OpenCode 2 beside it, never a repair", async () => {
+  let installed = false
+  const foreignInstallation = { path: "C:/winget/Links/opencode.exe", source: "winget" as const, packageId: "SST.opencode" }
+  const service = new OpenCodeUpdateService(deps({
+    resolveBinary: () => installed ? { path: "managed", label: "OpenCode", source: "managed" } : { path: foreignInstallation.path, label: "OpenCode", source: "path" },
+    probeBinary: path => path === "managed" ? { valid: true, version: minimum } : { valid: false, error: "not a valid application" },
+    inspectInstallation: () => ({ foreignInstallation }),
+    upgradeBinary: async (_binary, target, options) => {
+      assert.deepEqual(options, { replaceLegacy: false })
+      installed = true
+      return { success: true, version: target }
+    },
+  }))
+  const status = await service.getStatus()
+  assert.equal(status.state, "error")
+  assert.equal(status.canUpgrade, true)
+  assert.deepEqual(status.foreignInstallation, foreignInstallation)
+  assert.deepEqual(await service.upgrade(), { success: true, version: minimum })
+  const after = await service.getStatus()
+  assert.equal(after.installationSource, "managed")
+  assert.equal(after.canUpgrade, false)
+  assert.deepEqual(after.foreignInstallation, foreignInstallation, "the untouched older command remains reported")
 })
 
 test("coalesces overlapping installations and never downgrades a newer version", async () => {
