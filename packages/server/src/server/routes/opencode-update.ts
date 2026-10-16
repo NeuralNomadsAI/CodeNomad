@@ -4,6 +4,8 @@ import { OpenCodeUpdateError, type OpenCodeUpdateService } from "../../opencode-
 import { z } from "zod"
 import { InstallationBusyError } from "../../opencode-update/installation-lock"
 
+const legacyConsent = z.object({ path: z.string().min(1).max(4096), version: z.string().regex(/^\d+\.\d+\.\d+$/) }).strict()
+
 interface RouteDeps {
   service: OpenCodeUpdateService
   logger: Logger
@@ -45,9 +47,10 @@ export function registerOpenCodeUpdateRoutes(app: FastifyInstance, deps: RouteDe
 
   app.post("/api/opencode/update", async (request, reply) => {
     try {
-      // Only an explicit, confirmed request may remove OpenCode 1.x from npm.
-      const replaceLegacy = (request.body as { replaceLegacy?: unknown } | undefined)?.replaceLegacy === true
-      return await deps.service.upgrade({ replaceLegacy })
+      // Only an explicit confirmation naming the exact OpenCode 1.x installation
+      // may remove it from npm; the service rechecks that identity under the lock.
+      const parsed = legacyConsent.safeParse((request.body as { replaceLegacy?: unknown } | undefined)?.replaceLegacy)
+      return await deps.service.upgrade(parsed.success ? { replaceLegacy: parsed.data } : {})
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to update OpenCode")
       const failure = requestError(error, "upgrade_failed")

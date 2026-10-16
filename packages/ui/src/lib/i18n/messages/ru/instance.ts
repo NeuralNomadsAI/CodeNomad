@@ -338,7 +338,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Добавить",
   "opencodeBinarySelector.actions.browse": "Выбрать бинарник…",
   "opencodeBinarySelector.actions.removeTitle": "Удалить бинарник",
-  "opencodeBinarySelector.badge.systemPath": "Сначала PATH, затем пользовательская установка npm",
+  "opencodeBinarySelector.badge.systemPath": "Сначала PATH, если там не более старый OpenCode, затем OpenCode 2 из пользовательской установки npm",
   "opencodeBinarySelector.status.checkingVersions": "Проверка версий…",
   "opencodeBinarySelector.status.checking": "Проверка…",
   "opencodeBinarySelector.dialog.title": "Выберите бинарник OpenCode",

@@ -4,22 +4,27 @@ import path from "node:path"
 import { bundledNpm, executeInstaller } from "./npm-runtime"
 import { isRetiredInstallation } from "./retired-installation"
 import { registerUserPath } from "./user-path"
-import { probeBinaryVersion, probeBinaryVersionAsync, buildSpawnSpec } from "../workspaces/spawn"
+import { probeBinaryVersionAsync, buildSpawnSpec } from "../workspaces/spawn"
 import { assertSupportedOpenCode, isBelowOpenCodeMinimum } from "../opencode/runtime-support"
 import { compareVersionStrings } from "../releases/release-monitor"
 import { assertExecutableWritable, InstallationBusyError, withInstallationLock } from "./installation-lock"
 import { upgradeSharedOpenCode } from "./native-upgrade"
 import { isIncompleteWindowsNpmShim } from "./incomplete-installation"
-import { LEGACY_NPM_PACKAGE, legacyNpmInstallation, legacyNpmPackageRoot, wingetInstallation, type LegacyNpmInstallation } from "./legacy-installation"
-
-type VersionProbe = { valid: boolean; version?: string }
+import { LEGACY_NPM_PACKAGE, legacyNativeImages, legacyNpmInstallation, legacyNpmPackageRoot, wingetInstallation, type LegacyNpmInstallation } from "./legacy-installation"
+import { cachedForeignProbe, probeForeignCommand, type ForeignProbe } from "./foreign-probe"
 
 export interface InstallationHost {
   home?: string
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
-  /** Synchronous `--version` probe of a non-npm PATH command. */
-  probeForeign?: (command: string) => VersionProbe
+  /** Spawn-free lookup of a non-npm PATH command's version; `undefined` is unknown. */
+  probeForeign?: (command: string) => ForeignProbe
+}
+
+/** The exact OpenCode 1.x installation the user confirmed replacing. */
+export interface LegacyReplacementConsent {
+  path: string
+  version: string
 }
 
 /** A PATH OpenCode that CodeNomad never modifies but no longer prefers. */
@@ -39,7 +44,7 @@ export interface SharedInstallationPlan {
 }
 
 export class LegacyReplacementError extends Error {
-  constructor(readonly code: "legacy_replacement_required" | "legacy_removed_install_failed", message: string) {
+  constructor(readonly code: "legacy_replacement_required" | "legacy_removed_install_failed" | "legacy_partially_removed", message: string) {
     super(message)
   }
 }
@@ -151,25 +156,14 @@ export function resolveDefaultInstallation(host: InstallationHost = {}): { path:
   return { path: "opencode2" }
 }
 
-const foreignProbes = new Map<string, { key: string; result: VersionProbe }>()
-
-/** Version probes of a foreign command are cached by its file identity. */
-function probeForeignCommand(command: string): VersionProbe {
-  let key = ""
-  try { const stat = statSync(realpathSync(command)); key = `${stat.mtimeMs}:${stat.size}` } catch { /* Probe uncached. */ }
-  const cached = foreignProbes.get(command)
-  if (key && cached?.key === key) return cached.result
-  const result = probeBinaryVersion(command)
-  if (key) foreignProbes.set(command, { key, result })
-  return result
-}
-
 /** Foreign commands are superseded only when they cannot run or report a
- * comparable version below the minimum; valid and custom-labelled builds keep
- * PATH precedence. */
+ * comparable version below the minimum; valid, custom-labelled and not yet
+ * probed (or timed out) commands keep PATH precedence. Resolution never spawns:
+ * it reads results of the bounded asynchronous probe. */
 function supersededForeign(command: string, host: InstallationHost): ForeignOpenCode | undefined {
   const platform = host.platform ?? process.platform
-  const result = (host.probeForeign ?? probeForeignCommand)(command)
+  const result = (host.probeForeign ?? cachedForeignProbe)(command)
+  if (!result) return undefined
   const version = result.valid ? result.version?.trim() || undefined : undefined
   if (result.valid && !(version && /^(?:\d+\.\d+\.\d+|0\.0\.0-beta-\d+)$/.test(version) && isBelowOpenCodeMinimum(version))) return undefined
   const winget = wingetInstallation(command, host.env ?? process.env, platform)
@@ -228,13 +222,28 @@ export function sharedInstallPrefix(host: InstallationHost = {}): string | undef
   return sharedInstallationPlan(host).prefix
 }
 
+/** Settles the bounded version probe of a foreign PATH command so the
+ * synchronous plan/resolution can use it. npm-managed commands are never run. */
+export async function prepareForeignProbe(host: InstallationHost = {}): Promise<void> {
+  const platform = host.platform ?? process.platform
+  const command = findPathOpenCode(host)
+  if (!command) return
+  const prefix = commandPrefix(command, platform)
+  if (npmLauncher(command, prefix, platform) || legacyNpmInstallation(command, prefix, npmCommandDirectory(prefix, platform), platform)) return
+  await probeForeignCommand(command)
+}
+
+function matchesConsent(legacy: LegacyNpmInstallation, consent: LegacyReplacementConsent | undefined) {
+  return Boolean(consent && path.resolve(consent.path) === path.resolve(legacy.command) && consent.version === legacy.version)
+}
+
 export async function installSharedOpenCode(version: string, options: InstallationHost & {
   node?: string; npm?: string
   execute?: typeof executeInstaller
   probe?: typeof probeBinaryVersionAsync
   registerPath?: (directory: string) => Promise<void>
-  /** Explicit consent to remove an OpenCode 1.x npm package from the target prefix. */
-  replaceLegacy?: boolean
+  /** Explicit consent to remove exactly this OpenCode 1.x npm installation. */
+  replaceLegacy?: LegacyReplacementConsent
 } = {}): Promise<string> {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Installation requires an exact stable OpenCode version")
   assertSupportedOpenCode(version)
@@ -242,9 +251,9 @@ export async function installSharedOpenCode(version: string, options: Installati
   const plan = sharedInstallationPlan(options)
   if (!plan.prefix) throw new Error("The PATH executable is not a writable npm installation")
   const prefix: string = plan.prefix
-  if (plan.legacy && !options.replaceLegacy) {
-    throw new LegacyReplacementError("legacy_replacement_required", "Replacing OpenCode 1.x requires explicit confirmation")
-  }
+  const consentRequired = () => new LegacyReplacementError("legacy_replacement_required",
+    "Replacing OpenCode 1.x requires explicit confirmation of the current installation")
+  if (plan.legacy && !matchesConsent(plan.legacy, options.replaceLegacy)) throw consentRequired()
   const node = options.node ?? process.execPath
   const bundled = options.npm ?? bundledNpm(node)
   if (!bundled) throw new Error("npm is unavailable beside the CodeNomad Node runtime")
@@ -260,13 +269,34 @@ export async function installSharedOpenCode(version: string, options: Installati
   return withInstallationLock(prefix, async () => {
     const current = sharedInstallationPlan(options)
     if (current.prefix !== prefix) throw new Error("The OpenCode installation changed; check its status again")
-    if (!current.legacy) return install()
-    if (!options.replaceLegacy) throw new LegacyReplacementError("legacy_replacement_required", "Replacing OpenCode 1.x requires explicit confirmation")
+    const legacy = current.legacy
+    if (!legacy) return install()
+    // Consent covers only the installation the user saw, rechecked under the lock.
+    if (!matchesConsent(legacy, options.replaceLegacy)) throw consentRequired()
     // Windows cannot remove a running image: defer before npm changes anything.
-    await assertExecutableWritable(current.legacy.binary, platform)
-    await (options.execute ?? executeInstaller)(node, [npm, "uninstall", "--global", "--prefix", prefix,
-      "--no-audit", "--no-fund", LEGACY_NPM_PACKAGE], npmEnvironment())
-    if (existsSync(legacyNpmPackageRoot(prefix, platform))) throw new Error("npm did not remove the OpenCode 1.x package")
+    // 1.0-1.15.0 run a nested platform package's executable (or a bin/.opencode
+    // copy) through a Node launcher, so check every native file of the package.
+    const images = legacyNativeImages(legacyNpmPackageRoot(prefix, platform))
+    for (const image of images) await assertExecutableWritable(image, platform)
+    try {
+      await (options.execute ?? executeInstaller)(node, [npm, "uninstall", "--global", "--prefix", prefix,
+        "--no-audit", "--no-fund", LEGACY_NPM_PACKAGE], npmEnvironment())
+    } catch (error) {
+      if (error instanceof InstallationBusyError) throw error
+      const intact = Boolean(legacyNpmInstallation(legacy.command, prefix, npmCommandDirectory(prefix, platform), platform))
+        && images.every(image => existsSync(image))
+      if (!intact) {
+        throw new LegacyReplacementError("legacy_partially_removed", "Removing OpenCode 1.x failed after npm changed the installation")
+      }
+      const code = (error as { npmCode?: string }).npmCode
+      if (code === "EPERM" || code === "EBUSY" || code === "EACCES") {
+        throw new InstallationBusyError("installation_in_use", "OpenCode 1.x is in use or not writable; it is still installed")
+      }
+      throw new Error(`Removing OpenCode 1.x failed; it is still installed (${error instanceof Error ? error.message : String(error)})`)
+    }
+    if (existsSync(legacyNpmPackageRoot(prefix, platform))) {
+      throw new LegacyReplacementError("legacy_partially_removed", "npm did not completely remove the OpenCode 1.x package")
+    }
     try { return await install() }
     catch (error) {
       // An interrupted installer retains its lock and diagnosis unchanged.

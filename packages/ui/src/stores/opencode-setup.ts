@@ -7,7 +7,8 @@ export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
 export const [openCodeSetupBusy, setOpenCodeSetupBusy] = createSignal(false)
 export const [openCodeSetupError, setOpenCodeSetupError] = createSignal(false)
 export const [openCodeSetupCheckError, setOpenCodeSetupCheckError] = createSignal(false)
-const INSTALLATION_ERRORS = ["installation_busy", "installation_in_use", "legacy_replacement_required", "legacy_removed_install_failed"] as const
+const INSTALLATION_ERRORS = ["installation_busy", "installation_in_use", "legacy_replacement_required", "legacy_removed_install_failed",
+  "legacy_partially_removed"] as const
 type OpenCodeInstallationError = typeof INSTALLATION_ERRORS[number]
 export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<OpenCodeInstallationError>()
 export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
@@ -123,7 +124,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
   return request.promise
 }
 
-export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean; replaceLegacy?: boolean } = {}): Promise<OpenCodeUpdateStatus | undefined> {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean; replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined

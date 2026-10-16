@@ -14,6 +14,7 @@ import { resolveConfigLocation } from "./config/location"
 import { TemporaryFolderRegistry } from "./workspaces/temporary-workspaces"
 import { SettingsService } from "./settings/service"
 import { BinaryResolver } from "./settings/binaries"
+import { prepareForeignProbe } from "./opencode-update/shared-installation"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
@@ -389,6 +390,9 @@ async function main() {
 
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
+  // Warm the bounded, asynchronous version probe of a foreign PATH OpenCode so
+  // synchronous resolution can prefer a managed OpenCode 2 without spawning.
+  void prepareForeignProbe().catch(() => {})
   const pruningLifecycle = new PruningLifecycle()
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")

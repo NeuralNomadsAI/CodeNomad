@@ -116,12 +116,25 @@ bin-links refuses (EEXIST) to link one package's shim over another's without
 `--force`, so installing 2.x beside a 1.x shim in the same prefix cannot succeed.
 CodeNomad recognizes the 1.x shim only by the package manifest (`opencode-ai`,
 version below the minimum) and the shim's actual target. The setup panel then
-offers an explicit "Replace OpenCode 1.x with OpenCode 2" action; after
-confirmation and under the prefix lock, bundled npm uninstalls `opencode-ai` from
-that prefix (after the Windows running-image preflight) and the ordinary
-installation path installs and verifies `@opencode/cli`. A failure after removal
-is reported as `legacy_removed_install_failed`; the next attempt is an ordinary
-installation, never an automatic replay. The data directory is untouched: OpenCode
+offers an explicit "Replace OpenCode 1.x with OpenCode 2" action, also when the
+1.x executable cannot run (for example the published placeholder left when its
+postinstall did not run). The confirmation sends the exact installation shown
+(command path and package version); the server rechecks it under the prefix lock
+and refuses a mismatch. Bundled npm then uninstalls `opencode-ai` from that prefix
+and the ordinary installation path installs and verifies `@opencode/cli`.
+
+The Windows running-image preflight covers every native file of the package:
+`bin/` and the nested `node_modules/opencode-<os>-<arch>[-variant]/bin/`. 1.0.0-1.15.0
+declare a Node launcher bin (`bin/opencode`) that runs the nested platform
+package's executable (or a `bin/.opencode` copy); 1.15.1+ declare `bin/opencode.exe`,
+which postinstall links or copies from the nested package. If npm's uninstall
+fails anyway, its symbolic error code (only) classifies the outcome: with the
+package still intact, EPERM/EBUSY/EACCES report `installation_in_use`, other
+codes a generic failure stating 1.x is still installed; a package npm already
+changed reports `legacy_partially_removed` with manual `npm uninstall -g
+opencode-ai` guidance. A failure after complete removal is reported as
+`legacy_removed_install_failed`; the next attempt is an ordinary installation,
+never an automatic replay. The data directory is untouched: OpenCode
 2 uses the same `opencode.db` and its server imports 1.x sessions itself at
 startup (upstream `V1Migration`, present since 2.0.0); CodeNomad converts nothing.
 
@@ -138,12 +151,23 @@ root. The package ID (for example `SST.opencode`) is shown with an optional manu
 `<PackageIdentifier>_Microsoft.Winget.Source_8wekyb3d8bbwe` directory proves it.
 A valid foreign OpenCode 2 or custom-labelled build keeps PATH precedence.
 
+Foreign `--version` probes never run synchronously. `opencode-update/foreign-probe.ts`
+spawns them asynchronously with a 5 s deadline and kills the whole process tree on
+timeout or output overflow. Results are cached by the command's file identity
+(path, mtime and size, plus the executable an npm-style shim launches); any change
+reads as unknown until reprobed, and timeouts are cached as unknown so a hanging
+wrapper is not re-run on every read. Unknown never supersedes the PATH command.
+Synchronous resolution (workspace launch, binary validation) only reads the cache
+and starts a background probe on a miss; status reads and installation await the
+bounded probe first, and the backend warms it at startup.
+
 `node --import tsx scripts/test-opencode-legacy-replacement-native.mjs` installs the
 published `opencode-ai` (default 1.18.10, `CODENOMAD_FIXTURE_LEGACY_VERSION`) into
 an isolated prefix/cache/home, checks that plain npm installation of
-`@opencode/cli` fails with EEXIST and leaves 1.x in place, then performs the
-confirmed replacement and verifies the installed 2.x command. It never runs a
-service.
+`@opencode/cli` fails with EEXIST and leaves 1.x in place, checks that a stale
+consent is refused and that the native images are found, then performs the
+confirmed replacement and verifies the installed 2.x command. It passed on Windows
+for 1.18.10 and for the 1.15.0 Node-launcher layout. It never runs a service.
 
 An exclusive `.codenomad-opencode-install.lock` in the npm prefix serializes
 CodeNomad backends; the version is re-probed under that lock. A competing backend

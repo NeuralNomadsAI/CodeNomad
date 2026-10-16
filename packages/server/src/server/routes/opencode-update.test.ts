@@ -31,20 +31,23 @@ test("does not pass request-controlled binary paths to the update service", asyn
 
   await app.inject({ method: "GET", url: "/api/opencode/update?binary=untrusted.cmd" })
   await app.inject({ method: "POST", url: "/api/opencode/update", payload: { binary: "untrusted.cmd" } })
-  await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: "true" } })
   await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: true } })
+  await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: { path: "C:/npm/opencode.cmd", version: "1.x", extra: 1 } } })
+  const consent = { path: "C:/npm/opencode.cmd", version: "1.18.10" }
+  await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: consent } })
 
   assert.deepEqual(calls, [
     { method: "status", args: [] },
-    { method: "upgrade", args: [{ replaceLegacy: false }] },
-    { method: "upgrade", args: [{ replaceLegacy: false }] },
-    { method: "upgrade", args: [{ replaceLegacy: true }] },
+    { method: "upgrade", args: [{}] },
+    { method: "upgrade", args: [{}] },
+    { method: "upgrade", args: [{}] },
+    { method: "upgrade", args: [{ replaceLegacy: consent }] },
   ])
   await app.close()
 })
 
 test("legacy replacement outcomes expose localized error codes", async () => {
-  for (const [code, status] of [["legacy_replacement_required", 409], ["legacy_removed_install_failed", 502]] as const) {
+  for (const [code, status] of [["legacy_replacement_required", 409], ["legacy_removed_install_failed", 502], ["legacy_partially_removed", 502]] as const) {
     const app = Fastify()
     registerOpenCodeUpdateRoutes(app, {
       service: { upgrade: async () => { throw new OpenCodeUpdateError(code, "private host path") } } as unknown as OpenCodeUpdateService,

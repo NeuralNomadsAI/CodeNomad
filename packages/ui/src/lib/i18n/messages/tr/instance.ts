@@ -316,7 +316,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Ekle",
   "opencodeBinarySelector.actions.browse": "Binary için gözat…",
   "opencodeBinarySelector.actions.removeTitle": "Binary'yi kaldır",
-  "opencodeBinarySelector.badge.systemPath": "Önce PATH, sonra kullanıcının npm kurulumu",
+  "opencodeBinarySelector.badge.systemPath": "Daha eski bir OpenCode içermedikçe önce PATH, sonra kullanıcının npm OpenCode 2 kurulumu",
   "opencodeBinarySelector.status.checkingVersions": "Sürümler kontrol ediliyor…",
   "opencodeBinarySelector.status.checking": "Kontrol ediliyor…",
   "opencodeBinarySelector.dialog.title": "OpenCode Binary Seç",

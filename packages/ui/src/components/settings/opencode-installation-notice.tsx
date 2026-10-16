@@ -12,7 +12,7 @@ export function OpenCodeInstallationNotice(props: { status: OpenCodeUpdateStatus
     <Show when={props.status.foreignInstallation}>
       {foreign => <div class="opencode-installation-notice" role="note">
         <p class="settings-toggle-caption">{foreign().version
-          ? t("settings.opencode.setup.foreign.found", { version: foreign().version ?? "", path: foreign().path })
+          ? t("settings.opencode.setup.foreign.found", { version: foreign().version ?? "", path: foreign().path, minimum: props.status.minimumVersion })
           : t("settings.opencode.setup.foreign.unusable", { path: foreign().path })}</p>
         <Show when={foreign().source === "winget"}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.foreign.winget")}</p>

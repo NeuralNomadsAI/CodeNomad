@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { OpenCodeUpdateService, OpenCodeUpdateError,
   resolveLatestOpenCodeVersion, compareOpenCodeVersionStrings,
-  type OpenCodeUpdateServiceDeps } from "./service"
+  type OpenCodeUpdateServiceDeps, type UpgradeOptions } from "./service"
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 import { rememberRuntime } from "../opencode/compatibility/runtime"
 import type { Endpoint } from "@opencode/client/service"
@@ -101,7 +101,7 @@ test("user npm PATH repair remains available without an update and never downgra
 
 test("OpenCode 1.x npm replacement requires explicit consent and reports failure after removal", async () => {
   let version = "1.18.10", replaced = false
-  const requests: Array<{ replaceLegacy?: boolean }> = []
+  const requests: UpgradeOptions[] = []
   const legacyReplacement = { path: "C:/npm/opencode.cmd", version: "1.18.10" }
   const service = new OpenCodeUpdateService(deps({
     probeBinary: () => ({ valid: true, version }),
@@ -118,12 +118,47 @@ test("OpenCode 1.x npm replacement requires explicit consent and reports failure
   assert.equal(status.canUpgrade, true)
   assert.deepEqual(status.legacyReplacement, legacyReplacement)
   await assert.rejects(service.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_replacement_required")
-  await assert.rejects(service.upgrade({ replaceLegacy: false }), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_replacement_required")
-  assert.deepEqual(requests, [], "no installer runs without consent")
-  await assert.rejects(service.upgrade({ replaceLegacy: true }), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_removed_install_failed")
-  assert.deepEqual(await service.upgrade({ replaceLegacy: true }), { success: true, version: minimum })
-  assert.deepEqual(requests, [{ replaceLegacy: true }, { replaceLegacy: true }])
+  for (const stale of [{ ...legacyReplacement, version: "1.18.9" }, { ...legacyReplacement, path: "C:/other/opencode.cmd" }]) {
+    await assert.rejects(service.upgrade({ replaceLegacy: stale }), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_replacement_required")
+  }
+  assert.deepEqual(requests, [], "no installer runs without consent to the exact installation")
+  await assert.rejects(service.upgrade({ replaceLegacy: legacyReplacement }), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_removed_install_failed")
+  assert.deepEqual(await service.upgrade({ replaceLegacy: legacyReplacement }), { success: true, version: minimum })
+  assert.deepEqual(requests, [{ replaceLegacy: legacyReplacement }, { replaceLegacy: legacyReplacement }])
   assert.equal((await service.getStatus()).legacyReplacement, undefined)
+})
+
+test("a broken OpenCode 1.x npm install remains replaceable with consent", async () => {
+  let installed = false
+  const legacyReplacement = { path: "C:/npm/opencode.cmd", version: "1.18.10" }
+  const requests: UpgradeOptions[] = []
+  const service = new OpenCodeUpdateService(deps({
+    resolveBinary: () => ({ path: installed ? "C:/npm/opencode2.cmd" : legacyReplacement.path, label: "OpenCode", source: "path" }),
+    // The published placeholder bin/opencode.exe fails when postinstall did not run.
+    probeBinary: () => installed ? { valid: true, version: minimum } : { valid: false, error: "Exited with code 1: postinstall script was not run" },
+    inspectInstallation: () => installed ? {} : { legacyReplacement },
+    upgradeBinary: async (_binary, target, options) => { requests.push(options); installed = true; return { success: true, version: target } },
+  }))
+  const status = await service.getStatus()
+  assert.equal(status.state, "error")
+  assert.equal(status.canUpgrade, true)
+  assert.deepEqual(status.legacyReplacement, legacyReplacement)
+  await assert.rejects(service.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "legacy_replacement_required")
+  assert.deepEqual(await service.upgrade({ replaceLegacy: legacyReplacement }), { success: true, version: minimum })
+  assert.deepEqual(requests, [{ replaceLegacy: legacyReplacement }])
+})
+
+test("bounded installation inputs settle before resolution on status and upgrade", async () => {
+  const order: string[] = []
+  const service = new OpenCodeUpdateService(deps({
+    prepareInstallation: async () => { order.push("prepare") },
+    resolveBinary: () => { order.push("resolve"); return { path: "opencode2", label: "OpenCode" } },
+  }))
+  await service.getStatus()
+  await service.upgrade()
+  assert.deepEqual(order.slice(0, 2), ["prepare", "resolve"])
+  assert.equal(order.filter(step => step === "prepare").length, 2)
+  assert.ok(order.indexOf("prepare", 1) < order.lastIndexOf("resolve"))
 })
 
 test("an unusable foreign command still offers OpenCode 2 beside it, never a repair", async () => {
@@ -134,7 +169,7 @@ test("an unusable foreign command still offers OpenCode 2 beside it, never a rep
     probeBinary: path => path === "managed" ? { valid: true, version: minimum } : { valid: false, error: "not a valid application" },
     inspectInstallation: () => ({ foreignInstallation }),
     upgradeBinary: async (_binary, target, options) => {
-      assert.deepEqual(options, { replaceLegacy: false })
+      assert.deepEqual(options, {})
       installed = true
       return { success: true, version: target }
     },

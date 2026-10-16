@@ -338,7 +338,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Agregar",
   "opencodeBinarySelector.actions.browse": "Explorar binario…",
   "opencodeBinarySelector.actions.removeTitle": "Quitar binario",
-  "opencodeBinarySelector.badge.systemPath": "Primero PATH, luego la instalación npm del usuario",
+  "opencodeBinarySelector.badge.systemPath": "Primero PATH salvo que contenga un OpenCode más antiguo; luego OpenCode 2 de la instalación npm del usuario",
   "opencodeBinarySelector.status.checkingVersions": "Comprobando versiones…",
   "opencodeBinarySelector.status.checking": "Comprobando…",
   "opencodeBinarySelector.dialog.title": "Seleccionar binario de OpenCode",

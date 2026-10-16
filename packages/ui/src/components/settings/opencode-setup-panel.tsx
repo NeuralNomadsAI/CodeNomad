@@ -49,7 +49,8 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
       const current = status()
       if (!confirmed || disposed || binary !== serverSettings().opencodeBinary || busy() || checking()
         || !current?.canUpgrade || current.legacyReplacement?.path !== legacy.path) return
-      await runOpenCodeSetup("install", { replaceLegacy: true })
+      // The server re-verifies this exact installation under its lock.
+      await runOpenCodeSetup("install", { replaceLegacy: { path: legacy.path, version: legacy.version } })
     } finally {
       if (!disposed) setConfirmPending(false)
     }

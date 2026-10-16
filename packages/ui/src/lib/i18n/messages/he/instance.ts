@@ -337,7 +337,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "הוסף",
   "opencodeBinarySelector.actions.browse": "עיין אחר קובץ בינארי…",
   "opencodeBinarySelector.actions.removeTitle": "הסר קובץ בינארי",
-  "opencodeBinarySelector.badge.systemPath": "עדיפות ל-PATH, אחריו התקנת npm של המשתמש",
+  "opencodeBinarySelector.badge.systemPath": "עדיפות ל-PATH אלא אם יש בו OpenCode ישן יותר, ואחריו OpenCode 2 מהתקנת ה-npm של המשתמש",
   "opencodeBinarySelector.status.checkingVersions": "בודק גרסאות…",
   "opencodeBinarySelector.status.checking": "בודק…",
   "opencodeBinarySelector.dialog.title": "בחר קובץ בינארי של OpenCode",

@@ -76,3 +76,11 @@ test("output-limit termination retains the lock; ordinary installer failure rele
     await assert.rejects(withInstallationLock(prefix, async () => {}), { code: "installation_busy" })
   } finally { await rm(prefix, { recursive: true, force: true }) }
 })
+
+test("npm failures expose only npm's symbolic error code for classification", async () => {
+  const script = "process.stderr.write('npm error code EBUSY\\r\\nnpm error path C:\\\\private\\\\opencode.exe\\r\\n'); process.exit(1)"
+  await assert.rejects(executeInstaller(process.execPath, ["-e", script], process.env), (error: unknown) =>
+    (error as { npmCode?: string }).npmCode === "EBUSY" && !/private/.test((error as Error).message))
+  await assert.rejects(executeInstaller(process.execPath, ["-e", "process.exit(1)"], process.env), (error: unknown) =>
+    (error as { npmCode?: string }).npmCode === undefined)
+})

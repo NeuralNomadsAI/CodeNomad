@@ -9,7 +9,7 @@ import { promisify } from "node:util"
 import os from "node:os"
 import path from "node:path"
 import { installSharedOpenCode, npmCommandDirectory, npmExecutable, resolveDefaultInstallation, sharedInstallationPlan } from "../packages/server/src/opencode-update/shared-installation.ts"
-import { legacyNpmPackageRoot } from "../packages/server/src/opencode-update/legacy-installation.ts"
+import { legacyNativeImages, legacyNpmPackageRoot } from "../packages/server/src/opencode-update/legacy-installation.ts"
 import { bundledNpm } from "../packages/server/src/opencode-update/npm-runtime.ts"
 import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/runtime-support.ts"
 
@@ -50,7 +50,11 @@ try {
   await assert.rejects(installSharedOpenCode(RECOMMENDED_OPENCODE_VERSION, options), /explicit confirmation/)
   assert.ok(existsSync(legacyNpmPackageRoot(prefix, process.platform)))
 
-  assert.equal(await installSharedOpenCode(RECOMMENDED_OPENCODE_VERSION, { ...options, replaceLegacy: true }), npmExecutable(prefix))
+  result.nativeImages = legacyNativeImages(legacyNpmPackageRoot(prefix, process.platform)).map(image => path.relative(prefix, image))
+  assert.ok(result.nativeImages.some(image => /\.exe$|[\\/]\.opencode$/.test(image)), "the package's native executable is preflighted")
+  const consent = { path: plan.legacy.command, version: LEGACY_VERSION }
+  await assert.rejects(installSharedOpenCode(RECOMMENDED_OPENCODE_VERSION, { ...options, replaceLegacy: { ...consent, version: "1.0.0" } }), /explicit confirmation/)
+  assert.equal(await installSharedOpenCode(RECOMMENDED_OPENCODE_VERSION, { ...options, replaceLegacy: consent }), npmExecutable(prefix))
   assert.equal(existsSync(legacyNpmPackageRoot(prefix, process.platform)), false)
   assert.deepEqual(sharedInstallationPlan(options), { prefix })
   const resolved = resolveDefaultInstallation(options)

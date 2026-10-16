@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import path from "node:path"
 import { isBelowOpenCodeMinimum } from "../opencode/runtime-support"
 
@@ -17,6 +17,29 @@ export function legacyNpmPackageRoot(prefix: string, platform: NodeJS.Platform):
   return path.join(prefix, ...(platform === "win32" ? [] : ["lib"]), "node_modules", LEGACY_NPM_PACKAGE)
 }
 
+/** Files a running OpenCode 1.x may have mapped: `bin/` (1.15.1+ copies or
+ * links the native executable to `bin/opencode.exe`; 1.0-1.15.0 to
+ * `bin/.opencode`, next to a Node launcher) and the nested platform packages'
+ * `bin/` (`node_modules/opencode-<os>-<arch>[-variant]`). Bounded; a missing
+ * directory contributes nothing. */
+export function legacyNativeImages(root: string, limit = 64): string[] {
+  const directories = [path.join(root, "bin")]
+  try {
+    for (const entry of readdirSync(path.join(root, "node_modules"), { withFileTypes: true })) {
+      if (entry.isDirectory() && /^opencode-[a-z0-9-]+$/.test(entry.name)) directories.push(path.join(root, "node_modules", entry.name, "bin"))
+    }
+  } catch { /* No nested platform packages. */ }
+  const images: string[] = []
+  for (const directory of directories) {
+    try {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isFile() && images.length < limit) images.push(path.join(directory, entry.name))
+      }
+    } catch { /* Missing directory. */ }
+  }
+  return images
+}
+
 function samePath(left: string, right: string, platform: NodeJS.Platform) {
   const normalize = (value: string) => platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value)
   return normalize(left) === normalize(right)
@@ -33,7 +56,7 @@ export function legacyNpmInstallation(command: string, prefix: string, commandDi
     const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { name?: string; version?: string; bin?: unknown }
     const relative = manifest.bin && typeof manifest.bin === "object" ? (manifest.bin as Record<string, unknown>).opencode : undefined
     if (manifest.name !== LEGACY_NPM_PACKAGE || typeof relative !== "string" || typeof manifest.version !== "string"
-      || !/^\d+\.\d+\.\d+$/.test(manifest.version) || !isBelowOpenCodeMinimum(manifest.version)) return undefined
+      || !/^[01]\.\d+\.\d+$/.test(manifest.version) || !isBelowOpenCodeMinimum(manifest.version)) return undefined
     const binary = path.resolve(root, relative)
     if (!binary.startsWith(root + path.sep) || !statSync(binary).isFile()) return undefined
     if (platform === "win32") {

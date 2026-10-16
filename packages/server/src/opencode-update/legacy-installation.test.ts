@@ -1,12 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { existsSync } from "node:fs"
-import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { installSharedOpenCode, LegacyReplacementError, npmCommandDirectory, npmExecutable, resolveDefaultInstallation,
   sharedInstallationPlan, userNpmPrefix, type InstallationHost } from "./shared-installation"
-import { legacyNpmInstallation, legacyNpmPackageRoot } from "./legacy-installation"
+import { legacyNativeImages, legacyNpmInstallation, legacyNpmPackageRoot } from "./legacy-installation"
+import { cachedForeignProbe, probeForeignCommand } from "./foreign-probe"
+import { InstallationBusyError } from "./installation-lock"
 import { BinaryResolver } from "../settings/binaries"
 import type { SettingsService } from "../settings/service"
 
@@ -140,7 +142,13 @@ test("legacy npm OpenCode is replaced in its prefix only after explicit consent,
     assert.deepEqual(calls, [])
     assert.ok(existsSync(command), "nothing changes without consent")
 
-    assert.equal(await installSharedOpenCode("2.0.30", { ...options, replaceLegacy: true }), npmExecutable(prefix))
+    for (const stale of [{ path: command, version: "1.18.9" }, { path: path.join(home, "other", "opencode.cmd"), version: "1.18.10" }]) {
+      await assert.rejects(installSharedOpenCode("2.0.30", { ...options, replaceLegacy: stale }),
+        (error: unknown) => error instanceof LegacyReplacementError && error.code === "legacy_replacement_required")
+    }
+    assert.deepEqual(calls, [], "consent applies only to the exact installation shown")
+
+    assert.equal(await installSharedOpenCode("2.0.30", { ...options, replaceLegacy: { path: command, version: "1.18.10" } }), npmExecutable(prefix))
     assert.deepEqual(calls, ["uninstall opencode-ai", "install @opencode/cli@2.0.30"])
     assert.equal(registered, 1)
     assert.equal(existsSync(path.join(prefix, ".codenomad-opencode-install.lock")), false)
@@ -152,13 +160,13 @@ test("legacy npm OpenCode is replaced in its prefix only after explicit consent,
 test("an OpenCode 2 installation failure after removing 1.x is reported and remains retryable", async () => {
   const { home, env, host, prefix } = await environment("legacy-failure-")
   try {
-    await legacyFixture(prefix)
+    const command = await legacyFixture(prefix)
     env.PATH = npmCommandDirectory(prefix)
     const calls: string[] = []
     let offline = true
     const options = { ...host, node: process.execPath, npm: "fixture-npm.js", probe, registerPath: async () => {},
       execute: installer(prefix, calls, () => offline ? new Error("ENOTFOUND registry.npmjs.org") : undefined) }
-    await assert.rejects(installSharedOpenCode("2.0.30", { ...options, replaceLegacy: true }), (error: unknown) =>
+    await assert.rejects(installSharedOpenCode("2.0.30", { ...options, replaceLegacy: { path: command, version: "1.18.10" } }), (error: unknown) =>
       error instanceof LegacyReplacementError && error.code === "legacy_removed_install_failed" && /ENOTFOUND/.test(error.message))
     assert.deepEqual(calls, ["uninstall opencode-ai", "install @opencode/cli@2.0.30"], "never retried through another mechanism")
     assert.equal(existsSync(path.join(prefix, ".codenomad-opencode-install.lock")), false)
@@ -211,7 +219,7 @@ test("winget OpenCode first on PATH with npm OpenCode 1.x behind it replaces onl
     const calls: string[] = []
     const options = { ...wingetHost, node: process.execPath, npm: "fixture-npm.js", probe, execute: installer(prefix, calls), registerPath: async () => {} }
     await assert.rejects(installSharedOpenCode("2.0.30", options), /explicit confirmation/)
-    await installSharedOpenCode("2.0.30", { ...options, replaceLegacy: true })
+    await installSharedOpenCode("2.0.30", { ...options, replaceLegacy: { path: plan.legacy!.command, version: "1.18.10" } })
     assert.deepEqual(calls, ["uninstall opencode-ai", "install @opencode/cli@2.0.30"])
     assert.deepEqual(resolveDefaultInstallation(wingetHost), { path: npmExecutable(prefix), source: "managed" })
     assert.equal(await readFile(winget.target, "utf8"), "1.19.0")
@@ -226,8 +234,8 @@ test("valid foreign OpenCode 2 keeps PATH precedence; unusable foreign commands 
     await mkdir(path.dirname(foreign), { recursive: true })
     await writeFile(foreign, "foreign", { mode: 0o755 })
     env.PATH = [path.dirname(foreign), npmCommandDirectory(prefix)].join(path.delimiter)
-    for (const version of ["2.0.31", "local-build"]) {
-      const probeForeign = () => ({ valid: true, version })
+    // Valid OpenCode 2, custom labels and unknown (not yet probed or timed out) keep PATH precedence.
+    for (const probeForeign of [() => ({ valid: true, version: "2.0.31" }), () => ({ valid: true, version: "local-build" }), () => undefined]) {
       assert.deepEqual(resolveDefaultInstallation({ ...host, probeForeign }), { path: foreign, source: "path" })
       assert.deepEqual(sharedInstallationPlan({ ...host, probeForeign }), {})
     }
@@ -236,6 +244,115 @@ test("valid foreign OpenCode 2 keeps PATH precedence; unusable foreign commands 
       assert.equal(sharedInstallationPlan({ ...host, probeForeign }).foreign?.source, "other")
     }
     assert.equal(await readFile(foreign, "utf8"), "foreign")
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+/** opencode-ai 1.0-1.15.0: a Node launcher bin, a bin/.opencode copy and the
+ * native executable in a nested platform package. */
+async function launcherFixture(prefix: string, version = "1.15.0") {
+  const root = legacyNpmPackageRoot(prefix, process.platform)
+  const nested = path.join(root, "node_modules", "opencode-windows-x64", "bin", "opencode.exe")
+  await mkdir(path.dirname(nested), { recursive: true })
+  await writeFile(nested, version)
+  await mkdir(path.join(root, "bin"), { recursive: true })
+  await writeFile(path.join(root, "bin", "opencode"), "#!/usr/bin/env node\n", { mode: 0o755 })
+  await writeFile(path.join(root, "bin", ".opencode"), version)
+  await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "opencode-ai", version, bin: { opencode: "bin/opencode" } }))
+  const directory = npmCommandDirectory(prefix)
+  await mkdir(directory, { recursive: true })
+  if (!windows) {
+    const command = path.join(directory, "opencode")
+    await symlink(path.join("..", "lib", "node_modules", "opencode-ai", "bin", "opencode"), command)
+    return { command, nested }
+  }
+  // npm's cmd-shim output for a Node script bin.
+  const command = path.join(directory, "opencode.cmd")
+  await writeFile(command, ["@ECHO off", "GOTO start", ":find_dp0", "SET dp0=%~dp0", "EXIT /b", ":start", "SETLOCAL", "CALL :find_dp0", "",
+    'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ") ELSE (", '  SET "_prog=node"', "  SET PATHEXT=%PATHEXT:;.JS;=;%", ")", "",
+    'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\opencode-ai\\bin\\opencode" %*', ""].join("\r\n"))
+  return { command, nested }
+}
+
+test("opencode-ai 1.0-1.15.0 Node-launcher installs are recognized and every native image is preflighted", async (t) => {
+  const { home, env, host, prefix } = await environment("legacy-launcher-")
+  try {
+    const { command, nested } = await launcherFixture(prefix)
+    env.PATH = npmCommandDirectory(prefix)
+    const plan = sharedInstallationPlan(host)
+    assert.equal(plan.legacy?.command, command)
+    assert.equal(plan.legacy?.version, "1.15.0")
+    const root = legacyNpmPackageRoot(prefix, process.platform)
+    assert.deepEqual(legacyNativeImages(root).sort(), [path.join(root, "bin", ".opencode"), path.join(root, "bin", "opencode"), nested].sort())
+    if (!windows) return t.skip("running-image preflight is Windows-only")
+    // A read-only file fails the same write-open preflight as a mapped image.
+    await chmod(nested, 0o444)
+    const calls: string[] = []
+    try {
+      await assert.rejects(installSharedOpenCode("2.0.30", { ...host, node: process.execPath, npm: "fixture-npm.js", probe,
+        execute: installer(prefix, calls), registerPath: async () => {}, replaceLegacy: { path: command, version: "1.15.0" } }),
+      (error: unknown) => error instanceof InstallationBusyError && error.code === "installation_in_use")
+    } finally { await chmod(nested, 0o644) }
+    assert.deepEqual(calls, [], "npm never runs while a native image is in use")
+    assert.equal(sharedInstallationPlan(host).legacy?.version, "1.15.0", "nothing was removed")
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("npm uninstall failures report whether OpenCode 1.x is still installed", async () => {
+  const { home, env, host, prefix } = await environment("legacy-uninstall-")
+  try {
+    const command = await legacyFixture(prefix)
+    env.PATH = npmCommandDirectory(prefix)
+    const consent = { path: command, version: "1.18.10" }
+    const attempt = (execute: (node: string, args: string[]) => Promise<void>) => installSharedOpenCode("2.0.30", {
+      ...host, node: process.execPath, npm: "fixture-npm.js", probe, execute, registerPath: async () => {}, replaceLegacy: consent })
+    const failure = (npmCode?: string) => Object.assign(new Error("OpenCode installation failed (1)"), npmCode ? { npmCode } : {})
+    for (const code of ["EBUSY", "EPERM"]) {
+      await assert.rejects(attempt(async () => { throw failure(code) }),
+        (error: unknown) => error instanceof InstallationBusyError && error.code === "installation_in_use" && /still installed/.test(error.message))
+    }
+    await assert.rejects(attempt(async () => { throw failure("E500") }), (error: unknown) =>
+      !(error instanceof LegacyReplacementError) && /still installed/.test((error as Error).message))
+    assert.equal(sharedInstallationPlan(host).legacy?.version, "1.18.10")
+    assert.equal(existsSync(path.join(prefix, ".codenomad-opencode-install.lock")), false)
+    await assert.rejects(attempt(async () => {
+      await rm(path.join(legacyNpmPackageRoot(prefix, process.platform), "bin"), { recursive: true })
+      throw failure("EBUSY")
+    }), (error: unknown) => error instanceof LegacyReplacementError && error.code === "legacy_partially_removed")
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("foreign version probes are asynchronous, bounded and kill the process tree on timeout", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "foreign-probe-"))
+  try {
+    const quick = path.join(home, windows ? "quick.cmd" : "quick")
+    await writeFile(quick, windows ? "@echo opencode 1.19.0\r\n" : "#!/bin/sh\necho opencode 1.19.0\n", { mode: 0o755 })
+    assert.deepEqual(cachedForeignProbe(quick), undefined, "a cache miss reports unknown without spawning synchronously")
+    assert.deepEqual(await probeForeignCommand(quick), { valid: true, version: "1.19.0" })
+    assert.deepEqual(cachedForeignProbe(quick), { valid: true, version: "1.19.0" })
+    await writeFile(quick, windows ? "@echo opencode 2.0.30 \r\n" : "#!/bin/sh\necho opencode 2.0.30 \n", { mode: 0o755 })
+    assert.equal(cachedForeignProbe(quick), undefined, "a changed file invalidates the cached decision")
+    assert.deepEqual(await probeForeignCommand(quick), { valid: true, version: "2.0.30" })
+
+    const pidFile = path.join(home, "grandchild.pid")
+    const script = path.join(home, "hang.js")
+    await writeFile(script, "require('fs').writeFileSync(process.argv[2], String(process.pid)); setInterval(() => {}, 1000)\n")
+    const hang = path.join(home, windows ? "hang.cmd" : "hang")
+    await writeFile(hang, windows ? `@"${process.execPath}" "${script}" "${pidFile}"\r\n`
+      : `#!/bin/sh\n"${process.execPath}" "${script}" "${pidFile}" &\nwait\n`, { mode: 0o755 })
+    const started = Date.now()
+    assert.equal(await probeForeignCommand(hang, 1_500), undefined, "a timeout is unknown, not unusable")
+    assert.ok(Date.now() - started < 5_000)
+    assert.equal(cachedForeignProbe(hang), undefined)
+    const pid = Number(await readFile(pidFile, "utf8"))
+    const deadline = Date.now() + 5_000
+    let alive = true
+    while (alive && Date.now() < deadline) {
+      try { process.kill(pid, 0); await new Promise(resolve => setTimeout(resolve, 100)) } catch { alive = false }
+    }
+    assert.equal(alive, false, "the wrapper's descendant is killed")
+    const before = Date.now()
+    assert.equal(await probeForeignCommand(hang, 1_500), undefined)
+    assert.ok(Date.now() - before < 500, "a timed-out identity is not re-run on every status read")
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

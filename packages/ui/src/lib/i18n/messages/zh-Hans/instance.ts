@@ -338,7 +338,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "添加",
   "opencodeBinarySelector.actions.browse": "浏览可执行文件…",
   "opencodeBinarySelector.actions.removeTitle": "移除可执行文件",
-  "opencodeBinarySelector.badge.systemPath": "优先使用 PATH，其次为用户 npm 安装",
+  "opencodeBinarySelector.badge.systemPath": "优先使用 PATH（除非其中是较旧的 OpenCode），其次是用户 npm 中的 OpenCode 2",
   "opencodeBinarySelector.status.checkingVersions": "正在检查版本…",
   "opencodeBinarySelector.status.checking": "正在检查…",
   "opencodeBinarySelector.dialog.title": "选择 OpenCode 可执行文件",

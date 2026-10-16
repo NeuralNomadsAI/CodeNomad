@@ -337,7 +337,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "थप्नुहोस्",
   "opencodeBinarySelector.actions.browse": "बाइनरीको लागि ब्राउज गर्नुहोस्...",
   "opencodeBinarySelector.actions.removeTitle": "बाइनरी हटाउनुहोस्",
-  "opencodeBinarySelector.badge.systemPath": "पहिले PATH, त्यसपछि प्रयोगकर्ताको npm स्थापना",
+  "opencodeBinarySelector.badge.systemPath": "पुरानो OpenCode नभएसम्म PATH लाई प्राथमिकता, त्यसपछि प्रयोगकर्ता npm को OpenCode 2",
   "opencodeBinarySelector.status.checkingVersions": "संस्करणहरू जाँच गर्दै...",
   "opencodeBinarySelector.status.checking": "जाँच गर्दै...",
   "opencodeBinarySelector.dialog.title": "OpenCode बाइनरी चयन गर्नुहोस्",

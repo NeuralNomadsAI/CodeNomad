@@ -11,7 +11,7 @@ import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import type { Endpoint } from "@opencode/client/service"
 import { bundledNpm } from "./npm-runtime"
 import { isRetiredInstallation } from "./retired-installation"
-import { installSharedOpenCode, LegacyReplacementError, sharedInstallationPlan, sharedInstallPrefix } from "./shared-installation"
+import { installSharedOpenCode, LegacyReplacementError, prepareForeignProbe, sharedInstallationPlan, sharedInstallPrefix } from "./shared-installation"
 import { InstallationBusyError } from "./installation-lock"
 import type { OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
 import { parseWslUncPath } from "../workspaces/spawn"
@@ -22,10 +22,13 @@ const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 type ServiceAction = "start" | "restart" | "reload"
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
-export type UpgradeOptions = { replaceLegacy?: boolean }
+/** `replaceLegacy` names the exact OpenCode 1.x installation the user confirmed. */
+export type UpgradeOptions = { replaceLegacy?: { path: string; version: string } }
 export type InstallationNotice = Pick<OpenCodeUpdateStatus, "legacyReplacement" | "foreignInstallation">
 
 export interface OpenCodeUpdateServiceDeps {
+  /** Settles bounded, asynchronous inputs (foreign `--version` probes) before resolution. */
+  prepareInstallation?: () => Promise<void>
   resolveBinary: () => ResolvedBinary
   probeBinary: (path: string) => ReturnType<typeof probeBinaryVersion> | Promise<ReturnType<typeof probeBinaryVersion>>
   resolveLatestVersion: () => Promise<string>
@@ -49,7 +52,8 @@ export class OpenCodeUpdateError extends Error {
       | "upgrade_failed"
       | "upgrade_verification_failed"
       | "legacy_replacement_required"
-      | "legacy_removed_install_failed",
+      | "legacy_removed_install_failed"
+      | "legacy_partially_removed",
     message: string,
   ) {
     super(message)
@@ -63,6 +67,7 @@ export class OpenCodeUpdateService {
   constructor(private readonly deps: OpenCodeUpdateServiceDeps) {}
 
   async getStatus(): Promise<OpenCodeUpdateStatus> {
+    await this.deps.prepareInstallation?.()
     const binary = this.deps.resolveBinary()
     let currentVersion: string | null = null
     let missing = false
@@ -77,9 +82,9 @@ export class OpenCodeUpdateService {
     const updateAvailable = latestVersion && (!currentVersion || comparableVersion(currentVersion))
       ? !currentVersion || compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0 : null
     const notice = this.deps.inspectInstallation?.(binary) ?? {}
-    // An unusable foreign command is never repaired, but OpenCode 2 can still
-    // be installed beside it.
-    const installable = !invalid || foreignInstallationOf(notice, binary)
+    // An unusable foreign command is never repaired, but OpenCode 2 can still be
+    // installed beside it; a broken verified 1.x npm install can still be replaced.
+    const installable = !invalid || replaceableOrForeign(notice, binary)
     const status: OpenCodeUpdateStatus = {
       currentVersion, latestVersion, updateAvailable, ...notice,
       canUpgrade: installable && Boolean(updateAvailable || needsSharedInstallation(binary)) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
@@ -194,7 +199,8 @@ export class OpenCodeUpdateService {
     return this.getStatus()
   }
 
-  upgrade(options: UpgradeOptions = {}): Promise<OpenCodeUpdateResponse> {
+  async upgrade(options: UpgradeOptions = {}): Promise<OpenCodeUpdateResponse> {
+    await this.deps.prepareInstallation?.()
     const binary = this.deps.resolveBinary()
     const existing = inFlightUpgrades.get(binary.path)
     if (existing) return existing
@@ -209,7 +215,7 @@ export class OpenCodeUpdateService {
   private async performUpgrade(binary: ResolvedBinary, options: UpgradeOptions): Promise<OpenCodeUpdateResponse> {
     const probe = await this.deps.probeBinary(binary.path)
     const notice = this.deps.inspectInstallation?.(binary) ?? {}
-    const currentVersion = probe.missing || (!probe.valid && foreignInstallationOf(notice, binary))
+    const currentVersion = probe.missing || (!probe.valid && replaceableOrForeign(notice, binary))
       ? null : await this.readCurrentVersion(binary.path, probe)
     const latestVersion = await this.readLatestVersion()
     assertSupportedOpenCode(latestVersion)
@@ -229,13 +235,14 @@ export class OpenCodeUpdateService {
       )
     }
 
-    if (notice.legacyReplacement && !options.replaceLegacy) {
-      throw new OpenCodeUpdateError("legacy_replacement_required", "Replacing OpenCode 1.x requires explicit confirmation")
+    const legacy = notice.legacyReplacement
+    if (legacy && (options.replaceLegacy?.path !== legacy.path || options.replaceLegacy.version !== legacy.version)) {
+      throw new OpenCodeUpdateError("legacy_replacement_required", "Replacing OpenCode 1.x requires confirmation of the current installation")
     }
 
     try {
       const targetVersion = currentVersion && compareOpenCodeVersionStrings(currentVersion, latestVersion) > 0 ? currentVersion : latestVersion
-      const result = await this.deps.upgradeBinary(binary, targetVersion, { replaceLegacy: options.replaceLegacy === true })
+      const result = await this.deps.upgradeBinary(binary, targetVersion, legacy ? { replaceLegacy: options.replaceLegacy } : {})
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
@@ -322,6 +329,7 @@ export function createOpenCodeUpdateService(
     return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2" || (typeof configured === "string" && isRetiredInstallation(configured)))
   }
   return new OpenCodeUpdateService({
+    prepareInstallation: () => prepareForeignProbe(),
     resolveBinary: () => {
       const binary = binaryResolver.resolveDefault()
       return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }
@@ -364,6 +372,8 @@ function needsSharedInstallation(binary: ResolvedBinary): boolean {
   return binary.source === "user"
 }
 
-function foreignInstallationOf(notice: InstallationNotice, binary: ResolvedBinary): boolean {
-  return notice.foreignInstallation?.path === binary.path
+/** The failing binary is a foreign command (installed beside) or a verified
+ * OpenCode 1.x npm shim (replaced with consent), never repaired in place. */
+function replaceableOrForeign(notice: InstallationNotice, binary: ResolvedBinary): boolean {
+  return notice.foreignInstallation?.path === binary.path || notice.legacyReplacement?.path === binary.path
 }
