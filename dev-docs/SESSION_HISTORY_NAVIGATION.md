@@ -149,10 +149,16 @@ it, with or without a net append. It puts the reader's row back and drops the re
 once every retired row is measured at zero: no painted frame shows the retiring
 row's height, and nothing outlives the measurement to pull back a later programmatic
 scroll, a viewport resize (which stays bottom-anchored, clamping included) or a
-middle-button autoscroll. Until that measurement Virtua keeps every row where it was,
-so a write or reveal landing in between (in the roll's own task) moves the recorded
-place with it; a held native scrollbar thumb owns the position, and a roll under it
-records nothing. The place is kept from roll to roll while nothing else moves the
+middle-button autoscroll. A held native scrollbar thumb is corrected the same way:
+Chromium continues a thumb drag from the current offset. Until that measurement
+Virtua keeps every row where it was, so a write or reveal in the roll's own task,
+whose scroll event arrives before the measurement, moves the recorded place with
+it. A write from an animation-frame callback of the roll's frame is still undone:
+its scroll event arrives only after the measurement, when the correction has
+already run (list-owned reveals supersede the correction instead). A `beforeItems`
+resize not yet corrected by its own observer is discounted from the place, since
+that correction (before the measurement) restores the rows it displaces. The
+place is kept from roll to roll while nothing else moves the
 reader by more than 2 px, so Virtua's rounded compensations (a fraction of a pixel
 per roll, more at fractional zoom) never accumulate; returning to follow forgets it.
 Growth above an escaped reader is Virtua's own compensation, as without rolls, and

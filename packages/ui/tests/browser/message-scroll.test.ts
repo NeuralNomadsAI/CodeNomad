@@ -571,6 +571,31 @@ async function tallHeadAcrossTop(page: Page, row1: number) {
   return start!
 }
 
+/**
+ * Runs `action` in a task (as a native event delivers a roll), then reads
+ * `key`'s rounded viewport offset after each of the next `count` painted
+ * frames: each sample is a task posted from a frame's RAF, so it runs after
+ * that frame's layout, ResizeObserver pass and paint.
+ */
+function paintedOffsets(page: Page, key: string, action: string, count = 30) {
+  return page.evaluate(({ key, action, count }) => new Promise<Array<number | null>>(resolve => {
+    const offsets: Array<number | null> = [], channel = new MessageChannel()
+    let acted = false
+    channel.port1.onmessage = () => {
+      if (!acted) {
+        acted = true
+        new Function(action)()
+      } else {
+        const el = document.querySelector<HTMLElement>(".message-stream")!, row = el.querySelector(`[data-virtual-follow-key="${key}"]`)
+        offsets.push(row ? Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) : null)
+        if (offsets.length === count) return resolve(offsets)
+      }
+      requestAnimationFrame(() => channel.port2.postMessage(0))
+    }
+    channel.port2.postMessage(0)
+  }), { key, action, count })
+}
+
 function rowOffset(page: Page, key: string) {
   return page.locator(".message-stream").evaluate((el, key) => {
     const row = el.querySelector(`[data-virtual-follow-key="${key}"]`)
@@ -602,18 +627,7 @@ for (const [remount, kind, wheel] of [[false, "step", false], [false, "step", tr
       await page.mouse.wheel(0, -200)
       expected += 200
     }
-    // The step runs in the first frame; each sample is read by a task posted
-    // from a frame's RAF, so after that frame has been laid out and painted.
-    const offsets = await page.evaluate(kind => new Promise<Array<number | null>>(resolve => {
-      const offsets: Array<number | null> = [], channel = new MessageChannel()
-      channel.port1.onmessage = () => {
-        const el = document.querySelector<HTMLElement>(".message-stream")!, row = el.querySelector('[data-virtual-follow-key="row-1"]')
-        offsets.push(row ? Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) : null)
-        if (offsets.length < 30) requestAnimationFrame(() => channel.port2.postMessage(0))
-        else resolve(offsets)
-      }
-      requestAnimationFrame(() => { (window as any).fixture[kind](); channel.port2.postMessage(0) })
-    }), kind)
+    const offsets = await paintedOffsets(page, "row-1", `window.fixture.${kind}()`)
     const diagnostics = JSON.stringify({ start, expected, offsets })
     assert.equal(await page.evaluate(() => document.querySelector('[data-virtual-follow-key="row-0"]')), null, `row-0 must be retired: ${diagnostics}`)
     // The correction lands before the first paint after the step: no painted frame may be off.
@@ -645,13 +659,11 @@ for (const move of ["write", "scrollIntoView"] as const) test(`a ${move} in the 
   }, { name: "list" })
 })
 
-// A held native scrollbar thumb owns the position: a roll writes nothing (the
-// thumb would override a write on its next move; the retiring row's height
-// moves the content under it natively).
-test("a roll during a held native scrollbar thumb writes no correction", async () => {
+// A roll under a held native scrollbar thumb keeps the content in place like
+// any other escaped reader, and the drag then continues from that position
+// (Chromium drags from the current offset, not the press's).
+test("a roll under a held native scrollbar thumb keeps the content in place and the drag continues", async () => {
   await open(async page => {
-    const trace = collectScrollTrace(page)
-    await trace.enable()
     await tallHeadAcrossTop(page, 250)
     const stream = page.locator(".message-stream")
     const thumb = await stream.evaluate(el => {
@@ -662,15 +674,42 @@ test("a roll during a held native scrollbar thumb writes no correction", async (
     assert.ok(thumb.inset > 0, "The transcript needs a classic scrollbar")
     await page.mouse.move(thumb.x, thumb.y)
     await page.mouse.down()
+    let released = false
     try {
       await frames(page, 15)
-      const start = trace.entries.length
-      await page.evaluate(() => (window as any).fixture.step())
-      await frames(page, 30)
-      const writes = trace.entries.slice(start).filter(entry => entry.kind === "write")
-      assert.deepEqual(writes, [], "A roll must not write while the thumb is held")
-    } finally { await page.mouse.up() }
+      const offsets = await paintedOffsets(page, "row-1", "window.fixture.step()")
+      assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - 250) <= 2), `The content jumped under the held thumb: ${JSON.stringify(offsets)}`)
+      const scrollTop = () => stream.evaluate(el => el.scrollTop)
+      const before = await scrollTop()
+      await page.mouse.move(thumb.x, thumb.y + 20, { steps: 4 })
+      await frames(page, 10)
+      const dragged = await scrollTop() - before, offset = await rowOffset(page, "row-1")
+      const diagnostics = JSON.stringify({ before, dragged, offset })
+      assert.ok(dragged > 50, `The drag must keep scrolling: ${diagnostics}`)
+      assert.ok(offset !== null && Math.abs(offset - (250 - dragged)) <= 2, `The drag must continue from the corrected position: ${diagnostics}`)
+      await page.mouse.up()
+      released = true
+      await frames(page, 10)
+      const settled = await rowOffset(page, "row-1")
+      assert.ok(settled !== null && Math.abs(settled - offset!) <= 2, `Releasing the thumb moved the content: ${JSON.stringify({ offset, settled })}`)
+    } finally { if (!released) await page.mouse.up() }
   }, { name: "list", scrollbars: true })
+})
+
+// A `beforeItems` resize (permission receipts, a load-error banner) in a roll's
+// task is corrected by its own observer: neither the roll's capture nor a
+// write adopted before the measurement may take the rows it displaces for the
+// reader's place.
+for (const order of ["resize, roll", "roll, resize, write"] as const) test(`a beforeItems resize in a roll's task leaves the reader in place (${order})`, async () => {
+  await open(async page => {
+    await tallHeadAcrossTop(page, 250)
+    const write = order === "roll, resize, write"
+    const offsets = await paintedOffsets(page, "row-1", write
+      ? "window.fixture.step(); window.fixture.resizeBefore(700); document.querySelector('.message-stream').scrollTop += 60"
+      : "window.fixture.resizeBefore(700); window.fixture.step()")
+    const expected = write ? 190 : 250
+    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - expected) <= 2), `The reader moved: ${JSON.stringify({ expected, offsets })}`)
+  }, { name: "list" })
 })
 
 // Repeated rolls under a still escaped reader leave it in place: Virtua's

@@ -637,7 +637,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const anchor = rollAnchor, element = scrollElement()
     if (!anchor || !element) return
     const row = itemElements.get(anchor.key)
-    if (row?.isConnected && isActive() && !autoScroll() && !scrollController.snapshot().restoring && !nativeScrollbarDragging) {
+    if (row?.isConnected && isActive() && !autoScroll() && !scrollController.snapshot().restoring) {
       const delta = measureAnchorDelta(element, row, anchor.offset)
       if (Math.abs(delta) >= 1) writeScroll("reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
     }
@@ -646,15 +646,32 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   /**
    * Rows keep their places until Virtua measures the retiring ones, so a scroll
-   * landing in between (a write or reveal right after the roll) moves the
-   * reader's place with it rather than being undone.
+   * whose event lands in between (a write or reveal in the roll's task) moves
+   * the reader's place with it rather than being undone. A write from the
+   * roll frame's animation callbacks scrolls after the measurement: undone.
    */
   function followRollAnchor() {
     const anchor = rollAnchor, element = scrollElement()
     const row = anchor && itemElements.get(anchor.key)
     if (!anchor || !element || !row?.isConnected) return
-    const delta = measureAnchorDelta(element, row, anchor.offset)
+    const delta = measureReaderDelta(element, row, anchor.offset)
     if (Math.abs(delta) > ROLL_READER_ROUNDING_PX) rollReader = rollAnchor = { key: anchor.key, offset: anchor.offset + delta }
+  }
+
+  /**
+   * A `beforeItems` resize its observer has not corrected yet: the rows sit
+   * that much lower than where that correction will put them (it corrects an
+   * escaped reader below the header, outside a thumb drag).
+   */
+  function pendingBeforeItemsShift(element: HTMLElement) {
+    const before = beforeItemsElement(), height = untrack(beforeItemsHeight)
+    if (!before || nativeScrollbarDragging || element.scrollTop < height) return 0
+    return before.getBoundingClientRect().height - height
+  }
+
+  /** `measureAnchorDelta` for a rolled reader's place, as of the pending `beforeItems` correction. */
+  function measureReaderDelta(element: HTMLElement, row: Element, offset: number) {
+    return measureAnchorDelta(element, row, offset) - pendingBeforeItemsShift(element)
   }
 
   /**
@@ -1248,13 +1265,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         const handle = virtuaHandle(), element = scrollElement()
         let shrinks = false
         for (let index = retiredBefore; index < retiredNext && !shrinks; index++) shrinks = !handle || handle.getItemSize(index) !== 0
-        // A native thumb drag owns the position (its rows move under the thumb).
-        if (shrinks && element && !nativeScrollbarDragging) {
+        if (shrinks && element) {
           // Moved further than rounding (a programmatic scroll, find-in-page):
           // the reader is wherever it now reads.
           const row = rollReader && surviving.has(rollReader.key) ? itemElements.get(rollReader.key) : undefined
-          if (!rollReader || !row?.isConnected || Math.abs(measureAnchorDelta(element, row, rollReader.offset)) > ROLL_READER_ROUNDING_PX) {
-            rollReader = findTopVisibleAnchor(element, surviving) ?? undefined
+          if (!rollReader || !row?.isConnected || Math.abs(measureReaderDelta(element, row, rollReader.offset)) > ROLL_READER_ROUNDING_PX) {
+            const anchor = findTopVisibleAnchor(element, surviving)
+            rollReader = anchor ? { key: anchor.key, offset: anchor.offset - pendingBeforeItemsShift(element) } : undefined
           }
           rollAnchor = rollReader
         }
@@ -1267,9 +1284,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       virtualItemKeys = plannedVirtualKeys
       if (retiredNext > retiredBefore && rowResizeObserver) {
         // A retiring row's own element is gone; only its Virtua wrapper shrinks.
-        // A fresh observation of a rendered row reports in the next pass, the
-        // one in which Virtua measures the wrapper at zero, after it.
-        const row = (rollAnchor && itemElements.get(rollAnchor.key)) || [...itemElements.values()].find(element => element.offsetHeight > 0)
+        // A fresh observation of a rendered row (the first live one, kept
+        // mounted as a head probe) reports in the next pass, the one in which
+        // Virtua measures the wrapper at zero, after it.
+        const row = itemElements.get(plannedVirtualKeys[retiredNext])
         if (row) {
           rowResizeObserver.unobserve(row)
           rowResizeObserver.observe(row)
