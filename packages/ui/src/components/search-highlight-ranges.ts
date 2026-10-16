@@ -64,10 +64,9 @@ export type AlignInTranscript = (target: HTMLElement, viewportOffset: number) =>
  * element at the top, possibly still out of view. The alignment re-measures
  * that element for 30 frames, and a wheel consumed by a nested scroller is not
  * a list gesture: scrolling such a scroller during that window moves the
- * transcript along with the element. Known follow-up: the jump's Virtua index
- * operation is still live and reasserts the message top on each row measurement,
- * so frames at the message top can paint before and between the alignment's
- * corrections. Nested scrollers, and a
+ * transcript along with the element. Known follow-up: the reveal runs one frame
+ * after the row's highlights are painted, so that frame can show the message
+ * top. Nested scrollers, and a
  * transcript outside a list, are written directly and traced as `search-reveal`.
  */
 export function revealSearchRange(range: Range, align?: AlignInTranscript): void {

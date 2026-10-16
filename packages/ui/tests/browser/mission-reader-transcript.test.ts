@@ -103,3 +103,57 @@ test("a session reactivated beneath a reader is restored to its latest message o
     })
   } finally { await page.close() }
 })
+
+/** Streams `count` inline tokens, one per frame; the reply stays shorter than a held one. */
+const streamDeltas = (page: Page, from: number, count: number) => page.evaluate(async ({ from, count }) => {
+  for (let i = from; i < from + count; i++) {
+    (window as any).fixture.delta(`token ${i} `)
+    await new Promise(resolve => requestAnimationFrame(resolve))
+  }
+}, { from, count })
+const waitFrames = (page: Page, count: number) => page.evaluate(async count => {
+  for (let i = 0; i < count; i++) await new Promise(resolve => requestAnimationFrame(resolve))
+}, count)
+const streamPosition = (page: Page) => page.locator(".message-stream").evaluate(el => ({
+  mode: el.getAttribute("data-follow-mode"), gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+}))
+
+test("a reader opened while a following transcript streams resumes following once it closes", async () => {
+  const page = await open([readerMission])
+  try {
+    await page.evaluate(() => (window as any).fixture.loadMissions())
+    await page.evaluate(() => (window as any).fixture.seedHistory())
+    await latestHistoryPainted(page)
+    // The opening restore has settled and recorded a following reader.
+    await page.waitForFunction(() => (window as any).fixture.snapshot().scroll?.followModeType === "following")
+    await page.evaluate(() => (window as any).fixture.startStream())
+    await streamDeltas(page, 0, 10)
+    await page.waitForFunction(() => {
+      const el = document.querySelector(".message-stream")!
+      return el.getAttribute("data-follow-mode") === "following" && el.scrollHeight - el.scrollTop - el.clientHeight <= 1
+    })
+    // A multi-paragraph delta grows the reply beyond the follow tolerance. Open
+    // the reader after its frame pins the bottom in the DOM, before the scroll
+    // event updates Virtua's offset: the deactivation capture must still record
+    // a reader at the bottom.
+    await page.evaluate(async () => {
+      (window as any).fixture.delta("\n\nA streamed paragraph.".repeat(4) + "\n\n")
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      await new Promise(resolve => setTimeout(resolve))
+      await (window as any).fixture.readMission()
+    })
+    await page.locator(".mission-reader").getByText("Report opening paragraph.", { exact: true }).waitFor()
+    await streamDeltas(page, 11, 15)
+    await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+    await waitFrames(page, 30)
+    const restored = await streamPosition(page)
+    const persisted = await page.evaluate(() => JSON.stringify((window as any).fixture.snapshot().scroll))
+    assert.equal(restored.mode, "following", `restored from ${persisted}`)
+    assert.ok(restored.gap <= 1, `restored ${restored.gap}px above the bottom`)
+    await streamDeltas(page, 26, 5)
+    await waitFrames(page, 5)
+    const followed = await streamPosition(page)
+    assert.equal(followed.mode, "following")
+    assert.ok(followed.gap <= 1, `followed ${followed.gap}px above the bottom`)
+  } finally { await page.close() }
+})

@@ -9,14 +9,12 @@ export const SCROLL_REASONS = [
   "jump-top", "jump-bottom", "jump-key", "explicit-pin",
   // Follow mode re-pinning after growth, or after an off-bottom observation.
   "content-grew", "observe",
-  // Snapshot restoration: anchor index/correction, pixel fallback, final mode.
+  // Snapshot restoration: anchor row/correction, pixel fallback, final mode.
   "restore-anchor", "restore-pixel", "restore-finish",
-  // Escaped-reader retention and in-place reveals.
+  // Escaped-reader retention (including a jump's landing) and in-place reveals.
   "reader-settle", "align-element", "hold",
   // Layout compensation.
   "before-items", "viewport-resize",
-  // Releases of Virtua's pending imperative/shift operation (scrollBy(0)).
-  "cancel-virtua", "window-shift",
   // Mode-only sources.
   "user-gesture", "thumb-drag", "set-follow", "reset",
   // External writer retained to preserve occurrence-level reveal behavior.

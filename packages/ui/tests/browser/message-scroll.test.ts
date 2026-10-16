@@ -210,7 +210,10 @@ test("the scroll trace emits coherent labelled writes and detects unclaimed move
   })
 })
 
-test("Virtua releases do not claim a wheel's movement or replace its preceding write", async () => {
+// Only DOM writes position the transcript (Virtua's imperative operations
+// reassert their target over later gestures), and a rolling window keeps the
+// attribution of the write before it.
+test("a wheel and a rolling window leave only DOM writes and never claim a wheel's movement", async () => {
   await open(async page => {
     await page.evaluate(() => (window as any).fixture.nearTail())
     await frames(page, 30)
@@ -220,8 +223,6 @@ test("Virtua releases do not claim a wheel's movement or replace its preceding w
     await trace.enable()
     await page.mouse.wheel(0, -80)
     await frames(page, 8)
-    // A release would pin the pre-wheel offset for Virtua's later measurements.
-    assert.ok(!trace.entries.some(entry => entry.kind === "write" && entry.reason === "cancel-virtua"), "A wheel never releases an earlier imperative index request")
     assert.ok(trace.entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.intent === "up"), "The wheel belongs to the user")
     assert.equal(await stream.getAttribute("data-scroll-write"), null, "A gesture publishes no write attribution")
 
@@ -230,9 +231,9 @@ test("Virtua releases do not claim a wheel's movement or replace its preceding w
       const w = window as any
       w.fixture.align()
       w.fixture.roll()
-      // Run after the rolling-window release in the same RAF batch. This is the
-      // routing layer's scrollBy leg of the still-fresh upward wheel, without a
-      // second wheel event that would clear the programmatic window first.
+      // Run after the rolling window's settlement in the same RAF batch. This is
+      // the routing layer's scrollBy leg of the still-fresh upward wheel, without
+      // a second wheel event that would clear the programmatic window first.
       queueMicrotask(() => requestAnimationFrame(() => {
         const el = document.querySelector<HTMLElement>(".message-stream")!
         const reason = el.dataset.scrollWrite
@@ -243,13 +244,12 @@ test("Virtua releases do not claim a wheel's movement or replace its preceding w
     }))
     await frames(page, 4)
     const entries = trace.entries.slice(start)
-    const release = entries.find(entry => entry.kind === "write" && entry.reason === "window-shift")
     const preceding = entries.find(entry => entry.kind === "write" && entry.reason === "align-element")
-    assert.ok(release && preceding, JSON.stringify(entries))
+    assert.ok(preceding, JSON.stringify(entries))
     assert.ok(moved.at - preceding.at < 120, "The displacement must occur during the preceding programmatic window")
-    assert.equal(moved.reason, "align-element", "A window release preserves the preceding position-write reason")
+    assert.equal(moved.reason, "align-element", "A rolling window preserves the preceding position-write reason")
     assert.ok(entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.during === "align-element" && entry.intent === "up" && Math.abs(entry.to - moved.offset) < 1), JSON.stringify(entries))
-    assert.ok(!entries.some(entry => entry.kind === "observe" && ["cancel-virtua", "window-shift"].includes(entry.owner)), "A release never owns an observation")
+    assert.ok(!trace.entries.some(entry => entry.kind === "write" && !["dom", "native"].includes(entry.op)), "Only DOM writes position the transcript")
   }, { name: "list" })
 })
 
@@ -277,6 +277,101 @@ for (const growing of [false, true]) test(`a wheel after a key placement is neve
     } finally {
       await page.evaluate(() => clearInterval((window as any).growTimer))
     }
+  }, { name: "list" })
+})
+
+// A gesture made while an imperative placement (scrollToKey, an anchor
+// restoration) is still settling ends it: Virtua's measurements of the rows
+// the gesture reveals must not reapply the placement over the reader.
+async function assertGestureWins(page: Page, { key, start, delay, gesture, amplitude }: { key: string; start: string; delay: number; gesture: () => Promise<unknown>; amplitude: number }) {
+  await page.evaluate(key => {
+    const w = window as any, mark = () => { w.gestureFrame ??= w.pumpFrame }
+    w.traceKey = key
+    w.gestureFrame = undefined
+    addEventListener("wheel", mark, { capture: true })
+    addEventListener("keydown", mark, { capture: true })
+  }, key)
+  // Frame 0 starts the placement; the gesture follows `delay` painted frames.
+  const pumped = pump(page, 100 + delay, `if (frame === 0) { ${start} }`)
+  await page.waitForFunction(count => (window as any).pumpFrame > count, delay)
+  await gesture()
+  const samples = await pumped
+  const at: number = await page.evaluate(() => (window as any).gestureFrame)
+  const baseline = samples.find(sample => sample.frame === at - 1)?.anchorOffset ?? null
+  const after = samples.filter(sample => sample.frame >= at)
+  const diagnostics = JSON.stringify({ at, baseline, amplitude, offsets: samples.map(({ frame, anchorOffset }) => [frame, anchorOffset === null ? null : Math.round(anchorOffset)]) })
+  assert.ok(baseline !== null && after.length >= 90, `The placement must show ${key} before the gesture: ${diagnostics}`)
+  // Landed: half the gesture's displacement, which no later frame may lose.
+  const held = (sample: FrameSample) => sample.anchorOffset !== null && sample.anchorOffset - baseline >= amplitude / 2
+  const landed = after.findIndex(held)
+  assert.ok(landed >= 0 && landed < 30, `The gesture must land: ${diagnostics}`)
+  const undone = after.slice(landed).filter(sample => !held(sample))
+  assert.deepEqual(undone.map(sample => sample.frame), [], `The placement undid the gesture: ${diagnostics}`)
+}
+
+// Leaving Virtua's shift mode after a rolling window must not leave an operation
+// pinned to the reader's offset at the roll: the streaming tail's measurements
+// would reapply it over every later wheel.
+for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} while a reply streams after a rolling window wins for good`, async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.nearTail())
+    await frames(page, 30)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    if (gesture === "PageUp") await stream.focus()
+    await page.evaluate(() => (window as any).fixture.roll())
+    await frames(page, 4)
+    const sampling = sampleAnchor(page, { key: "row-180", stream: ".message-stream", count: 90, step: "window.fixture.growTail(48 + frame * 12)" })
+    await frames(page, 10)
+    if (gesture === "wheel") await page.mouse.wheel(0, -300)
+    else await page.keyboard.press("PageUp")
+    const samples = await sampling
+    const offsets = samples.map(sample => sample.anchorOffset === null ? null : Math.round(sample.anchorOffset))
+    assert.ok(offsets.slice(-30).every(offset => offset !== null && offset >= 150), `The ${gesture} must hold while the tail grows: ${JSON.stringify(offsets)}`)
+  }, { name: "list" })
+})
+
+const varyRowHeights = (page: Page) => page.evaluate(() => { for (let i = 0; i < 200; i++) (window as any).fixture.resizeRow(`row-${i}`, 30 + (i * 37) % 90) })
+
+for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} one frame after a key placement wins immediately and for good`, async () => {
+  await open(async page => {
+    await varyRowHeights(page)
+    await frames(page, 10)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    if (gesture === "PageUp") await stream.focus()
+    const amplitude = gesture === "wheel" ? 300 : await stream.evaluate(el => Math.floor(el.clientHeight * 0.875))
+    await assertGestureWins(page, {
+      key: "row-100", start: "window.fixture.middle()", delay: 1, amplitude,
+      gesture: () => gesture === "wheel" ? page.mouse.wheel(0, -amplitude) : page.keyboard.press("PageUp"),
+    })
+  }, { name: "list" })
+})
+
+test("a wheel one frame after an anchor restoration starts wins immediately and for good", async () => {
+  await open(async page => {
+    await varyRowHeights(page)
+    await frames(page, 10)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page, 30)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    // The first notch can be reasserted over (see above); the second settles.
+    for (let i = 0; i < 2; i++) {
+      await page.mouse.wheel(0, 100)
+      await frames(page, 45)
+    }
+    const target = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.ok(target.anchorKey && target.anchorOffset !== 0 && !target.atBottom, JSON.stringify(target))
+    await page.evaluate(target => { (window as any).restoreTarget = target; (window as any).fixture.bottom() }, target)
+    await frames(page, 30)
+    // Rows off screen re-render at new heights, so the restoration measures them.
+    await page.evaluate(() => { for (let i = 0; i < 170; i++) (window as any).fixture.resizeRow(`row-${i}`, 30 + (i * 53) % 90) })
+    await frames(page, 10)
+    await assertGestureWins(page, {
+      key: target.anchorKey, start: "window.fixture.restore(window.restoreTarget)", delay: 1, amplitude: 300,
+      gesture: () => page.mouse.wheel(0, -300),
+    })
   }, { name: "list" })
 })
 
@@ -757,6 +852,22 @@ test("the long-reply hold persists while streaming and the latest button resumes
     const resumed = await readerState(page, scope)
     assert.deepEqual({ followModeType: resumed.followModeType, latestButton: resumed.latestButton }, { followModeType: "following", latestButton: 0 }, JSON.stringify(resumed))
     assert.ok(resumed.gap <= 1, `The latest button must reach the streaming tail: ${resumed.gap}px`)
+  }, { name: "switch", hold: true })
+})
+
+// The hold escapes at the bottom and growth below it scrolls nothing, so no
+// scroll settles: a state capture's flush must still record the grown position.
+test("a state capture after a long-reply hold records the reader above the grown reply", async () => {
+  const scope = '[data-session-id="A"]'
+  await open(async page => {
+    await streamUntilHold(page, scope)
+    const held = await page.evaluate(() => (window as any).fixture.snapshot().scroll)
+    await page.evaluate(async () => (await import("/src/stores/message-v2/bus.ts")).messageStoreBus.flushScrollSnapshots())
+    const flushed = await page.evaluate(() => (window as any).fixture.snapshot().scroll)
+    const gap = await page.locator(`${scope} .message-stream`).evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap > 1, `The reply must have grown below the hold: ${gap}px`)
+    assert.deepEqual({ atBottom: flushed.atBottom, followModeType: flushed.followModeType, anchored: Boolean(flushed.anchorKey) },
+      { atBottom: false, followModeType: "escaped", anchored: true }, JSON.stringify({ held, flushed }))
   }, { name: "switch", hold: true })
 })
 

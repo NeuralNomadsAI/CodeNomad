@@ -113,11 +113,33 @@ also account for off-window messages, not just the local scroll offset.
 
 `VirtualFollowList.writeScroll(reason, op)` is the only list-owned transcript position write.
 Reasons come from the closed `SCROLL_REASONS` list in `virtual-scroll-trace.ts`; the
-same call opens the programmatic window, records synchronous targets and keeps
-imperative Virtua operations cancellable by the next gesture. Follow-mode changes go
-through `syncControllerResult` with a reason as well. Outside it remain user gestures
+same call opens the programmatic window and records synchronous targets. Every write
+is a DOM write: the list never issues Virtua's imperative operations
+(`scrollTo`/`scrollBy`/`scrollToIndex`). In Virtua 0.51 such an operation reapplies
+its fixed target on every item or viewport measurement until 150 ms after the last
+one; the rows a gesture mounts, or a streaming tail, keep re-arming it, and nothing
+public cancels it, so it would undo any gesture or later write made meanwhile. Key
+jumps and anchor restoration therefore write the offset Virtua would target for the
+row (`writeIndex`, from its own item offsets) and let a list stabilizer settle the
+row once measured (the reader settlement for jumps, the restoration's own loop), both
+cancelled by every gesture. A restored anchor that has shrunk since its capture is
+kept partly visible: Virtua mounts no overscan above the viewport after a downward
+scroll, so a row held entirely above it would be unmounted and re-placed in a loop.
+A rolling window must leave Virtua's shift mode at once (it compensates every later
+measurement, a streaming tail below the reader included, until scrolling idles, and
+each compensation postpones that). Only an imperative operation does, so this is the
+list's one Virtua operation (a smooth one would instead defer Virtua's compensation
+into item offsets). While it may live (until 150 ms without a measurement of the
+list's content), every list write and scroll event retargets it to the DOM offset, so
+its reapplication never undoes a wheel, a key scroll or a later write; an instant
+write to the current offset leaves a running smooth scroll alone (checked in
+Chromium). Follow-mode changes go through
+`syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
 compensation, browser clamping and search-result reveals inside nested scrollers.
+List positions are read from the DOM, not Virtua's `scrollOffset`, which lags a write
+until its scroll event; a following list is captured at the bottom (without an
+anchor) wherever its pin's latest write stands.
 
 A search navigation reveals its occurrence once, after placing its message. Inside
 nested code/tool scrollers the reveal writes them directly and emits
@@ -136,10 +158,9 @@ is `write`, `mode` or `observe` JSON with session, offsets, scroll height and mo
 `observe` move that no write claimed is `unowned`; `intent` distinguishes a user
 gesture from Virtua/browser movement. A recent synchronous write claims only its
 actual landing offset, not unrelated moves during its 120ms programmatic window
-(`during` retains that recent reason); asynchronous Virtua/smooth operations are
-attributed by that window and must be correlated with their preceding `write`.
-Virtua releases are logged without taking over attribution. Synchronous no-op writes
-are omitted; asynchronous requests report `now` and `target`, never a pre-landing `to`.
+(`during` retains that recent reason); smooth scrolls are attributed by that window
+and must be correlated with their preceding `write`. Synchronous no-op writes are
+omitted; smooth requests report `now` and `target`, never a pre-landing `to`.
 The trace is observational, not a proof of native/virtualizer ownership. While enabled,
 `.message-stream` also carries `data-scroll-write` (last position-write reason), cleared
 with its attribution state on the next list action/observation after disabling.
@@ -158,11 +179,16 @@ before estimating lasts only until the first remount whose retained rows are all
 measured. A new instance reads offset 0 until the next scroll event, so a non-zero
 offset is seeded by one scroll event (the
 remount has already recreated every row). The long-reply hold scrolls nothing; the
-section persists its escaped position as a follow-mode change. Gestures and explicit navigation supersede
-restoration, alignment and bottom pins through one function; deactivation, session
-reset and unmount stop every list-owned positioning operation (including a
-restoration in flight) through another, and deactivation also releases Virtua's
-queued imperative scroll.
+section persists its escaped position as a follow-mode change and leaves it unsettled,
+so a state capture's flush records it again after growth below it. An escaped reader
+keeps its anchor even when captured at the bottom (a hold triggered there), and
+returns to that anchor rather than to a bottom that has grown while it was away; the
+restore loads that anchor's window like any other anchor. Gestures and explicit
+navigation supersede restoration, alignment and bottom pins through one function;
+deactivation, session reset and unmount stop every list-owned positioning operation
+(including a restoration in flight) through another. Middle-button autoscroll over a
+nested output deliberately releases the transcript's follow as well: a transcript
+still re-pinning its bottom would move that output under the held pointer.
 
 One bottom loop (`bottomPin`) keeps the bottom, and only while following: leaving
 follow ends it. Ordinary following re-pins for two frames after each bottom write;
@@ -175,7 +201,8 @@ bottom joins an active explicit pin and keeps its row count; it reports `onAppli
 only after its own landing, and `onCancelled` when superseded or when its pin loses
 follow without a gesture. A new send intent also cancels MessageSection's pending
 window paging, which would otherwise leave follow after the send, and its pending
-activation restore: a send before hydration keeps the bottom over a saved passage.
+activation restore: a send before hydration keeps the bottom over a saved passage,
+and does so even if the prompt is then rejected (the saved passage is not restored).
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
 element, with the former element alignment's lifetime: the element is measured and
@@ -189,17 +216,10 @@ transcript (e.g. to the composer) does not. Any other scroll during the window i
 corrected like layout, as before. While a hold is active, a window shift retains the
 hold rather than the visible top anchor, so no reader stays retained after it
 expires. Settlement, alignment and anchor restoration share one anchor measurement.
-Pre-existing: a Virtua index request still pending from an earlier key navigation
-re-runs on every measurement while they keep coming (for instance during streaming)
-and can re-place its row, also against a gesture made while it is still live;
-another index navigation, a restoration or deactivation replaces it. A gesture does
-not release it: Virtua's `scrollBy(0)` would pin the pre-gesture offset and reassert
-it on every later measurement, undoing the gesture (a wheel notch mounting new rows).
-Known follow-ups, both from that live index operation: a deep reveal right after its
-jump can paint the message top before and between the hold's corrections (the
-operation reasserts the row top on each measurement); and since Virtua lands an
-index jump in a microtask but reports it at the next scroll event, a session switch
-within that frame persists the position from before the jump.
+Known follow-ups: a search reveal is aligned one frame after its row's highlights
+are painted, so that frame can show the message top; and Virtua renders the rows of
+a jump's new offset only at its next scroll event, so a session switch within that
+frame finds no anchor to capture and keeps the position from before the jump.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

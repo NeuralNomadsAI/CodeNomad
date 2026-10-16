@@ -480,6 +480,97 @@ test("a message sent before hydration stays at the bottom over a saved passage",
   } finally { await f.close() }
 })
 
+const bottomState = (page: Page) => page.evaluate(`(() => {
+  const stream = document.querySelector('.message-stream')
+  return { mode: stream.getAttribute('data-follow-mode'), gap: stream.scrollHeight - stream.clientHeight - stream.scrollTop }
+})()`) as Promise<{ mode: string | null; gap: number }>
+
+// A send pins the bottom until its exchange settles. The click projects the
+// sent row synchronously, after the pin's first write; a switch before the
+// pin's next frame must still capture following at the bottom, not escaped.
+test("switching sessions right after a send returns following at the bottom", async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    assert.deepEqual(await bottomState(f.page), { mode: "following", gap: 0 }, "the hydrated session starts following at the bottom")
+    await f.page.locator(".prompt-input-container textarea").first().fill("Sent before switching")
+    const switched = await f.page.evaluate(`(() => {
+      document.querySelector('.send-button').click()
+      const stream = document.querySelector('.message-stream')
+      const state = { gap: stream.scrollHeight - stream.clientHeight - stream.scrollTop,
+        sent: window.fixture.snapshot().ids.filter(id => !/^msg_\\d{5}$/.test(id)).length }
+      window.fixture.switchAway()
+      return state
+    })()`) as { gap: number; sent: number }
+    assert.equal(switched.sent, 1, `the send (and its pin) must be under way at the switch: ${JSON.stringify(switched)}`)
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.waitForFunction(() => document.querySelector(".message-stream [data-virtual-follow-key]"))
+    await waitFrames(f.page, 60)
+    const returned = await bottomState(f.page)
+    assert.ok(returned.mode === "following" && returned.gap <= 1,
+      `the returned session must follow at the bottom: ${JSON.stringify({ switched, returned, scroll: (await snapshot(f.page)).scroll })}`)
+    await f.page.evaluate(() => (window as any).fixture.stream("A reply that grows after the return. ".repeat(80)))
+    await waitFrames(f.page, 30)
+    const grown = await bottomState(f.page)
+    assert.ok(grown.mode === "following" && grown.gap <= 1, `later growth must be followed: ${JSON.stringify(grown)}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+/** Samples a row's viewport offset on each frame from now, while `gesture` runs. */
+async function sampleRowOffsets(page: Page, index: number, frames: number, gesture: () => Promise<void>) {
+  await page.evaluate(`(() => {
+    const stream = document.querySelector('.message-stream'), samples = window.rowSamples = []
+    let count = ${frames}
+    const next = () => {
+      const row = stream.querySelector('[data-virtual-follow-key="${navigationMessageId(index)}"]')
+      samples.push(row ? row.getBoundingClientRect().top - stream.getBoundingClientRect().top : null)
+      if (--count) requestAnimationFrame(next)
+    }
+    requestAnimationFrame(next)
+  })()`)
+  await gesture()
+  await page.waitForFunction(frames => (window as any).rowSamples.length >= frames, frames)
+  return page.evaluate(() => (window as any).rowSamples) as Promise<Array<number | null>>
+}
+
+// A resident jump's Virtua index request re-places its row on each measurement
+// while rows keep mounting. A gesture right after the click, before the jump
+// settles, must win at once and for good.
+for (const gesture of ["wheel", "PageUp"] as const) test(`a ${gesture} right after a resident timeline jump wins over the jump`, async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    await f.page.evaluate(() => (window as any).codenomadLogger.enableLogger("scroll"))
+    const stream = f.page.locator(".message-stream[tabindex]")
+    const box = (await stream.boundingBox())!
+    const amplitude = gesture === "wheel" ? 300 : await stream.evaluate(element => element.clientHeight * 0.875)
+    await clickTimeline(f.page, 1350)
+    // The click has issued its index request; its landing has not settled.
+    await f.page.waitForFunction(() => document.querySelector(".message-stream")?.getAttribute("data-scroll-write") === "jump-key")
+    await waitFrames(f.page, 2)
+    const samples = await sampleRowOffsets(f.page, 1350, 90, async () => {
+      if (gesture === "wheel") {
+        await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+        await f.page.mouse.wheel(0, -300)
+      } else {
+        await stream.evaluate(element => element.focus({ preventScroll: true }))
+        await f.page.keyboard.press("PageUp")
+      }
+    })
+    // The jump's target puts the row at the top (offset 0); the gesture moves it down.
+    const won = samples.findIndex(offset => offset !== null && offset >= amplitude / 2)
+    const detail = JSON.stringify({ amplitude, samples: samples.map(offset => offset === null ? null : Math.round(offset)) })
+    assert.ok(won >= 0 && won < 30, `the ${gesture} must win within 30 frames: ${detail}`)
+    const reverted = samples.slice(won).findIndex(offset => offset !== null && offset < amplitude / 4)
+    assert.equal(reverted, -1, `the jump must not reclaim its target after the ${gesture}: ${detail}`)
+    await waitFrames(f.page, 30)
+    const settled = await rowOffset(f.page, 1350)
+    assert.ok(settled === null || settled >= amplitude / 2, `the ${gesture} must hold: ${settled} ${detail}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 // A restore loading its saved anchor positions the list itself: reaching the
 // bottom meanwhile must not page beyond the window that restore brings in.
 test("reaching the bottom while a restore loads its anchor does not page newer", async () => {

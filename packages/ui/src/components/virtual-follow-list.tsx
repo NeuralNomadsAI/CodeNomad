@@ -18,6 +18,8 @@ const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
+// Virtua 0.51 keeps an imperative operation until it has seen no measurement for this long.
+const VIRTUA_OPERATION_IDLE_MS = 150
 
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
@@ -58,14 +60,9 @@ export interface VirtualFollowScrollSnapshot {
 
 /** One transcript position write; see `writeScroll`. */
 type ScrollWriteOp =
-  /** Clamped absolute offset, through Virtua when mounted so its pending measurement pin agrees. */
-  | { type: "offset"; top: number }
-  /** Direct DOM write; `record` publishes the synchronous result before its scroll event. */
+  /** Direct DOM write (the browser clamps it); `record` publishes the synchronous result before its scroll event. */
   | { type: "dom"; top: number; record: boolean }
   | { type: "native"; top: number; behavior: ScrollBehavior; record: boolean }
-  | { type: "index"; index: number; align: ScrollLogicalPosition; smooth: boolean }
-  /** `scrollBy(0)`: releases Virtua's pending imperative or shift operation without claiming the next scroll. */
-  | { type: "release" }
 
 /**
  * The single bottom loop, which exists only while following: each frame
@@ -181,7 +178,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   // The last intent token started or cancelled: an intent never restarts itself.
   let handledBottomPinToken: string | number | null = null
   let programmaticScrollUntil = 0
-  let pendingVirtuaScroll = false
+  // The rolling window's live Virtua operation, if any; see `endVirtuaShift`.
+  let virtuaPin: { handle: VirtualizerHandle; until: number } | undefined
   // Trace-only attribution state, written only while the `scroll` trace is enabled.
   let lastTracedWrite: ScrollReason | undefined
   let lastTracedLanding: number | undefined
@@ -288,8 +286,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     supersedePositioning()
     const element = scrollElement()
     syncControllerResult(scrollController.userGesture(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS, element ? getDomMetrics(element) : null, distance), "user-gesture")
-    // No Virtua release here: scrollBy(0) would pin the pre-gesture offset, which
-    // Virtua reasserts on every later row measurement, undoing this gesture.
+    // No list positioning outlives this: see `writeScroll`.
     // At a clamped edge a wheel/key produces no scroll event. The gesture
     // itself must be able to request the next historical window.
     if (direction) updateScrollStateFromDom()
@@ -311,67 +308,51 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   /**
-   * The single transcript position write. Every op except a Virtua release
-   * opens the programmatic window that tells writes from gestures; synchronous
-   * targets are recorded, and imperative Virtua operations stay cancellable by
-   * the next gesture. Virtua's own compensation, the browser's clamping and
-   * user gestures are observed as `unowned` scrolls.
+   * The single transcript position write: a DOM write that opens the
+   * programmatic window telling writes from gestures, its synchronous target
+   * recorded. Positioning never uses Virtua's imperative operations
+   * (scrollTo/scrollBy/scrollToIndex): Virtua 0.51 reapplies one on every item
+   * or viewport measurement until 150 ms after the last, which the rows a
+   * gesture mounts (or a streaming tail) keep re-arming, and nothing public
+   * cancels it, so it would undo a gesture or a later write. Rows are placed
+   * from Virtua's own offsets instead (`writeIndex`) and held by the list's
+   * stabilizers, which every gesture cancels. The one exception ends shift
+   * mode, and every write and scroll retargets it while it may live
+   * (`endVirtuaShift`). Virtua's own compensation, the
+   * browser's clamping and user gestures are observed as `unowned` scrolls.
    */
   function writeScroll(reason: ScrollReason, op: ScrollWriteOp) {
     const element = scrollElement()
-    const handle = virtuaHandle()
-    const traced = scrollTraceEnabled() && element
+    if (!element) return
+    const traced = scrollTraceEnabled()
       ? { from: element.scrollTop, scrollHeight: element.scrollHeight }
       : undefined
-    if (op.type === "release") {
-      handle?.scrollBy(0)
-    } else if (op.type === "index") {
-      programmaticScrollUntil = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS
-      pendingVirtuaScroll = true
-      handle?.scrollToIndex(op.index, { align: op.align, smooth: op.smooth })
+    programmaticScrollUntil = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS
+    if (op.type === "dom") {
+      element.scrollTop = op.top
+      if (op.record) scrollController.recordProgrammaticOffset(element.scrollTop)
     } else {
-      if (!element) return
-      programmaticScrollUntil = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS
-      if (op.type === "offset") {
-        const top = Math.min(Math.max(op.top, 0), getMaxOffset(element))
-        if (handle) {
-          pendingVirtuaScroll = true
-          handle.scrollTo(top)
-        } else {
-          element.scrollTop = top
-        }
-        scrollController.recordProgrammaticOffset(top)
-      } else if (op.type === "dom") {
-        element.scrollTop = op.top
-        if (op.record) scrollController.recordProgrammaticOffset(element.scrollTop)
-      } else {
-        element.scrollTo({ top: op.top, behavior: op.behavior })
-        if (op.record) scrollController.recordProgrammaticOffset(op.top)
-      }
+      element.scrollTo({ top: op.top, behavior: op.behavior })
+      if (op.record) scrollController.recordProgrammaticOffset(op.top)
     }
-    if (!traced || !element) return
-    if (!handle && (op.type === "index" || op.type === "release")) return
-    // Virtua's imperative operations and smooth scrolls land later, at no known offset.
-    const synchronous = op.type === "dom" || (op.type === "native" && op.behavior !== "smooth") || (op.type === "offset" && !handle)
+    retargetVirtuaPin()
+    if (!traced) return
+    // A smooth scroll lands later, at no known offset.
+    const synchronous = op.type === "dom" || op.behavior !== "smooth"
     const to = synchronous ? element.scrollTop : undefined
     // A no-op still opens a programmatic window, so it takes the attribution;
     // only its duplicate diagnostic line is omitted.
-    if (op.type !== "release") {
-      if (element.dataset.scrollWrite !== reason) element.dataset.scrollWrite = reason
-      lastTracedWrite = reason
-      lastTracedLanding = to
-    }
+    if (element.dataset.scrollWrite !== reason) element.dataset.scrollWrite = reason
+    lastTracedWrite = reason
+    lastTracedLanding = to
     if (to !== undefined && Math.abs(to - traced.from) < 1) return
-    const index = op.type === "index" ? op.index : undefined
-    const item = index === undefined ? undefined : untrack(virtualItems)[index]
     trace("write", {
       reason,
       op: op.type,
       from: traced.from,
       to,
       now: synchronous ? undefined : element.scrollTop,
-      target: "top" in op ? op.top : op.type === "index" ? item === undefined ? index : props.getKey(item, index!) : { delta: 0 },
-      handle: Boolean(handle),
+      target: op.top,
       scrollHeight: traced.scrollHeight,
       mode: untrack(followMode).type,
     })
@@ -403,7 +384,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     })
   }
 
-  function getDomMetrics(element: HTMLDivElement, handle = virtuaHandle(), offset = handle?.scrollOffset ?? element.scrollTop): ScrollControllerMetrics {
+  /** The DOM offset, not Virtua's `scrollOffset`, which lags a write until its scroll event. */
+  function getDomMetrics(element: HTMLDivElement, offset = element.scrollTop): ScrollControllerMetrics {
     return {
       offset,
       // Virtua's scrollSize excludes content preceding its own item root.
@@ -430,21 +412,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element || virtualItems().length === 0) return
     if (canPinFollowBottom()) return pinFollowBottom(reason)
-    if (canScrollInDirection(getEdgeMetrics(element), "down")) {
+    if (canScrollInDirection(element, "down")) {
       writeScroll(reason, { type: "native", top: getMaxOffset(element), behavior: immediate ? "instant" : "smooth", record: false })
     }
   }
 
-  function getEdgeMetrics(element: HTMLDivElement) {
-    return { scrollTop: virtuaHandle()?.scrollOffset ?? element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }
-  }
-
   function writeBottom(reason: ScrollReason) {
     const element = scrollElement()
-    // Virtua's imperative scroll reasserts its target on later measurements
-    // and has no public cancellation API. Bottom settlement is already owned
-    // here, so keep its writes synchronous.
-    if (element && canScrollInDirection(getEdgeMetrics(element), "down")) {
+    if (element && canScrollInDirection(element, "down")) {
       writeScroll(reason, { type: "dom", top: getMaxOffset(element), record: true })
     }
   }
@@ -528,15 +503,63 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function performScrollToTop(immediate: boolean, source: ScrollReason) {
-    writeScroll(source, immediate ? { type: "offset", top: 0 } : { type: "native", top: 0, behavior: "smooth", record: false })
+    writeScroll(source, immediate ? { type: "dom", top: 0, record: true } : { type: "native", top: 0, behavior: "smooth", record: false })
   }
 
   function performScrollToKey(key: string, opts: { block: ScrollLogicalPosition; smooth: boolean }, source: ScrollReason) {
     const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return
     // Large smooth jumps over dynamically measured items can leave Virtua's
-    // mounted range behind the viewport. Semantic navigation must land first.
-    writeScroll(source, { type: "index", index, align: opts.block, smooth: false })
+    // mounted range behind the viewport. Semantic navigation must land first;
+    // the reader settlement then aligns the row exactly once it is measured.
+    const offset = writeIndex(source, index, opts.block)
+    if (offset !== undefined) readerSettlement.hold({ key, offset })
+  }
+
+  /**
+   * Writes the offset Virtua's scrollToIndex would target for row `index`
+   * (estimated until measured) as one DOM write, and returns the row's intended
+   * viewport offset. Virtua's resize compensation keeps that row in place as
+   * the rows around it are measured; the caller's stabilizer settles the rest.
+   */
+  function writeIndex(reason: ScrollReason, index: number, align: ScrollLogicalPosition, behavior: ScrollBehavior = "instant") {
+    const element = scrollElement(), handle = virtuaHandle()
+    if (!element || !handle) return undefined
+    const size = handle.getItemSize(index)
+    const offset = align === "end" ? element.clientHeight - size : align === "center" ? (element.clientHeight - size) / 2 : 0
+    // Virtua's item offsets exclude its start margin, the content before its items.
+    const top = untrack(beforeItemsHeight) + handle.getItemOffset(index) - offset
+    writeScroll(reason, behavior === "smooth" ? { type: "native", top, behavior, record: true } : { type: "dom", top, record: true })
+    return offset
+  }
+
+  /**
+   * Leaves Virtua's shift mode, which otherwise compensates every later
+   * measurement (a streaming tail below an escaped reader included) until
+   * scrolling idles, and each compensation scroll postpones that. Only an
+   * imperative operation leaves it at once, and Virtua 0.51 reapplies that
+   * operation on every measurement until it has been idle for 150 ms, with no
+   * public cancellation (a smooth one defers Virtua's compensation instead).
+   * This is the list's one such operation: while it may live, every position
+   * change retargets it to the DOM offset (`retargetVirtuaPin`), so it never
+   * undoes a write or a gesture; an instant write to the current offset leaves
+   * a running smooth scroll alone.
+   */
+  function endVirtuaShift() {
+    const element = scrollElement(), handle = virtuaHandle()
+    if (!element || !handle) return
+    virtuaPin = { handle, until: performance.now() + VIRTUA_OPERATION_IDLE_MS }
+    handle.scrollTo(element.scrollTop)
+  }
+
+  function retargetVirtuaPin() {
+    const element = scrollElement(), pin = virtuaPin
+    if (!pin || !element) return
+    if (pin.handle !== virtuaHandle() || performance.now() > pin.until) {
+      virtuaPin = undefined
+      return
+    }
+    pin.handle.scrollTo(element.scrollTop)
   }
 
   function updateScrollStateFromDom() {
@@ -544,8 +567,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!handle || !element) return
 
-    const offset = handle.scrollOffset
-    const metrics = getDomMetrics(element, handle, offset)
+    const offset = element.scrollTop
+    const metrics = getDomMetrics(element, offset)
     const atTop = offset <= TOP_SCROLL_EPSILON_PX
     const hasItems = props.items().length > 0
     setShowScrollTopButton(hasItems && !atTop)
@@ -576,6 +599,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleScroll() {
+    retargetVirtuaPin()
     readerSettlement.notify()
     updateScrollStateFromDom()
     props.onScroll?.()
@@ -615,6 +639,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element || element === observedVirtualContent || typeof ResizeObserver === "undefined") return
     if (!virtualContentResizeObserver) {
       virtualContentResizeObserver = new ResizeObserver(() => {
+        // Each measurement keeps Virtua's live operation alive.
+        if (virtuaPin) virtuaPin.until = performance.now() + VIRTUA_OPERATION_IDLE_MS
         if (!isActive()) return
         if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
         pendingContentRenderedFrame = null
@@ -640,7 +666,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (targetRect.top - containerRect.top - holdTargetTopThresholdPx() > 1) return false
 
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "hold")
-    scrollController.recordProgrammaticOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop)
+    scrollController.recordProgrammaticOffset(element.scrollTop)
     // The hold changes the mode without a scroll; consumers observing
     // state.autoScroll persist the held position (as MessageSection does).
     return true
@@ -660,10 +686,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function captureScrollSnapshot(): VirtualFollowScrollSnapshot | undefined {
     const element = scrollElement()
     if (!element) return undefined
-    const handle = virtuaHandle()
-    const scrollTop = handle?.scrollOffset ?? element.scrollTop
+    const scrollTop = element.scrollTop
     const maxScrollTop = getMaxOffset(element)
-    const atBottom = isAtBottomForMode(followMode(), getDomMetrics(element, handle, scrollTop))
+    // A following list is at the bottom by definition, wherever its pin's
+    // latest write stands (a send pin catching up, growth not yet re-pinned).
+    const atBottom = autoScroll() || isAtBottomForMode(followMode(), getDomMetrics(element, scrollTop))
     const snapshot: VirtualFollowScrollSnapshot = {
       scrollTop,
       scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 0,
@@ -673,7 +700,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     // An escaped reader keeps its anchor even at the bottom (a hold triggered
     // there): growth below it scrolls nothing, so no later capture replaces this one.
-    if (!atBottom || !isAutoFollowing(followMode())) {
+    if (!autoScroll()) {
       const anchor = findTopVisibleAnchor(element)
       if (anchor) {
         snapshot.anchorKey = anchor.key
@@ -697,7 +724,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       candidates.push({ key, top: rect.top, bottom: rect.bottom })
     }
     const handle = virtuaHandle()
-    const index = handle?.findItemIndex(handle.scrollOffset)
+    const index = handle?.findItemIndex(element.scrollTop)
     const item = typeof index === "number" ? virtualItems()[index] : undefined
     const preferredKey = item === undefined || index === undefined ? undefined : props.getKey(item, index)
     const anchor = selectTopViewportAnchor(candidates, containerRect.top, containerRect.bottom, preferredKey)
@@ -775,13 +802,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (snapshot.anchorKey) {
         const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
         if (index !== -1) {
-          writeScroll("restore-anchor", { type: "index", index, align: "start", smooth: opts?.behavior === "smooth" })
+          writeIndex("restore-anchor", index, "start", opts?.behavior === "smooth" ? "smooth" : "instant")
           const stabilizer = new AnchorRestoreStabilizer()
           restartAnchorRestore = () => {
             if (!isCurrent()) return
             stabilizer.restartStability()
             // A mounted anchor with a saved inner offset has one target, which
-            // the frame loop corrects. Reissuing the index would fight it.
+            // the frame loop corrects. Rewriting the row's estimate would fight it.
             const mounted = itemElements.get(snapshot.anchorKey!)?.isConnected && typeof snapshot.anchorOffset === "number"
             if (!mounted) scrollToAnchorIndex(snapshot.anchorKey!)
           }
@@ -804,7 +831,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function scrollToAnchorIndex(key: string) {
     const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return false
-    writeScroll("restore-anchor", { type: "index", index, align: "start", smooth: false })
+    writeIndex("restore-anchor", index, "start")
     return true
   }
 
@@ -817,8 +844,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const itemWrapper = itemElements.get(key)
       const anchorOffset = snapshot.anchorOffset
       const mounted = Boolean(element && itemWrapper?.isConnected)
+      // The anchor was the top visible row: if it has shrunk since, keep it
+      // visible rather than above the viewport, where Virtua may unmount it.
       const delta = mounted && element && itemWrapper && typeof anchorOffset === "number"
-        ? measureAnchorDelta(element, itemWrapper, anchorOffset)
+        ? measureAnchorDelta(element, itemWrapper, Math.max(anchorOffset, 1 - itemWrapper.getBoundingClientRect().height))
         : undefined
       const result = stabilizer.nextFrame({ targetExists, mounted, delta })
 
@@ -827,7 +856,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         return
       }
       if (result.type === "correct" && element) {
-        writeScroll("restore-anchor", { type: "offset", top: (virtuaHandle()?.scrollOffset ?? element.scrollTop) + result.delta })
+        writeScroll("restore-anchor", { type: "dom", top: element.scrollTop + result.delta, record: true })
         if (result.finishAfterCorrection) {
           restartAnchorRestore = () => {}
           requestAnimationFrame(onApplied)
@@ -847,16 +876,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function applyPixelSnapshot(snapshot: VirtualFollowScrollSnapshot, behavior: ScrollBehavior) {
     const element = scrollElement()
     if (!element) return
-    const handle = virtuaHandle()
     const maxScrollTop = getMaxOffset(element)
     const nextTop = snapshot.atBottom
       ? maxScrollTop
       : typeof snapshot.scrollRatio === "number" && snapshot.maxScrollTop !== maxScrollTop
         ? Math.min(Math.max(snapshot.scrollRatio, 0), 1) * maxScrollTop
         : Math.min(snapshot.scrollTop, maxScrollTop)
-    writeScroll("restore-pixel", behavior === "smooth" && !handle
+    writeScroll("restore-pixel", behavior === "smooth"
       ? { type: "native", top: nextTop, behavior, record: true }
-      : { type: "offset", top: nextTop })
+      : { type: "dom", top: nextTop, record: true })
   }
 
   function attachScrollIntentListeners(element: HTMLDivElement | undefined) {
@@ -1169,14 +1197,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           setShiftVirtualItems(true)
           setVirtualItems(nextItems.slice())
           virtualItemKeys = nextItemKeys
-          // Shift mode adjusts for every subsequent measurement, including a
-          // streaming tail below an escaped reader, until scrolling becomes idle.
-          // Release that end-relative mode through the public relative operation:
-          // zero follows the current offset, never a captured pre-gesture target.
           // Keep the keyed DOM intact for a held nested middle-button drag.
           requestAnimationFrame(() => {
             if (shiftGeneration !== windowShiftGeneration) return
-            writeScroll("window-shift", { type: "release" })
+            endVirtuaShift()
             readerSettlement.settle(reader)
           })
         })
@@ -1220,16 +1244,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // Includes a restoration in flight: its frames stop at inactivity, and
     // an armed restart or a sticky `restoring` would outlive this session view.
     stopPositioning()
-    // Virtua keeps reasserting a queued imperative target (e.g. the restore
-    // index) after it lands; release it so the hidden list stays put. Only
-    // here: on reset, the next session's positioning replaces that queue.
-    // Unlike a gesture, no scroll event is dispatched first: it would publish
-    // an observation and snapshot from an inactive list, and a stale Virtua
-    // offset is harmless while hidden because reactivation restores anew.
-    if (pendingVirtuaScroll) {
-      pendingVirtuaScroll = false
-      writeScroll("cancel-virtua", { type: "release" })
-    }
   }))
 
   createEffect(() => {
@@ -1242,7 +1256,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (canPinFollowBottom()) {
         pinFollowBottom("viewport-resize")
       } else if (!readerSettlement.held()) {
-        writeScroll("viewport-resize", { type: "offset", top: getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta) })
+        writeScroll("viewport-resize", { type: "dom", top: getBottomAnchoredViewportOffset(element.scrollTop, heightDelta), record: true })
       }
       updateScrollStateFromDom()
     })

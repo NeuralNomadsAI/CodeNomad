@@ -471,8 +471,8 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     setNavigation({ kind: "idle" })
     // A committed page records its intended position in the store; record the reader's actual one.
-    // Known follow-up: Virtua lands an index jump in a microtask but reports it at the next scroll
-    // event; a view hidden before then cannot capture, so the last good position predates the jump.
+    // Known follow-up: Virtua renders a jump's rows only at its next scroll event; a view hidden
+    // before then finds no anchor to capture, so the last good position predates the jump.
     persistMessageScrollSnapshot({ sessionId: paging.sessionId, allowCapture: paging.sessionId === props.sessionId, requireActive: false })
   }
 
@@ -598,22 +598,14 @@ export default function MessageSection(props: MessageSectionProps) {
   }
   onCleanup(messageStoreBus.onScrollSnapshotFlush(persistSettledScroll))
   // A pinned stream keeps scrolling, so it never settles: persist a follow-mode
-  // change rather than wait for the stream to pause. A gesture resumes follow
-  // before its scroll lands, so a resume persists once the reader is at the
-  // bottom; earlier, the snapshot would restore as escaped.
-  let followResumePending = false
-  function persistFollowResume() {
-    const snapshot = listApi()?.captureScrollSnapshot()
-    if (!snapshot?.atBottom) return
-    followResumePending = false
-    scrollUnsettled = false
-    persistMessageScrollSnapshot({ snapshot })
-  }
+  // change rather than wait for the stream to pause. The list captures a
+  // following reader at the bottom even before a resuming gesture lands.
   createEffect(on(() => listState()?.autoScroll(), (following, previous) => {
     if (following === undefined || previous === undefined) return
-    followResumePending = following
-    if (following) persistFollowResume()
-    else persistScroll()
+    persistScroll()
+    // Growth below an escaped reader (a long-reply hold) scrolls nothing, so
+    // nothing settles: a state capture's flush must still record it again.
+    if (!following) scrollUnsettled = true
   }, { defer: true }))
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
@@ -695,10 +687,12 @@ export default function MessageSection(props: MessageSectionProps) {
     const restore = async () => {
       setOlderMessageLoadFailed(false)
       let restoredSnapshot = snapshot
-      const loadsAnchor = !snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)
+      // An anchor identifies an escaped reader, even one captured at the bottom
+      // (a long-reply hold); only a following snapshot has none.
+      const loadsAnchor = snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)
       // The bottom of the latest page (or no position) reopens that page first
       // when a cancelled jump left a historical window in its place.
-      const loadsLatest = snapshot.atBottom && stored?.windowIsLatest !== false && props.onLoadLatestMessages
+      const loadsLatest = snapshot.atBottom && !snapshot.anchorKey && stored?.windowIsLatest !== false && props.onLoadLatestMessages
         && !isLatestWindow(store().getMessageWindow(restoreSessionId))
       if (loadsAnchor || loadsLatest) {
         try {
@@ -1290,7 +1284,6 @@ export default function MessageSection(props: MessageSectionProps) {
           onScroll={() => {
             clearQuoteSelection()
             scrollUnsettled = true
-            if (followResumePending) persistFollowResume()
           }}
           onScrollEnd={persistSettledScroll}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
