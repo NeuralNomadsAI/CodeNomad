@@ -687,7 +687,7 @@ async function streamUntilHold(page: Page, scope: string) {
     held = await stream.getAttribute("data-follow-mode") === "escaped"
   }
   assert.ok(held, "A long streamed reply must engage the hold")
-  // The hold scrolls nothing, so it must publish the held position itself.
+  // The hold scrolls nothing; the section persists it as a follow-mode change.
   assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().scroll.followModeType), "escaped", "The hold must persist its escaped position")
   for (let i = 0; i < 20; i++) {
     await page.evaluate(() => (window as any).fixture.delta("A", "After hold.\n\n"))
