@@ -134,14 +134,19 @@ imperative operation. Rows leaving the head are instead retired in place: they s
 in Virtua's data as an empty prefix (a key and a size, no content), so Virtua only
 sees the data grow, measures them at zero, and its ordinary resize anchoring keeps
 the reader in place. Callers never see them: `renderItem` receives live indexes, and
-key lookups, the active row and anchors skip them. Retired rows stay mounted only
-until Virtua has measured them at zero (a watermark advanced two frames after each
-roll), so the DOM stays bounded; their keys and sizes accumulate until the next reset
-(page navigation, a disjoint window, an emptied list or a session change), a few
-bytes per step. Limits: a retired row still partly visible at the viewport top is
-compensated only when scrolling down, as Virtua's anchoring does for any shrinking
-row (shift mode compensated it fully); in a hidden (`display:none`) list the retired
-rows are measured, and compensated, when it is shown again. Follow-mode changes go through
+key lookups, the active row and anchors skip them; a remap never carries a retired
+row's zero to the same message brought back by a page (live rows are remapped by
+key, a retained retired prefix by position), and a retired key coming back without
+a page resets the list. Virtua compensates a shrinking row only once it is entirely
+above the viewport, so an escaped reader is held across each roll by its first
+visible surviving row, for the bounded hold window below: a retiring row across the
+viewport top cannot drop the content by its height, and the reader is released
+afterwards. Retired rows stay mounted only until Virtua has measured them at zero (a
+watermark advanced on every items change and content resize), so the DOM stays
+bounded; their keys and sizes accumulate until the next reset (page navigation, a
+disjoint window, an emptied list or a session change), a few bytes per step. In a
+hidden (`display:none`) list the retired rows are measured, and compensated, when it
+is shown again. Follow-mode changes go through
 `syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
 compensation, browser clamping and search-result reveals inside nested scrollers.
@@ -213,7 +218,8 @@ activation restore: a send before hydration keeps the bottom over a saved passag
 and does so even if the prompt is then rejected (the saved passage is not restored).
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
-element, and key jumps hold their row the same way at offset 0. Both have the former
+element; key jumps hold their row the same way at offset 0, and a rolling window the
+escaped reader's first visible surviving row. All have the former
 element alignment's lifetime and are released afterwards: the element is measured and
 re-aligned on every frame of a fixed 30-frame window counted from the request, which
 layout never extends. Within it, viewport and `beforeItems` resizes re-align the
@@ -222,19 +228,26 @@ the current viewport only when applied. Gestures, navigation and focus moving to
 another element inside the transcript scroller (Tab, assistive technology) end it at
 once, and so does losing the element (an unmounted row); focus leaving the
 transcript (e.g. to the composer) does not. Any other scroll during the window is
-corrected like layout, as before. While a hold is active, a rolling window retains the
-hold rather than the visible top anchor, so no reader stays retained after it
-expires. Settlement, alignment and anchor restoration share one anchor measurement.
+corrected like layout, as before. While a hold on a surviving row is active, a rolling
+window keeps it rather than the visible top row; nothing retains a reader after a
+hold expires. Settlement, alignment and anchor restoration share one anchor
+measurement. The long-reply hold is decided before each bottom write, against the
+offset that write would reach, so it engages with the reply top still below its
+line: once that top is above the viewport, Virtua (still scrolling down) would
+compensate the reply's next growth and push it further up.
 Known follow-ups: a search reveal is aligned one frame after its row's highlights
 are painted, so that frame can show the message top; and Virtua renders the rows of
 a jump's new offset only at its next scroll event, so a session switch within that
 frame finds no anchor to capture and keeps the position from before the jump.
-A hold whose reply grows while its pane is hidden (review P2-3) lands at the top only
+A hold whose reply grows while its pane is hidden lands at the top only
 in the switch fixture: native events for an inactive session invalidate its message
 load, and that fixture's `message.list` omits the in-flight reply, so the reload drops
 the hold's anchor and restoration waits `ANCHOR_RESTORE_MAX_FRAMES` before its pixel
 fallback. With the reply listed, the hold returns exactly; but the latest button's
 reload then re-engages the long-reply hold at once, a product decision left open.
+A following list shown again after `display:none` is pinned before its first painted
+frame: a gap read in the animation frame that shows it predates layout and the
+ResizeObserver-driven pin, and a browser check measures 0 px once painted.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

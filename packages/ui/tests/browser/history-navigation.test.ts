@@ -1328,3 +1328,132 @@ test("current-session search clicks and keyboard next use direct distant windows
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
+
+/** Runs `count` agent steps, one per frame, each rolling the window's oldest message out. */
+async function rollSteps(page: Page, count: number, kind: "text" | "empty" = "text") {
+  const first = (await snapshot(page)).ids[0] as string
+  await page.evaluate(`new Promise(resolve => {
+    let count = ${count}
+    const next = () => {
+      window.fixture.steps(1, ${JSON.stringify(kind)})
+      if (--count) requestAnimationFrame(next); else resolve()
+    }
+    requestAnimationFrame(next)
+  })`)
+  const rolled = navigationMessageId(Number(first.slice(4)) + count)
+  await page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] === id, rolled)
+}
+
+/** `clickTimeline` for a rail that has grown past 1500 segments. */
+async function clickGrownTimeline(page: Page, index: number) {
+  const rail = page.locator(".message-timeline")
+  await rail.hover()
+  await rail.evaluate((element, index) => {
+    element.scrollTop = element.scrollHeight * index / Number(element.getAttribute("data-segment-count"))
+  }, index)
+  await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).click()
+}
+
+/** Waits (bounded) for `index` to reach the top and asserts it stays there once settled. */
+async function assertLandsAtTop(page: Page, index: number) {
+  const reached = await page.waitForFunction(id => {
+    const stream = document.querySelector(".message-stream")!
+    const row = stream.querySelector(`[data-virtual-follow-key="${id}"]`)
+    return row && Math.abs(row.getBoundingClientRect().top - stream.getBoundingClientRect().top) <= 2
+  }, navigationMessageId(index), { timeout: 5000 }).then(() => true, () => false)
+  const detail = async () => JSON.stringify({ offset: await rowOffset(page, index), resident: (await snapshot(page)).ids.includes(navigationMessageId(index)),
+    scrollTop: await page.locator(".message-stream").evaluate(element => element.scrollTop) })
+  assert.ok(reached, `passage ${index} never reached the top: ${await detail()}`)
+  await waitFrames(page, 30)
+  const offset = await rowOffset(page, index)
+  assert.ok(offset !== null && Math.abs(offset) <= 2, `passage ${index} did not stay at the top: ${await detail()}`)
+}
+
+// Messages rolled out of the window's head stay in the list as retired rows
+// measured at zero. A jump bringing one back must measure it again, not reuse
+// that zero for the live row. 1345 is still resident: the control.
+for (const index of [1305, 1335, 1345]) test(`a timeline jump to a message rolled out of the window lands (${index})`, async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    await rollSteps(f.page, 40)
+    await waitFrames(f.page, 30)
+    await clickGrownTimeline(f.page, index)
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids.includes(id), navigationMessageId(index))
+    await assertLandsAtTop(f.page, index)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("a search result for a message rolled out of the window lands", async () => {
+  const f = await fixture()
+  try {
+    await f.page.route("**/session-history/query", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      status: "page", scanned: 1500, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+      hits: [{ sessionID: "s", messageID: navigationMessageId(1305), role: "user", partIndex: 0, kind: "text", excerpt: "Passage 1305" }],
+    }) }))
+    await waitFrames(f.page, 30)
+    await rollSteps(f.page, 40)
+    await waitFrames(f.page, 30)
+    await f.page.evaluate(() => (window as any).fixture.openSearch())
+    await f.page.getByRole("searchbox").fill("Passage")
+    await f.page.locator(".history-search-result").first().click()
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids.includes(id), navigationMessageId(1305))
+    await assertLandsAtTop(f.page, 1305)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// After a rolling step, an escaped reader is the list's anchor only until the
+// step settles: a later focus move or programmatic scroll (keyboard, assistive
+// technology, find-in-page) must keep the position it reaches. Without a step:
+// the control.
+for (const rolled of [true, false]) for (const move of ["focus", "scrollIntoView"] as const) test(`a ${move} ${rolled ? "after a rolling step" : "without a rolling step"} keeps an escaped reader's new position`, async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    const box = (await f.page.locator(".message-stream").boundingBox())!
+    await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+    await f.page.mouse.wheel(0, -1200)
+    await waitFrames(f.page, 30)
+    assert.equal(await f.page.locator(".message-stream").getAttribute("data-follow-mode"), "escaped")
+    if (rolled) await rollSteps(f.page, 1)
+    await waitFrames(f.page, 60)
+    // The first mounted row lying wholly below the viewport, in the overscan.
+    const moved = await f.page.evaluate(`(() => {
+      const stream = document.querySelector('.message-stream'), bounds = stream.getBoundingClientRect()
+      const row = [...stream.querySelectorAll('[data-virtual-follow-key]')].find(row => row.getBoundingClientRect().top >= bounds.bottom && row.querySelector('button'))
+      const before = stream.scrollTop
+      if (${JSON.stringify(move)} === 'scrollIntoView') row.scrollIntoView()
+      else row.querySelector('button').focus()
+      return { key: row.dataset.virtualFollowKey, delta: stream.scrollTop - before, offset: row.getBoundingClientRect().top - bounds.top, scrollTop: stream.scrollTop }
+    })()`) as { key: string; delta: number; offset: number; scrollTop: number }
+    assert.ok(moved.delta > 0, `the ${move} must scroll the transcript: ${JSON.stringify(moved)}`)
+    // Sampled every 10 frames over 60: the row's offset and the scroll position.
+    const samples: Array<{ offset: number | null; scrollTop: number }> = []
+    for (let frame = 0; frame < 6; frame++) {
+      await waitFrames(f.page, 10)
+      samples.push(await f.page.evaluate(`(() => {
+        const stream = document.querySelector('.message-stream'), row = stream.querySelector('[data-virtual-follow-key="${moved.key}"]')
+        return { offset: row ? row.getBoundingClientRect().top - stream.getBoundingClientRect().top : null, scrollTop: stream.scrollTop }
+      })()`) as { offset: number | null; scrollTop: number })
+    }
+    assert.ok(samples.every(sample => sample.offset !== null && Math.abs(sample.offset - moved.offset) < 2),
+      `the rolled reader's anchor must not pull back the ${move}: ${JSON.stringify({ moved, samples })}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// Retired rows stay mounted only until measured at zero. Steps arriving at
+// frame cadence, each also changing the tail, must not keep them mounted.
+test("sixty empty steps at frame cadence leave no retired row mounted once idle", async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    await rollSteps(f.page, 60, "empty")
+    await waitFrames(f.page, 10)
+    const retired = await f.page.locator(".message-stream [data-virtual-follow-retired]").count()
+    assert.equal(retired, 0, `retired rows still mounted 10 frames after the steps: ${retired}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})

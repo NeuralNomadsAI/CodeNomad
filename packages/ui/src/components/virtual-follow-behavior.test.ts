@@ -174,8 +174,8 @@ describe("virtual follow behavior", () => {
   })
 
   it("key jumps always escape follow mode", () => {
-    const fromEscaped = transitionFollowMode({ type: "escaped" }, { type: "jump-key", key: "a", block: "start", smooth: false })
-    const fromFollowing = transitionFollowMode({ type: "following" }, { type: "jump-key", key: "b", block: "center", smooth: true })
+    const fromEscaped = transitionFollowMode({ type: "escaped" }, { type: "jump-key", key: "a" })
+    const fromFollowing = transitionFollowMode({ type: "following" }, { type: "jump-key", key: "b" })
 
     assert.deepEqual(fromEscaped.mode, { type: "escaped" })
     assert.deepEqual(fromFollowing.mode, { type: "escaped" })

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import { createRequire } from "node:module"
+import path from "node:path"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
@@ -26,6 +28,14 @@ const fixtures = {
 } as const
 type FixtureName = keyof typeof fixtures
 
+// `virtua/solid` resolves to a transparent wrapper that records the scroll
+// operations issued through a Virtualizer handle; the wrapper imports Virtua's
+// own Solid build (the `solid` export condition) under a second name.
+const virtuaCountingAlias = [
+  { find: /^virtua\/solid$/, replacement: fileURLToPath(new URL("./fixtures/virtua-solid-counting.ts", import.meta.url)) },
+  { find: /^virtua-solid-native$/, replacement: path.join(path.dirname(createRequire(import.meta.url).resolve("virtua/solid")), "index.jsx") },
+]
+
 let server: ViteDevServer, browser: Browser, url: string
 let fixtureCache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
@@ -38,7 +48,7 @@ before(async () => {
         res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${fixtures[name]}.tsx"></script></body></html>`))
       })
     },
-  }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  }], resolve: { dedupe: ["solid-js"], alias: virtuaCountingAlias }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -441,8 +451,10 @@ test("a wheel after a rolling window and a viewport resize lands and holds", asy
 })
 
 // Rolling windows under an escaped reader leave positioning to DOM writes and
-// Virtua's own compensation (scrollBy away from the edges). An imperative
-// Virtua operation (scrollTo) would outlive its call and reassert its target.
+// Virtua's own compensation. An imperative Virtua operation (a handle's
+// scrollTo/scrollBy/scrollToIndex) would outlive its call and reassert its
+// target. Virtua's edge compensation also writes scrollTo on the element, so
+// only the list's calls through its handle are counted (virtua-solid-counting).
 test("a run that rolls the window under an escaped reader starts no imperative Virtua operation", async () => {
   await open(async page => {
     await page.evaluate(() => (window as any).fixture.nearTail())
@@ -453,14 +465,9 @@ test("a run that rolls the window under an escaped reader starts no imperative V
     await frames(page, 30)
     assert.equal(await stream.getAttribute("data-follow-mode"), "escaped")
     // Four steps, each growing its reply for 12 frames, then 30 idle frames.
-    const calls = await page.evaluate(() => new Promise<Array<{ method: string; caller: string }>>(resolve => {
-      const w = window as any, calls: Array<{ method: string; caller: string }> = []
-      const originals = { scrollTo: Element.prototype.scrollTo, scrollBy: Element.prototype.scrollBy }
-      for (const method of ["scrollTo", "scrollBy"] as const) (Element.prototype as any)[method] = function (this: Element, ...args: unknown[]) {
-        // The caller's frame, under this wrapper's.
-        if (this.classList.contains("message-stream")) calls.push({ method, caller: (new Error().stack ?? "").split("\n")[2]?.trim() ?? "" })
-        return (originals[method] as any).apply(this, args)
-      }
+    const run = await page.evaluate(() => new Promise<{ handles: number; calls: Array<{ method: string; args: unknown[] }> }>(resolve => {
+      const w = window as any
+      w.virtuaHandleCalls = []
       let frame = 0, key = ""
       const next = () => {
         if (frame < 48) {
@@ -468,23 +475,12 @@ test("a run that rolls the window under an escaped reader starts no imperative V
           w.fixture.resizeRow(key, 48 + (frame % 12) * 24)
         }
         if (++frame < 78) requestAnimationFrame(next)
-        else {
-          Object.assign(Element.prototype, originals)
-          resolve(calls)
-        }
+        else resolve({ handles: w.virtuaHandles ?? 0, calls: w.virtuaHandleCalls })
       }
       requestAnimationFrame(next)
     }))
-    // Vite serves Virtua's Solid source, or an optimized `deps/virtua_*.js` chunk.
-    const virtua = calls.filter(call => /\/node_modules\/virtua\/|\/deps\/virtua[^/]*\.js/.test(call.caller))
-    const sites: Record<string, number> = {}
-    for (const { method, caller } of calls) {
-      const site = `${method} ${/[^/]+:\d+:\d+/.exec(caller)?.[0] ?? caller}`
-      sites[site] = (sites[site] ?? 0) + 1
-    }
-    const diagnostics = JSON.stringify(sites)
-    assert.ok(virtua.length > 0, `Virtua's compensation must be observed: ${diagnostics}`)
-    assert.equal(virtua.filter(call => call.method === "scrollTo").length, 0, `Virtua scrollTo calls during the run: ${diagnostics}`)
+    assert.ok(run.handles > 0, "The Virtualizer handle must be instrumented")
+    assert.deepEqual(run.calls, [], "Virtua handle operations during the run")
   }, { name: "list" })
 })
 
@@ -519,6 +515,113 @@ for (const escaped of [false, true]) test(`sixty rolling windows keep the mounte
     assert.ok(mounted.rows <= bound, `Mounted rows must stay bounded: ${JSON.stringify({ ...mounted, bound })}`)
     assert.ok(mounted.retired <= retiredLimit, `Retired rows must collapse: ${JSON.stringify(mounted)}`)
     assert.equal(await stream.getAttribute("data-follow-mode"), escaped ? "escaped" : "following")
+  }, { name: "list" })
+})
+
+// A burst of steps (one per frame) ends with its retired rows collapsed: the
+// DOM must not keep one empty row per step until the next calm roll, even when
+// each step's reply is hidden again right after its roll (empty steps).
+for (const kind of ["step", "emptyStep"] as const) for (const escaped of [false, true]) test(`a burst of one ${kind === "step" ? "" : "empty "}step per frame leaves no retired row mounted (escaped=${escaped})`, async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    if (escaped) {
+      await page.evaluate(() => (window as any).fixture.nearTail())
+      await frames(page, 30)
+      await stream.hover()
+      await page.mouse.wheel(0, -400)
+    } else await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 30)
+    // 60 steps, one per frame, then the retired count over 10 idle frames.
+    const retired = await page.evaluate(kind => new Promise<number[]>(resolve => {
+      const counts: number[] = []
+      let frame = 0
+      const next = () => {
+        if (frame < 60) (window as any).fixture[kind]()
+        else counts.push(document.querySelectorAll(".message-stream [data-virtual-follow-retired]").length)
+        if (++frame < 70) requestAnimationFrame(next)
+        else resolve(counts)
+      }
+      requestAnimationFrame(next)
+    }), kind)
+    assert.equal(retired.at(-1), 0, `Retired rows still mounted after the burst: ${JSON.stringify(retired)}`)
+  }, { name: "list" })
+})
+
+// Virtua compensates a resize only for a row wholly above the viewport: a
+// retired row still overlapping its top must not drag the content below it up
+// by the row's height. The first surviving row keeps its viewport offset; the
+// content above the rows leaves room to scroll back by the retired height.
+for (const wheel of [false, true]) test(`a tall head row retired across the viewport top leaves the content in place (wheel=${wheel})`, async () => {
+  await open(async page => {
+    await page.evaluate(() => { (window as any).fixture.resizeBefore(600); (window as any).fixture.resizeRow("row-0", 500) })
+    await frames(page, 10)
+    const stream = page.locator(".message-stream")
+    // A reader wheels up to row-0, half above the viewport top (with the
+    // second wheel, once its 200 px land), then rests.
+    await stream.evaluate((el, top) => { el.scrollTop = top; el.dispatchEvent(new Event("scroll")) }, wheel ? 1350 : 1150)
+    await frames(page, 10)
+    await stream.hover()
+    await page.mouse.wheel(0, -300)
+    await frames(page, 30)
+    const offset = (key: string) => stream.evaluate((el, key) => {
+      const row = el.querySelector(`[data-virtual-follow-key="${key}"]`)
+      return row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null
+    }, key)
+    const start = await offset("row-1")
+    assert.ok(start !== null && Math.abs(start - (wheel ? 50 : 250)) < 2, `row-0 must overlap the viewport top: row-1 at ${start}`)
+    let expected = start
+    if (wheel) {
+      await page.mouse.wheel(0, -200)
+      expected += 200
+    }
+    const samples = await sampleAnchor(page, { key: "row-1", stream: ".message-stream", count: 30, step: "if (frame === 0) window.fixture.step()" })
+    const offsets = samples.map(sample => sample.anchorOffset === null ? null : Math.round(sample.anchorOffset))
+    const diagnostics = JSON.stringify({ start, expected, offsets })
+    assert.equal(await page.evaluate(() => document.querySelector('[data-virtual-follow-key="row-0"]')), null, `row-0 must be retired: ${diagnostics}`)
+    // The step lands in the first sample's frame; at most one later frame may be off.
+    const off = samples.filter(sample => sample.anchorOffset === null || Math.abs(sample.anchorOffset - expected) > 2)
+    assert.ok(off.length <= 1, `The content jumped: ${diagnostics}`)
+    assert.ok(samples.slice(-10).every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - expected) <= 2), `The content moved: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+// A following list hidden by display:none (still mounted), whose streaming
+// tail grows while hidden, paints its first frame shown again at the bottom.
+test("a following list shown again after display:none paints its first frame at the bottom", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 30)
+    await page.evaluate(() => (window as any).fixture.roll())
+    await frames(page, 30)
+    await page.evaluate(() => (window as any).fixture.setHidden(true))
+    await frames(page, 5)
+    await page.evaluate(() => (window as any).fixture.growTail(552))
+    await frames(page, 10)
+    // `unmeasured`: the gap read in the first RAF, before layout and resize
+    // observers (the 504 px the review reported). `painted`: the gaps after the
+    // first five painted frames, read by a task posted from each frame's RAF.
+    const { unmeasured, painted } = await page.evaluate(() => new Promise<{ unmeasured: number; painted: number[] }>(resolve => {
+      const painted: number[] = [], channel = new MessageChannel()
+      const gap = () => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!
+        return Math.round(el.scrollHeight - el.clientHeight - el.scrollTop)
+      }
+      let unmeasured = 0
+      channel.port1.onmessage = () => {
+        painted.push(gap())
+        if (painted.length < 5) requestAnimationFrame(() => channel.port2.postMessage(0))
+        else resolve({ unmeasured, painted })
+      }
+      ;(window as any).fixture.setHidden(false)
+      requestAnimationFrame(() => {
+        unmeasured = gap()
+        channel.port2.postMessage(0)
+      })
+    }))
+    const diagnostics = JSON.stringify({ unmeasured, painted })
+    assert.ok(unmeasured >= 400, `The tail must grow while hidden: ${diagnostics}`)
+    assert.ok(painted.every(gap => gap <= 1), `Off the bottom after display:none: ${diagnostics}`)
+    assert.equal(await page.evaluate(() => (window as any).fixture.autoScroll()), true)
   }, { name: "list" })
 })
 
@@ -1093,6 +1196,19 @@ test("a state capture after a long-reply hold records the reader above the grown
 
 // The hold only escapes follow; it must not hand the next default-size
 // re-estimate of never-measured history rows a visible clamp (see above).
+// Holding once the reply top is above the viewport hands its next growth to
+// Virtua's resize compensation (still scrolling down), which pushes it further up.
+test("the long-reply hold engages before the reply top leaves the viewport", async () => {
+  const scope = '[data-session-id="A"]'
+  await open(async page => {
+    const trace = collectScrollTrace(page)
+    await trace.enable()
+    await streamUntilHold(page, scope)
+    const top = await page.locator(`${scope} .message-stream`).evaluate(el => el.querySelector('[data-virtual-follow-key="stream-A"]')!.getBoundingClientRect().top - el.getBoundingClientRect().top)
+    assert.ok(top >= 0 && top <= 8 + 40, `The held reply top must stay below the hold line: ${top}px ${JSON.stringify(unownedMoves(trace.entries).slice(-3))}`)
+  }, { name: "switch", hold: true })
+})
+
 test("the long-reply hold keeps the streaming reply in view when it escapes", async () => {
   const scope = '[data-session-id="A"]'
   await open(async page => {

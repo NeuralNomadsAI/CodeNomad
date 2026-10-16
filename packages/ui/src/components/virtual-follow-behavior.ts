@@ -248,13 +248,13 @@ export type FollowEffect =
   | { type: "none" }
   | { type: "scroll-top"; immediate: boolean }
   | { type: "scroll-bottom"; immediate: boolean }
-  | { type: "scroll-key"; key: string; block: ScrollLogicalPosition; smooth: boolean }
+  | { type: "scroll-key"; key: string }
 
 export type FollowEvent =
   | { type: "user-scroll"; direction: "up" | "down" | null; atBottom: boolean }
   | { type: "jump-top"; immediate: boolean }
   | { type: "jump-bottom"; immediate: boolean; explicit: boolean }
-  | { type: "jump-key"; key: string; block: ScrollLogicalPosition; smooth: boolean }
+  | { type: "jump-key"; key: string }
   | { type: "content-grew"; canPinToBottom: boolean }
   | { type: "set-follow"; enabled: boolean }
   | { type: "reset"; follow: boolean }
@@ -348,7 +348,7 @@ export function transitionFollowMode(mode: FollowMode, event: FollowEvent): Foll
     case "jump-key":
       return {
         mode: { type: "escaped" },
-        effect: { type: "scroll-key", key: event.key, block: event.block, smooth: event.smooth },
+        effect: { type: "scroll-key", key: event.key },
       }
 
     case "content-grew":
@@ -471,8 +471,8 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
-  jumpKey(key: string, block: ScrollLogicalPosition, smooth: boolean): ScrollControllerResult {
-    const next = transitionFollowMode(this.state.mode, { type: "jump-key", key, block, smooth })
+  jumpKey(key: string): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "jump-key", key })
     this.state.mode = next.mode
     return this.result(next.effect)
   }
