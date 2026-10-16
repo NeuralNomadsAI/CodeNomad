@@ -953,10 +953,12 @@ test("OpenCode 1.x npm replacement is confirmed explicitly and a failure after r
 test("an older winget OpenCode stays untouched while OpenCode 2 is installed beside it", async () => {
   const page = await browser.newPage()
   const posts: unknown[] = []
+  const statusReads: string[] = []
   let installed = false
   const foreignInstallation = { path: "C:/Users/fixture/AppData/Local/Microsoft/WinGet/Links/opencode.exe", version: "1.19.0", source: "winget", packageId: "SST.opencode" }
   await page.route("**/api/**", route => {
     const request = route.request()
+    if (request.method() === "GET" && new URL(request.url()).pathname === "/api/opencode/update") statusReads.push(new URL(request.url()).search)
     if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
       posts.push(request.postDataJSON()); installed = true
       return route.fulfill({ json: { success: true, version: "2.0.30" } })
@@ -979,10 +981,16 @@ test("an older winget OpenCode stays untouched while OpenCode 2 is installed bes
     await notice.getByText(/may still start the older version/).waitFor()
     assert.equal(await notice.locator("code").innerText(), "winget uninstall SST.opencode")
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-winget-alongside.png"), fullPage: true })
+    assert.ok(statusReads.length > 0 && statusReads.every(search => search === ""), "automatic reads use cached server probes")
+    await panel.getByRole("button", { name: "Check status and updates", exact: true }).click()
+    await panel.getByText("Status and update check complete.", { exact: true }).waitFor()
+    assert.equal(statusReads.at(-1), "?recheck=1", "the explicit Check re-probes installations")
+    const automaticReads = statusReads.length
     await install.click()
     await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
     assert.equal(await page.getByRole("dialog").count(), 0, "installing beside a foreign OpenCode needs no removal confirmation")
     assert.deepEqual(posts, [{}])
+    assert.ok(statusReads.slice(automaticReads).every(search => search === ""), "post-install reads never force a probe")
     await panel.getByText(/uses its OpenCode 2 installation in your user npm folder/).waitFor()
     assert.equal(await notice.getByText(/alongside the older version/).count(), 0)
     await notice.getByText(/may still start the older version/).waitFor()

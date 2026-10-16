@@ -224,13 +224,13 @@ export function sharedInstallPrefix(host: InstallationHost = {}): string | undef
 
 /** Settles the bounded version probe of a foreign PATH command so the
  * synchronous plan/resolution can use it. npm-managed commands are never run. */
-export async function prepareForeignProbe(host: InstallationHost = {}): Promise<void> {
+export async function prepareForeignProbe(host: InstallationHost = {}, options: { force?: boolean } = {}): Promise<void> {
   const platform = host.platform ?? process.platform
   const command = findPathOpenCode(host)
   if (!command) return
   const prefix = commandPrefix(command, platform)
   if (npmLauncher(command, prefix, platform) || legacyNpmInstallation(command, prefix, npmCommandDirectory(prefix, platform), platform)) return
-  await probeForeignCommand(command)
+  await probeForeignCommand(command, { force: options.force })
 }
 
 function matchesConsent(legacy: LegacyNpmInstallation, consent: LegacyReplacementConsent | undefined) {

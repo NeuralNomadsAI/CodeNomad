@@ -155,11 +155,15 @@ Foreign `--version` probes never run synchronously. `opencode-update/foreign-pro
 spawns them asynchronously with a 5 s deadline and kills the whole process tree on
 timeout or output overflow. Results are cached by the command's file identity
 (path, mtime and size, plus the executable an npm-style shim launches); any change
-reads as unknown until reprobed, and timeouts are cached as unknown so a hanging
-wrapper is not re-run on every read. Unknown never supersedes the PATH command.
+reads as unknown until reprobed. A timeout is cached as unknown for only 60 s, so
+a hanging wrapper is not re-run on every read while a slow first run (for example
+an antivirus scan) is retried later. At most one probe of a command runs at a
+time; concurrent readers, including an explicit recheck, join it. The setup
+panel's Check action sends `recheck=1`, which forces a fresh probe even within
+that delay; automatic reads never do. Unknown never supersedes the PATH command.
 Synchronous resolution (workspace launch, binary validation) only reads the cache
-and starts a background probe on a miss; status reads and installation await the
-bounded probe first, and the backend warms it at startup.
+and starts a background probe on a miss or an expired unknown; status reads and
+installation await the bounded probe first, and the backend warms it at startup.
 
 `node --import tsx scripts/test-opencode-legacy-replacement-native.mjs` installs the
 published `opencode-ai` (default 1.18.10, `CODENOMAD_FIXTURE_LEGACY_VERSION`) into

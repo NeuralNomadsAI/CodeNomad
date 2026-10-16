@@ -103,7 +103,8 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
     do {
       request.again = false
       try {
-        const status = await serverApi.fetchOpenCodeUpdateStatus()
+        // Only the explicit Check action asks the server to re-probe installations.
+        const status = await serverApi.fetchOpenCodeUpdateStatus({ recheck: request.announce })
         if (epoch !== generation) return
         setOpenCodeSetupStatus(status)
         setOpenCodeSetupCheckError(false)

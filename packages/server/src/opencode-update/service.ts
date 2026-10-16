@@ -28,7 +28,7 @@ export type InstallationNotice = Pick<OpenCodeUpdateStatus, "legacyReplacement" 
 
 export interface OpenCodeUpdateServiceDeps {
   /** Settles bounded, asynchronous inputs (foreign `--version` probes) before resolution. */
-  prepareInstallation?: () => Promise<void>
+  prepareInstallation?: (options: { recheck?: boolean }) => Promise<void>
   resolveBinary: () => ResolvedBinary
   probeBinary: (path: string) => ReturnType<typeof probeBinaryVersion> | Promise<ReturnType<typeof probeBinaryVersion>>
   resolveLatestVersion: () => Promise<string>
@@ -66,8 +66,9 @@ export class OpenCodeUpdateService {
 
   constructor(private readonly deps: OpenCodeUpdateServiceDeps) {}
 
-  async getStatus(): Promise<OpenCodeUpdateStatus> {
-    await this.deps.prepareInstallation?.()
+  /** `recheck` is an explicit user check: cached probe results are refreshed. */
+  async getStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
+    await this.deps.prepareInstallation?.({ recheck: options.recheck === true })
     const binary = this.deps.resolveBinary()
     let currentVersion: string | null = null
     let missing = false
@@ -200,7 +201,7 @@ export class OpenCodeUpdateService {
   }
 
   async upgrade(options: UpgradeOptions = {}): Promise<OpenCodeUpdateResponse> {
-    await this.deps.prepareInstallation?.()
+    await this.deps.prepareInstallation?.({})
     const binary = this.deps.resolveBinary()
     const existing = inFlightUpgrades.get(binary.path)
     if (existing) return existing
@@ -329,7 +330,7 @@ export function createOpenCodeUpdateService(
     return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2" || (typeof configured === "string" && isRetiredInstallation(configured)))
   }
   return new OpenCodeUpdateService({
-    prepareInstallation: () => prepareForeignProbe(),
+    prepareInstallation: options => prepareForeignProbe({}, { force: options.recheck }),
     resolveBinary: () => {
       const binary = binaryResolver.resolveDefault()
       return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }

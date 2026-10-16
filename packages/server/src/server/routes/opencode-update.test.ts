@@ -30,6 +30,8 @@ test("does not pass request-controlled binary paths to the update service", asyn
   })
 
   await app.inject({ method: "GET", url: "/api/opencode/update?binary=untrusted.cmd" })
+  await app.inject({ method: "GET", url: "/api/opencode/update?recheck=true" })
+  await app.inject({ method: "GET", url: "/api/opencode/update?recheck=1" })
   await app.inject({ method: "POST", url: "/api/opencode/update", payload: { binary: "untrusted.cmd" } })
   await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: true } })
   await app.inject({ method: "POST", url: "/api/opencode/update", payload: { replaceLegacy: { path: "C:/npm/opencode.cmd", version: "1.x", extra: 1 } } })
@@ -38,6 +40,8 @@ test("does not pass request-controlled binary paths to the update service", asyn
 
   assert.deepEqual(calls, [
     { method: "status", args: [] },
+    { method: "status", args: [] },
+    { method: "status", args: [{ recheck: true }] },
     { method: "upgrade", args: [{}] },
     { method: "upgrade", args: [{}] },
     { method: "upgrade", args: [{}] },

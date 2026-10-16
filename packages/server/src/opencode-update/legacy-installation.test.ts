@@ -340,7 +340,7 @@ test("foreign version probes are asynchronous, bounded and kill the process tree
     await writeFile(hang, windows ? `@"${process.execPath}" "${script}" "${pidFile}"\r\n`
       : `#!/bin/sh\n"${process.execPath}" "${script}" "${pidFile}" &\nwait\n`, { mode: 0o755 })
     const started = Date.now()
-    assert.equal(await probeForeignCommand(hang, 1_500), undefined, "a timeout is unknown, not unusable")
+    assert.equal(await probeForeignCommand(hang, { timeoutMs: 1_500 }), undefined, "a timeout is unknown, not unusable")
     assert.ok(Date.now() - started < 5_000)
     assert.equal(cachedForeignProbe(hang), undefined)
     const pid = Number(await readFile(pidFile, "utf8"))
@@ -350,9 +350,72 @@ test("foreign version probes are asynchronous, bounded and kill the process tree
       try { process.kill(pid, 0); await new Promise(resolve => setTimeout(resolve, 100)) } catch { alive = false }
     }
     assert.equal(alive, false, "the wrapper's descendant is killed")
-    const before = Date.now()
-    assert.equal(await probeForeignCommand(hang, 1_500), undefined)
-    assert.ok(Date.now() - before < 500, "a timed-out identity is not re-run on every status read")
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+/** A command that records each start in `<name>.runs`, then prints a version or hangs. */
+async function countingCommand(home: string, name: string, behavior: "version" | "hang") {
+  const runs = path.join(home, `${name}.runs`)
+  const script = path.join(home, `${name}.js`)
+  await writeFile(script, `require('fs').appendFileSync(${JSON.stringify(runs)}, 'x');`
+    + (behavior === "version" ? "console.log('opencode 1.19.0')\n" : "setInterval(() => {}, 1000)\n"))
+  const command = path.join(home, windows ? `${name}.cmd` : name)
+  await writeFile(command, windows ? `@"${process.execPath}" "${script}"\r\n` : `#!/bin/sh\nexec "${process.execPath}" "${script}"\n`, { mode: 0o755 })
+  return { command, runs: async () => { try { return (await readFile(runs, "utf8")).length } catch { return 0 } } }
+}
+
+const settle = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+test("timed-out probes are shared, not re-run on every read, and expire after a bounded delay", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "foreign-probe-ttl-"))
+  try {
+    const hang = await countingCommand(home, "hang", "hang")
+    const options = { timeoutMs: 1_000, unknownTtlMs: 2_500 }
+    // Concurrent status reads and resolution lookups join the single running probe.
+    const shared = [probeForeignCommand(hang.command, options), probeForeignCommand(hang.command, options),
+      probeForeignCommand(hang.command, { ...options, force: true })]
+    assert.equal(cachedForeignProbe(hang.command), undefined)
+    assert.deepEqual(await Promise.all(shared), [undefined, undefined, undefined])
+    await settle(300)
+    assert.equal(await hang.runs(), 1, "one probe for concurrent callers, including an explicit recheck")
+
+    // Within the delay, a still-unknown command is not spawned again.
+    for (let read = 0; read < 5; read++) {
+      assert.equal(cachedForeignProbe(hang.command), undefined)
+      assert.equal(await probeForeignCommand(hang.command, options), undefined)
+    }
+    await settle(300)
+    assert.equal(await hang.runs(), 1, "a hanging command is not re-run on every status read")
+
+    // After the delay, the next read probes again (e.g. once an antivirus scan finished).
+    await settle(2_500)
+    assert.equal(await probeForeignCommand(hang.command, options), undefined)
+    await settle(300)
+    assert.equal(await hang.runs(), 2, "an expired unknown is re-probed")
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("an explicit recheck re-probes immediately; definite results last until the file changes", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "foreign-probe-recheck-"))
+  try {
+    const hang = await countingCommand(home, "hang", "hang")
+    assert.equal(await probeForeignCommand(hang.command, { timeoutMs: 1_000 }), undefined)
+    await settle(300)
+    assert.equal(await probeForeignCommand(hang.command, { timeoutMs: 1_000 }), undefined)
+    await settle(300)
+    assert.equal(await hang.runs(), 1, "the default delay keeps the unknown result")
+    assert.equal(await probeForeignCommand(hang.command, { timeoutMs: 1_000, force: true }), undefined)
+    await settle(300)
+    assert.equal(await hang.runs(), 2, "the explicit recheck spawns a fresh probe within the delay")
+
+    const quick = await countingCommand(home, "quick", "version")
+    assert.deepEqual(await probeForeignCommand(quick.command, { unknownTtlMs: 1 }), { valid: true, version: "1.19.0" })
+    await settle(50)
+    assert.deepEqual(cachedForeignProbe(quick.command), { valid: true, version: "1.19.0" }, "definite results do not expire")
+    assert.deepEqual(await probeForeignCommand(quick.command), { valid: true, version: "1.19.0" })
+    assert.equal(await quick.runs(), 1)
+    assert.deepEqual(await probeForeignCommand(quick.command, { force: true }), { valid: true, version: "1.19.0" })
+    assert.equal(await quick.runs(), 2, "an explicit recheck also refreshes a definite result")
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

@@ -6,10 +6,25 @@ import { buildSpawnSpec, parseBinaryVersion } from "../workspaces/spawn"
 export type ForeignProbe = { valid: boolean; version?: string } | undefined
 
 export const FOREIGN_PROBE_TIMEOUT_MS = 5_000
+/** A timed-out probe is retried after this delay (for example once a first-run
+ * antivirus scan has finished); definite results last until the file changes. */
+export const FOREIGN_PROBE_UNKNOWN_TTL_MS = 60_000
 const OUTPUT_LIMIT = 64 * 1024
 
-const results = new Map<string, { key: string; result: ForeignProbe }>()
+export interface ForeignProbeOptions {
+  timeoutMs?: number
+  /** Explicit user recheck: ignore cached results, but still join a running probe. */
+  force?: boolean
+  unknownTtlMs?: number
+}
+
+const results = new Map<string, { key: string; result: ForeignProbe; expiresAt?: number }>()
 const pending = new Map<string, { key: string; promise: Promise<ForeignProbe> }>()
+
+function cachedResult(command: string, key: string) {
+  const cached = results.get(command)
+  return cached?.key === key && (cached.expiresAt === undefined || Date.now() < cached.expiresAt) ? cached : undefined
+}
 
 /** File identity of the command and, for npm-style shims, of the executable it
  * launches. Any change invalidates a cached decision. */
@@ -22,28 +37,32 @@ function identity(command: string): string | undefined {
   } catch { return undefined }
 }
 
-/** Synchronous, spawn-free lookup for resolution paths. A miss starts a bounded
- * background probe and reports unknown. */
+/** Synchronous, spawn-free lookup for resolution paths. A miss or an expired
+ * unknown starts a bounded background probe and reports unknown. */
 export function cachedForeignProbe(command: string): ForeignProbe {
   const key = identity(command)
   if (!key) return undefined
-  const cached = results.get(command)
-  if (cached?.key === key) return cached.result
+  const cached = cachedResult(command, key)
+  if (cached) return cached.result
   void probeForeignCommand(command)
   return undefined
 }
 
-/** Probes once per file identity, coalescing concurrent callers. Timeouts are
- * cached as unknown so a hanging wrapper is not re-run on every status read. */
-export function probeForeignCommand(command: string, timeoutMs = FOREIGN_PROBE_TIMEOUT_MS): Promise<ForeignProbe> {
+/** Probes at most once at a time per command, coalescing concurrent callers
+ * (including forced rechecks) onto the running probe. Definite results are
+ * cached per file identity; timeouts are cached as unknown only for a bounded
+ * delay, so a hanging wrapper is neither re-run on every read nor trusted forever. */
+export function probeForeignCommand(command: string, options: ForeignProbeOptions = {}): Promise<ForeignProbe> {
   const key = identity(command)
   if (!key) return Promise.resolve(undefined)
-  const cached = results.get(command)
-  if (cached?.key === key) return Promise.resolve(cached.result)
+  // Even a changed file waits for the running probe: never two at once.
   const inflight = pending.get(command)
-  if (inflight?.key === key) return inflight.promise
-  const promise = boundedVersionProbe(command, timeoutMs).then(result => {
-    if (identity(command) === key) results.set(command, { key, result })
+  if (inflight) return inflight.promise
+  const cached = options.force ? undefined : cachedResult(command, key)
+  if (cached) return Promise.resolve(cached.result)
+  const unknownTtlMs = options.unknownTtlMs ?? FOREIGN_PROBE_UNKNOWN_TTL_MS
+  const promise = boundedVersionProbe(command, options.timeoutMs ?? FOREIGN_PROBE_TIMEOUT_MS).then(result => {
+    if (identity(command) === key) results.set(command, { key, result, ...(result ? {} : { expiresAt: Date.now() + unknownTtlMs }) })
     return result
   }).finally(() => { if (pending.get(command)?.promise === promise) pending.delete(command) })
   pending.set(command, { key, promise })

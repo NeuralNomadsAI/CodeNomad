@@ -34,9 +34,11 @@ export function registerOpenCodeUpdateRoutes(app: FastifyInstance, deps: RouteDe
       return reply.code(502).send({ error: "service_activation_failed" })
     }
   })
-  app.get("/api/opencode/update", async (_request, reply) => {
+  app.get("/api/opencode/update", async (request, reply) => {
     try {
-      return await deps.service.getStatus()
+      // `recheck=1` marks the explicit user check, which refreshes cached probes.
+      const recheck = (request.query as { recheck?: unknown } | undefined)?.recheck === "1"
+      return await (recheck ? deps.service.getStatus({ recheck }) : deps.service.getStatus())
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to check OpenCode update status")
       const failure = requestError(error, "update_check_failed")

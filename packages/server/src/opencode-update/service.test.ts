@@ -161,6 +161,16 @@ test("bounded installation inputs settle before resolution on status and upgrade
   assert.ok(order.indexOf("prepare", 1) < order.lastIndexOf("resolve"))
 })
 
+test("only an explicit recheck asks for fresh installation probes", async () => {
+  const rechecks: boolean[] = []
+  const service = new OpenCodeUpdateService(deps({ prepareInstallation: async ({ recheck }) => { rechecks.push(recheck === true) } }))
+  await service.getStatus()
+  await service.getStatus({ recheck: true })
+  await service.upgrade()
+  assert.deepEqual(rechecks.slice(0, 2), [false, true])
+  assert.ok(rechecks.slice(2).every(recheck => !recheck), "installation and its follow-up reads never force a probe")
+})
+
 test("an unusable foreign command still offers OpenCode 2 beside it, never a repair", async () => {
   let installed = false
   const foreignInstallation = { path: "C:/winget/Links/opencode.exe", source: "winget" as const, packageId: "SST.opencode" }

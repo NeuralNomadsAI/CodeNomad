@@ -605,8 +605,9 @@ export const serverApi = {
       body: JSON.stringify({ path }),
     })
   },
-  fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>("/api/opencode/update")
+  /** `recheck` marks an explicit user check, which refreshes the server's cached version probes. */
+  fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
   },
   updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",
