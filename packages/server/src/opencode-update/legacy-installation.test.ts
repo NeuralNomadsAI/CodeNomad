@@ -28,6 +28,8 @@ async function shim(prefix: string, name: string, target: string) {
     return path.join(directory, `${name}.cmd`)
   }
   const command = path.join(directory, name)
+  // Like npm relinking a bin: replace an existing shim instead of failing with EEXIST.
+  await rm(command, { force: true })
   await symlink(path.join("..", "lib", target), command)
   return command
 }
@@ -112,7 +114,8 @@ test("OpenCode 1.x npm shims are identified by package manifest and shim target 
     assert.equal(legacyNpmInstallation(command, prefix, directory, process.platform), undefined, "a supported version is never replaced")
     await writeFile(manifest, JSON.stringify({ name: "other", version: "1.18.10", bin: { opencode: "bin/opencode.exe" } }))
     assert.equal(legacyNpmInstallation(command, prefix, directory, process.platform), undefined)
-    await legacyFixture(prefix)
+    assert.equal(await legacyFixture(prefix), command)
+    assert.equal(legacyNpmInstallation(command, prefix, directory, process.platform)?.version, "1.18.10", "the restored shim is recognized again")
     const wrapper = path.join(home, "wrapper.exe")
     await writeFile(wrapper, "custom")
     await rm(command)
