@@ -1405,10 +1405,13 @@ test("a search result for a message rolled out of the window lands", async () =>
 })
 
 // After a rolling step, an escaped reader is the list's anchor only until the
-// step settles: a later focus move or programmatic scroll (keyboard, assistive
-// technology, find-in-page) must keep the position it reaches. Without a step:
-// the control.
-for (const rolled of [true, false]) for (const move of ["focus", "scrollIntoView"] as const) test(`a ${move} ${rolled ? "after a rolling step" : "without a rolling step"} keeps an escaped reader's new position`, async () => {
+// step's retired rows are measured: a focus move or programmatic scroll
+// (keyboard, assistive technology, find-in-page) a few frames later must keep
+// the position it reaches. Without a step: the control.
+for (const [rolled, wait, move] of [
+  [true, 60, "focus"], [true, 60, "scrollIntoView"], [true, 3, "write"],
+  [false, 60, "focus"], [false, 60, "scrollIntoView"], [false, 60, "write"],
+] as const) test(`a ${move} ${rolled ? `${wait} frames after a rolling step` : "without a rolling step"} keeps an escaped reader's new position`, async () => {
   const f = await fixture()
   try {
     await waitFrames(f.page, 30)
@@ -1418,13 +1421,18 @@ for (const rolled of [true, false]) for (const move of ["focus", "scrollIntoView
     await waitFrames(f.page, 30)
     assert.equal(await f.page.locator(".message-stream").getAttribute("data-follow-mode"), "escaped")
     if (rolled) await rollSteps(f.page, 1)
-    await waitFrames(f.page, 60)
-    // The first mounted row lying wholly below the viewport, in the overscan.
+    await waitFrames(f.page, wait)
+    // The first mounted row lying wholly below the viewport, in the overscan;
+    // a small programmatic write (60 px) follows the first visible row instead.
     const moved = await f.page.evaluate(`(() => {
       const stream = document.querySelector('.message-stream'), bounds = stream.getBoundingClientRect()
-      const row = [...stream.querySelectorAll('[data-virtual-follow-key]')].find(row => row.getBoundingClientRect().top >= bounds.bottom && row.querySelector('button'))
+      const rows = [...stream.querySelectorAll('[data-virtual-follow-key]')]
+      const row = ${JSON.stringify(move)} === 'write'
+        ? rows.find(row => row.getBoundingClientRect().top >= bounds.top)
+        : rows.find(row => row.getBoundingClientRect().top >= bounds.bottom && row.querySelector('button'))
       const before = stream.scrollTop
       if (${JSON.stringify(move)} === 'scrollIntoView') row.scrollIntoView()
+      else if (${JSON.stringify(move)} === 'write') stream.scrollTop += 60
       else row.querySelector('button').focus()
       return { key: row.dataset.virtualFollowKey, delta: stream.scrollTop - before, offset: row.getBoundingClientRect().top - bounds.top, scrollTop: stream.scrollTop }
     })()`) as { key: string; delta: number; offset: number; scrollTop: number }
@@ -1440,6 +1448,33 @@ for (const rolled of [true, false]) for (const move of ["focus", "scrollIntoView
     }
     assert.ok(samples.every(sample => sample.offset !== null && Math.abs(sample.offset - moved.offset) < 2),
       `the rolled reader's anchor must not pull back the ${move}: ${JSON.stringify({ moved, samples })}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+// Each roll corrects an escaped reader to its own place before paint: thirty
+// steps leave the read row where it was (sub-pixel rounding included).
+test("thirty rolling steps leave an escaped reader in place", async () => {
+  const f = await fixture()
+  try {
+    await waitFrames(f.page, 30)
+    const box = (await f.page.locator(".message-stream").boundingBox())!
+    await f.page.mouse.move(box.x + 60, box.y + box.height / 2)
+    await f.page.mouse.wheel(0, -1200)
+    await waitFrames(f.page, 30)
+    const read = () => f.page.evaluate(`(() => {
+      const stream = document.querySelector('.message-stream'), bounds = stream.getBoundingClientRect()
+      const row = [...stream.querySelectorAll('[data-virtual-follow-key]')].find(row => row.getBoundingClientRect().bottom > bounds.top + 1)
+      return { key: row.dataset.virtualFollowKey, offset: row.getBoundingClientRect().top - bounds.top }
+    })()`) as Promise<{ key: string; offset: number }>
+    const before = await read()
+    for (let i = 0; i < 30; i++) await rollSteps(f.page, 1)
+    await waitFrames(f.page, 10)
+    const after = await f.page.evaluate(`(() => {
+      const stream = document.querySelector('.message-stream'), row = stream.querySelector('[data-virtual-follow-key="${before.key}"]')
+      return row ? row.getBoundingClientRect().top - stream.getBoundingClientRect().top : null
+    })()`) as number | null
+    assert.ok(after !== null && Math.abs(after - before.offset) <= 1, `the escaped reader drifted: ${JSON.stringify({ before, after })}`)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

@@ -574,14 +574,85 @@ for (const wheel of [false, true]) test(`a tall head row retired across the view
       await page.mouse.wheel(0, -200)
       expected += 200
     }
-    const samples = await sampleAnchor(page, { key: "row-1", stream: ".message-stream", count: 30, step: "if (frame === 0) window.fixture.step()" })
-    const offsets = samples.map(sample => sample.anchorOffset === null ? null : Math.round(sample.anchorOffset))
+    // The step runs in the first frame; each sample is read by a task posted
+    // from a frame's RAF, so after that frame has been laid out and painted.
+    const offsets = await page.evaluate(() => new Promise<Array<number | null>>(resolve => {
+      const offsets: Array<number | null> = [], channel = new MessageChannel()
+      channel.port1.onmessage = () => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!, row = el.querySelector('[data-virtual-follow-key="row-1"]')
+        offsets.push(row ? Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) : null)
+        if (offsets.length < 30) requestAnimationFrame(() => channel.port2.postMessage(0))
+        else resolve(offsets)
+      }
+      requestAnimationFrame(() => { (window as any).fixture.step(); channel.port2.postMessage(0) })
+    }))
     const diagnostics = JSON.stringify({ start, expected, offsets })
     assert.equal(await page.evaluate(() => document.querySelector('[data-virtual-follow-key="row-0"]')), null, `row-0 must be retired: ${diagnostics}`)
-    // The step lands in the first sample's frame; at most one later frame may be off.
-    const off = samples.filter(sample => sample.anchorOffset === null || Math.abs(sample.anchorOffset - expected) > 2)
-    assert.ok(off.length <= 1, `The content jumped: ${diagnostics}`)
-    assert.ok(samples.slice(-10).every(sample => sample.anchorOffset !== null && Math.abs(sample.anchorOffset - expected) <= 2), `The content moved: ${diagnostics}`)
+    // The correction lands before the first paint after the step: no painted frame may be off.
+    const off = offsets.filter(offset => offset === null || Math.abs(offset - expected) > 2)
+    assert.equal(off.length, 0, `The content jumped: ${diagnostics}`)
+  }, { name: "list" })
+})
+
+/** Escapes near the tail with a real wheel, so later rolls retire rows above the reader. */
+async function escapeNearTail(page: Page, wheel = -400) {
+  await page.evaluate(() => (window as any).fixture.nearTail())
+  await frames(page, 30)
+  await page.locator(".message-stream").hover()
+  await page.mouse.wheel(0, wheel)
+  await frames(page, 30)
+}
+
+// Middle-button autoscroll keeps moving across a roll instead of freezing
+// under a correction that outlives the roll's measurement.
+test("middle-button autoscroll keeps moving across a rolling window", async () => {
+  await open(async page => {
+    await escapeNearTail(page, -1200)
+    const box = (await page.locator(".message-stream").boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down({ button: "middle" })
+    try {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 5 })
+      await frames(page, 10)
+      // The content position is the always-mounted last row's viewport offset:
+      // Virtua's compensation for the retired row moves scrollTop, not content.
+      const tails = await page.evaluate(() => new Promise<number[]>(resolve => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!, tails: number[] = []
+        const next = () => {
+          if (tails.length === 0) (window as any).fixture.step()
+          const rows = el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]"), last = rows[rows.length - 1]
+          tails.push(Math.round(last.getBoundingClientRect().top - el.getBoundingClientRect().top))
+          if (tails.length < 30) requestAnimationFrame(next); else resolve(tails)
+        }
+        requestAnimationFrame(next)
+      }))
+      // The step appends one 48 px row below: compare successive samples of that new last row.
+      const pulledBack = tails.slice(2).filter((tail, i) => tail > tails[i + 1] + 2)
+      assert.ok(pulledBack.length === 0 && tails[1] - tails.at(-1)! > 100, `The autoscroll froze across the roll: ${JSON.stringify(tails)}`)
+    } finally { await page.mouse.up({ button: "middle" }) }
+  }, { name: "list" })
+})
+
+// A viewport resize (the composer growing) during a roll keeps the escaped
+// reader's bottom lines where they were, as it does without a roll.
+test("a viewport resize during a rolling window stays bottom-anchored", async () => {
+  await open(async page => {
+    await escapeNearTail(page, -200)
+    const gap = () => page.locator(".message-stream").evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    // The step and the resize land in the same frame; the step's appended row
+    // is counted in the gap read just before it.
+    const before = await page.evaluate(() => new Promise<number>(resolve => requestAnimationFrame(() => {
+      (window as any).fixture.step()
+      const el = document.querySelector<HTMLElement>(".message-stream")!
+      requestAnimationFrame(() => {
+        const gap = el.scrollHeight - el.clientHeight - el.scrollTop
+        document.getElementById("root")!.style.height = "600px"
+        resolve(gap)
+      })
+    })))
+    await frames(page, 30)
+    const after = await gap()
+    assert.ok(Math.abs(after - before) <= 2, `The resize was not bottom-anchored: ${JSON.stringify({ before, after })}`)
   }, { name: "list" })
 })
 
@@ -1205,7 +1276,8 @@ test("the long-reply hold engages before the reply top leaves the viewport", asy
     await trace.enable()
     await streamUntilHold(page, scope)
     const top = await page.locator(`${scope} .message-stream`).evaluate(el => el.querySelector('[data-virtual-follow-key="stream-A"]')!.getBoundingClientRect().top - el.getBoundingClientRect().top)
-    assert.ok(top >= 0 && top <= 8 + 40, `The held reply top must stay below the hold line: ${top}px ${JSON.stringify(unownedMoves(trace.entries).slice(-3))}`)
+    // The hold engages within one streamed increment below its 8 px line (+14 px measured).
+    assert.ok(top >= 8 && top <= 8 + 16, `The held reply top must stay just below the hold line: ${top}px ${JSON.stringify(unownedMoves(trace.entries).slice(-3))}`)
   }, { name: "switch", hold: true })
 })
 

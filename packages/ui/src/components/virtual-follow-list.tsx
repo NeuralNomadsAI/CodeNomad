@@ -18,6 +18,8 @@ const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 120
 const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
+// A rolled reader corrects at 1 px; drift below this is rounding, not a move.
+const ROLL_READER_ROUNDING_PX = 2
 
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
@@ -177,6 +179,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   // The last intent token started or cancelled: an intent never restarts itself.
   let handledBottomPinToken: string | number | null = null
   let programmaticScrollUntil = 0
+  // An escaped reader's place across rolls (a row and its viewport offset),
+  // kept while nothing else has moved it by more than rounding, so Virtua's
+  // rounded compensations never accumulate; `rollAnchor` is the same place while
+  // a roll waits for its retired rows to be measured (see `settleRollAnchor`).
+  let rollReader: { key: string; offset: number } | undefined
+  let rollAnchor: { key: string; offset: number } | undefined
+  // The keys of the retired prefix of `virtualItemKeys`.
+  const retiredKeys = new Set<string>()
   // Trace-only attribution state, written only while the `scroll` trace is enabled.
   let lastTracedWrite: ScrollReason | undefined
   let lastTracedLanding: number | undefined
@@ -204,6 +214,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   /** A user gesture or explicit navigation supersedes restoration, alignment and any explicit bottom pin. */
   function supersedePositioning() {
+    rollReader = rollAnchor = undefined
     cancelActiveScrollRestore()
     if (bottomPin?.settle || explicitBottomPinIntent()) cancelExplicitBottomPin()
   }
@@ -214,6 +225,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
    * restoration fences its own callbacks on those transitions.
    */
   function stopPositioning() {
+    rollReader = rollAnchor = undefined
     readerSettlement.cancel()
     invalidateScrollRestore()
     endBottomPin("interrupted")
@@ -618,11 +630,28 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (collapsed !== untrack(collapsedCount)) setCollapsedCount(collapsed)
   }
 
+  /**
+   * Called from the content ResizeObserver, after Virtua's own measurement and
+   * before paint: puts the rolled reader's anchor back where it was, then lets
+   * it go once every retired row is measured at zero.
+   */
+  function settleRollAnchor() {
+    const anchor = rollAnchor, element = scrollElement()
+    if (!anchor || !element) return
+    const row = itemElements.get(anchor.key)
+    if (row?.isConnected && isActive() && !autoScroll() && !scrollController.snapshot().restoring) {
+      const delta = measureAnchorDelta(element, row, anchor.offset)
+      if (Math.abs(delta) >= 1) writeScroll("reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
+    }
+    if (untrack(collapsedCount) >= untrack(retiredCount)) rollAnchor = undefined
+  }
+
   function observeVirtualContent(element: HTMLElement | null | undefined) {
     if (!element || element === observedVirtualContent || typeof ResizeObserver === "undefined") return
     if (!virtualContentResizeObserver) {
       virtualContentResizeObserver = new ResizeObserver(() => {
         collapseRetiredRows()
+        settleRollAnchor()
         if (!isActive()) return
         if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
         pendingContentRenderedFrame = null
@@ -1095,12 +1124,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const nextHeight = element.getBoundingClientRect().height
       const delta = nextHeight - height
       const offset = delta < 0 && !canScrollInDirection(stream, "down") ? stableOffset : stream.scrollTop
-      // A bottom pin exists only while following, so it never retains a reader.
-      const retainReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
-      // The correction below keeps a held element in place; a retained reader restarts.
-      if (retainReader && !readerSettlement.held()) readerSettlement.cancel()
+      // An escaped reader (following has its bottom pin) keeps its rows in place.
+      const keepReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
       setBeforeItemsHeight(nextHeight)
-      if (retainReader && !nativeScrollbarDragging && offset >= height) {
+      if (keepReader && !nativeScrollbarDragging && offset >= height) {
         // One synchronous layout correction, not a deferred pin that can
         // reassert over the next wheel/thumb gesture. Header readers stay put.
         writeScroll("before-items", { type: "dom", top: Math.max(0, offset + delta), record: true })
@@ -1156,10 +1183,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // coming back, which Virtua would otherwise see twice) drops them.
       const retiredBefore = retiredCount()
       const liveKeys = virtualItemKeys.slice(retiredBefore)
-      const retiredKeys = new Set(virtualItemKeys.slice(0, retiredBefore))
       const change = classifyVirtualItemKeyChange(liveKeys, nextItemKeys)
-      const reset = change.resetMeasurements || (retiredBefore > 0 && nextItemKeys.some(key => retiredKeys.has(key)))
+      const reset = change.resetMeasurements || (retiredKeys.size > 0 && nextItemKeys.some(key => retiredKeys.has(key)))
       const retiredNext = reset ? 0 : retiredBefore + change.shiftedStartCount
+      if (reset) retiredKeys.clear()
+      for (let index = retiredBefore; index < retiredNext; index++) retiredKeys.add(virtualItemKeys[index])
       const plannedVirtualKeys = [...virtualItemKeys.slice(0, retiredNext), ...nextItemKeys]
       // A short append also needs measured probes: a hidden native metadata row
       // estimated at the mean height of a tall answer can pin beyond every row.
@@ -1190,19 +1218,26 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           }).map(([key]) => key))
         : new Set<string>()
       if (change.shiftedStartCount > 0 && !reset && !autoScroll()) {
-        // Virtua only compensates a shrinking row entirely above the viewport:
-        // a retiring row across its top would drop the content by its height.
-        // Hold the first visible surviving row (unless a hold already owns a
-        // surviving row) for the bounded window, which corrects that, then lets
-        // a later focus or reveal stand. The keyed DOM stays intact for a held
-        // nested middle-button drag.
+        // Virtua does not compensate every shrinking row (not one across the
+        // viewport top when idle or scrolling up), so an escaped reader keeps
+        // its first visible surviving row where it is: `settleRollAnchor`
+        // corrects it before paint once Virtua has measured the retiring rows,
+        // then drops it. Rows already measured at zero shift nothing. The keyed
+        // DOM stays intact for a held nested middle-button drag.
         const surviving = new Set(nextItemKeys)
         const held = readerSettlement.held()
-        const element = scrollElement()
-        if (!held || !surviving.has(held.key)) {
-          const anchor = element ? findTopVisibleAnchor(element, surviving) : null
-          if (anchor) readerSettlement.hold(anchor)
-          else readerSettlement.cancel()
+        if (held && !surviving.has(held.key)) readerSettlement.cancel()
+        const handle = virtuaHandle(), element = scrollElement()
+        let shrinks = false
+        for (let index = retiredBefore; index < retiredNext && !shrinks; index++) shrinks = !handle || handle.getItemSize(index) !== 0
+        if (shrinks && element) {
+          // Moved further than rounding (a programmatic scroll, find-in-page):
+          // the reader is wherever it now reads.
+          const row = rollReader && surviving.has(rollReader.key) ? itemElements.get(rollReader.key) : undefined
+          if (!rollReader || !row?.isConnected || Math.abs(measureAnchorDelta(element, row, rollReader.offset)) > ROLL_READER_ROUNDING_PX) {
+            rollReader = findTopVisibleAnchor(element, surviving) ?? undefined
+          }
+          rollAnchor = rollReader
         }
       }
       batch(() => {
@@ -1232,6 +1267,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     handledBottomPinToken = null
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     const items = props.items()
+    retiredKeys.clear()
     setRetiredCount(0)
     setCollapsedCount(0)
     setVirtualItems(items.slice())
@@ -1258,14 +1294,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (canPinFollowBottom()) {
         pinFollowBottom("viewport-resize")
       } else if (!readerSettlement.held()) {
+        // The rolled reader's place follows the bottom-anchored content.
+        if (rollReader) rollReader.offset -= heightDelta
         writeScroll("viewport-resize", { type: "dom", top: getBottomAnchoredViewportOffset(element.scrollTop, heightDelta), record: true })
       }
       updateScrollStateFromDom()
     })
-    const observer = new ResizeObserver(() => {
-      // An inactive or restoring list only rebases. A held element re-aligns itself on its next frame.
-      if (viewportHeight.update(isActive() && !scrollController.snapshot().restoring) && !readerSettlement.held()) readerSettlement.cancel()
-    })
+    // An inactive or restoring list only rebases. A held element re-aligns itself on its next frame.
+    const observer = new ResizeObserver(() => { viewportHeight.update(isActive() && !scrollController.snapshot().restoring) })
     observer.observe(element)
     onCleanup(() => {
       observer.disconnect()

@@ -137,11 +137,19 @@ the reader in place. Callers never see them: `renderItem` receives live indexes,
 key lookups, the active row and anchors skip them; a remap never carries a retired
 row's zero to the same message brought back by a page (live rows are remapped by
 key, a retained retired prefix by position), and a retired key coming back without
-a page resets the list. Virtua compensates a shrinking row only once it is entirely
-above the viewport, so an escaped reader is held across each roll by its first
-visible surviving row, for the bounded hold window below: a retiring row across the
-viewport top cannot drop the content by its height, and the reader is released
-afterwards. Retired rows stay mounted only until Virtua has measured them at zero (a
+a page resets the list. Virtua does not compensate every shrinking row (when idle or
+scrolling up, only one entirely above the viewport; a retiring row across the top is
+left uncompensated), so a roll records an escaped reader's place, its first visible
+surviving row and offset. The content ResizeObserver, which reports after Virtua's own
+measurement and before paint, puts that row back and drops the record once every
+retired row is measured at zero, usually within the roll's frame: no painted frame
+shows the retiring row's height, and nothing outlives the measurement to pull back a
+later programmatic scroll, a viewport resize (which stays bottom-anchored) or a
+middle-button autoscroll. The place is kept from roll to roll while nothing else
+moves the reader by more than 2 px, so Virtua's rounded compensations (a fraction
+of a pixel per roll) never accumulate. Growth above an escaped reader is Virtua's own
+compensation, as without rolls, and can still drift it by a few pixels over many
+updates. Retired rows stay mounted only until Virtua has measured them at zero (a
 watermark advanced on every items change and content resize), so the DOM stays
 bounded; their keys and sizes accumulate until the next reset (page navigation, a
 disjoint window, an emptied list or a session change), a few bytes per step. In a
@@ -218,8 +226,7 @@ activation restore: a send before hydration keeps the bottom over a saved passag
 and does so even if the prompt is then rejected (the saved passage is not restored).
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
-element; key jumps hold their row the same way at offset 0, and a rolling window the
-escaped reader's first visible surviving row. All have the former
+element; key jumps hold their row the same way at offset 0. Both have the former
 element alignment's lifetime and are released afterwards: the element is measured and
 re-aligned on every frame of a fixed 30-frame window counted from the request, which
 layout never extends. Within it, viewport and `beforeItems` resizes re-align the
@@ -228,10 +235,9 @@ the current viewport only when applied. Gestures, navigation and focus moving to
 another element inside the transcript scroller (Tab, assistive technology) end it at
 once, and so does losing the element (an unmounted row); focus leaving the
 transcript (e.g. to the composer) does not. Any other scroll during the window is
-corrected like layout, as before. While a hold on a surviving row is active, a rolling
-window keeps it rather than the visible top row; nothing retains a reader after a
-hold expires. Settlement, alignment and anchor restoration share one anchor
-measurement. The long-reply hold is decided before each bottom write, against the
+corrected like layout, as before. A hold whose row rolls out of the window ends;
+nothing retains a reader after a hold expires. Settlement, alignment and anchor
+restoration share one anchor measurement. The long-reply hold is decided before each bottom write, against the
 offset that write would reach, so it engages with the reply top still below its
 line: once that top is above the viewport, Virtua (still scrolling down) would
 compensate the reply's next growth and push it further up.

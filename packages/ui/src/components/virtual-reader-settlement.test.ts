@@ -33,7 +33,7 @@ test("a hold aligns at once, then on every frame of a window that nothing extend
     assert.equal(aligned, 30)
     assert.equal(reader.held(), undefined, "The hold ends with its window")
     assert.equal(frames.size, 0, "A released anchor keeps no frame running")
-    // A jump's row, or the reader across a rolling window, is held the same way.
+    // A jump's row is held the same way.
     reader.hold({ key: "jumped", offset: 0 })
     assert.equal(step(100), 29)
     assert.equal(reader.held(), undefined, "A row hold ends with its window")

@@ -5,9 +5,9 @@ interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement
 // later layout never extends it.
 const HOLD_FRAMES = 30
 
-/** A held anchor (a jump's row, a revealed element, or the reader across a
- * rolling window) is measured and re-aligned on every frame of its fixed
- * window, like the former element alignment: layout lands after animation
+/** A held anchor (a jump's row or a revealed element) is measured and
+ * re-aligned on every frame of its fixed window, like the former element
+ * alignment: layout lands after animation
  * frames, so waiting for a layout notification would paint the displaced frame
  * first. It is then released, so a later focus or reveal is never pulled back.
  * `align` returns false when an anchor can no longer be held.
