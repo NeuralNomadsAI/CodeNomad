@@ -140,21 +140,34 @@ key, a retained retired prefix by position), and a retired key coming back witho
 a page resets the list. Virtua does not compensate every shrinking row (when idle or
 scrolling up, only one entirely above the viewport; a retiring row across the top is
 left uncompensated), so a roll records an escaped reader's place, its first visible
-surviving row and offset. The content ResizeObserver, which reports after Virtua's own
-measurement and before paint, puts that row back and drops the record once every
-retired row is measured at zero, usually within the roll's frame: no painted frame
-shows the retiring row's height, and nothing outlives the measurement to pull back a
-later programmatic scroll, a viewport resize (which stays bottom-anchored) or a
-middle-button autoscroll. The place is kept from roll to roll while nothing else
-moves the reader by more than 2 px, so Virtua's rounded compensations (a fraction
-of a pixel per roll) never accumulate. Growth above an escaped reader is Virtua's own
-compensation, as without rolls, and can still drift it by a few pixels over many
-updates. Retired rows stay mounted only until Virtua has measured them at zero (a
-watermark advanced on every items change and content resize), so the DOM stays
-bounded; their keys and sizes accumulate until the next reset (page navigation, a
-disjoint window, an emptied list or a session change), a few bytes per step. In a
-hidden (`display:none`) list the retired rows are measured, and compensated, when it
-is shown again. Follow-mode changes go through
+surviving row and offset. Layout notifications come from the list's row
+ResizeObserver. ResizeObserver delivers a pass in observer creation order, so that
+observer is recreated after each Virtua instance (every measurement reset remounts
+one) and reports after Virtua's measurement, before paint; each roll re-observes a
+rendered row, so the pass in which Virtua measures the retiring rows at zero reaches
+it, with or without a net append. It puts the reader's row back and drops the record
+once every retired row is measured at zero: no painted frame shows the retiring
+row's height, and nothing outlives the measurement to pull back a later programmatic
+scroll, a viewport resize (which stays bottom-anchored, clamping included) or a
+middle-button autoscroll. Until that measurement Virtua keeps every row where it was,
+so a write or reveal landing in between (in the roll's own task) moves the recorded
+place with it; a held native scrollbar thumb owns the position, and a roll under it
+records nothing. The place is kept from roll to roll while nothing else moves the
+reader by more than 2 px, so Virtua's rounded compensations (a fraction of a pixel
+per roll, more at fractional zoom) never accumulate; returning to follow forgets it.
+Growth above an escaped reader is Virtua's own compensation, as without rolls, and
+can still drift it by a few pixels over many updates. The row observer never watches
+Virtua's container, which Virtua resizes during its own measurement: a shallower
+observation changing mid-pass would be deferred to the next frame (a
+`ResizeObserver loop completed with undelivered notifications` window error). Only
+rows that Virtua itself mounts during that pass, after an uncompensated shrink such
+as a retiring row across the viewport top, still raise that error; they lie in the
+overscan and are measured on the next frame. Retired rows stay mounted only until
+Virtua has measured them at zero (a watermark advanced on every items change and row
+resize), so the DOM stays bounded; their keys and sizes accumulate until the next
+reset (page navigation, a disjoint window, an emptied list or a session change), a
+few bytes per step. In a hidden (`display:none`) list the retired rows are measured,
+and compensated, when it is shown again. Follow-mode changes go through
 `syncControllerResult` with a reason as well. Outside it remain user gestures
 (including wheel re-emission and middle-button autoscroll), Virtua's own size
 compensation, browser clamping and search-result reveals inside nested scrollers.
@@ -237,10 +250,10 @@ once, and so does losing the element (an unmounted row); focus leaving the
 transcript (e.g. to the composer) does not. Any other scroll during the window is
 corrected like layout, as before. A hold whose row rolls out of the window ends;
 nothing retains a reader after a hold expires. Settlement, alignment and anchor
-restoration share one anchor measurement. The long-reply hold is decided before each bottom write, against the
-offset that write would reach, so it engages with the reply top still below its
-line: once that top is above the viewport, Virtua (still scrolling down) would
-compensate the reply's next growth and push it further up.
+restoration share one anchor measurement. The long-reply hold is decided before
+each bottom write, against the offset that write would reach, so it engages with the
+reply top still below its line: once that top is above the viewport, Virtua (still
+scrolling down) would compensate the reply's next growth and push it further up.
 Known follow-ups: a search reveal is aligned one frame after its row's highlights
 are painted, so that frame can show the message top; and Virtua renders the rows of
 a jump's new offset only at its next scroll event, so a session switch within that
