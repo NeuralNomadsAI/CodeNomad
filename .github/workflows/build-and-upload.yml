@@ -53,7 +53,9 @@ on:
 # least-privilege (e.g. dev CI uses read-only; releases grant write).
 
 jobs:
+  # Gate the shared PR/stable/prerelease binary builds on Tauri Windows first.
   build-macos:
+    needs: build-tauri-windows
     runs-on: macos-15-intel
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -225,6 +227,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: build-tauri-windows
     runs-on: windows-2025
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -275,6 +278,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
+    needs: build-tauri-windows
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -518,6 +522,7 @@ jobs:
           if-no-files-found: error
 
   build-tauri-macos:
+    needs: build-tauri-windows
     runs-on: macos-15-intel
     env:
       TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
@@ -616,6 +621,7 @@ jobs:
           done
 
   build-tauri-macos-arm64:
+    needs: build-tauri-windows
     runs-on: macos-26
     env:
       TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
@@ -827,6 +833,7 @@ jobs:
           }
 
   build-tauri-linux:
+    needs: build-tauri-windows
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1050,6 +1057,7 @@ jobs:
         run: node packages/tauri-app/scripts/updater-artifacts.mjs publish updater-receipts
 
   build-tauri-linux-arm64:
+    needs: build-tauri-windows
     if: ${{ false }}
     runs-on: ubuntu-24.04
     env:
