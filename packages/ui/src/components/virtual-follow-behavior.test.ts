@@ -35,8 +35,8 @@ import {
 const userScroll = (direction: "up" | "down" | null, atBottom: boolean) =>
   ({ type: "user-scroll", direction, atBottom }) as const
 
-function metrics(offset: number, scrollHeight = 3000, clientHeight = 600, sentinelMarginPx = BOTTOM_FOLLOW_EPSILON_PX): ScrollControllerMetrics {
-  return { offset, scrollHeight, clientHeight, sentinelMarginPx }
+function metrics(offset: number, scrollHeight = 3000, clientHeight = 600): ScrollControllerMetrics {
+  return { offset, scrollHeight, clientHeight }
 }
 
 describe("virtual follow behavior", () => {
@@ -398,7 +398,7 @@ describe("virtual follow behavior", () => {
     const controller = new VirtualScrollController(true)
     controller.setRestoring(true)
 
-    const result = controller.contentRendered(metrics(2400), true)
+    const result = controller.contentRendered(true)
 
     assert.deepEqual(result.state.mode, { type: "following" })
     assert.deepEqual(result.effect, { type: "none" })

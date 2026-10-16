@@ -174,7 +174,8 @@ supersedes it (the pin settles `interrupted`), except that a restoration to the
 bottom joins an active explicit pin and keeps its row count; it reports `onApplied`
 only after its own landing, and `onCancelled` when superseded or when its pin loses
 follow without a gesture. A new send intent also cancels MessageSection's pending
-window paging, which would otherwise leave follow after the send.
+window paging, which would otherwise leave follow after the send, and its pending
+activation restore: a send before hydration keeps the bottom over a saved passage.
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
 element, with the former element alignment's lifetime: the element is measured and
@@ -190,8 +191,15 @@ hold rather than the visible top anchor, so no reader stays retained after it
 expires. Settlement, alignment and anchor restoration share one anchor measurement.
 Pre-existing: a Virtua index request still pending from an earlier key navigation
 re-runs on every measurement while they keep coming (for instance during streaming)
-and can re-place its row; a gesture, another index navigation, a restoration or
-deactivation replaces it.
+and can re-place its row, also against a gesture made while it is still live;
+another index navigation, a restoration or deactivation replaces it. A gesture does
+not release it: Virtua's `scrollBy(0)` would pin the pre-gesture offset and reassert
+it on every later measurement, undoing the gesture (a wheel notch mounting new rows).
+Known follow-ups, both from that live index operation: a deep reveal right after its
+jump can paint the message top before and between the hold's corrections (the
+operation reasserts the row top on each measurement); and since Virtua lands an
+index jump in a microtask but reports it at the next scroll event, a session switch
+within that frame persists the position from before the jump.
 
 Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,

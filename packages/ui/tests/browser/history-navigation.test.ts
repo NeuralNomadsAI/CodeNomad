@@ -455,6 +455,31 @@ for (const saved of ["passage", "latest bottom", "none"] as const) test(`a jump 
   } finally { await f.close() }
 })
 
+// A send pins the latest bottom itself: sent before hydration, it supersedes the
+// activation restore still pending for a saved passage, which must not run later.
+test("a message sent before hydration stays at the bottom over a saved passage", async () => {
+  const f = await fixture(false, false, true)
+  try {
+    await seedSavedPosition(f.page, navigationMessageId(1450))
+    await f.page.locator(".prompt-input-container textarea").first().fill("Sent before hydration")
+    await f.page.locator(".send-button").click()
+    await f.page.waitForFunction(() => (window as any).fixture.prompts().length === 1)
+    await f.page.evaluate(() => (window as any).fixture.releaseMessages())
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_01499"))
+    await waitFrames(f.page, 60)
+    const sentId = await f.page.evaluate(() => (window as any).fixture.prompts()[0])
+    const state = await f.page.evaluate(`(() => {
+      const stream = document.querySelector('.message-stream'), bounds = stream.getBoundingClientRect()
+      const row = stream.querySelector('[data-virtual-follow-key="${sentId}"]')?.getBoundingClientRect()
+      return { row: row ? { top: row.top - bounds.top, bottom: row.bottom - bounds.top } : null, viewport: stream.clientHeight,
+        atBottom: stream.scrollHeight - stream.clientHeight - stream.scrollTop <= 1, anchorKey: window.fixture.snapshot().scroll?.anchorKey }
+    })()`) as { row: { top: number; bottom: number } | null; viewport: number; atBottom: boolean; anchorKey?: string }
+    assert.ok(state.row && state.row.top >= 0 && state.row.bottom <= state.viewport + 1 && state.atBottom,
+      `the sent message must stay visible at the bottom: ${JSON.stringify(state)}`)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 // A restore loading its saved anchor positions the list itself: reaching the
 // bottom meanwhile must not page beyond the window that restore brings in.
 test("reaching the bottom while a restore loads its anchor does not page newer", async () => {

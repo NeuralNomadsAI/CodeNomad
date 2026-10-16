@@ -471,8 +471,8 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     setNavigation({ kind: "idle" })
     // A committed page records its intended position in the store; record the reader's actual one.
-    // Known follow-up: on a session switch 0-1 frames after a jump lands, capture is not allowed and the
-    // last good position predates the jump (as before this navigation state).
+    // Known follow-up: Virtua lands an index jump in a microtask but reports it at the next scroll
+    // event; a view hidden before then cannot capture, so the last good position predates the jump.
     persistMessageScrollSnapshot({ sessionId: paging.sessionId, allowCapture: paging.sessionId === props.sessionId, requireActive: false })
   }
 
@@ -530,11 +530,12 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   // A send loads and pins the latest window itself: stale paging must not resume
-  // afterwards and leave follow, which would cancel the new send pin. The intent
-  // object is rebuilt on every count/streaming change; only a new token is a send.
+  // afterwards and leave follow, and a restore still pending must not run after
+  // it, either of which would cancel the new send pin. The intent object is
+  // rebuilt on every count/streaming change; only a new token is a send.
   const sendIntentToken = createMemo(() => props.explicitBottomPinIntent?.token)
   createEffect(on(sendIntentToken, (token) => {
-    if (token !== undefined) cancelWindowNavigation()
+    if (token !== undefined) cancelWindowNavigation(true)
   }, { defer: true }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {

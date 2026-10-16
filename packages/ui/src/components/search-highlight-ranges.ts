@@ -1,3 +1,4 @@
+import { scrollAxes } from "../lib/scroll-gesture-routing"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { isScrollTraceEnabled, traceScroll } from "./virtual-scroll-trace"
 
@@ -63,9 +64,10 @@ export type AlignInTranscript = (target: HTMLElement, viewportOffset: number) =>
  * element at the top, possibly still out of view. The alignment re-measures
  * that element for 30 frames, and a wheel consumed by a nested scroller is not
  * a list gesture: scrolling such a scroller during that window moves the
- * transcript along with the element. Known follow-up: Virtua's pending index
- * scroll can paint one frame back at the message top before the alignment's
- * next correction. Nested scrollers, and a
+ * transcript along with the element. Known follow-up: the jump's Virtua index
+ * operation is still live and reasserts the message top on each row measurement,
+ * so frames at the message top can paint before and between the alignment's
+ * corrections. Nested scrollers, and a
  * transcript outside a list, are written directly and traced as `search-reveal`.
  */
 export function revealSearchRange(range: Range, align?: AlignInTranscript): void {
@@ -74,11 +76,11 @@ export function revealSearchRange(range: Range, align?: AlignInTranscript): void
   const document = node.ownerDocument!
   const transcript = node.parentElement?.closest(".message-stream")
   for (let parent = node.parentElement; parent; parent = parent === transcript ? null : parent.parentElement) {
-    const style = document.defaultView!.getComputedStyle(parent)
+    const axes = scrollAxes(parent)
     const rect = range.getBoundingClientRect(), bounds = parent.getBoundingClientRect()
     const top = bounds.top + parent.clientTop, left = bounds.left + parent.clientLeft
-    const vertical = parent.scrollHeight > parent.clientHeight && (/auto|scroll|overlay/.test(style.overflowY) || parent === document.scrollingElement)
-    const horizontal = parent.scrollWidth > parent.clientWidth && /auto|scroll|overlay/.test(style.overflowX)
+    const vertical = axes.y || (parent === document.scrollingElement && parent.scrollHeight > parent.clientHeight)
+    const horizontal = axes.x
     if (vertical && (rect.top < top || rect.bottom > top + parent.clientHeight)) {
       const delta = (rect.top + rect.bottom) / 2 - top - parent.clientHeight / 2
       const target = node.parentElement!

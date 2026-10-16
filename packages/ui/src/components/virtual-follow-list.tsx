@@ -1,9 +1,10 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { attachScrollGestureRouting, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
+import { trackHeightDelta } from "../lib/height-delta"
+import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -175,8 +176,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let cancelRestore: (() => void) | undefined
   let lastResetKey: string | number | undefined = props.resetKey?.()
   let pendingContentRenderedFrame: number | null = null
-  let pendingViewportResizeFrame: number | null = null
-  let pendingViewportHeightDelta = 0
   let bottomPin: BottomPin | null = null
   let bottomPinFrame: number | null = null
   // The last intent token started or cancelled: an intent never restarts itself.
@@ -226,9 +225,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     endBottomPin("interrupted")
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     pendingContentRenderedFrame = null
-    if (pendingViewportResizeFrame !== null) cancelAnimationFrame(pendingViewportResizeFrame)
-    pendingViewportResizeFrame = null
-    pendingViewportHeightDelta = 0
   }
 
   /** The only follow-mode write; `source` labels the transition and any scroll it causes. */
@@ -251,7 +247,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       case "jump-top": return syncControllerResult(scrollController.jumpTop(event.immediate), source)
       case "jump-bottom": return syncControllerResult(scrollController.jumpBottom(event.immediate, event.explicit), source)
       case "jump-key": return syncControllerResult(scrollController.jumpKey(event.key, event.block, event.smooth), source)
-      case "content-grew": return syncControllerResult(scrollController.contentRendered(getCurrentMetrics(), event.canPinToBottom), source)
+      case "content-grew": return syncControllerResult(scrollController.contentRendered(event.canPinToBottom), source)
       case "set-follow": return syncControllerResult(scrollController.setFollow(event.enabled), source)
       case "reset": return syncControllerResult(scrollController.reset(event.follow), source)
     }
@@ -292,13 +288,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     supersedePositioning()
     const element = scrollElement()
     syncControllerResult(scrollController.userGesture(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS, element ? getDomMetrics(element) : null, distance), "user-gesture")
-    if (element && pendingVirtuaScroll) {
-      // Replace an outstanding imperative operation once, not on every wheel
-      // or key repeat: scrollBy(0) itself creates a new measurement-time pin.
-      pendingVirtuaScroll = false
-      element.dispatchEvent(new Event("scroll"))
-      writeScroll("cancel-virtua", { type: "release" })
-    }
+    // No Virtua release here: scrollBy(0) would pin the pre-gesture offset, which
+    // Virtua reasserts on every later row measurement, undoing this gesture.
     // At a clamped edge a wheel/key produces no scroll event. The gesture
     // itself must be able to request the next historical window.
     if (direction) updateScrollStateFromDom()
@@ -412,29 +403,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     })
   }
 
-  function getCurrentMetrics(): ScrollControllerMetrics {
-    const element = scrollElement()
-    if (!element) return getManualMetrics()
-    return getDomMetrics(element)
-  }
-
   function getDomMetrics(element: HTMLDivElement, handle = virtuaHandle(), offset = handle?.scrollOffset ?? element.scrollTop): ScrollControllerMetrics {
     return {
       offset,
       // Virtua's scrollSize excludes content preceding its own item root.
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
-      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
-    }
-  }
-
-  function getManualMetrics(): ScrollControllerMetrics {
-    const clientHeight = 1000
-    return {
-      offset: 0,
-      scrollHeight: clientHeight * 2,
-      clientHeight,
-      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
   }
 
@@ -697,7 +671,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       atBottom,
       ...getFollowSnapshotState(followMode()),
     }
-    if (!atBottom) {
+    // An escaped reader keeps its anchor even at the bottom (a hold triggered
+    // there): growth below it scrolls nothing, so no later capture replaces this one.
+    if (!atBottom || !isAutoFollowing(followMode())) {
       const anchor = findTopVisibleAnchor(element)
       if (anchor) {
         snapshot.anchorKey = anchor.key
@@ -734,11 +710,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // active explicit pin and keeps its row-count guarantee. It also supersedes
     // any earlier restoration, notified once this one owns the position (a
     // re-entrant restoration from that callback then supersedes this one), and
-    // reports only its own landing.
+    // reports only its own landing. An anchored snapshot (an escaped reader)
+    // returns to its anchor even when it was captured at the bottom.
+    const toBottom = snapshot.atBottom && snapshot.anchorKey === undefined
     const superseded = cancelRestore
     readerSettlement.cancel()
     invalidateScrollRestore()
-    if (!snapshot.atBottom || !bottomPin?.settle) endBottomPin("interrupted")
+    if (!toBottom || !bottomPin?.settle) endBottomPin("interrupted")
     const element = scrollElement()
     if (!element) {
       superseded?.()
@@ -779,7 +757,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         return
       }
 
-      if (snapshot.atBottom) {
+      if (toBottom) {
         const onSettled = (settlement: VirtualBottomSettlement) => {
           if (settlement !== "cancelled") finish()
           // Follow was left without a gesture (which cancels the restoration itself).
@@ -885,20 +863,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     detachScrollIntentListeners?.()
     detachScrollIntentListeners = undefined
     if (!element) return
-    const nestedScrollerConsumes = (target: EventTarget | null, direction: "up" | "down") => {
-      let current = target instanceof HTMLElement ? target : null
-      while (current && current !== element) {
-        const overflowY = getComputedStyle(current).overflowY
-        if ((overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay")
-          && canScrollInDirection(current, direction)) return true
-        current = current.parentElement
-      }
-      return false
-    }
+    const nestedScrollerConsumes = (target: EventTarget | null, direction: "up" | "down") => findNestedScroller(element, target, direction) !== null
+    // The gesture routing already decided which scroller owns each wheel event.
     const handleWheelIntent = (event: WheelEvent) => {
-      const direction = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
-      if (direction && nestedScrollerConsumes(event.target, direction)) return
-      markUserScrollIntent(direction, event.deltaY * wheelDeltaUnit(event, element))
+      markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null, event.deltaY * wheelDeltaUnit(event, element))
     }
     let lastPrimaryPointerY: number | null = null
     const handlePointerIntent = (event: PointerEvent) => {
@@ -993,9 +961,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const held = readerSettlement.held()
       if (held && !itemElements.get(held.key)?.contains(event.target as Node)) readerSettlement.cancel()
     }
-    const detachGestureRouting = attachScrollGestureRouting(element)
+    const detachGestureRouting = attachScrollGestureRouting(element, handleWheelIntent)
     element.addEventListener("focusin", handleFocusIn)
-    element.addEventListener("wheel", handleWheelIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
     element.addEventListener("pointermove", handlePointerMove)
     element.addEventListener("pointerup", handlePointerEnd)
@@ -1011,7 +978,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     detachScrollIntentListeners = () => {
       detachGestureRouting()
       element.removeEventListener("focusin", handleFocusIn)
-      element.removeEventListener("wheel", handleWheelIntent)
       element.removeEventListener("pointerdown", handlePointerIntent)
       element.removeEventListener("pointermove", handlePointerMove)
       element.removeEventListener("pointerup", handlePointerEnd)
@@ -1079,6 +1045,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }),
     scrollToKey,
     notifyContentRendered: () => {
+      // A hidden list keeps its position; activation positions it anew.
+      if (!isActive()) return
       if (restartAnchorRestore) {
         restartAnchorRestore()
         return
@@ -1266,43 +1234,26 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(() => {
     const element = scrollElement()
+    // A session reset drops a pending resize delta along with its tracker.
+    props.resetKey?.()
     if (!element || typeof ResizeObserver === "undefined") return
-    let previousHeight = element.clientHeight
+    const viewportHeight = trackHeightDelta(element, (heightDelta) => {
+      if (!isActive() || scrollController.snapshot().restoring) return
+      if (canPinFollowBottom()) {
+        pinFollowBottom("viewport-resize")
+      } else if (!readerSettlement.held()) {
+        writeScroll("viewport-resize", { type: "offset", top: getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta) })
+      }
+      updateScrollStateFromDom()
+    })
     const observer = new ResizeObserver(() => {
-      const nextHeight = element.clientHeight
-      if (nextHeight === previousHeight) return
-      // A held element re-aligns itself on its next frame.
-      if (!readerSettlement.held()) readerSettlement.cancel()
-      if (!isActive() || previousHeight <= 0 || nextHeight <= 0) {
-        previousHeight = nextHeight
-        return
-      }
-      pendingViewportHeightDelta += previousHeight - nextHeight
-      previousHeight = nextHeight
-      if (scrollController.snapshot().restoring) {
-        pendingViewportHeightDelta = 0
-        return
-      }
-      if (pendingViewportResizeFrame !== null) return
-      pendingViewportResizeFrame = requestAnimationFrame(() => {
-        pendingViewportResizeFrame = null
-        const heightDelta = pendingViewportHeightDelta
-        pendingViewportHeightDelta = 0
-        if (scrollController.snapshot().restoring) return
-        if (canPinFollowBottom()) {
-          pinFollowBottom("viewport-resize")
-        } else if (!readerSettlement.held()) {
-          writeScroll("viewport-resize", { type: "offset", top: getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta) })
-        }
-        updateScrollStateFromDom()
-      })
+      // An inactive or restoring list only rebases. A held element re-aligns itself on its next frame.
+      if (viewportHeight.update(isActive() && !scrollController.snapshot().restoring) && !readerSettlement.held()) readerSettlement.cancel()
     })
     observer.observe(element)
     onCleanup(() => {
       observer.disconnect()
-      if (pendingViewportResizeFrame !== null) cancelAnimationFrame(pendingViewportResizeFrame)
-      pendingViewportResizeFrame = null
-      pendingViewportHeightDelta = 0
+      viewportHeight.dispose()
     })
   })
 

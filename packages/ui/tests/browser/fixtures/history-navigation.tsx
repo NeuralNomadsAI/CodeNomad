@@ -24,6 +24,7 @@ const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage
 const model = { providerID: "fixture", id: "fixture" }
 const assistantId = "msg_streaming"
 let nativeLists = 0, time = 10000, live = "", streaming = false
+const prompts: string[] = []
 let listHold: Promise<void> | undefined, releaseListHold: (() => void) | undefined, listPending = false
 let releaseMessages!: () => void
 const messagesGate = new Promise<void>(resolve => { releaseMessages = resolve })
@@ -39,6 +40,8 @@ const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, title: "Long navigation", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
+    switchAgent: async () => ({}), switchModel: async () => ({}),
+    prompt: async ({ id }: any) => { prompts.push(id); return {} },
   },
   model: { default: async () => ({ data: model }) },
   message: { list: async ({ cursor, limit = 200, order }: any = {}) => {
@@ -133,6 +136,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
     live += delta
     emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta })
   },
+  prompts: () => prompts,
   snapshot: () => ({ nativeLists, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId),
     scroll: store.getScrollSnapshot(sessionId, "message-stream"), model: sessions().get(instanceId)?.get(sessionId)?.model }),
 }

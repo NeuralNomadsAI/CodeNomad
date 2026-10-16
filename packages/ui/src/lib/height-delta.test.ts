@@ -27,9 +27,14 @@ test("height changes coalesce into one per-frame delta and zero heights only reb
     element.clientHeight = 650; tracker.update(); flush()
     assert.deepEqual(deltas, [80, -50])
 
+    element.clientHeight = 600; assert.equal(tracker.update(), true)
+    assert.equal(tracker.update(), false, "Only a change is reported")
+    element.clientHeight = 550; assert.equal(tracker.update(false), true); flush()
+    assert.deepEqual(deltas, [80, -50, 0], "An unanchored change drops the pending delta and only rebases")
+
     element.clientHeight = 600; tracker.update(); tracker.dispose(); flush()
     element.clientHeight = 500; tracker.update(); flush()
-    assert.deepEqual(deltas, [80, -50], "Disposal drops the pending delta and ignores later changes")
+    assert.deepEqual(deltas, [80, -50, 0], "Disposal drops the pending delta and ignores later changes")
     assert.equal(frames.size, 0)
   } finally {
     globalThis.requestAnimationFrame = previousFrame

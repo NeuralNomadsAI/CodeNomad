@@ -9,11 +9,15 @@ export function trackHeightDelta(element: HTMLElement, onDelta: (delta: number) 
   let frame: number | null = null
   let disposed = false
   return {
-    /** Call from the owner's ResizeObserver. */
-    update() {
+    /**
+     * Call from the owner's ResizeObserver. Returns whether the height changed;
+     * a change while `anchored` is false only rebases and drops the pending delta.
+     */
+    update(anchored = true) {
       const next = element.clientHeight
-      if (disposed || next === previous) return
-      if (previous > 0 && next > 0) {
+      if (disposed || next === previous) return false
+      if (!anchored) pending = 0
+      else if (previous > 0 && next > 0) {
         pending += previous - next
         frame ??= requestAnimationFrame(() => {
           frame = null
@@ -23,6 +27,7 @@ export function trackHeightDelta(element: HTMLElement, onDelta: (delta: number) 
         })
       }
       previous = next
+      return true
     },
     dispose() {
       disposed = true

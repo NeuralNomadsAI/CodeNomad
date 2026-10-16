@@ -6,7 +6,8 @@ export const POINTER_CONTROL_SELECTOR = "a[href],button,input,textarea,select,[c
 const WHEEL_GESTURE_IDLE_MS = 180
 const MIDDLE_DEAD_ZONE_PX = 8
 
-function scrollAxes(node: HTMLElement) {
+/** The axes along which `node` is a scroll container with overflowing content. */
+export function scrollAxes(node: HTMLElement) {
   const style = getComputedStyle(node)
   const scrolls = (overflow: string) => /^(auto|scroll|overlay)$/.test(overflow)
   return {
@@ -51,24 +52,26 @@ function middleTargets(root: HTMLElement, target: EventTarget | null) {
 }
 
 /** Keep an in-progress gesture on its starting scroller, not whatever row
- * virtualization or pointer movement happens to place under the cursor next. */
-export function attachScrollGestureRouting(root: HTMLElement): () => void {
+ * virtualization or pointer movement happens to place under the cursor next.
+ * `onRootWheel` receives each wheel event that `root` itself scrolls, so its
+ * owner needs no second nested-scroller walk. */
+export function attachScrollGestureRouting(root: HTMLElement, onRootWheel?: (event: WheelEvent) => void): () => void {
   let wheelOwner: HTMLElement | undefined
   let wheelAt = -Infinity
   let middle: { owners: ReturnType<typeof middleTargets>; pointerId: number; x: number; y: number; dx: number; dy: number; time: number } | undefined
   let frame: number | undefined
 
   const wheel = (event: WheelEvent) => {
-    // Redispatched intent below is only for the existing follow controllers.
-    if (!event.isTrusted) return
-    // Leave zoom, native horizontal/Shift-wheel and uncancellable input alone.
-    if (event.ctrlKey || event.shiftKey || event.deltaX !== 0 || !event.deltaY || !event.cancelable || event.defaultPrevented) {
-      wheelOwner = undefined
+    const direction = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
+    const target = direction ? findNestedScroller(root, event.target, direction) ?? root : root
+    // Leave zoom, native horizontal/Shift-wheel, uncancellable input and
+    // synthetic intent (including the redispatch below, already routed) alone.
+    if (!event.isTrusted || !direction || event.ctrlKey || event.shiftKey || event.deltaX !== 0 || !event.cancelable || event.defaultPrevented) {
+      if (event.isTrusted) wheelOwner = undefined
+      if (target === root) onRootWheel?.(event)
       return
     }
     const now = performance.now()
-    const direction = event.deltaY < 0 ? "up" : "down"
-    const target = findNestedScroller(root, event.target, direction) ?? root
     // At an edge, chain only to an ancestor of the owner, never a new shell
     // passing under the cursor during the same gesture.
     wheelOwner = !wheelOwner?.isConnected || !root.contains(wheelOwner) || now - wheelAt > WHEEL_GESTURE_IDLE_MS
@@ -76,7 +79,11 @@ export function attachScrollGestureRouting(root: HTMLElement): () => void {
       : findNestedScroller(root, wheelOwner, direction) ?? root
     wheelAt = now
     const owner = wheelOwner
-    if (owner === target) return
+    if (owner === target) {
+      if (owner === root) onRootWheel?.(event)
+      return
+    }
+    // The redispatch reports a transcript owner itself.
     event.preventDefault()
     event.stopPropagation()
     owner.dispatchEvent(new WheelEvent("wheel", { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode, bubbles: true }))

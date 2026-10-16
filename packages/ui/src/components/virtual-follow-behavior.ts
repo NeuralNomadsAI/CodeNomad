@@ -270,7 +270,6 @@ export interface ScrollControllerMetrics {
   offset: number
   scrollHeight: number
   clientHeight: number
-  sentinelMarginPx: number
 }
 
 export interface ScrollControllerState {
@@ -371,7 +370,7 @@ export function getDistanceFromBottom(metrics: ScrollControllerMetrics) {
 }
 
 export function isAtBottom(metrics: ScrollControllerMetrics) {
-  return getDistanceFromBottom(metrics) <= metrics.sentinelMarginPx
+  return getDistanceFromBottom(metrics) <= BOTTOM_FOLLOW_EPSILON_PX
 }
 
 export function hasReachedBottom(metrics: ScrollControllerMetrics) {
@@ -517,7 +516,7 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
-  contentRendered(_metrics: ScrollControllerMetrics, canPinToBottom: boolean): ScrollControllerResult {
+  contentRendered(canPinToBottom: boolean): ScrollControllerResult {
     if (this.state.restoring) return this.result(noFollowEffect)
     const next = transitionFollowMode(this.state.mode, { type: "content-grew", canPinToBottom })
     this.state.mode = next.mode

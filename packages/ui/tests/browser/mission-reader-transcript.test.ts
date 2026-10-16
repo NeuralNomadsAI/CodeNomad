@@ -71,6 +71,9 @@ test("history loaded beneath a reader is followed to its latest message once the
     await page.locator(".mission-reader").getByText("Report opening paragraph.", { exact: true }).waitFor()
     await page.evaluate(() => (window as any).fixture.seedHistory())
     assert.equal(await page.locator(".mission-transcript-content").getAttribute("inert"), "")
+    // The hidden transcript stays put; it is followed only once it can be read.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
+    assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollTop), 0)
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
     await latestHistoryPainted(page)
   } finally { await page.close() }

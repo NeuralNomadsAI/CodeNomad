@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { BOTTOM_FOLLOW_EPSILON_PX, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
 
 interface FollowScrollOptions {
@@ -135,7 +135,6 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       offset: container.scrollTop,
       scrollHeight: container.scrollHeight,
       clientHeight: container.clientHeight,
-      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
   }
 

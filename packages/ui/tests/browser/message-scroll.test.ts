@@ -220,9 +220,10 @@ test("Virtua releases do not claim a wheel's movement or replace its preceding w
     await trace.enable()
     await page.mouse.wheel(0, -80)
     await frames(page, 8)
-    assert.ok(trace.entries.some(entry => entry.kind === "write" && entry.reason === "cancel-virtua"), "The wheel releases the earlier imperative index request")
-    assert.ok(trace.entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.intent === "up"), "The wheel belongs to the user, not its release")
-    assert.equal(await stream.getAttribute("data-scroll-write"), null, "A release without a traced position write cannot publish an attribution")
+    // A release would pin the pre-wheel offset for Virtua's later measurements.
+    assert.ok(!trace.entries.some(entry => entry.kind === "write" && entry.reason === "cancel-virtua"), "A wheel never releases an earlier imperative index request")
+    assert.ok(trace.entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.intent === "up"), "The wheel belongs to the user")
+    assert.equal(await stream.getAttribute("data-scroll-write"), null, "A gesture publishes no write attribution")
 
     const start = trace.entries.length
     const moved = await page.evaluate(() => new Promise<{ at: number; offset: number; reason?: string }>(resolve => {
@@ -249,6 +250,33 @@ test("Virtua releases do not claim a wheel's movement or replace its preceding w
     assert.equal(moved.reason, "align-element", "A window release preserves the preceding position-write reason")
     assert.ok(entries.some(entry => entry.kind === "observe" && entry.owner === "unowned" && entry.during === "align-element" && entry.intent === "up" && Math.abs(entry.to - moved.offset) < 1), JSON.stringify(entries))
     assert.ok(!entries.some(entry => entry.kind === "observe" && ["cancel-virtua", "window-shift"].includes(entry.owner)), "A release never owns an observation")
+  }, { name: "list" })
+})
+
+// A notch that mounts new rows makes Virtua measure them: a release issued for
+// that wheel (scrollBy(0) before the notch lands) would then restore the
+// pre-notch offset, cancelling the gesture and the compensation above it.
+for (const growing of [false, true]) test(`a wheel after a key placement is never undone by Virtua (growing tail=${growing})`, async () => {
+  await open(async page => {
+    await page.evaluate(() => { for (let i = 0; i < 200; i++) (window as any).fixture.resizeRow(`row-${i}`, 30 + (i * 37) % 90) })
+    await frames(page, 10)
+    await page.evaluate(() => (window as any).fixture.middle())
+    await frames(page, 60)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    // Streaming-like measurements below the reader keep any Virtua pin alive.
+    if (growing) await page.evaluate(() => { let height = 60; (window as any).growTimer = setInterval(() => (window as any).fixture.resizeRow("row-199", height += 8), 30) })
+    try {
+      for (const notch of growing ? [-100, -100, -100] : [-600]) {
+        const before = await stream.evaluate(el => el.scrollTop)
+        await page.mouse.wheel(0, notch)
+        await frames(page, 30)
+        const moved = before - await stream.evaluate(el => el.scrollTop)
+        assert.ok(moved > Math.abs(notch) / 2, `The notch must land: moved ${moved}px of ${-notch}px`)
+      }
+    } finally {
+      await page.evaluate(() => clearInterval((window as any).growTimer))
+    }
   }, { name: "list" })
 })
 
@@ -359,6 +387,29 @@ test("nested follow-scroll output resumes only at its true bottom", async () => 
     await page.mouse.wheel(0, 100)
     await frames(page, 10)
     assert.equal(await innerFollow(), true, "Reaching the output's true bottom resumes follow")
+  }, { name: "nested" })
+})
+
+// The routing owns the nested-scroller decision for every wheel target,
+// including SVG icons, which are not HTML elements.
+test("a wheel over an SVG inside scrollable nested output leaves the transcript following", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
+    // An icon over the output's end, inserted here to keep the shared fixture's layout.
+    await page.locator("[data-output-action]").evaluate(button => button.insertAdjacentHTML("afterend",
+      '<svg data-output-icon width="40" height="40" style="position: sticky; bottom: 0; display: block"><rect width="40" height="40" /></svg>'))
+    await frames(page, 10)
+    const before = await output.evaluate(el => el.scrollTop)
+    await page.locator("[data-output-icon] rect").hover()
+    await page.mouse.wheel(0, -100)
+    await frames(page, 10)
+    const after = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.ok(await output.evaluate(el => el.scrollTop) < before, "The nested output consumes the wheel")
+    assert.equal(after.outerFollow, true, `A wheel consumed by nested output is not a transcript gesture: ${JSON.stringify(after)}`)
   }, { name: "nested" })
 })
 
@@ -999,6 +1050,30 @@ test("restoring an escaped anchor during settleAtBottom wins over the pin", asyn
     const pins = trace.entries.filter(entry => entry.kind === "write" && entry.reason === "explicit-pin" && entry.at > Math.ceil(result.restoreAt))
     assert.deepEqual(pins, [], `The pin wrote after the restoration: ${diagnostics}`)
     assert.equal(result.cancelled, 0, diagnostics)
+  }, { name: "list" })
+})
+
+// A long-reply hold can escape exactly at the bottom, and growth below an escaped
+// reader scrolls nothing, so that snapshot is the last one published. It must
+// keep the reader's anchor: restoring it (a reload during the hold) must not
+// land at the bottom the reply has grown to since.
+test("an escaped reader captured at the bottom restores its anchor after growth below", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.setAutoScroll(false))
+    const target = await page.evaluate(() => (window as any).fixture.snapshot())
+    for (let i = 0; i < 30; i++) await page.evaluate(() => (window as any).fixture.append())
+    await frames(page)
+    await page.evaluate(target => (window as any).fixture.restore(target), target)
+    await frames(page, 45)
+    const landed = await page.evaluate(target => {
+      const el = document.querySelector(".message-stream")!, row = target.anchorKey ? el.querySelector(`[data-virtual-follow-key="${target.anchorKey}"]`) : null
+      return { gap: el.scrollHeight - el.clientHeight - el.scrollTop, anchorOffset: row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top : null, follow: (window as any).fixture.autoScroll() }
+    }, target)
+    const diagnostics = JSON.stringify({ target, landed })
+    assert.ok(target.atBottom && target.followModeType === "escaped" && target.anchorKey !== undefined, `An escaped capture at the bottom must carry its anchor: ${diagnostics}`)
+    assert.ok(landed.anchorOffset !== null && Math.abs(landed.anchorOffset - target.anchorOffset) <= 2 && landed.gap > 1 && !landed.follow, `The restoration must land on the anchor, escaped: ${diagnostics}`)
   }, { name: "list" })
 })
 
