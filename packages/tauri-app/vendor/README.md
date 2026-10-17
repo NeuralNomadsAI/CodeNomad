@@ -1,8 +1,9 @@
 # Tao native window backports
 
-`tao-0.34.6/` is the published Apache-2.0 crate (license included), with only
-the four Windows source files from upstream [tao#1215] and the macOS
-`is_zoomed` function from [tao#1182] changed. It is selected
+`tao-0.34.6/` is the published Apache-2.0 crate (license included), with
+the Windows input backport from upstream [tao#1215], the macOS
+`is_zoomed` function from [tao#1182], and the local Windows runner refcount
+compatibility correction below. It is selected
 by the Tauri workspace's `[patch.crates-io]`; there is no registry-cache mutation
 or build-time patching. All platforms keep the same dependency/API version.
 
@@ -49,11 +50,43 @@ events, including reads during geometry capture, and exercises maximize/restore,
 fixed-size and decorated windows. Its original-crate negative control reproduces
 the feedback loop.
 
-Remove the override only after both native backports are available in the
-resolved supported release and both native regressions pass.
+Remove the override only after the resolved dependencies cover the input,
+read-only zoom and runner lifetime fixes and their native regressions pass.
 
 [tao#1215]: https://github.com/tauri-apps/tao/pull/1215
 [tao#1182]: https://github.com/tauri-apps/tao/pull/1182
+
+## Windows runtime handle lifetime
+
+The pinned `tauri-runtime-wry` 2.10.1 exposes `Send + Sync + Clone` runtime
+handles whose unsafe context graph contains Tao's non-atomic
+`Rc<EventLoopRunner>`. Safe handle clones/drops on IPC workers race the main
+thread's reference count, freeing the runner prematurely or leaking it.
+
+The local correction changes **only this internal shared counter** to `Arc`
+in `event_loop.rs` and `event_loop/runner.rs`. It neither makes
+`EventLoopWindowTarget` Send/Sync nor permits worker access to the runner's
+`Cell`/`RefCell` state. Tauri's existing main-thread access discipline remains.
+
+Provenance: [tauri#15408](https://github.com/tauri-apps/tauri/issues/15408),
+[tauri#15793](https://github.com/tauri-apps/tauri/issues/15793) and the proposal
+[tao#1290](https://github.com/tauri-apps/tao/pull/1290). **That PR was closed
+unmerged**: the maintainer correctly identified Tauri's cross-thread use of a
+non-Send window target as the contract violation. This is a deliberate local
+compatibility correction for the runtime we ship, not a claimed upstream merge
+or a general guarantee that Tao window targets are safe to use across threads.
+
+`node scripts/test-tauri-runner-refcount.mjs --baseline` calls the real pinned
+Wry runtime's safe public handle API on eight workers. The negative control
+reverts only the counter in a temporary crate copy and requires a native fault;
+the corrected build must finish every run and tear down cleanly. It uses no
+CodeNomad profile, page, backend or OpenCode service. Individual negative-control
+processes can survive a race that leaks instead of freeing early.
+
+Keep this correction until the resolved Tauri runtime no longer races Tao's
+reference count (or the resolved Tao implementation safely handles that traffic).
+Qualify removal with the same regression and the existing Windows input tests.
+Captured crash evidence is recorded in `dev-docs/TAURI_WINDOWS_RUNNER_REFCOUNT.md`.
 
 ## Updater Windows launch handoff
 

@@ -1,0 +1,10 @@
+[package]
+name = "codenomad-windows-runner-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[target.'cfg(windows)'.dependencies]
+tauri-runtime = "=2.10.1"
+tauri-runtime-wry = "=2.10.1"
+windows-sys = { version = "0.59", features = ["Win32_System_Diagnostics_Debug"] }

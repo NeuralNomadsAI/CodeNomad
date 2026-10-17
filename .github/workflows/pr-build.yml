@@ -524,6 +524,9 @@ jobs:
       - name: Reproduce and prevent Tao input deadlocks
         run: node scripts/test-tauri-input-deadlock.mjs --baseline
 
+      - name: Reproduce and prevent Windows runtime handle corruption
+        run: node scripts/test-tauri-runner-refcount.mjs --baseline
+
   # Exercise the selected-CLI contract on the reported macOS ARM64 platform as
   # well as both other hosts, independently of unrelated server-suite failures.
   tests-opencode-compatibility:

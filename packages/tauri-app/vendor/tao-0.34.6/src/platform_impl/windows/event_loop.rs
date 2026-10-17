@@ -15,7 +15,6 @@ use std::{
   ffi::c_void,
   marker::PhantomData,
   mem, panic,
-  rc::Rc,
   sync::Arc,
   thread,
   time::{Duration, Instant},
@@ -198,7 +197,7 @@ impl<T: 'static> EventLoop<T> {
     thread::spawn(move || wait_thread(thread_id, HWND(send_thread_msg_target as _)));
     let wait_thread_id = get_wait_thread_id();
 
-    let runner_shared = Rc::new(EventLoopRunner::new(thread_msg_target, wait_thread_id));
+    let runner_shared = Arc::new(EventLoopRunner::new(thread_msg_target, wait_thread_id));
 
     let thread_msg_sender = subclass_event_target_window(thread_msg_target, runner_shared.clone());
     raw_input::register_all_mice_and_keyboards_for_raw_input(thread_msg_target, Default::default());
