@@ -833,13 +833,15 @@ for (const gap of [90, 110]) test(`a viewport growing in a header shrink's task 
   }, { name: "list" })
 })
 
-// A header resize that reverts before its observer runs (a scroll event in
-// between handed Virtua the transient height) must not leave Virtua's start
-// margin stale: a later downward scroll still renders the read row.
-test("a header resize reverted before its observer leaves Virtua's start margin current", async () => {
+// A header shrink that reverts before its observer runs, around a downward
+// scroll (whose event arrives in between), must not leave Virtua's range
+// computed against the transient margin: every painted frame after the revert,
+// and after a later downward scroll, renders the read row in place.
+test("a header shrink reverted before its observer keeps the read row rendered", async () => {
   await open(async page => {
     const before = await escapeUnderHeader(page)
-    await paintedOffsets(page, before.key, `window.fixture.resizeBefore(200); ${write(1)}; requestAnimationFrame(() => window.fixture.resizeBefore(600))`, 10)
+    const reverted = await paintedOffsets(page, before.key, `window.fixture.resizeBefore(200); ${write(1)}; requestAnimationFrame(() => window.fixture.resizeBefore(600))`, 45)
+    assert.ok(reverted.every(offset => offset !== null && Math.abs(offset - (before.offset - 1)) <= 2), `The read row was not rendered after the revert: ${JSON.stringify({ before, reverted })}`)
     const offsets = await paintedOffsets(page, before.key, write(5))
     assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset - 6)) <= 2), `The read row was not rendered in place: ${JSON.stringify({ before, offsets })}`)
   }, { name: "list" })

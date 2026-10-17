@@ -1169,11 +1169,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const live = element.getBoundingClientRect().height
       if (live === height) stabilize()
       // This listener precedes Virtua's, which computes the scroll's range
-      // from its start margin: hand it the header's laid-out height now (also
-      // when a resize reverted before its observer ran). Otherwise a downward
-      // scroll, which keeps no overscan above, unmounts rows still visible
-      // (and the read row) until the correction lands.
-      setBeforeItemsHeight(live)
+      // from its start margin. A downward scroll keeps no overscan above, so a
+      // margin smaller than the laid-out header unmounts rows still visible
+      // (the read row included) until Virtua next renders, which a margin
+      // change alone does not cause. Hand it the larger of the header's
+      // laid-out and observed heights: a grown header now, and a shrink only
+      // once observed, as it may revert before its observer runs (its
+      // correction, which scrolls, re-renders the range in the same pass).
+      setBeforeItemsHeight(Math.max(live, height))
     }
     // The offset the correction of a resize not yet observed will write, if any.
     const correctionTarget = () => {

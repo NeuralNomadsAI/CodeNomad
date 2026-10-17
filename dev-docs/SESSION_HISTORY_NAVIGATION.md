@@ -175,14 +175,21 @@ beyond the shrink, are kept. Everywhere else the correction starts from the
 current offset, so a write, wheel or PageUp in the resize's frame is kept whole.
 The recorded offset and maximum are refreshed on every scroll event and row
 resize, streaming growth included, while no header resize is pending. In the
-shrink's frame, a reader in that zone loses at most the shrink of an upward move
-(all of a move smaller than the shrink); outside it nothing is lost. Every scroll
-event hands Virtua the header's laid-out height as its start margin, also while a
-resize is pending or after one reverted before its observer ran. Otherwise the
-scroll's range is computed against the
-old margin, and a downward scroll, which keeps no overscan above, unmounts rows
-that are still visible, including the read row. After writing its correction the
-header dispatches one scroll event, so Virtua renders the rows that correction
+shrink's frame, a reader in that zone loses at most the shrink of a move made in
+that frame: all of an upward move smaller than the shrink, and of a downward move
+(without growth in the same task) what the clamp took, since a clamp cannot be
+told apart from a write landing on the new bottom; outside it nothing is lost.
+
+Virtua computes a scroll's range from its start margin, and a downward scroll
+keeps no overscan above, so a margin smaller than the laid-out header unmounts
+rows that are still visible, including the read row; a margin change alone does
+not make Virtua render again (nor does a scroll event at an unchanged offset).
+Every scroll event therefore hands Virtua the larger of the header's laid-out and
+observed heights: a grown header at once, a shrink only once its observer has run,
+since the shrink may revert before then. A pending shrink's range may then end
+short below the viewport, beyond the overscan, until the shrink's own correction,
+whose write scrolls and re-renders in the same pass. After writing its correction
+the header dispatches one scroll event, so Virtua renders the rows that correction
 brings back in the same pass rather than one painted frame later. Header heights
 are compared with scroll offsets: under CSS `zoom` (not used by the app, which
 zooms natively through the device scale factor) the two are in different units,
