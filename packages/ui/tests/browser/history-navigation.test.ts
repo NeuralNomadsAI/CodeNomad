@@ -1198,6 +1198,46 @@ test("first/latest controls remain available at local boundaries and land at act
   } finally { await f.close() }
 })
 
+// A window sharing no message with the previous one remounts Virtua without a
+// size cache, so the moved header stays hidden until Virtua measures it: a
+// focused header control (the receipts' summary, Reload messages) keeps the
+// focus, and the keyboard keeps scrolling the transcript.
+for (const navigation of ["older page", "Home"] as const) test(`a focused header control keeps the focus when ${navigation} replaces the window`, async () => {
+  const f = await fixture()
+  try {
+    const stream = f.page.locator('.message-stream[tabindex]')
+    await f.page.evaluate(() => {
+      const button = document.createElement("button")
+      button.id = "header-button"
+      button.textContent = "Header control"
+      document.querySelector(".message-stream .virtual-follow-list-before")!.append(button)
+    })
+    const before = await snapshot(f.page)
+    const box = await stream.boundingBox()
+    assert(box)
+    await f.page.mouse.move(box.x + 25, box.y + 25)
+    // Leave the latest window's follow, then rest at its top.
+    await f.page.mouse.wheel(0, -400)
+    await f.page.waitForTimeout(400)
+    await stream.evaluate(element => { element.scrollTop = 0 })
+    await f.page.waitForTimeout(500)
+    await f.page.focus("#header-button")
+    if (navigation === "Home") await f.page.keyboard.press("Home")
+    else await f.page.mouse.wheel(0, -200)
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] !== id, before.ids[0], { timeout: 4000 })
+    await f.page.waitForTimeout(400)
+    const after = await snapshot(f.page)
+    assert.ok(!after.ids.some((id: string) => before.ids.includes(id)), `the windows share messages: ${after.ids[0]}…${after.ids.at(-1)}`)
+    assert.equal(await f.page.evaluate(() => document.activeElement?.id), "header-button", "the header control lost the focus")
+    // The older page is entered at its bottom, the oldest window at its top.
+    const offset = await stream.evaluate(element => element.scrollTop)
+    await f.page.keyboard.press(navigation === "Home" ? "PageDown" : "PageUp")
+    await f.page.waitForTimeout(400)
+    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - offset) > 100, "the keyboard no longer scrolls the transcript")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("keyboard scrolling owns the timeline without paging the transcript", async () => {
   const f = await fixture(true)
   try {

@@ -177,8 +177,10 @@ from its recorded offset, so the rows stay in place there too. A held native
 scrollbar thumb is compensated like a roll: the content stays in place and the
 offset moves. The row observer also watches the header, so its growth re-pins a
 following bottom. Its element is created once: a remount moves it into the new
-row 0 rather than recreating it, and focus inside it, which the move drops, is
-restored. Virtua disables its container's hit testing while scrolling; the header,
+row 0 rather than recreating it. The move drops focus inside it; the row observer
+restores it after Virtua's measurement, before paint, since a remount without a
+carried size cache (a disjoint window: older page, first/latest, jumps) hides the
+header until measured. Virtua disables its container's hit testing while scrolling; the header,
 like the rows, restores it in `styles/messaging/virtual-follow-list.css`.
 
 The place is kept from roll to roll while nothing else moves the reader by more

@@ -171,6 +171,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   // once: a Virtua remount moves it into its new first row instead of
   // recreating it (focus and its components' state survive).
   const headerElement = <div class="virtual-follow-list-before">{props.renderBeforeItems?.()}</div> as HTMLDivElement
+  // Virtua reads `data` once per mounted row: copy the window once per change.
+  const virtuaData = createMemo(() => [HEADER_ROW as T, ...virtualItems()])
   const itemElements = new Map<string, HTMLDivElement>()
   const state: VirtualFollowListState = { autoScroll, showScrollTopButton, showScrollBottomButton, scrollButtonsCount, activeKey }
 
@@ -201,6 +203,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let plannedKeys = virtualItemKeys.slice()
   // Observes the rendered rows; see `recreateRowObserver`.
   let rowResizeObserver: ResizeObserver | null = null
+  // A header control a remount blurred; see `restoreHeaderFocus`.
+  let pendingHeaderFocus: HTMLElement | undefined
   let nativeScrollbarDragging = false
 
   function invalidateScrollRestore() {
@@ -402,7 +406,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function getDomMetrics(element: HTMLDivElement, offset = element.scrollTop): ScrollControllerMetrics {
     return {
       offset,
-      // Virtua's scrollSize excludes content preceding its own item root.
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
     }
@@ -665,6 +668,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   /**
+   * Refocuses the header control a remount blurred. Without a carried size
+   * cache Virtua hides the moved header until it has measured it, so this runs
+   * from the row observer, after that measurement and before paint, unless the
+   * focus has moved elsewhere meanwhile.
+   */
+  function restoreHeaderFocus() {
+    const target = pendingHeaderFocus
+    pendingHeaderFocus = undefined
+    const active = document.activeElement
+    if (target?.isConnected && (!active || active === document.body)) target.focus({ preventScroll: true })
+  }
+
+  /**
    * Layout notifications come from the rendered rows, after Virtua has measured
    * them. ResizeObserver delivers one pass in observer creation order, so this
    * observer is recreated after each Virtua instance's (created at its mount):
@@ -678,6 +694,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     rowResizeObserver?.disconnect()
     if (typeof ResizeObserver === "undefined") return
     rowResizeObserver = new ResizeObserver(() => {
+      restoreHeaderFocus()
       collapseRetiredRows()
       settleRollAnchor()
       if (isActive()) {
@@ -1250,9 +1267,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (resetMeasurements) {
-        // The remount moves the header into its new first row, which blurs it.
-        const focused = headerElement.contains(document.activeElement) ? document.activeElement as HTMLElement : null
-        if (focused) queueMicrotask(() => { if (focused.isConnected) focused.focus({ preventScroll: true }) })
+        // The remount moves the header into its new first row, which blurs it;
+        // the row observer restores the focus (see `restoreHeaderFocus`).
+        if (headerElement.contains(document.activeElement)) pendingHeaderFocus = document.activeElement as HTMLElement
         itemElements.clear()
         setMeasurementAuthority({
           cache: measurementCache?.cache,
@@ -1373,7 +1390,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 })
               }}
               scrollRef={scrollElement()}
-              data={[HEADER_ROW as T, ...virtualItems()]}
+              data={virtuaData()}
               bufferSize={props.overscanPx ?? 400}
               // The header (Virtua's row 0) stays mounted.
               keepMounted={[0, ...new Set([
