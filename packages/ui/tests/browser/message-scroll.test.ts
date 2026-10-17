@@ -732,6 +732,34 @@ test("sixty rolling windows leave an escaped reader in place at 110% zoom", asyn
   }, { name: "list", zoom: 1.1 })
 })
 
+// Near the bottom the browser already clamps a header shrink, so the header's
+// correction moves less than the shrink: only that move may be discounted from
+// the roll's capture (exactly at the bottom, none).
+for (const gap of [0, 10, 40]) test(`a beforeItems shrink near the bottom in a roll's task leaves the reader in place (gap=${gap})`, async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.resizeBefore(600))
+    await frames(page, 10)
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page, 30)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.mouse.wheel(0, -Math.max(gap, 1))
+    await frames(page, 30)
+    if (gap === 0) {
+      await stream.evaluate(el => { el.scrollTop = el.scrollHeight })
+      await frames(page, 10)
+    }
+    const before = await stream.evaluate(el => {
+      const bounds = el.getBoundingClientRect()
+      const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")].find(row => row.getBoundingClientRect().top >= bounds.top)!
+      return { key: row.dataset.virtualFollowKey!, offset: Math.round(row.getBoundingClientRect().top - bounds.top), gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: el.dataset.followMode }
+    })
+    assert.ok(before.mode === "escaped" && Math.abs(before.gap - gap) <= 1, JSON.stringify(before))
+    const offsets = await paintedOffsets(page, before.key, "window.fixture.resizeBefore(520); window.fixture.step()")
+    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - before.offset) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
+  }, { name: "list" })
+})
+
 /** Escapes near the tail with a real wheel, so later rolls retire rows above the reader. */
 async function escapeNearTail(page: Page, wheel = -400) {
   await page.evaluate(() => (window as any).fixture.nearTail())

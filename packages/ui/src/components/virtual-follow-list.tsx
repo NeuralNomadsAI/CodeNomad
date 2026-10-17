@@ -195,6 +195,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let plannedKeys = virtualItemKeys.slice()
   // Observes the rendered rows; see `recreateRowObserver`.
   let rowResizeObserver: ResizeObserver | null = null
+  // The `beforeItems` effect's pending correction; see `pendingBeforeItemsShift`.
+  let beforeItemsCorrectionTarget: (() => number | null) | undefined
   let nativeScrollbarDragging = false
 
   function invalidateScrollRestore() {
@@ -648,7 +650,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
    * Rows keep their places until Virtua measures the retiring ones, so a scroll
    * whose event lands in between (a write or reveal in the roll's task) moves
    * the reader's place with it rather than being undone. A write from the
-   * roll frame's animation callbacks scrolls after the measurement: undone.
+   * roll frame's animation callbacks scrolls before the measurement too, but
+   * its event arrives only after it: that write is undone.
    */
   function followRollAnchor() {
     const anchor = rollAnchor, element = scrollElement()
@@ -659,14 +662,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   /**
-   * A `beforeItems` resize its observer has not corrected yet: the rows sit
-   * that much lower than where that correction will put them (it corrects an
-   * escaped reader below the header, outside a thumb drag).
+   * The move a pending `beforeItems` correction will actually make (its target,
+   * clamped like the write, minus the current offset): the rows sit that much
+   * lower than where it will put them. The browser may already have clamped a
+   * header shrink near the bottom, so this can be less than the resize.
    */
   function pendingBeforeItemsShift(element: HTMLElement) {
-    const before = beforeItemsElement(), height = untrack(beforeItemsHeight)
-    if (!before || nativeScrollbarDragging || element.scrollTop < height) return 0
-    return before.getBoundingClientRect().height - height
+    const target = beforeItemsCorrectionTarget?.()
+    return target == null ? 0 : Math.min(target, getMaxOffset(element)) - element.scrollTop
   }
 
   /** `measureAnchorDelta` for a rolled reader's place, as of the pending `beforeItems` correction. */
@@ -1155,18 +1158,27 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // Retain the pre-layout offset until that resize has been accounted for.
       if (element.getBoundingClientRect().height === height) stableOffset = stream.scrollTop
     }
+    // The offset the correction of a resize not yet observed will write, if any.
+    const correctionTarget = () => {
+      const delta = element.getBoundingClientRect().height - height
+      // A shrink near the bottom is clamped by the browser, by at most the
+      // shrink, before this runs; that clamp is not a reader move. (Being at
+      // the bottom is no evidence: a roll in the same task may append rows.)
+      const clamped = delta < 0 && stream.scrollTop < stableOffset && stableOffset - stream.scrollTop <= -delta
+      const offset = clamped ? stableOffset : stream.scrollTop
+      // An escaped reader (following has its bottom pin) keeps its rows in
+      // place. Header readers stay put, and a thumb drag owns the position.
+      const keepReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
+      return keepReader && !nativeScrollbarDragging && offset >= height ? Math.max(0, offset + delta) : null
+    }
+    beforeItemsCorrectionTarget = correctionTarget
     const measure = () => {
       const nextHeight = element.getBoundingClientRect().height
-      const delta = nextHeight - height
-      const offset = delta < 0 && !canScrollInDirection(stream, "down") ? stableOffset : stream.scrollTop
-      // An escaped reader (following has its bottom pin) keeps its rows in place.
-      const keepReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
+      const target = correctionTarget()
       setBeforeItemsHeight(nextHeight)
-      if (keepReader && !nativeScrollbarDragging && offset >= height) {
-        // One synchronous layout correction, not a deferred pin that can
-        // reassert over the next wheel/thumb gesture. Header readers stay put.
-        writeScroll("before-items", { type: "dom", top: Math.max(0, offset + delta), record: true })
-      }
+      // One synchronous layout correction, not a deferred pin that can
+      // reassert over the next wheel/thumb gesture.
+      if (target !== null) writeScroll("before-items", { type: "dom", top: target, record: true })
       height = nextHeight
       stableOffset = stream.scrollTop
       if (isActive() && !nativeScrollbarDragging) api.notifyContentRendered()
@@ -1175,6 +1187,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     observer.observe(element)
     stream.addEventListener("scroll", captureOffset, { passive: true })
     onCleanup(() => {
+      if (beforeItemsCorrectionTarget === correctionTarget) beforeItemsCorrectionTarget = undefined
       observer.disconnect()
       stream.removeEventListener("scroll", captureOffset)
     })
@@ -1284,9 +1297,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       virtualItemKeys = plannedVirtualKeys
       if (retiredNext > retiredBefore && rowResizeObserver) {
         // A retiring row's own element is gone; only its Virtua wrapper shrinks.
-        // A fresh observation of a rendered row (the first live one, kept
-        // mounted as a head probe) reports in the next pass, the one in which
-        // Virtua measures the wrapper at zero, after it.
+        // A fresh observation of a rendered row reports in the next pass, the
+        // one in which Virtua measures the wrapper at zero, after it. The first
+        // live row is re-observed if it is already mounted (a head probe);
+        // otherwise (a roll of 8 rows or more) its mount, as a head probe right
+        // after this effect, provides that initial observation.
         const row = itemElements.get(plannedVirtualKeys[retiredNext])
         if (row) {
           rowResizeObserver.unobserve(row)

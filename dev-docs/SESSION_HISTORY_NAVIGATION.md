@@ -157,10 +157,15 @@ it. A write from an animation-frame callback of the roll's frame is still undone
 its scroll event arrives only after the measurement, when the correction has
 already run (list-owned reveals supersede the correction instead). A `beforeItems`
 resize not yet corrected by its own observer is discounted from the place, since
-that correction (before the measurement) restores the rows it displaces. The
-place is kept from roll to roll while nothing else moves the
-reader by more than 2 px, so Virtua's rounded compensations (a fraction of a pixel
-per roll, more at fractional zoom) never accumulate; returning to follow forgets it.
+that correction (before the measurement) restores the rows it displaces; only the
+move the correction will actually make is discounted (its target, clamped like
+the write). A header shrink near the bottom is clamped by the browser first; the
+correction recognises that clamp (the offset fell by at most the shrink) rather
+than requiring the reader to be at the bottom, which a roll appending rows in
+the same task would contradict. The place is kept from roll to roll while
+nothing else moves the reader by more than 2 px, so Virtua's rounded compensations
+(a fraction of a pixel per roll, more at fractional zoom) never accumulate;
+returning to follow forgets it.
 Growth above an escaped reader is Virtua's own compensation, as without rolls, and
 can still drift it by a few pixels over many updates. The row observer never watches
 Virtua's container, which Virtua resizes during its own measurement: a shallower
