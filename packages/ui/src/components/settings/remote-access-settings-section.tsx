@@ -156,7 +156,7 @@ export const RemoteAccessSettingsSection: Component = () => {
   return (
     // Remote Control is the default way in; direct access is an advanced option,
     // shown open while the server already listens beyond localhost.
-    <details class="remote-direct-access" open={allowExternalConnections()}>
+    <details class="remote-direct-access">
       <summary class="remote-direct-access-summary">
         <ChevronRight class="remote-direct-access-chevron disclosure-chevron" aria-hidden="true" />
         <span>

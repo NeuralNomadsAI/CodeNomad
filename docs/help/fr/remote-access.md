@@ -21,7 +21,7 @@ L’adresse d’écoute ne crée pas de règles de pare-feu, transfert de ports,
 3. Activez **Autoriser les connexions depuis d'autres IP** sous **Mode d'écoute**. Lisez l’avertissement et choisissez **Redémarrer maintenant** seulement lorsque vous êtes prêt pour l’interruption temporaire.
 4. Après redémarrage, utilisez **Rafraîchir** et vérifiez **Adresses accessibles**. Ouvrez l’adresse HTTPS accessible sur l’autre appareil, ou choisissez **Afficher le QR** sur l’hôte et scannez-le avec l’autre appareil, puis connectez-vous.
 
-Cela change le mode d’écoute directe de l’hôte, pas un projet ni le Contrôle à distance. La section s’ouvre automatiquement tant que le serveur écoute au-delà de localhost. Si le redémarrage automatique est indisponible, redémarrez CodeNomad manuellement ; les déploiements autonomes doivent régler leur `--host` de lancement de manière cohérente. Pour retirer l’exposition, désactivez le commutateur et redémarrez, ou relancez la CLI en boucle locale. Cela ne révoque pas les appareils appairés au Contrôle à distance.
+Cela change le mode d’écoute directe de l’hôte, pas un projet ni le Contrôle à distance. La section est repliée par défaut même si le serveur écoute au-delà de localhost. Si le redémarrage automatique est indisponible, redémarrez CodeNomad manuellement ; les déploiements autonomes doivent régler leur `--host` de lancement de manière cohérente. Pour retirer l’exposition, désactivez le commutateur et redémarrez, ou relancez la CLI en boucle locale. Cela ne révoque pas les appareils appairés au Contrôle à distance.
 
 ### Matrice des adresses d’écoute {#binding-matrix}
 

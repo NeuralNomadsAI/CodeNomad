@@ -4,7 +4,7 @@
     { "id": "start", "pages": ["index", "install", "server"] },
     { "id": "workflows", "pages": ["projects", "conversations", "history", "files", "permissions", "missions"] },
     { "id": "opencode-setup", "pages": ["opencode", "providers", "integrations"] },
-    { "id": "remote-access", "pages": ["remote-access", "remote-control", "security", "mobile"] },
+    { "id": "remote-access", "pages": ["remote-control", "remote-access", "security", "mobile"] },
     { "id": "customize", "pages": ["settings", "shortcuts", "voice"] },
     { "id": "extensions", "pages": ["extensions"] },
     { "id": "desktop", "pages": ["desktop", "browser-sidecars", "updates"] },

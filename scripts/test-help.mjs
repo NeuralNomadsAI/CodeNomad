@@ -103,7 +103,7 @@ test("declared help pages have translations, stable heading ids, links, images a
   assert.deepEqual(site.locales, LOCALES, "help must support the app's ten locales")
   assert.deepEqual(site.sections.map((section) => section.pages), [
     ["index", "install", "server"], ["projects", "conversations", "history", "files", "permissions", "missions"],
-    ["opencode", "providers", "integrations"], ["remote-access", "remote-control", "security", "mobile"],
+    ["opencode", "providers", "integrations"], ["remote-control", "remote-access", "security", "mobile"],
     ["settings", "shortcuts", "voice"], ["extensions"], ["desktop", "browser-sidecars", "updates"], ["troubleshooting", "support"],
   ], "all approved pages must remain reachable in their eight groups")
   if (onlyLocale) assert.ok(site.locales.includes(onlyLocale), `unsupported locale: ${onlyLocale}`)

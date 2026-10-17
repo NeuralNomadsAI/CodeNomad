@@ -21,7 +21,7 @@ Escuchar en una dirección no crea reglas de cortafuegos, reenvío de puertos, D
 3. Activa **Permitir conexiones desde otras IP** en **Modo de escucha**. Lee la advertencia de reinicio y elige **Reiniciar ahora** solo cuando estés preparado para la interrupción temporal.
 4. Tras reiniciar, usa **Actualizar** y comprueba **Direcciones accesibles**. Abre la dirección HTTPS accesible en el otro dispositivo, o elige **Mostrar QR** en el anfitrión y escanéalo con el otro dispositivo; después inicia sesión.
 
-Esto cambia el modo de escucha directa del anfitrión, no un proyecto ni Control remoto. La sección se abre automáticamente mientras el servidor escucha más allá de localhost. Si el reinicio automático no está disponible, reinicia CodeNomad manualmente; los despliegues independientes deben definir coherentemente `--host` al iniciar. Para retirar la exposición, desactiva el interruptor y reinicia, o vuelve a iniciar la CLI escuchando en loopback. Esto no revoca los dispositivos emparejados de Control remoto.
+Esto cambia el modo de escucha directa del anfitrión, no un proyecto ni Control remoto. La sección está contraída por defecto incluso si el servidor escucha más allá de localhost. Si el reinicio automático no está disponible, reinicia CodeNomad manualmente; los despliegues independientes deben definir coherentemente `--host` al iniciar. Para retirar la exposición, desactiva el interruptor y reinicia, o vuelve a iniciar la CLI escuchando en loopback. Esto no revoca los dispositivos emparejados de Control remoto.
 
 ### Matriz de direcciones de escucha {#binding-matrix}
 

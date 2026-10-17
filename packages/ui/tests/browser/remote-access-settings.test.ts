@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "remote-access-fixture", configureServer(s) { s.middlewares.use("/fixture", async (_req, res) => {
       res.setHeader("Content-Type", "text/html")
       res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/remote-access-settings.tsx"></script></body></html>'))
@@ -16,7 +19,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
 test("direct access stays collapsed behind Remote Control until the user opens it", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
@@ -35,11 +38,17 @@ test("direct access stays collapsed behind Remote Control until the user opens i
   } finally { await page.close() }
 })
 
-test("direct access opens by itself while the server listens beyond localhost", async () => {
+test("direct access starts collapsed even while the server listens beyond localhost", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {
     await page.goto(`${url}?mode=all`)
-    await page.getByText("Listening mode", { exact: true }).waitFor()
-    assert.equal(await page.locator("details.remote-direct-access").evaluate((node) => (node as HTMLDetailsElement).open), true)
+    const summary = page.locator("summary.remote-direct-access-summary")
+    await summary.waitFor()
+    assert.equal(await page.locator("details.remote-direct-access").evaluate((node) => (node as HTMLDetailsElement).open), false)
+    const listening = page.getByText("Listening mode", { exact: true })
+    assert.equal(await listening.isVisible(), false)
+    await summary.click()
+    await listening.waitFor()
+    assert.equal(await page.getByRole("switch").first().isChecked(), true)
   } finally { await page.close() }
 })

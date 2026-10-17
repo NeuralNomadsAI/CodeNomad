@@ -21,7 +21,7 @@ Binding does not create firewall rules, port forwarding, DNS or a VPN. Do not pu
 3. Turn on **Allow connections from other IPs** under **Listening mode**. Read the restart warning and choose **Restart now** only when ready for the temporary interruption.
 4. After restart, use **Refresh** and check **Reachable addresses**. Open the reachable HTTPS address on the other device, or choose **Show QR** on the host and scan it with the other device, then sign in.
 
-This changes the host's direct listening mode, not one project and not Remote Control. The disclosure opens automatically while the server listens beyond localhost. If automatic restart is unavailable, restart CodeNomad manually; standalone deployments must set their launch-time `--host` consistently. To remove exposure, turn the switch off and restart, or relaunch the CLI with loopback binding. This does not revoke paired Remote Control devices.
+This changes the host's direct listening mode, not one project and not Remote Control. The disclosure starts collapsed even while the server listens beyond localhost. If automatic restart is unavailable, restart CodeNomad manually; standalone deployments must set their launch-time `--host` consistently. To remove exposure, turn the switch off and restart, or relaunch the CLI with loopback binding. This does not revoke paired Remote Control devices.
 
 ### Listener binding matrix {#binding-matrix}
 
