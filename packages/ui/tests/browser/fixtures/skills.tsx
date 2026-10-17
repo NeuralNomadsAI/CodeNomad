@@ -6,7 +6,7 @@ import type { PromptInputApi } from "../../../src/components/prompt-input/types"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import MessageSection from "../../../src/components/message-section"
 import type { SessionMessageUser } from "@opencode/client"
-import { setSessions, setActiveSession } from "../../../src/stores/session-state"
+import { setSessions, setActiveSession, setAgents } from "../../../src/stores/session-state"
 import { loadMessages } from "../../../src/stores/session-api"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
@@ -24,6 +24,9 @@ import "../../../src/index.css"
 const [session, setSession] = createSignal("a")
 const [active, setActive] = createSignal(true)
 const params = new URLSearchParams(location.search)
+if (params.has("groups")) setAgents(new Map([["skills", [
+  { id: "review-agent", name: "review-agent", description: "Review agent", mode: "subagent" },
+]]]))
 const skillName = params.has("longSkill") ? "m".repeat(64) + "-END-SKILL" : "Review"
 const pending: Array<{ directory: string; resolve: (value: any) => void }> = []
 const history: SessionMessageUser[] = [

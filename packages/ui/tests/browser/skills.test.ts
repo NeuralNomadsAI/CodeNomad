@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "skills-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -20,7 +23,46 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
+
+test("mention groups and keyboard selection follow files, agents, then skills even when files arrive last", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: "en-US" })
+  let releaseFiles!: () => Promise<void>
+  await page.route("**/api/**", route => {
+    if (/\/files(?:\/search)?$/.test(new URL(route.request().url()).pathname)) {
+      releaseFiles = () => route.fulfill({ json: [{ path: "review.md", type: "file" }] })
+      return
+    }
+    return route.fulfill({ json: {} })
+  })
+  try {
+    await page.goto(`${url}?groups=1`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const textarea = page.locator(".prompt-input-container textarea").first()
+    const picker = page.locator(".dropdown-surface")
+    await textarea.fill("@review")
+    await page.waitForFunction(() => (window as any).fixture.pending().length === 1)
+    await page.evaluate(() => (window as any).fixture.resolve(0, "review-skill"))
+    await picker.locator(".dropdown-item", { hasText: "review-skill" }).waitFor()
+    assert.ok(releaseFiles, "file query started")
+    await releaseFiles()
+    await picker.locator(".dropdown-item", { hasText: "review.md" }).waitFor()
+    assert.deepEqual(await picker.locator(".dropdown-section-header").allTextContents().then(items => items.map(s => s.trim())),
+      ["FILES", "AGENTS", "SKILLS"])
+    const selected = picker.locator('[data-picker-selected="true"]')
+    assert.equal(await selected.count(), 1)
+    assert.match(await selected.innerText(), /review\.md/)
+    await textarea.press("ArrowDown")
+    assert.equal(await selected.count(), 1)
+    assert.match(await selected.innerText(), /review-agent/)
+    await textarea.press("ArrowDown")
+    assert.equal(await selected.count(), 1)
+    assert.match(await selected.innerText(), /review-skill/)
+    await textarea.press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.selected().some((s: any) => s.type === "skill" && s.id === "review-skill"))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.sends), [])
+  } finally { await page.close() }
+})
 
 test("skills use the existing attachments bar without a second composer row", async () => {
   const page = await browser.newPage({ viewport: { width: 380, height: 700 }, locale: "en-US" })
