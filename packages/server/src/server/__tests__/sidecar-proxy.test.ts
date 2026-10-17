@@ -10,6 +10,7 @@ import pino from "pino"
 import type { FastifyInstance } from "fastify"
 import type { SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
+import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../http-server"
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -137,11 +138,13 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     },
   }
   const stub = new Proxy({}, { get: () => () => undefined }) as never
+  const previewManager = new PreviewManager()
+  const preview = previewManager.create("fixture", `http://127.0.0.1:${port}`)
   const { instance: app } = createHttpServer({
     bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
     workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: stub,
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
-    instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager: stub,
+    instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager,
     clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
     remoteControlManager: stub, uiStaticDir: directory,
@@ -158,6 +161,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     cookie: `${authManager.getCookieName()}=${session.id}`,
     upgrades,
     requests,
+    preview,
     cleanupDirectory: directory,
   }
 }
@@ -211,6 +215,20 @@ it("a rejected WebSocket handshake cannot overwrite the CodeNomad session either
     assert.equal(response.head.includes("codenomad_session"), false)
     assert.ok(response.head.includes("service_login=expired"))
     assert.equal(server.requests[0].cookie, undefined)
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("preview WebSocket capabilities keep working through the shared transport without forwarding cookies", async () => {
+  const server = await startServer({ cookies: ["codenomad_session=poison; Path=/", "preview_cookie=value; Path=/"] })
+  try {
+    const cases: Record<string, string>[] = [{}, { cookie: `${server.cookie}; service=value`, origin: "null" }]
+    for (const headers of cases) {
+      const response = await webSocketUpgrade(server.port, `/previews/${server.preview.token}/ws`, headers)
+      assert.equal(response.status, 101)
+      assert.equal(response.head.toLowerCase().includes("set-cookie"), false)
+    }
+    assert.deepEqual(server.requests.map(request => request.cookie), [undefined, undefined])
+    assert.deepEqual(server.upgrades, ["/ws", "/ws"])
   } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
 
