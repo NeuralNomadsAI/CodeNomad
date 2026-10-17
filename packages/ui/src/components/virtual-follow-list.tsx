@@ -20,6 +20,10 @@ const SCROLL_RESTORE_MEASUREMENT_MAX_FRAMES = 90
 const ELEMENT_ALIGNMENT_BOTTOM_MARGIN_PX = 48
 // A rolled reader corrects at 1 px; drift below this is rounding, not a move.
 const ROLL_READER_ROUNDING_PX = 2
+// Virtua's first row is the content above the rows (`renderBeforeItems`): row
+// `index` of `virtualItems` is Virtua's row `index + HEADER_ROWS`.
+const HEADER_ROWS = 1
+const HEADER_ROW = {}
 
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
@@ -138,8 +142,6 @@ export interface VirtualFollowListProps<T> {
 export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
   const [shellElement, setShellElement] = createSignal<HTMLDivElement | undefined>()
-  const [beforeItemsElement, setBeforeItemsElement] = createSignal<HTMLDivElement>()
-  const [beforeItemsHeight, setBeforeItemsHeight] = createSignal(0)
   const [virtuaHandle, setVirtuaHandle] = createSignal<VirtualizerHandle | undefined>()
   const [followMode, setFollowMode] = createSignal<FollowMode>({ type: props.initialAutoScroll?.() ?? true ? "following" : "escaped" })
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
@@ -165,6 +167,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
 
   const scrollController = new VirtualScrollController(initialAutoScroll())
+  // Virtua measures and compensates the header like any row. It is created
+  // once: a Virtua remount moves it into its new first row instead of
+  // recreating it (focus and its components' state survive).
+  const headerElement = <div class="virtual-follow-list-before">{props.renderBeforeItems?.()}</div> as HTMLDivElement
   const itemElements = new Map<string, HTMLDivElement>()
   const state: VirtualFollowListState = { autoScroll, showScrollTopButton, showScrollBottomButton, scrollButtonsCount, activeKey }
 
@@ -195,8 +201,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let plannedKeys = virtualItemKeys.slice()
   // Observes the rendered rows; see `recreateRowObserver`.
   let rowResizeObserver: ResizeObserver | null = null
-  // The `beforeItems` effect's pending correction; see `pendingBeforeItemsShift`.
-  let beforeItemsCorrection: { target: () => number | null; capture: () => void } | undefined
   let nativeScrollbarDragging = false
 
   function invalidateScrollRestore() {
@@ -536,8 +540,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function writeIndex(reason: ScrollReason, index: number) {
     const handle = virtuaHandle()
     if (!scrollElement() || !handle) return false
-    // Virtua's item offsets exclude its start margin, the content before its items.
-    writeScroll(reason, { type: "dom", top: untrack(beforeItemsHeight) + handle.getItemOffset(index), record: true })
+    writeScroll(reason, { type: "dom", top: handle.getItemOffset(index + HEADER_ROWS), record: true })
     return true
   }
 
@@ -548,9 +551,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     return -1
   }
 
-  /** Virtua's row index at `offset`, never a retired row. */
+  /** The row index at `offset`, never the header or a retired row. */
   function findLiveItemIndex(handle: VirtualizerHandle, offset: number) {
-    return Math.max(handle.findItemIndex(offset), retiredCount())
+    return Math.max(handle.findItemIndex(offset) - HEADER_ROWS, retiredCount())
   }
 
   function updateScrollStateFromDom() {
@@ -626,7 +629,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!handle) return
     let collapsed = untrack(collapsedCount)
     const retired = untrack(retiredCount)
-    while (collapsed < retired && handle.getItemSize(collapsed) === 0) collapsed++
+    while (collapsed < retired && handle.getItemSize(collapsed + HEADER_ROWS) === 0) collapsed++
     if (collapsed !== untrack(collapsedCount)) setCollapsedCount(collapsed)
   }
 
@@ -657,24 +660,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const anchor = rollAnchor, element = scrollElement()
     const row = anchor && itemElements.get(anchor.key)
     if (!anchor || !element || !row?.isConnected) return
-    const delta = measureReaderDelta(element, row, anchor.offset)
+    const delta = measureAnchorDelta(element, row, anchor.offset)
     if (Math.abs(delta) > ROLL_READER_ROUNDING_PX) rollReader = rollAnchor = { key: anchor.key, offset: anchor.offset + delta }
-  }
-
-  /**
-   * The move a pending `beforeItems` correction will actually make (its target,
-   * clamped like the write, minus the current offset): the rows sit that much
-   * lower than where it will put them. The browser may already have clamped a
-   * header shrink near the bottom, so this can be less than the resize.
-   */
-  function pendingBeforeItemsShift(element: HTMLElement) {
-    const target = beforeItemsCorrection?.target()
-    return target == null ? 0 : Math.min(target, getMaxOffset(element)) - element.scrollTop
-  }
-
-  /** `measureAnchorDelta` for a rolled reader's place, as of the pending `beforeItems` correction. */
-  function measureReaderDelta(element: HTMLElement, row: Element, offset: number) {
-    return measureAnchorDelta(element, row, offset) - pendingBeforeItemsShift(element)
   }
 
   /**
@@ -698,9 +685,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         pendingContentRenderedFrame = null
         flushContentRendered()
       }
-      // Row resizes (streaming) move the maximum offset without a scroll event.
-      beforeItemsCorrection?.capture()
     })
+    rowResizeObserver.observe(headerElement)
     for (const element of itemElements.values()) rowResizeObserver.observe(element)
   }
 
@@ -1149,78 +1135,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(() => props.registerApi?.(api))
   createEffect(() => props.registerState?.(state))
 
-  createEffect(() => {
-    const element = beforeItemsElement()
-    const stream = scrollElement()
-    if (!element || !stream) return
-    let height = element.getBoundingClientRect().height
-    // The offset and maximum offset before a resize not yet observed.
-    let stableOffset = 0, stableMax = 0
-    const stabilize = () => {
-      stableOffset = stream.scrollTop
-      stableMax = getMaxOffset(stream)
-    }
-    stabilize()
-    setBeforeItemsHeight(height)
-    // On scroll events and row resizes: a shrinking prefix can clamp scrollTop
-    // before ResizeObserver runs, so retain the values from before a resize
-    // until it has been accounted for.
-    const captureOffset = () => {
-      const live = element.getBoundingClientRect().height
-      if (live === height) stabilize()
-      // This listener precedes Virtua's, which computes the scroll's range
-      // from its start margin. A downward scroll keeps no overscan above, so a
-      // margin smaller than the laid-out header unmounts rows still visible
-      // (the read row included) until Virtua next renders, which a margin
-      // change alone does not cause. Hand it the larger of the header's
-      // laid-out and observed heights: a grown header now, and a shrink only
-      // once observed, as it may revert before its observer runs (its
-      // correction, which scrolls, re-renders the range in the same pass).
-      setBeforeItemsHeight(Math.max(live, height))
-    }
-    // The offset the correction of a resize not yet observed will write, if any.
-    const correctionTarget = () => {
-      const delta = element.getBoundingClientRect().height - height
-      // The browser clamps a shrink only for a reader closer to the bottom
-      // than the shrink (by the recorded maximum, or because the list can no
-      // longer scroll down: the viewport may have grown unobserved). A clamp
-      // only lowers scrollTop, by at most the shrink: restore no more than
-      // that, so other moves (a downward write that growth made possible, a
-      // larger upward one) stay the reader's.
-      const mayClamp = delta < 0 && (stableMax - stableOffset < -delta || !canScrollInDirection(stream, "down"))
-      const offset = mayClamp && stream.scrollTop < stableOffset ? Math.min(stableOffset, stream.scrollTop - delta) : stream.scrollTop
-      // An escaped reader (following has its bottom pin) keeps its rows in
-      // place. Header readers stay put, and a thumb drag owns the position.
-      const keepReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
-      return keepReader && !nativeScrollbarDragging && offset >= height ? Math.max(0, offset + delta) : null
-    }
-    const correction = { target: correctionTarget, capture: captureOffset }
-    beforeItemsCorrection = correction
-    const measure = () => {
-      const nextHeight = element.getBoundingClientRect().height
-      const target = correctionTarget()
-      setBeforeItemsHeight(nextHeight)
-      // One synchronous layout correction, not a deferred pin that can
-      // reassert over the next wheel/thumb gesture.
-      if (target !== null) writeScroll("before-items", { type: "dom", top: target, record: true })
-      height = nextHeight
-      stabilize()
-      // Virtua renders a scroll's range at its event, a frame later; after a
-      // downward scroll (no overscan above) the rows the correction brings back
-      // into view would paint missing. Let it render them in this pass.
-      if (target !== null) stream.dispatchEvent(new Event("scroll"))
-      if (isActive() && !nativeScrollbarDragging) api.notifyContentRendered()
-    }
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    stream.addEventListener("scroll", captureOffset, { passive: true })
-    onCleanup(() => {
-      if (beforeItemsCorrection === correction) beforeItemsCorrection = undefined
-      observer.disconnect()
-      stream.removeEventListener("scroll", captureOffset)
-    })
-  })
-
   createEffect(on(explicitBottomPinIntent, (intent) => {
     if (!intent) {
       handledBottomPinToken = null
@@ -1276,14 +1190,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const resetMeasurements = reset || measureAppend
       // Remap live rows by key only: a retired row's zero must never become the
       // size of the same message brought back by a page. A retained prefix keeps
-      // its sizes by position.
+      // its sizes by position, and so does the header.
       const cache = virtuaHandle()?.cache
       const remapped = resetMeasurements
-        ? remapVirtualMeasurements(liveKeys, nextItemKeys, cache && [cache[0].slice(retiredBefore), cache[1]] as typeof cache, autoScroll(), measurementAuthority().pendingProbeKeys)
+        ? remapVirtualMeasurements(liveKeys, nextItemKeys, cache && [cache[0].slice(HEADER_ROWS + retiredBefore), cache[1]] as typeof cache, autoScroll(), measurementAuthority().pendingProbeKeys)
         : undefined
-      const measurementCache = remapped && retiredNext > 0
-        ? { cache: [[...cache![0].slice(0, retiredNext), ...remapped.cache[0]], remapped.cache[1]] as typeof cache, probes: remapped.probes.map(index => index + retiredNext) }
-        : remapped
+      const measurementCache = remapped && { cache: [[...cache![0].slice(0, HEADER_ROWS + retiredNext), ...remapped.cache[0]], remapped.cache[1]] as typeof cache, probes: remapped.probes.map(index => index + retiredNext) }
       const viewport = resetMeasurements ? scrollElement()?.getBoundingClientRect() : undefined
       // Visible rows and pending measurements have separate lifetimes: many
       // visible rows must never evict a zero-seeded insertion before its measure.
@@ -1305,14 +1217,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         if (held && !surviving.has(held.key)) readerSettlement.cancel()
         const handle = virtuaHandle(), element = scrollElement()
         let shrinks = false
-        for (let index = retiredBefore; index < retiredNext && !shrinks; index++) shrinks = !handle || handle.getItemSize(index) !== 0
+        for (let index = retiredBefore; index < retiredNext && !shrinks; index++) shrinks = !handle || handle.getItemSize(index + HEADER_ROWS) !== 0
         if (shrinks && element) {
           // Moved further than rounding (a programmatic scroll, find-in-page):
           // the reader is wherever it now reads.
           const row = rollReader && surviving.has(rollReader.key) ? itemElements.get(rollReader.key) : undefined
-          if (!rollReader || !row?.isConnected || Math.abs(measureReaderDelta(element, row, rollReader.offset)) > ROLL_READER_ROUNDING_PX) {
+          if (!rollReader || !row?.isConnected || Math.abs(measureAnchorDelta(element, row, rollReader.offset)) > ROLL_READER_ROUNDING_PX) {
             const anchor = findTopVisibleAnchor(element, surviving)
-            rollReader = anchor ? { key: anchor.key, offset: anchor.offset - pendingBeforeItemsShift(element) } : undefined
+            rollReader = anchor ? { key: anchor.key, offset: anchor.offset } : undefined
           }
           rollAnchor = rollReader
         }
@@ -1338,6 +1250,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (resetMeasurements) {
+        // The remount moves the header into its new first row, which blurs it.
+        const focused = headerElement.contains(document.activeElement) ? document.activeElement as HTMLElement : null
+        if (focused) queueMicrotask(() => { if (focused.isConnected) focused.focus({ preventScroll: true }) })
         itemElements.clear()
         setMeasurementAuthority({
           cache: measurementCache?.cache,
@@ -1424,7 +1339,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onMouseUp={props.onMouseUp}
         onClick={props.onClick}
       >
-        <div class="virtual-follow-list-before" ref={setBeforeItemsElement}>{props.renderBeforeItems?.()}</div>
         {/* Client-only: keep bounded measurement probes, not an SSR range that
             stays pinned until a real scroll event (short threads cannot scroll). */}
         <Show keyed when={measurementAuthority()}>
@@ -1459,10 +1373,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 })
               }}
               scrollRef={scrollElement()}
-              startMargin={beforeItemsHeight()}
-              data={virtualItems()}
+              data={[HEADER_ROW as T, ...virtualItems()]}
               bufferSize={props.overscanPx ?? 400}
-              keepMounted={[...new Set([
+              // The header (Virtua's row 0) stays mounted.
+              keepMounted={[0, ...new Set([
                 // Retired rows stay mounted until Virtua has measured them at zero.
                 ...Array.from({ length: retiredCount() - collapsedCount() }, (_, index) => collapsedCount() + index),
                 ...Array.from({ length: Math.min(virtualItems().length - retiredCount(), MEASUREMENT_PROBE_COUNT) }, (_, index) => retiredCount() + index),
@@ -1471,11 +1385,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 // alone cannot render the destination before the scroll event.
                 ...Array.from({ length: Math.min(virtualItems().length - retiredCount(), MEASUREMENT_PROBE_COUNT) }, (_, index) => virtualItems().length - 1 - index),
                 ...authority.probes.filter(index => index < virtualItems().length),
-              ])]}
+              ].map(index => index + HEADER_ROWS))]}
               onScroll={handleScroll}
               onScrollEnd={props.onScrollEnd}
             >
-              {(item, index) => {
+              {(item, virtuaIndex) => {
+                if (item === HEADER_ROW) return headerElement
+                const index = () => virtuaIndex() - HEADER_ROWS
                 const key = props.getKey(item, index())
                 // A retired row renders nothing; callers see live indexes only.
                 return <Show when={index() >= retiredCount()} fallback={<div data-virtual-follow-retired="" />}><div

@@ -14,7 +14,7 @@ export const SCROLL_REASONS = [
   // Escaped-reader retention (including a jump's landing) and in-place reveals.
   "reader-settle", "align-element", "hold",
   // Layout compensation.
-  "before-items", "viewport-resize",
+  "viewport-resize",
   // Mode-only sources.
   "user-gesture", "thumb-drag", "set-follow", "reset",
   // External writer retained to preserve occurrence-level reveal behavior.

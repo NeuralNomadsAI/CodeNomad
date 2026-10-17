@@ -259,12 +259,19 @@ test("expanded unanchored receipts participate in latest, anchor and manual scro
     await page.mouse.down()
     await page.waitForTimeout(750)
     const heldOffset = await stream.evaluate(element => element.scrollTop)
+    const heldAnchor = await anchorOffset()
     await refresh(2)
-    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - heldOffset) <= 2, "prefix resize must not move a held native thumb")
+    // The receipts are the transcript's first virtual row: Virtua compensates
+    // their growth under a held thumb like any row's (and a roll's), so the
+    // read content stays in place and the offset absorbs the growth; Chromium
+    // continues the drag from the new offset.
+    const grownOffset = await stream.evaluate(element => element.scrollTop)
+    assert.ok(grownOffset > heldOffset + 300, "the prefix grew above the held thumb's position")
+    assert.ok(Math.abs(await anchorOffset() - heldAnchor) <= 2, "prefix growth under a held native thumb keeps the read content in place")
     await page.mouse.move(thumb.x, thumb.y + 60, { steps: 8 })
     await page.mouse.up()
     await page.waitForTimeout(250)
-    assert.ok(await stream.evaluate(element => element.scrollTop) > heldOffset + 100, "thumb motion owns the new position after growth")
+    assert.ok(await stream.evaluate(element => element.scrollTop) > grownOffset + 100, "thumb motion owns the new position after growth")
 
     await page.getByRole("button", { name: "Aller au premier message", exact: true }).click()
     await stream.hover()

@@ -155,45 +155,31 @@ Virtua keeps every row where it was, so a write or reveal in the roll's own task
 whose scroll event arrives before the measurement, moves the recorded place with
 it. A write from an animation-frame callback of the roll's frame is still undone:
 its scroll event arrives only after the measurement, when the correction has
-already run (list-owned reveals supersede the correction instead). A `beforeItems`
-resize not yet corrected by its own observer is discounted from the place, since
-that correction (before the measurement) restores the rows it displaces; only the
-move the correction will actually make is discounted (its target, clamped like
-the write).
+already run (list-owned reveals supersede the correction instead).
 
-The header correction keeps the reader's rows where they were. A header that
-shrinks may first be clamped by the browser, which happens only for a reader that
-was closer to the bottom than the shrink (by the recorded maximum), or that can no
-longer scroll down (the viewport may have grown in the same task, unobserved). A
-clamp only lowers the offset, by at most the shrink, so in that zone the
-correction restores no more than that: it starts from the recorded offset, or from
-the current offset plus the shrink if that is lower. A clamp against the maximum
-of any intermediate layout (a roll appending rows in the same task), fractional
-heights and a viewport resize in the same task are thus undone, while a downward
-write that growth in the same task made possible, and the part of an upward move
-beyond the shrink, are kept. Everywhere else the correction starts from the
-current offset, so a write, wheel or PageUp in the resize's frame is kept whole.
-The recorded offset and maximum are refreshed on every scroll event and row
-resize, streaming growth included, while no header resize is pending. In the
-shrink's frame, a reader in that zone loses at most the shrink of a move made in
-that frame: all of an upward move smaller than the shrink, and of a downward move
-(without growth in the same task) what the clamp took, since a clamp cannot be
-told apart from a write landing on the new bottom; outside it nothing is lost.
-
-Virtua computes a scroll's range from its start margin, and a downward scroll
-keeps no overscan above, so a margin smaller than the laid-out header unmounts
-rows that are still visible, including the read row; a margin change alone does
-not make Virtua render again (nor does a scroll event at an unchanged offset).
-Every scroll event therefore hands Virtua the larger of the header's laid-out and
-observed heights: a grown header at once, a shrink only once its observer has run,
-since the shrink may revert before then. A pending shrink's range may then end
-short below the viewport, beyond the overscan, until the shrink's own correction,
-whose write scrolls and re-renders in the same pass. After writing its correction
-the header dispatches one scroll event, so Virtua renders the rows that correction
-brings back in the same pass rather than one painted frame later. Header heights
-are compared with scroll offsets: under CSS `zoom` (not used by the app, which
-zooms natively through the device scale factor) the two are in different units,
-and the correction is off by the shrink times (zoom − 1).
+The content above the rows (`renderBeforeItems`: permission receipts, the older
+history controls, the empty, loading and load-error states) is Virtua's row 0,
+ahead of the retired prefix (Virtua's sizes are positional, so a header after the
+prefix would change index, and size, with every roll), and always mounted. Row
+`index` of the list's data is Virtua's row `index + 1`; the translation stays inside
+the list (`writeIndex`, `findLiveItemIndex`, the retired watermark, the remapped size
+cache, which keeps the header's size by position, and `keepMounted`). The header
+carries no `data-virtual-follow-key` and is not a keyed item element: it is never
+an anchor, the active row, a reveal or restoration target, a message or a
+`renderItem` call. Like every row it is absolutely positioned, so its resizes move
+nothing until Virtua measures them and compensates them in the same pass, by the
+same rule as any row: a header wholly above the viewport keeps the reader's rows in
+place; one cut by the viewport top is compensated only while scrolling down, and
+otherwise the rows below it move with its resize (the reader inside it stays put).
+No list code corrects it. Near the bottom the browser clamps the
+offset as Virtua shrinks its content; Virtua (0.52.8 and later) then compensates
+from its recorded offset, so the rows stay in place there too. A held native
+scrollbar thumb is compensated like a roll: the content stays in place and the
+offset moves. The row observer also watches the header, so its growth re-pins a
+following bottom. Its element is created once: a remount moves it into the new
+row 0 rather than recreating it, and focus inside it, which the move drops, is
+restored. Virtua disables its container's hit testing while scrolling; the header,
+like the rows, restores it in `styles/messaging/virtual-follow-list.css`.
 
 The place is kept from roll to roll while nothing else moves the reader by more
 than 2 px, so Virtua's rounded compensations (a fraction of a pixel per roll, more
@@ -285,7 +271,7 @@ In-place reveals (`alignElement`) are reader-settlement holds on the revealed
 element; key jumps hold their row the same way at offset 0. Both have the former
 element alignment's lifetime and are released afterwards: the element is measured and
 re-aligned on every frame of a fixed 30-frame window counted from the request, which
-layout never extends. Within it, viewport and `beforeItems` resizes re-align the
+layout never extends. Within it, viewport and header resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
 the current viewport only when applied. Gestures, navigation and focus moving to
 another element inside the transcript scroller (Tab, assistive technology) end it at

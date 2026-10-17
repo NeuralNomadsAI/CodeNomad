@@ -571,15 +571,18 @@ async function tallHeadAcrossTop(page: Page, row1: number) {
   return start!
 }
 
+/** `key`'s rounded viewport offset, and the viewport height within the content that no rendered row or header covers. */
+type PaintedFrame = { offset: number | null; blank: number }
+
 /**
- * Runs `action` in a task (as a native event delivers a roll), then reads
- * `key`'s rounded viewport offset after each of the next `count` painted
- * frames: each sample is a task posted from a frame's RAF, so it runs after
- * that frame's layout, ResizeObserver pass and paint.
+ * Runs `action` in a task (as a native event delivers a roll), then samples
+ * each of the next `count` painted frames: each sample is a task posted from
+ * a frame's RAF, so it runs after that frame's layout, ResizeObserver pass and
+ * paint. Rows Virtua has not rendered (or hides unmeasured) count as blank.
  */
-function paintedOffsets(page: Page, key: string, action: string, count = 30) {
-  return page.evaluate(({ key, action, count }) => new Promise<Array<number | null>>(resolve => {
-    const offsets: Array<number | null> = [], channel = new MessageChannel()
+function paintedFrames(page: Page, key: string, action: string, count = 30) {
+  return page.evaluate(({ key, action, count }) => new Promise<PaintedFrame[]>(resolve => {
+    const painted: PaintedFrame[] = [], channel = new MessageChannel()
     let acted = false
     channel.port1.onmessage = () => {
       if (!acted) {
@@ -587,13 +590,26 @@ function paintedOffsets(page: Page, key: string, action: string, count = 30) {
         new Function(action)()
       } else {
         const el = document.querySelector<HTMLElement>(".message-stream")!, row = el.querySelector(`[data-virtual-follow-key="${key}"]`)
-        offsets.push(row ? Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) : null)
-        if (offsets.length === count) return resolve(offsets)
+        const top = el.getBoundingClientRect().top, end = top + Math.min(el.clientHeight, el.scrollHeight - el.scrollTop)
+        const spans = [...el.querySelectorAll(".virtual-follow-list-before, [data-virtual-follow-key]")]
+          .filter(node => getComputedStyle(node).visibility !== "hidden")
+          .map(node => node.getBoundingClientRect())
+          .map(rect => [Math.max(rect.top, top), Math.min(rect.bottom, end)])
+          .filter(([from, to]) => to > from)
+          .sort((a, b) => a[0] - b[0])
+        let covered = 0, reach = top
+        for (const [from, to] of spans) if (to > reach) { covered += to - Math.max(from, reach); reach = to }
+        painted.push({ offset: row ? Math.round(row.getBoundingClientRect().top - top) : null, blank: Math.round(end - top - covered) })
+        if (painted.length === count) return resolve(painted)
       }
       requestAnimationFrame(() => channel.port2.postMessage(0))
     }
     channel.port2.postMessage(0)
   }), { key, action, count })
+}
+
+async function paintedOffsets(page: Page, key: string, action: string, count = 30) {
+  return (await paintedFrames(page, key, action, count)).map(frame => frame.offset)
 }
 
 function rowOffset(page: Page, key: string) {
@@ -696,22 +712,6 @@ test("a roll under a held native scrollbar thumb keeps the content in place and 
   }, { name: "list", scrollbars: true })
 })
 
-// A `beforeItems` resize (permission receipts, a load-error banner) in a roll's
-// task is corrected by its own observer: neither the roll's capture nor a
-// write adopted before the measurement may take the rows it displaces for the
-// reader's place.
-for (const order of ["resize, roll", "roll, resize, write"] as const) test(`a beforeItems resize in a roll's task leaves the reader in place (${order})`, async () => {
-  await open(async page => {
-    await tallHeadAcrossTop(page, 250)
-    const write = order === "roll, resize, write"
-    const offsets = await paintedOffsets(page, "row-1", write
-      ? "window.fixture.step(); window.fixture.resizeBefore(700); document.querySelector('.message-stream').scrollTop += 60"
-      : "window.fixture.resizeBefore(700); window.fixture.step()")
-    const expected = write ? 190 : 250
-    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - expected) <= 2), `The reader moved: ${JSON.stringify({ expected, offsets })}`)
-  }, { name: "list" })
-})
-
 // Repeated rolls under a still escaped reader leave it in place: Virtua's
 // compensations are rounded (fractional at a non-integer zoom) and must not
 // accumulate from roll to roll. CSS zoom (the page's `zoom`) and native zoom
@@ -733,58 +733,51 @@ for (const native of [false, true]) test(`sixty rolling windows leave an escaped
   }, native ? { name: "list", deviceScaleFactor: 1.1 } : { name: "list", zoom: 1.1 })
 })
 
-/** Rests an escaped reader `gap` px from the bottom under a `header` px header; returns its first visible row. */
-async function escapeNearBottomUnderHeader(page: Page, gap: number, header = 600) {
-  await page.evaluate(header => (window as any).fixture.resizeBefore(header), header)
+// The content above the rows (permission receipts, the older-history
+// controls) is Virtua's first row: its resizes are compensated like any row's.
+const write = (px: number) => `document.querySelector('.message-stream').scrollTop += ${px}`
+const resizeBefore = (height: number) => `window.fixture.resizeBefore(${height})`
+const step = "window.fixture.step()"
+
+/**
+ * Rests an escaped reader under a `header` px header, `gap` px from the bottom
+ * (far from it when absent); returns the row nearest the viewport middle,
+ * which stays in view through the moves below.
+ */
+async function escapeUnderHeader(page: Page, gap?: number, header = 600) {
+  await page.evaluate(height => (window as any).fixture.resizeBefore(height), header)
   await frames(page, 10)
-  await page.evaluate(() => (window as any).fixture.bottom())
-  await frames(page, 30)
   const stream = page.locator(".message-stream")
+  if (gap === undefined) {
+    await stream.evaluate(el => { el.scrollTop = 4000; el.dispatchEvent(new Event("scroll")) })
+    await frames(page, 10)
+  } else {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page, 30)
+  }
   await stream.hover()
-  await page.mouse.wheel(0, -Math.max(gap, 1))
+  await page.mouse.wheel(0, gap === undefined ? -300 : -Math.max(gap, 1))
   await frames(page, 30)
   if (gap === 0) {
     await stream.evaluate(el => { el.scrollTop = el.scrollHeight })
     await frames(page, 10)
   }
   const before = await stream.evaluate(el => {
-    const bounds = el.getBoundingClientRect()
-    const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")].find(row => row.getBoundingClientRect().top >= bounds.top)!
+    const bounds = el.getBoundingClientRect(), middle = bounds.top + el.clientHeight / 2
+    const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")]
+      .reduce((best, row) => Math.abs(row.getBoundingClientRect().top - middle) < Math.abs(best.getBoundingClientRect().top - middle) ? row : best)
     return { key: row.dataset.virtualFollowKey!, offset: Math.round(row.getBoundingClientRect().top - bounds.top), gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: el.dataset.followMode }
   })
-  assert.ok(before.mode === "escaped" && Math.abs(before.gap - gap) <= 1, JSON.stringify(before))
+  assert.ok(before.mode === "escaped" && (gap === undefined || Math.abs(before.gap - gap) <= 1), JSON.stringify(before))
   return before
 }
 
-// Near the bottom the browser clamps a header shrink before its correction,
-// whatever the maximum is by then: the reader's rows stay in place with a roll
-// in the same task (the clamp may happen against the maximum before the roll's
-// append), after unobserved growth below the reader (streaming), with a
-// fractional shrink, and with a viewport resize in the same task (then
-// bottom-anchored on top: the rows rise by the 50 px the viewport lost).
-for (const [gap, label, action, rise] of [
-  [0, "roll", "window.fixture.resizeBefore(520); window.fixture.step()", 0],
-  [10, "roll", "window.fixture.resizeBefore(520); window.fixture.step()", 0],
-  [40, "roll", "window.fixture.resizeBefore(520); window.fixture.step()", 0],
-  [10, "growth below, then", "window.fixture.resizeBefore(520)", 0],
-  [10, "fractional", "window.fixture.resizeBefore(519.4)", 0],
-  [40, "fractional, roll", "window.fixture.resizeBefore(519.25); window.fixture.step()", 0],
-  [0, "viewport resize", "window.fixture.resizeBefore(520); document.getElementById('root').style.height = '650px'", 50],
-  [10, "viewport resize", "window.fixture.resizeBefore(520); document.getElementById('root').style.height = '650px'", 50],
-] as const) test(`a beforeItems shrink near the bottom leaves the reader in place (${label}, gap=${gap})`, async () => {
-  await open(async page => {
-    const before = await escapeNearBottomUnderHeader(page, gap)
-    if (label === "growth below, then") {
-      // The last row grows 30 px below the escaped reader: no scroll event.
-      await page.evaluate(() => (window as any).fixture.resizeRow("row-199", 78))
-      await frames(page, 10)
-    }
-    const offsets = await paintedOffsets(page, before.key, action)
-    // A viewport resize is bottom-anchored on its next frame.
-    const settled = offsets.slice(rise ? 2 : 0)
-    assert.ok(settled.every(offset => offset !== null && Math.abs(offset - (before.offset - rise)) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
-  }, { name: "list" })
-})
+/** Every painted frame shows the read row `shift` px from where it was, from frame `settle` on, and no blank band. */
+function assertReaderPainted(painted: PaintedFrame[], before: { offset: number }, shift = 0, settle = 0) {
+  const diagnostics = JSON.stringify({ before, shift, painted })
+  assert.ok(painted.slice(settle).every(frame => frame.offset !== null && Math.abs(frame.offset - (before.offset + shift)) <= 2), `The reader moved: ${diagnostics}`)
+  assert.ok(painted.every(frame => frame.blank <= 1), `A painted frame shows a blank band: ${diagnostics}`)
+}
 
 // Virtua compensates an ordinary row shrinking wholly above the reader, but
 // near the bottom the browser has already clamped scrollTop to the shrunk
@@ -796,70 +789,81 @@ for (const [gap, shrink] of [[0, 80], [10, 80], [40, 200]] as const) test(`an or
   await open(async page => {
     await page.evaluate(height => (window as any).fixture.resizeRow("row-182", height), 48 + shrink)
     await frames(page, 10)
-    const before = await escapeNearBottomUnderHeader(page, gap, 0)
+    const before = await escapeUnderHeader(page, gap, 0)
     const offsets = await paintedOffsets(page, before.key, "window.fixture.resizeRow('row-182', 48)")
     assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - before.offset) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
   }, { name: "list" })
 })
 
-// Inside the clamp zone a clamp only lowers scrollTop, by at most the shrink:
-// a downward write that growth in the same task made possible is kept whole,
-// and an upward move larger than the shrink keeps all but the shrink (the
-// part a clamp could have taken). `range`: the row's accepted offsets.
-const write = (px: number) => `document.querySelector('.message-stream').scrollTop += ${px}`
-const grow = "window.fixture.resizeRow('row-199', 348)"
-for (const [gap, label, action, range] of [
-  [10, "growth, shrink, write +30", `${grow}; window.fixture.resizeBefore(520); ${write(30)}`, [-30, -30]],
-  [40, "growth, shrink, write +100", `${grow}; window.fixture.resizeBefore(520); ${write(100)}`, [-100, -100]],
-  [10, "growth, write +30, shrink", `${grow}; ${write(30)}; window.fixture.resizeBefore(520)`, [-30, -30]],
-  [10, "write -100, shrink", `${write(-100)}; window.fixture.resizeBefore(520)`, [20, 100]],
-  [40, "write -300, shrink", `${write(-300)}; window.fixture.resizeBefore(520)`, [220, 300]],
-] as const) test(`a move in a header shrink's task inside the clamp zone is kept (${label}, gap=${gap})`, async () => {
-  await open(async page => {
-    const before = await escapeNearBottomUnderHeader(page, gap)
-    const offsets = await paintedOffsets(page, before.key, action)
-    const [low, high] = range
-    assert.ok(offsets.every(offset => offset !== null && offset >= before.offset + low - 2 && offset <= before.offset + high + 2), `The move was undone: ${JSON.stringify({ before, range, offsets })}`)
-  }, { name: "list" })
-})
-
-test("an upward wheel larger than the clamp zone, landing as the header shrinks, is kept but for the shrink", async () => {
-  await open(async page => {
-    const before = await escapeNearBottomUnderHeader(page, 10)
-    // The wheel's scroll lands first; the header shrinks at its scroll event,
-    // captured before the list's listeners, in the same frame.
-    await page.evaluate(() => document.addEventListener("scroll", () => (window as any).fixture.resizeBefore(520), { capture: true, once: true }))
-    await page.mouse.wheel(0, -120)
-    await frames(page, 30)
-    const after = await rowOffset(page, before.key)
-    assert.ok(after !== null && after >= before.offset + 40 - 2 && after <= before.offset + 120 + 2, `The wheel was undone: ${JSON.stringify({ before, after })}`)
-  }, { name: "list" })
-})
-
-// A viewport growing in the shrink's task lowers the maximum further than the
-// recorded one shows: a reader just beyond the recorded clamp zone is clamped
-// too (it can no longer scroll down), and keeps its rows; the growth is then
-// bottom-anchored (the rows descend by the 40 px the viewport gained).
-for (const gap of [90, 110]) test(`a viewport growing in a header shrink's task leaves a reader just beyond the clamp zone in place (gap=${gap})`, async () => {
-  await open(async page => {
-    const before = await escapeNearBottomUnderHeader(page, gap)
-    const offsets = await paintedOffsets(page, before.key, "window.fixture.resizeBefore(520); document.getElementById('root').style.height = '740px'")
-    const settled = offsets.slice(2)
-    assert.ok(settled.every(offset => offset !== null && Math.abs(offset - (before.offset + 40)) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
-  }, { name: "list" })
-})
-
-// A header shrink that reverts before its observer runs, around a downward
-// scroll (whose event arrives in between), must not leave Virtua's range
-// computed against the transient margin: every painted frame after the revert,
-// and after a later downward scroll, renders the read row in place.
-test("a header shrink reverted before its observer keeps the read row rendered", async () => {
+// Far from the bottom a header resize, with a roll and a write in the same
+// task, leaves the reader in place but for its own write; so does one that
+// reverts within its frame, around a scroll whose event arrives in between.
+const revert = "requestAnimationFrame(() => window.fixture.resizeBefore(600))"
+for (const [label, action, shift] of [
+  ["shrink", resizeBefore(520), 0],
+  ["growth", resizeBefore(680), 0],
+  ["shrink, roll", `${resizeBefore(520)}; ${step}`, 0],
+  ["roll, growth, write +60", `${step}; ${resizeBefore(680)}; ${write(60)}`, -60],
+  ["roll, shrink, write -40", `${step}; ${resizeBefore(520)}; ${write(-40)}`, 40],
+  ["600 px shrink", resizeBefore(0), 0],
+  ["shrink, write +1, reverted", `${resizeBefore(200)}; ${write(1)}; ${revert}`, -1],
+  ["growth, write -5, reverted", `${resizeBefore(900)}; ${write(-5)}; ${revert}`, 5],
+] as const) test(`a header resize under an escaped reader leaves it in place (${label})`, async () => {
   await open(async page => {
     const before = await escapeUnderHeader(page)
-    const reverted = await paintedOffsets(page, before.key, `window.fixture.resizeBefore(200); ${write(1)}; requestAnimationFrame(() => window.fixture.resizeBefore(600))`, 45)
-    assert.ok(reverted.every(offset => offset !== null && Math.abs(offset - (before.offset - 1)) <= 2), `The read row was not rendered after the revert: ${JSON.stringify({ before, reverted })}`)
-    const offsets = await paintedOffsets(page, before.key, write(5))
-    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset - 6)) <= 2), `The read row was not rendered in place: ${JSON.stringify({ before, offsets })}`)
+    assertReaderPainted(await paintedFrames(page, before.key, action, 45), before, shift)
+  }, { name: "list" })
+})
+
+// Near the bottom the browser clamps a header shrink as Virtua shrinks its
+// content; the compensation still keeps the rows in place, with a roll, a
+// fractional shrink, growth and a write in the same task, and with a viewport
+// resize (then bottom-anchored on its next frame: the rows follow the bottom).
+const grow = "window.fixture.resizeRow('row-199', 348)"
+for (const [gap, label, action, shift, settle] of [
+  [0, "shrink", resizeBefore(520), 0, 0],
+  [10, "shrink", resizeBefore(520), 0, 0],
+  [40, "200 px shrink", resizeBefore(400), 0, 0],
+  [10, "fractional shrink", resizeBefore(519.4), 0, 0],
+  [10, "shrink, roll", `${resizeBefore(520)}; ${step}`, 0, 0],
+  [40, "growth below, shrink, write +100", `${grow}; ${resizeBefore(520)}; ${write(100)}`, -100, 0],
+  [10, "write -100, shrink", `${write(-100)}; ${resizeBefore(520)}`, 100, 0],
+  [10, "shrink, viewport shrink", `${resizeBefore(520)}; document.getElementById('root').style.height = '650px'`, -50, 2],
+  [90, "shrink, viewport growth", `${resizeBefore(520)}; document.getElementById('root').style.height = '740px'`, 40, 2],
+] as const) test(`a header shrink near the bottom leaves the reader in place (${label}, gap=${gap})`, async () => {
+  await open(async page => {
+    const before = await escapeUnderHeader(page, gap)
+    assertReaderPainted(await paintedFrames(page, before.key, action), before, shift, settle)
+  }, { name: "list" })
+})
+
+// A reader inside the header (Virtua compensates only a header wholly above
+// the viewport, so its rows move with the shrink) never sees a blank band.
+for (const [header, height, move] of [[500, 200, -5], [1200, 200, 5]] as const) test(`a header shrinking under a reader inside it paints no blank band (${header} to ${height} px, write ${move})`, async () => {
+  await open(async page => {
+    await page.evaluate(height => (window as any).fixture.resizeBefore(height), header)
+    await frames(page, 10)
+    const stream = page.locator(".message-stream")
+    await stream.evaluate((el, header) => { el.scrollTop = header - 10; el.dispatchEvent(new Event("scroll")) }, header)
+    await frames(page, 10)
+    await stream.hover()
+    await page.mouse.wheel(0, -40)
+    await frames(page, 30)
+    const painted = await paintedFrames(page, "row-0", `${resizeBefore(height)}; ${write(move)}`, 45)
+    assert.ok(painted.every(frame => frame.blank <= 1), `A painted frame shows a blank band: ${JSON.stringify(painted)}`)
+  }, { name: "list" })
+})
+
+// A large header shrink in a following roll's task keeps the bottom painted.
+for (const header of [700, 1000]) test(`a ${header} px header shrink with a roll while following keeps the bottom painted`, async () => {
+  await open(async page => {
+    await page.evaluate(height => (window as any).fixture.resizeBefore(height), header)
+    await frames(page, 10)
+    await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 30)
+    const painted = await paintedFrames(page, "row-199", `${resizeBefore(0)}; ${step}`)
+    assert.ok(painted.every(frame => frame.blank <= 1), `A painted frame shows a blank band: ${JSON.stringify(painted)}`)
+    assert.ok(await page.locator(".message-stream").evaluate(el => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) <= 1), "Following left the bottom")
   }, { name: "list" })
 })
 
@@ -895,47 +899,6 @@ test("a header shrink after unobserved streaming growth below an escaped reader 
   })
 })
 
-/** Rests an escaped reader far from the bottom under a 600 px header; returns its first visible row. */
-async function escapeUnderHeader(page: Page) {
-  await page.evaluate(() => (window as any).fixture.resizeBefore(600))
-  await frames(page, 10)
-  const stream = page.locator(".message-stream")
-  await stream.evaluate(el => { el.scrollTop = 4000; el.dispatchEvent(new Event("scroll")) })
-  await frames(page, 10)
-  await stream.hover()
-  await page.mouse.wheel(0, -300)
-  await frames(page, 30)
-  return stream.evaluate(el => {
-    const bounds = el.getBoundingClientRect()
-    const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")].find(row => row.getBoundingClientRect().top >= bounds.top)!
-    return { key: row.dataset.virtualFollowKey!, offset: Math.round(row.getBoundingClientRect().top - bounds.top), mode: el.dataset.followMode }
-  })
-}
-
-// Far from the bottom no clamp is possible: a write in a header resize's task
-// is the reader's own move and is kept, with or without a roll, in either
-// order, on every painted frame (no frame without the read row).
-for (const [steps, write] of [
-  ["resizeBefore(520); write", -40],
-  ["step; resizeBefore(520); write", -5],
-  ["step; resizeBefore(520); write", -40],
-  ["step; resizeBefore(520); write", 5],
-  ["step; resizeBefore(520); write", 60],
-  ["step; resizeBefore(680); write", 20],
-  ["step; resizeBefore(680); write", 60],
-  ["step; write; resizeBefore(680)", 60],
-] as const) test(`a write in a header resize's task far from the bottom is kept (${steps}, ${write} px)`, async () => {
-  await open(async page => {
-    const before = await escapeUnderHeader(page)
-    assert.equal(before.mode, "escaped")
-    const action = steps.split("; ").map(part => part === "step" ? "window.fixture.step()"
-      : part === "write" ? `document.querySelector('.message-stream').scrollTop += ${write}`
-      : `window.fixture.${part}`).join("; ")
-    const offsets = await paintedOffsets(page, before.key, action)
-    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset - write)) <= 2), `The write was undone: ${JSON.stringify({ before, offsets })}`)
-  }, { name: "list" })
-})
-
 test("an upward wheel landing in a header shrink's frame far from the bottom is kept", async () => {
   await open(async page => {
     const before = await escapeUnderHeader(page)
@@ -946,6 +909,56 @@ test("an upward wheel landing in a header shrink's frame far from the bottom is 
     await frames(page, 30)
     const after = await rowOffset(page, before.key)
     assert.ok(after !== null && Math.abs(after - (before.offset + 40)) <= 2, `The wheel was undone: ${JSON.stringify({ before, after })}`)
+  }, { name: "list" })
+})
+
+/** Adds a focusable control to the header, below `above` px of header content. */
+async function addHeaderButton(page: Page, above: number) {
+  await page.evaluate(height => (window as any).fixture.resizeBefore(height), above)
+  await page.evaluate(() => {
+    const button = document.createElement("button")
+    button.id = "header-button"
+    button.textContent = "Reload messages"
+    document.querySelector(".message-stream .virtual-follow-list-before")!.append(button)
+  })
+  await frames(page, 10)
+}
+
+// A Virtualizer remount (a measured append while following) moves the header
+// element into its new first row: it is not recreated and keeps the focus.
+test("a focused header control keeps the focus across a Virtualizer remount", async () => {
+  await open(async page => {
+    await addHeaderButton(page, 0)
+    await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 10)
+    await page.focus("#header-button")
+    const mounts = await page.evaluate(() => (window as any).virtuaHandles)
+    const button = await page.evaluateHandle(() => document.getElementById("header-button"))
+    await page.evaluate(() => (window as any).fixture.append())
+    await frames(page, 10)
+    assert.ok(await page.evaluate(() => (window as any).virtuaHandles) > mounts, "The measured append must remount the Virtualizer")
+    assert.ok(await page.evaluate(button => button === document.getElementById("header-button") && document.activeElement === button, button), "The header control lost the focus")
+  }, { name: "list" })
+})
+
+// Virtua disables its container's hit testing while scrolling: header
+// controls, like the rows, still receive input at their visible target.
+test("a header control stays hit-testable while Virtua scrolls", async () => {
+  await open(async page => {
+    await addHeaderButton(page, 300)
+    const stream = page.locator(".message-stream")
+    await stream.evaluate(el => { el.scrollTop = 0 })
+    await frames(page, 10)
+    await stream.hover()
+    await page.mouse.wheel(0, 20)
+    await frames(page, 2)
+    const hit = await page.evaluate(() => {
+      const button = document.getElementById("header-button")!, rect = button.getBoundingClientRect()
+      const container = document.querySelector<HTMLElement>(".message-stream > div[style*='contain']")
+      return { scrolling: container?.style.pointerEvents === "none", hit: document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) === button }
+    })
+    assert.ok(hit.scrolling, "Virtua must be scrolling")
+    assert.ok(hit.hit, "The header control is not hit-testable while scrolling")
   }, { name: "list" })
 })
 
