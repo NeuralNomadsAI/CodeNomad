@@ -6,6 +6,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import MessageSection from "../../../src/components/message-section"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { activeSessionId } from "../../../src/stores/sessions"
+import { getSessionPreview, openSessionPreview } from "../../../src/stores/session-previews"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { setSessionSearchOpen } from "../../../src/stores/session-search"
 import { serverApi } from "../../../src/lib/api-client"
@@ -29,7 +30,7 @@ serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/r
 // other-session-N: even N live in the feature worktree, N = 3 has no native session.
 const nativeSession = (sessionID: string) => {
   const index = Number(sessionID.split("-").pop())
-  if (index === 3) throw new Error("Session not found")
+  if (index === 3) throw Object.assign(new Error("Session not found"), { _tag: "SessionNotFoundError" })
   return { id: sessionID, title: `Conversation ${index}`, projectID: "project", time: { created: 1, updated: 1 },
     location: { directory: index % 2 === 0 ? "/repo/.codenomad/worktrees/feature" : "/repo" } }
 }
@@ -66,6 +67,13 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   deactivate: () => setActive(false),
   snapshot: () => ({ ids: store.getSessionMessageIds(sessionId), loads, previewReads }),
   sessionReads: () => ({ reads: [...sessionReads], peak: peakSessionReads }),
+  // The destination was last left on its browser preview.
+  showDestinationPreview: async () => {
+    serverApi.createPreview = async () => ({ token: "fixture", sessionId: "other-session-2", targetUrl: "https://example.com", url: "/preview/fixture" }) as any
+    await openSessionPreview("other-session-2", "https://example.com", "/repo")
+    return getSessionPreview("other-session-2", "/repo")?.mode
+  },
   opened: () => ({ active: activeSessionId().get(instanceId) ?? null,
-    anchor: store.getScrollSnapshot("other-session-2", MESSAGE_STREAM_SCROLL_SCOPE)?.anchorKey ?? null }),
+    anchor: store.getScrollSnapshot("other-session-2", MESSAGE_STREAM_SCROLL_SCOPE)?.anchorKey ?? null,
+    surface: getSessionPreview("other-session-2", "/repo")?.mode ?? null }),
 }

@@ -21,7 +21,10 @@ export default function HistorySearchResults(props: {
   const { t } = useI18n()
   const id = createUniqueId()
   const labels = createHistorySessionLabels(() => props.instanceId)
-  createEffect(() => { if (props.showSessions) labels.request([...new Set(props.matches.map(match => match.sessionId))]) })
+  createEffect(() => {
+    if (props.showSessions) labels.request(props.matches.map(match => match.sessionId))
+    else labels.cancel()
+  })
   const groupStarts = createMemo(() => {
     let start = 0
     return props.matches.map((match, index) => index > 0 && props.matches[index - 1]!.sessionId === match.sessionId ? start : (start = index))

@@ -120,9 +120,11 @@ test("search derives page progress from search responses without a separate coun
     const preview = page.locator(".history-message-preview")
     await preview.getByText("feature/search", { exact: true }).waitFor()
     await preview.getByText("3h ago", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.showDestinationPreview()), "preview")
     await preview.getByRole("button", { name: "Open in session" }).click()
     await page.waitForFunction(() => (window as any).fixture.opened().active === "other-session-2")
-    assert.deepEqual(await page.evaluate(() => (window as any).fixture.opened()), { active: "other-session-2", anchor: "unloaded-3" })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.opened()), { active: "other-session-2", anchor: "unloaded-3", surface: "chat" },
+      "opening returns a destination left on its browser preview to the transcript")
     await page.evaluate(() => (window as any).fixture.deactivate())
     await page.getByRole("searchbox").waitFor({ state: "hidden" })
     assert.deepEqual(errors, [])

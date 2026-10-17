@@ -80,10 +80,14 @@ the session's native location; hits carry no commit, since a message is not
 bound to one. Titles and locations come from the session store, or from one
 `session.get` per distinct unloaded session (older catalog pages, collapsed
 subsessions), at most four in flight. These display reads never add sessions
-to the list and end with the results view; a reconnect discards them. The
+to the list. Queued reads follow the visible results: a new query or page drops
+sessions it no longer shows, session scope and closing abort them, and a
+reconnect discards resolved labels. Only a not-found session is labelled
+unavailable; other read failures retry on the next result update. The
 preview's "Open in session" hydrates only that session and its parents, stores
-the hit as its transcript anchor and selects it, so the destination restores
-the bounded window around the message through its normal anchor path.
+the hit as its transcript anchor, selects it and returns its central surface to
+chat, so the destination restores the bounded window around the message
+through its normal anchor path.
 
 ## Cleanup semantics
 

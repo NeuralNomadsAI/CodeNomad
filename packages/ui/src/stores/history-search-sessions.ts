@@ -1,8 +1,10 @@
-import { createSignal, onCleanup } from "solid-js"
+import { batch, createSignal, onCleanup, untrack } from "solid-js"
+import { isSessionNotFoundError } from "@opencode/client"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
+import { showSessionChatFor } from "./session-previews"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 
 export interface HistorySessionLabel {
@@ -16,10 +18,11 @@ const CONCURRENT_READS = 4
  * Workspace search hits carry only native IDs. Each distinct session resolves
  * from the session store, or with one native read when it lies outside the
  * loaded catalog (older pages, collapsed subsessions). Display only: results
- * never add sessions to the list. Reads end with the owning component.
+ * never add sessions to the list. Queued reads follow the visible results.
  */
 export function createHistorySessionLabels(instanceId: () => string) {
   const [fetched, setFetched] = createSignal(new Map<string, HistorySessionLabel | null>())
+  // Requested IDs stay until resolved; a transient failure is released for retry.
   const requested = new Set<string>()
   const queue: string[] = []
   let running = 0
@@ -31,7 +34,11 @@ export function createHistorySessionLabels(instanceId: () => string) {
       const sessionID = queue.shift()!
       running += 1
       void getRootClient(current.instanceId).session.get({ sessionID }, { signal: current.controller.signal })
-        .then(session => ({ title: session.title ?? "", directory: session.location?.directory }), () => null)
+        .then(session => ({ title: session.title ?? "", directory: session.location?.directory }), error => {
+          // Only a missing session is unavailable; other failures retry on the next request.
+          if (current === owner && !isSessionNotFoundError(error)) requested.delete(sessionID)
+          return null
+        })
         .then(label => {
           if (current === owner) setFetched(previous => new Map(previous).set(sessionID, label))
         })
@@ -43,30 +50,47 @@ export function createHistorySessionLabels(instanceId: () => string) {
     }
   }
 
-  function reset() {
+  /** Abandons pending reads; resolved labels are kept unless the connection changed. */
+  function restart(clearLabels: boolean) {
     owner.controller.abort()
     owner = { instanceId: instanceId(), generation: getOpenCodeInstanceGeneration(instanceId()), controller: new AbortController() }
-    requested.clear()
     queue.length = 0
     running = 0
-    setFetched(new Map())
+    const labels = clearLabels ? new Map<string, HistorySessionLabel | null>() : fetched()
+    for (const sessionId of [...requested]) if (!labels.has(sessionId)) requested.delete(sessionId)
+    if (clearLabels) {
+      requested.clear()
+      setFetched(labels)
+    }
   }
 
   onCleanup(() => owner.controller.abort())
 
   return {
-    /** Queues reads for sessions absent from the store; a reconnect discards older labels. */
+    /** Queues reads for these sessions only; a reconnect discards older labels. */
     request(sessionIds: readonly string[]) {
-      if (owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())) reset()
-      const resident = sessions().get(owner.instanceId)
-      for (const sessionId of sessionIds) {
-        if (requested.has(sessionId) || resident?.has(sessionId)) continue
-        requested.add(sessionId)
-        queue.push(sessionId)
-      }
+      if (owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())) restart(true)
+      untrack(() => {
+        const wanted = new Set(sessionIds)
+        for (let index = queue.length - 1; index >= 0; index -= 1) {
+          if (wanted.has(queue[index]!)) continue
+          requested.delete(queue[index]!)
+          queue.splice(index, 1)
+        }
+        const resident = sessions().get(owner.instanceId)
+        for (const sessionId of wanted) {
+          if (requested.has(sessionId) || resident?.has(sessionId)) continue
+          requested.add(sessionId)
+          queue.push(sessionId)
+        }
+      })
       pump()
     },
-    /** `undefined` while unresolved, `null` when the native read failed. */
+    /** Hidden results need no labels: stop reading them. */
+    cancel() {
+      restart(false)
+    },
+    /** `undefined` while unresolved, `null` when the session is unavailable. */
     get(sessionId: string): HistorySessionLabel | null | undefined {
       const resident = sessions().get(instanceId())?.get(sessionId)
       if (resident) return { title: resident.title ?? "", directory: resident.location?.directory }
@@ -91,6 +115,10 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
   if (!admitted() || !sessions().get(instanceId)?.has(sessionId)) return false
   messageStoreBus.getOrCreate(instanceId).setScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE,
     { scrollTop: 0, atBottom: false, anchorKey: messageId, anchorOffset: 0, followModeType: "escaped" })
-  setActiveSessionFromList(instanceId, sessionId)
+  // A destination left on its browser preview would hide the transcript.
+  batch(() => {
+    setActiveSessionFromList(instanceId, sessionId)
+    showSessionChatFor(sessionId, instances().get(instanceId)?.folder ?? "")
+  })
   return true
 }
