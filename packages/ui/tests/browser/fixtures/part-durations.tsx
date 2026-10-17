@@ -25,6 +25,9 @@ const finished = { id: "finished-message", type: "assistant", agent: "build", mo
 const untitled = { id: "untitled-message", type: "assistant", agent: "build", model,
   time: { created: 9_500, completed: 12_000 }, content: [
     { type: "reasoning", text: "Untitled reasoning without a heading.", time: { created: 10_000, completed: 12_000 } },
+    // Sub-second execution: no duration shown.
+    { type: "tool", id: "quick-tool", name: "read", time: { created: 11_500, ran: 11_600, completed: 11_900 },
+      state: { status: "completed", input: { path: "README.md" }, content: [{ type: "text", text: "ok" }] } },
     { type: "text", text: "Done." },
   ] }
 const running = { id: "running-message", type: "assistant", agent: "build", model,

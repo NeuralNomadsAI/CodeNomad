@@ -54,10 +54,12 @@ export function inferReasoningDurationMs(
 /** A short, localized duration ("3s", "1m 5s", "1h 2m"), not a clock reading
  * that could be mistaken for a time of day. While `live` (ticking), the trailing
  * unit is always shown with two digits ("1m 05s", "2m 00s") so the width stays
- * steady and the header layout does not shift every minute. */
+ * steady and the header layout does not shift every minute. Durations under a
+ * second are not shown: the point is spotting slow steps, and a "1s" on every
+ * quick tool call is noise. */
 export function formatElapsedDuration(durationMs?: number, locale?: string, live = false): string {
   const safeDuration = getPositiveNumber(durationMs)
-  if (!safeDuration) {
+  if (!safeDuration || safeDuration < 1000) {
     return ""
   }
 

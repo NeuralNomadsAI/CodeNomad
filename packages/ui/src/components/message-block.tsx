@@ -1581,7 +1581,8 @@ function getReasoningText(part: ClientPart) {
 }
 
 function reasoningDurationTitle(t: I18nContextValue["t"], durationMs?: number) {
-  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+  // Like the header duration, sub-second steps show no duration.
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 1000) {
     return t("messageBlock.reasoning.thoughtsFallback")
   }
   const seconds = Math.max(1, Math.round(durationMs / 1000))
@@ -1691,8 +1692,8 @@ function ReasoningGroupCard(props: {
             <span class="message-technical-group-meta">
               · {t(`messageBlock.reasoning.steps.${summaryParts().length === 1 ? "one" : "other"}`, { count: String(summaryParts().length) })}
             </span>
-            <Show when={totalDuration() > 0}>
-              <span class="message-technical-group-meta">· {formatElapsedDuration(totalDuration(), locale())}</span>
+            <Show when={formatElapsedDuration(totalDuration(), locale())}>
+              {(duration) => <span class="message-technical-group-meta">· {duration()}</span>}
             </Show>
           </button>
           <Show when={!expanded() && canDeleteGroup()}>

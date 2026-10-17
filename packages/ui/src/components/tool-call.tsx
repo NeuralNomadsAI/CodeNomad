@@ -880,12 +880,12 @@ export default function ToolCall(props: ToolCallProps) {
             <Show when={renderedHeaderTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
             </Show>
+            <ToolStatusIndicator status={status} t={t} />
             <PartDuration
               startedAt={getPartStartedAt(toolCallMemo() as any)}
               endedAt={status() === "completed" || status() === "error" ? getPartEndedAt(toolCallMemo() as any) : undefined}
               running={status() === "running"}
             />
-            <ToolStatusIndicator status={status} t={t} />
           </span>
         </button>
 

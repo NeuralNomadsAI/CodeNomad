@@ -5,7 +5,10 @@ import { formatElapsedDuration, getMessageDurationMs, getPartDurationMs, getPart
 
 describe("message timing helpers", () => {
   it("formats elapsed durations with short units, never as a clock reading", () => {
-    assert.equal(formatElapsedDuration(900, "en"), "1s")
+    assert.equal(formatElapsedDuration(900, "en"), "", "sub-second durations are not shown")
+    assert.equal(formatElapsedDuration(999, "en", true), "")
+    assert.equal(formatElapsedDuration(1_000, "en"), "1s")
+    assert.equal(formatElapsedDuration(1_400, "en"), "1s")
     assert.equal(formatElapsedDuration(3_000, "en"), "3s")
     assert.equal(formatElapsedDuration(65_000, "en"), "1m 5s")
     assert.equal(formatElapsedDuration(120_000, "en"), "2m")

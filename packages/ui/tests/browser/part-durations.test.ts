@@ -44,13 +44,20 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
     // Execution time runs from ran to completed, not from input streaming.
     assert.equal(await finishedTool.innerText(), "4s")
     assert.equal(await finishedTool.getAttribute("data-live"), null)
-    // It leads the trailing status, visible without hovering; the space after
-    // the status stays free for the hover/touch header actions.
+    // It follows the status ("✓ Completed 4s"), visible without hovering, right
+    // before the header actions' reserved space.
     assert.ok(await finishedTool.isVisible())
     const status = await page.locator('.tool-call[data-part-id="finished-tool"] .tool-call-header-status').boundingBox()
     const duration = await finishedTool.boundingBox()
-    assert.ok(status && duration && duration.x + duration.width <= status.x, "duration sits just before the status")
-    assert.ok(status!.x - (duration!.x + duration!.width) < 16, "and stays next to it")
+    assert.ok(status && duration && duration.x >= status.x + status.width, "duration follows the status")
+    assert.ok(duration!.x - (status!.x + status!.width) <= 12, "and sticks to it")
+    // A sub-second tool shows no duration ("1s" everywhere would be noise).
+    await page.locator('.tool-call[data-part-id="quick-tool"] .tool-call-header-status').waitFor()
+    assert.equal(await page.locator('.tool-call[data-part-id="quick-tool"] .tool-call-header .part-duration').count(), 0)
+    // The header actions keep their reserved space: hovering moves nothing.
+    await page.locator('.tool-call[data-part-id="finished-tool"] .tool-call-header').hover()
+    const hovered = await finishedTool.boundingBox()
+    assert.ok(hovered && Math.abs(hovered.x - duration!.x) < 0.5, "hover does not shift the duration")
 
     const reasoning = (messageId: string) => page.locator(`.message-reasoning-card[data-part-id="${messageId}-reasoning-0"] .message-reasoning-header .part-duration`)
     await reasoning("finished-message").waitFor()
