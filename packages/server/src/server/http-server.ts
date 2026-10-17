@@ -3,10 +3,9 @@ import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
-import { connect as connectTcp, isIP, type Socket } from "net"
+import { isIP, type Socket } from "net"
 import path from "path"
 import type { Readable } from "stream"
-import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
@@ -66,6 +65,8 @@ import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
+import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
+import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
@@ -374,7 +375,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
-  registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
+  registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
     sidecarManager: deps.sidecarManager,
@@ -484,6 +485,7 @@ interface InstanceProxyDeps {
 interface SideCarProxyDeps {
   sidecarManager: SideCarManager
   logger: Logger
+  authManager: AuthManager
 }
 
 interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
@@ -509,6 +511,7 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
       reply,
       sidecarManager: deps.sidecarManager,
       logger: deps.logger,
+      sessionCookie: deps.authManager.getCookieName(),
       pathSuffix: "",
     })
   }
@@ -522,6 +525,7 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
       reply,
       sidecarManager: deps.sidecarManager,
       logger: deps.logger,
+      sessionCookie: deps.authManager.getCookieName(),
       pathSuffix: request.params["*"] ?? "",
     })
   }
@@ -1960,6 +1964,7 @@ async function proxySideCarRequest(args: {
   reply: FastifyReply
   sidecarManager: SideCarManager
   logger: Logger
+  sessionCookie: string
   pathSuffix?: string
 }) {
   const sidecarId = (args.request.params as { id?: string }).id ?? ""
@@ -1984,9 +1989,10 @@ async function proxySideCarRequest(args: {
     logger: args.logger,
     targetUrl,
     targetOrigin,
+    sessionCookie: args.sessionCookie,
     logContext: { sidecarId: sidecar.id },
     errorMessage: "SideCar proxy failed",
-    rewriteHeaders: (headers) => rewriteSideCarResponseHeaders(headers, sidecarId, targetOrigin, sidecar.prefixMode),
+    rewriteHeaders: (headers) => sidecarResponseCookies(rewriteSideCarResponseHeaders(headers, sidecarId, targetOrigin, sidecar.prefixMode), args.sessionCookie),
   })
 }
 
@@ -2124,13 +2130,14 @@ async function proxyTargetRequest(args: {
   logger: Logger
   targetUrl: string
   targetOrigin: string
+  sessionCookie: string
   logContext: Record<string, unknown>
   errorMessage: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
   await args.reply.from(args.targetUrl, {
     rewriteRequestHeaders: (_originalRequest, headers) =>
-      sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin),
+      sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin, args.sessionCookie),
     rewriteHeaders: args.rewriteHeaders,
     onError: (reply, { error }) => {
       args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
@@ -2237,6 +2244,7 @@ async function proxySideCarWebSocketUpgrade(args: {
     logger,
     logContext: { sidecarId },
     proxyLabel: "SideCar",
+    sessionCookie: authManager.getCookieName(),
   })
 }
 
@@ -2292,109 +2300,19 @@ function proxyTargetWebSocketUpgrade(args: {
   logContext: Record<string, unknown>
   proxyLabel: string
   stripCookies?: boolean
+  sessionCookie?: string
 }) {
-  const { request, socket, head, targetUrl, logger, logContext, proxyLabel, stripCookies } = args
-  const { socket: upstream, readyEvent } = createSideCarUpstreamSocket(targetUrl)
-
-  const closeBoth = () => {
-    if (!socket.destroyed) {
-      socket.destroy()
+  const headers = sanitizeSideCarProxyRequestHeaders(args.request.headers, args.targetUrl.origin, args.sessionCookie)
+  if (args.stripCookies) delete headers.cookie
+  proxyWebSocket({ ...args, headers, responseHeaders: incoming => {
+    if (args.stripCookies) {
+      const result = { ...incoming }
+      delete result["set-cookie"]
+      delete result["set-cookie2"]
+      return result
     }
-    if (!upstream.destroyed) {
-      upstream.destroy()
-    }
-  }
-
-  upstream.once("error", (error) => {
-    logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to proxy ${proxyLabel} websocket`)
-    rejectUpgrade(socket, 502, "Bad Gateway")
-    if (!upstream.destroyed) {
-      upstream.destroy()
-    }
-  })
-
-  socket.once("error", (error) => {
-    logger.debug({ ...logContext, err: error }, `${proxyLabel} websocket client socket errored`)
-    if (!upstream.destroyed) {
-      upstream.destroy()
-    }
-  })
-
-  upstream.once(readyEvent, () => {
-    try {
-      upstream.write(buildSideCarWebSocketRequest(request, targetUrl, { stripCookies }))
-      if (head.length > 0) {
-        upstream.write(head)
-      }
-      upstream.pipe(socket)
-      socket.pipe(upstream)
-    } catch (error) {
-      logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to forward ${proxyLabel} websocket upgrade`)
-      closeBoth()
-    }
-  })
-
-  upstream.once("close", () => {
-    if (!socket.destroyed) {
-      socket.end()
-    }
-  })
-
-  socket.once("close", () => {
-    if (!upstream.destroyed) {
-      upstream.end()
-    }
-  })
-}
-
-function createSideCarUpstreamSocket(targetUrl: URL): { socket: Socket | TLSSocket; readyEvent: "connect" | "secureConnect" } {
-  const port = Number(targetUrl.port || (targetUrl.protocol === "https:" ? 443 : 80))
-  if (targetUrl.protocol === "https:") {
-    return {
-      socket: connectTls({
-        host: targetUrl.hostname,
-        port,
-        servername: targetUrl.hostname,
-      }),
-      readyEvent: "secureConnect",
-    }
-  }
-  return {
-    socket: connectTcp(port, targetUrl.hostname),
-    readyEvent: "connect",
-  }
-}
-
-function buildSideCarWebSocketRequest(
-  request: import("http").IncomingMessage,
-  targetUrl: URL,
-  options?: { stripCookies?: boolean },
-): string {
-  const pathWithQuery = `${targetUrl.pathname}${targetUrl.search}`
-  const requestLine = `${request.method ?? "GET"} ${pathWithQuery} HTTP/${request.httpVersion}\r\n`
-  const headerLines: string[] = []
-  const rawHeaders = request.rawHeaders ?? []
-  const blockedHeaders = getBlockedSideCarRequestHeaders()
-
-  for (let index = 0; index < rawHeaders.length; index += 2) {
-    const key = rawHeaders[index]
-    const value = rawHeaders[index + 1]
-    if (!key || value === undefined) continue
-    const lower = key.toLowerCase()
-    if (blockedHeaders.has(lower)) continue
-    if (options?.stripCookies && lower === "cookie") continue
-    if (lower === "origin") {
-      headerLines.push(`Origin: ${targetUrl.origin}\r\n`)
-      continue
-    }
-    headerLines.push(`${key}: ${value}\r\n`)
-  }
-
-  const hostValue = targetUrl.port ? `${targetUrl.hostname}:${targetUrl.port}` : targetUrl.hostname
-  headerLines.push(`Host: ${hostValue}\r\n`)
-  headerLines.push("\r\n")
-
-  return requestLine + headerLines.join("")
+    return args.sessionCookie ? sidecarResponseCookies(incoming, args.sessionCookie) : incoming
+  } })
 }
 
 function isWebSocketUpgradeRequest(request: import("http").IncomingMessage): boolean {
@@ -2497,6 +2415,7 @@ function rewritePreviewResponseHeaders(
 function sanitizeSideCarProxyRequestHeaders(
   headers: Record<string, string | string[] | undefined>,
   targetOrigin: string,
+  sessionCookie?: string,
 ): Record<string, string | string[] | undefined> {
   const blockedHeaders = getBlockedSideCarRequestHeaders()
   const next: Record<string, string | string[] | undefined> = {}
@@ -2504,7 +2423,8 @@ function sanitizeSideCarProxyRequestHeaders(
   for (const [key, value] of Object.entries(headers)) {
     if (!value) continue
     if (blockedHeaders.has(key.toLowerCase())) continue
-    next[key] = value
+    const forwarded = key.toLowerCase() === "cookie" && sessionCookie ? sidecarRequestCookies(value, sessionCookie) : value
+    if (forwarded !== undefined) next[key] = forwarded
   }
 
   next.origin = targetOrigin

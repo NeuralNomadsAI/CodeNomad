@@ -18,6 +18,7 @@ const apps: FastifyInstance[] = []
 const upstreams: http.Server[] = []
 const upstreamSocketCleanups: Array<() => void> = []
 const sockets: net.Socket[] = []
+type UpstreamOptions = { cookies?: string[]; fragmented?: boolean; denied?: boolean }
 
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.destroy()
@@ -36,10 +37,13 @@ afterEach(async () => {
 })
 
 /** A minimal SideCar upstream that completes WebSocket upgrades itself. */
-async function startSideCarUpstream(): Promise<{ port: number; upgrades: string[] }> {
+async function startSideCarUpstream(options: UpstreamOptions = {}) {
   const upgrades: string[] = []
+  const requests: http.IncomingHttpHeaders[] = []
   const connections = new Set<net.Socket>()
-  const upstream = http.createServer((_request, response) => {
+  const upstream = http.createServer((request, response) => {
+    requests.push(request.headers)
+    if (options.cookies) response.setHeader("Set-Cookie", options.cookies)
     response.writeHead(200, { "content-type": "application/json" })
     response.end("{\"ok\":true}")
   })
@@ -49,14 +53,25 @@ async function startSideCarUpstream(): Promise<{ port: number; upgrades: string[
   })
   upstream.on("upgrade", (request, socket) => {
     upgrades.push(request.url ?? "")
+    requests.push(request.headers)
     const key = String(request.headers["sec-websocket-key"] ?? "")
     const accept = crypto.createHash("sha1").update(`${key}${WEBSOCKET_GUID}`).digest("base64")
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    const cookies = (options.cookies ?? []).map(value => `Set-Cookie: ${value}\r\n`).join("")
+    if (options.denied) {
+      socket.end(`HTTP/1.1 403 Forbidden\r\n${cookies}Connection: close\r\nContent-Length: 0\r\n\r\n`)
+      return
+    }
+    const header = `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n${cookies}\r\n`
+    if (options.fragmented) {
+      const split = header.indexOf("Set-Cookie") + 4
+      socket.write(header.slice(0, split))
+      setImmediate(() => { if (!socket.destroyed) socket.write(header.slice(split)) })
+    } else socket.write(header)
   })
   upstreams.push(upstream)
   upstreamSocketCleanups.push(() => { for (const socket of connections) socket.destroy() })
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve))
-  return { port: (upstream.address() as net.AddressInfo).port, upgrades }
+  return { port: (upstream.address() as net.AddressInfo).port, upgrades, requests }
 }
 
 /** Raw WebSocket handshake, like a browser's; resolves once the status line and headers arrived. */
@@ -92,7 +107,7 @@ function webSocketUpgrade(port: number, pathname: string, headers: Record<string
   })
 }
 
-async function startServer() {
+async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"] } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
   const logger = pino({ level: "silent" })
   const authManager = new AuthManager({
@@ -100,10 +115,11 @@ async function startServer() {
     username: "codenomad",
     password: "test-password",
     generateToken: false,
+    cookieName: options.cookieName,
   }, logger)
-  const { port, upgrades } = await startSideCarUpstream()
+  const { port, upgrades, requests } = await startSideCarUpstream(options)
   const sidecar: SideCar = {
-    id: "fixture", kind: "port", name: "ttyd", port, insecure: true, prefixMode: "strip",
+    id: "fixture", kind: "port", name: "ttyd", port, insecure: true, prefixMode: options.prefixMode ?? "strip",
     status: "running", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   }
   const publicBase = `/sidecars/${sidecar.id}`
@@ -114,6 +130,7 @@ async function startServer() {
     buildProxyBasePath: (id: string) => `/sidecars/${encodeURIComponent(id)}`,
     buildTargetOrigin: (target: Pick<SideCar, "port" | "insecure">) => `http${target.insecure ? "" : "s"}://127.0.0.1:${target.port}`,
     buildTargetPath: (_id: string, incomingPath: string, search = "") => {
+      if (sidecar.prefixMode === "preserve") return `${incomingPath}${search}`
       let stripped = incomingPath.startsWith(publicBase) ? incomingPath.slice(publicBase.length) : incomingPath
       if (!stripped.startsWith("/")) stripped = `/${stripped}`
       return `${stripped || "/"}${search}`
@@ -140,6 +157,7 @@ async function startServer() {
     origin: `http://127.0.0.1:${address.port}`,
     cookie: `${authManager.getCookieName()}=${session.id}`,
     upgrades,
+    requests,
     cleanupDirectory: directory,
   }
 }
@@ -159,6 +177,41 @@ it("SideCar WebSocket upgrades require the SameSite session cookie a same-origin
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }
+})
+
+for (const prefixMode of ["strip", "preserve"] as const) {
+  for (const cookieName of ["codenomad_session", "custom_session"]) {
+    it(`filters application cookies in HTTP and WS both ways, retaining service cookies (${prefixMode}, ${cookieName})`, async () => {
+      const safeCookies = ["service_login=a=b%2Fc; HttpOnly; Path=/", "theme=dark; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/"]
+      const unsafe = [cookieName, "codenomad_session_123_456", "__Host-codenomad_device"]
+      const server = await startServer({ prefixMode, cookieName, fragmented: true,
+        cookies: [...safeCookies, ...unsafe.map(name => `${name}=injected; Path=/; HttpOnly`)] })
+      try {
+        const cookie = `${server.cookie}; service_login=a=b%2Fc; codenomad_session_123_456=sibling; __Host-codenomad_device=device; theme=dark`
+        const response = await server.app.inject({ url: "/sidecars/fixture/token", headers: { cookie } })
+        assert.equal(response.statusCode, 200)
+        assert.deepEqual(response.headers["set-cookie"], safeCookies)
+        const ws = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie })
+        assert.equal(ws.status, 101)
+        for (const name of unsafe) assert.equal(ws.head.includes(`${name}=`), false)
+        for (const value of safeCookies) assert.ok(ws.head.includes(value))
+        assert.deepEqual(server.upgrades, [prefixMode === "strip" ? "/ws" : "/sidecars/fixture/ws"])
+        assert.deepEqual(server.requests.map(headers => headers.cookie), ["service_login=a=b%2Fc; theme=dark", "service_login=a=b%2Fc; theme=dark"])
+        assert.equal((await server.app.inject({ url: "/sidecars/fixture/token", headers: { cookie: "service_login=a=b%2Fc" } })).statusCode, 401)
+      } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+    })
+  }
+}
+
+it("a rejected WebSocket handshake cannot overwrite the CodeNomad session either", async () => {
+  const server = await startServer({ denied: true, cookies: ["codenomad_session=poison; Path=/", "service_login=expired; Path=/"] })
+  try {
+    const response = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie: server.cookie })
+    assert.equal(response.status, 403)
+    assert.equal(response.head.includes("codenomad_session"), false)
+    assert.ok(response.head.includes("service_login=expired"))
+    assert.equal(server.requests[0].cookie, undefined)
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
 
 it("opaque-origin frames cannot reach SideCar routes while same-origin frames can", async () => {
