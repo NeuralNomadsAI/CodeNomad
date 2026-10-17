@@ -21,7 +21,7 @@ import { useI18n, type I18nContextValue } from "../lib/i18n"
 import { hotkeyLabel } from "../lib/hotkeys"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
-import { formatElapsedClock, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
+import { formatElapsedDuration, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
 import { PartDuration } from "./part-duration"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { applySearchHighlights, clearSearchHighlights, type SearchRevealRequest } from "./search-highlights"
@@ -1691,7 +1691,7 @@ function ReasoningGroupCard(props: {
               · {t(`messageBlock.reasoning.steps.${summaryParts().length === 1 ? "one" : "other"}`, { count: String(summaryParts().length) })}
             </span>
             <Show when={totalDuration() > 0}>
-              <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
+              <span class="message-technical-group-meta">· {formatElapsedDuration(totalDuration(), locale())}</span>
             </Show>
           </button>
           <Show when={!expanded() && canDeleteGroup()}>

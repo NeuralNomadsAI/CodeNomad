@@ -51,22 +51,26 @@ export function inferReasoningDurationMs(
   return getPartDurationMs(reasoningPart)
 }
 
-export function formatElapsedClock(durationMs?: number, locale?: string): string {
+/** A short, localized duration ("3s", "1m 5s", "1h 2m"), not a clock reading
+ * that could be mistaken for a time of day. */
+export function formatElapsedDuration(durationMs?: number, locale?: string): string {
   const safeDuration = getPositiveNumber(durationMs)
   if (!safeDuration) {
     return ""
   }
 
-  const formatNumber = (value: number, minimumIntegerDigits = 1) =>
-    new Intl.NumberFormat(locale, { minimumIntegerDigits, useGrouping: false }).format(value)
+  const formatUnit = (unit: "hour" | "minute" | "second", value: number) =>
+    new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "narrow", useGrouping: false }).format(value)
   const totalSeconds = Math.max(1, Math.round(safeDuration / 1000))
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
 
   if (hours > 0) {
-    return `${formatNumber(hours)}:${formatNumber(minutes, 2)}:${formatNumber(seconds, 2)}`
+    return minutes ? `${formatUnit("hour", hours)} ${formatUnit("minute", minutes)}` : formatUnit("hour", hours)
   }
-
-  return `${formatNumber(minutes)}:${formatNumber(seconds, 2)}`
+  if (minutes > 0) {
+    return seconds ? `${formatUnit("minute", minutes)} ${formatUnit("second", seconds)}` : formatUnit("minute", minutes)
+  }
+  return formatUnit("second", seconds)
 }

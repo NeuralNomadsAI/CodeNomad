@@ -29,7 +29,8 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
-const seconds = (clock: string) => clock.split(":").reduce((total, part) => total * 60 + Number(part), 0)
+// Short running durations read "5s" (no clock, which looks like a time of day).
+const seconds = (duration: string) => Number(/^(\d+)s$/.exec(duration)?.[1] ?? NaN)
 
 test("reasoning and tool headers show OpenCode V2 durations, live while running", async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
@@ -41,7 +42,7 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
     const finishedTool = page.locator('.tool-call[data-part-id="finished-tool"] .tool-call-header .part-duration')
     await finishedTool.waitFor()
     // Execution time runs from ran to completed, not from input streaming.
-    assert.equal(await finishedTool.innerText(), "0:04")
+    assert.equal(await finishedTool.innerText(), "4s")
     assert.equal(await finishedTool.getAttribute("data-live"), null)
     // It leads the trailing status, visible without hovering; the space after
     // the status stays free for the hover/touch header actions.
@@ -53,10 +54,10 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
 
     const reasoning = (messageId: string) => page.locator(`.message-reasoning-card[data-part-id="${messageId}-reasoning-0"] .message-reasoning-header .part-duration`)
     await reasoning("finished-message").waitFor()
-    assert.equal(await reasoning("finished-message").innerText(), "0:03", "V2 reasoning created → completed")
-    // An untitled step keeps its generic title; the duration is shown once, by the clock.
+    assert.equal(await reasoning("finished-message").innerText(), "3s", "V2 reasoning created → completed")
+    // An untitled step keeps its generic title; the duration is shown once.
     const untitled = page.locator('.message-reasoning-card[data-part-id="untitled-message-reasoning-0"] .message-reasoning-header')
-    assert.equal(await untitled.locator(".part-duration").innerText(), "0:02")
+    assert.equal(await untitled.locator(".part-duration").innerText(), "2s")
     assert.equal(await untitled.locator(".message-reasoning-title").innerText(), "Thoughts")
     assert.match(await untitled.locator(".message-reasoning-title").getAttribute("title") ?? "", /Thought for 2 seconds/)
 
@@ -67,7 +68,7 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
     assert.ok(before >= 3 && before <= 6, `running tool counts from ran (${before}s)`)
     await page.waitForFunction(start => {
       const text = document.querySelector('.tool-call[data-part-id="running-tool"] .part-duration')?.textContent ?? ""
-      return text.split(":").reduce((total, part) => total * 60 + Number(part), 0) > start
+      return Number(/^(\d+)s$/.exec(text)?.[1] ?? 0) > start
     }, before, { timeout: 5000 })
     if (process.env.CODENOMAD_DURATION_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_DURATION_CAPTURE })
 

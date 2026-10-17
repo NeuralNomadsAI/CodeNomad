@@ -1,20 +1,26 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { formatElapsedClock, getMessageDurationMs, getPartDurationMs, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "./message-timing.ts"
+import { formatElapsedDuration, getMessageDurationMs, getPartDurationMs, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "./message-timing.ts"
 
 describe("message timing helpers", () => {
-  it("formats elapsed durations as clock values without unit suffixes", () => {
-    assert.equal(formatElapsedClock(900), "0:01")
-    assert.equal(formatElapsedClock(65_000), "1:05")
-    assert.equal(formatElapsedClock(3_725_000), "1:02:05")
+  it("formats elapsed durations with short units, never as a clock reading", () => {
+    assert.equal(formatElapsedDuration(900, "en"), "1s")
+    assert.equal(formatElapsedDuration(3_000, "en"), "3s")
+    assert.equal(formatElapsedDuration(65_000, "en"), "1m 5s")
+    assert.equal(formatElapsedDuration(120_000, "en"), "2m")
+    assert.equal(formatElapsedDuration(3_725_000, "en"), "1h 2m")
+    assert.equal(formatElapsedDuration(3_600_000, "en"), "1h")
+    assert.equal(formatElapsedDuration(0, "en"), "")
   })
 
-  it("localizes elapsed clock digits while keeping compact clock separators", () => {
-    const wholeNumber = new Intl.NumberFormat("ar-EG", { useGrouping: false })
-    const twoDigitNumber = new Intl.NumberFormat("ar-EG", { minimumIntegerDigits: 2, useGrouping: false })
+  it("localizes units and digits", () => {
+    const unit = (locale: string, unit: string, value: number) =>
+      new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "narrow", useGrouping: false }).format(value)
 
-    assert.equal(formatElapsedClock(65_000, "ar-EG"), `${wholeNumber.format(1)}:${twoDigitNumber.format(5)}`)
+    assert.equal(formatElapsedDuration(65_000, "fr"), `${unit("fr", "minute", 1)} ${unit("fr", "second", 5)}`)
+    assert.equal(formatElapsedDuration(65_000, "ar-EG"), `${unit("ar-EG", "minute", 1)} ${unit("ar-EG", "second", 5)}`)
+    assert.doesNotMatch(formatElapsedDuration(65_000, "ar-EG"), /:/)
   })
 
   it("uses message created/completed times for assistant durations", () => {

@@ -10,7 +10,7 @@
   white-space: nowrap;
 }
 
-/* In tool headers it leads the trailing status ("0:12 Completed"): the space
+/* In tool headers it leads the trailing status ("12s Completed"): the space
  * after the status belongs to the hover (and touch) header actions. */
 .tool-call-summary > .part-duration {
   margin-inline-start: auto;
@@ -21,7 +21,7 @@
 }
 
 /* Short of room (components/tool-status-compaction.ts), the status keeps its
- * icon and the duration ("0:04 ✓") before the title truncates; the word stays in
+ * icon and the duration ("4s ✓") before the title truncates; the word stays in
  * its tooltip and accessible name, and stays measurable while hidden. */
 .tool-call-header-status {
   position: relative;
