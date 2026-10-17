@@ -2,9 +2,19 @@ import type { RuntimeEnvironment } from "../lib/runtime-env"
 
 const FRAME_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads"
 
-export function getBrowserFramePolicy(_environment: Pick<RuntimeEnvironment, "host" | "windowContext">) {
+/**
+ * `allow-same-origin` lets a frame's own fetches and WebSocket handshakes stay
+ * same-origin, so the `SameSite=Lax` session cookie reaches app-authenticated
+ * routes. Reserved for app-proxied content the user explicitly configured
+ * (SideCars): without it the sandboxed frame is an opaque origin, its requests
+ * carry `Origin: null`, and `/sidecars/*` rejects them before the proxy runs.
+ */
+export function getBrowserFramePolicy(
+  _environment: Pick<RuntimeEnvironment, "host" | "windowContext">,
+  options: { trustedSameOrigin?: boolean } = {},
+) {
   return {
-    sandbox: FRAME_SANDBOX,
+    sandbox: options.trustedSameOrigin ? `${FRAME_SANDBOX} allow-same-origin` : FRAME_SANDBOX,
     canInspectDom: false,
   }
 }

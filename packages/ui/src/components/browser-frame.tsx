@@ -75,6 +75,13 @@ interface BrowserFrameProps {
   initialUrl: string
   initialAddress?: string
   proxyBasePath: string
+  /**
+   * Content proxied through the app's authenticated origin that the user
+   * explicitly configured (SideCars). Keeps the frame same-origin so its own
+   * fetches and WebSocket handshakes carry the SameSite session cookie;
+   * arbitrary web previews must never set this.
+   */
+  trustedSameOrigin?: boolean
   lockedBaseLabel?: string
   labels: BrowserFrameLabels
   addressMode?: "path" | "url"
@@ -195,7 +202,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const framePolicy = getBrowserFramePolicy(runtimeEnv)
+  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin })
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")

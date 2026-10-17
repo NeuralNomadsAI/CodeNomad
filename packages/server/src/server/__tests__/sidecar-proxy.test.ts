@@ -1,0 +1,181 @@
+import assert from "node:assert/strict"
+import crypto from "node:crypto"
+import fs from "node:fs/promises"
+import http from "node:http"
+import net from "node:net"
+import os from "node:os"
+import path from "node:path"
+import { afterEach, it } from "node:test"
+import pino from "pino"
+import type { FastifyInstance } from "fastify"
+import type { SideCar } from "../../api-types"
+import { AuthManager } from "../../auth/manager"
+import { createHttpServer } from "../http-server"
+
+const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+const apps: FastifyInstance[] = []
+const upstreams: http.Server[] = []
+const upstreamSocketCleanups: Array<() => void> = []
+const sockets: net.Socket[] = []
+
+afterEach(async () => {
+  for (const socket of sockets.splice(0)) socket.destroy()
+  // Proxied upgrades leave detached sockets that server.close() would wait on
+  // forever; destroy every open connection deterministically before closing.
+  for (const destroy of upstreamSocketCleanups.splice(0)) destroy()
+  await Promise.all(apps.splice(0).map(async (app) => {
+    app.server.closeAllConnections?.()
+    await app.close()
+  }))
+  await Promise.all(upstreams.splice(0).map((upstream) => new Promise<void>((resolve, reject) => {
+    upstream.closeAllConnections?.()
+    upstream.close(() => resolve())
+    upstream.on("error", reject)
+  })))
+})
+
+/** A minimal SideCar upstream that completes WebSocket upgrades itself. */
+async function startSideCarUpstream(): Promise<{ port: number; upgrades: string[] }> {
+  const upgrades: string[] = []
+  const connections = new Set<net.Socket>()
+  const upstream = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end("{\"ok\":true}")
+  })
+  upstream.on("connection", (socket) => {
+    connections.add(socket)
+    socket.on("close", () => connections.delete(socket))
+  })
+  upstream.on("upgrade", (request, socket) => {
+    upgrades.push(request.url ?? "")
+    const key = String(request.headers["sec-websocket-key"] ?? "")
+    const accept = crypto.createHash("sha1").update(`${key}${WEBSOCKET_GUID}`).digest("base64")
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+  })
+  upstreams.push(upstream)
+  upstreamSocketCleanups.push(() => { for (const socket of connections) socket.destroy() })
+  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve))
+  return { port: (upstream.address() as net.AddressInfo).port, upgrades }
+}
+
+/** Raw WebSocket handshake, like a browser's; resolves once the status line and headers arrived. */
+function webSocketUpgrade(port: number, pathname: string, headers: Record<string, string>): Promise<{ status: number; head: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      const key = crypto.randomBytes(16).toString("base64")
+      const lines = [
+        `GET ${pathname} HTTP/1.1`,
+        "Host: 127.0.0.1",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${key}`,
+        "Sec-WebSocket-Version: 13",
+        ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+        "", "",
+      ]
+      socket.write(lines.join("\r\n"))
+    })
+    sockets.push(socket)
+    socket.setTimeout(4000, () => { reject(new Error(`WebSocket handshake timed out: ${pathname}`)) })
+    let head = ""
+    socket.on("data", (chunk) => {
+      head += chunk.toString("latin1")
+      const end = head.indexOf("\r\n\r\n")
+      if (end < 0) return
+      // Abort like a browser tab close: a FIN would leave the proxied
+      // connection half-open and the servers would never finish closing.
+      socket.resetAndDestroy()
+      resolve({ status: Number(head.split(" ")[1]), head: head.slice(0, end) })
+    })
+    socket.on("error", reject)
+  })
+}
+
+async function startServer() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
+  const logger = pino({ level: "silent" })
+  const authManager = new AuthManager({
+    configPath: path.join(directory, "config.yaml"),
+    username: "codenomad",
+    password: "test-password",
+    generateToken: false,
+  }, logger)
+  const { port, upgrades } = await startSideCarUpstream()
+  const sidecar: SideCar = {
+    id: "fixture", kind: "port", name: "ttyd", port, insecure: true, prefixMode: "strip",
+    status: "running", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  }
+  const publicBase = `/sidecars/${sidecar.id}`
+  const sidecarManager = {
+    async get(id: string) {
+      return id === sidecar.id ? sidecar : undefined
+    },
+    buildProxyBasePath: (id: string) => `/sidecars/${encodeURIComponent(id)}`,
+    buildTargetOrigin: (target: Pick<SideCar, "port" | "insecure">) => `http${target.insecure ? "" : "s"}://127.0.0.1:${target.port}`,
+    buildTargetPath: (_id: string, incomingPath: string, search = "") => {
+      let stripped = incomingPath.startsWith(publicBase) ? incomingPath.slice(publicBase.length) : incomingPath
+      if (!stripped.startsWith("/")) stripped = `/${stripped}`
+      return `${stripped || "/"}${search}`
+    },
+  }
+  const stub = new Proxy({}, { get: () => () => undefined }) as never
+  const { instance: app } = createHttpServer({
+    bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
+    workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: stub,
+    serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
+    instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager: stub,
+    clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+    authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
+    remoteControlManager: stub, uiStaticDir: directory,
+  })
+  apps.push(app)
+  await app.listen({ host: "127.0.0.1", port: 0 })
+  const address = app.server.address()
+  assert.ok(address && typeof address === "object")
+  const session = authManager.createSession("codenomad")
+  return {
+    app,
+    port: address.port,
+    origin: `http://127.0.0.1:${address.port}`,
+    cookie: `${authManager.getCookieName()}=${session.id}`,
+    upgrades,
+    cleanupDirectory: directory,
+  }
+}
+
+it("SideCar WebSocket upgrades require the SameSite session cookie a same-origin frame sends", async () => {
+  const server = await startServer()
+  try {
+    const anonymous = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", {})
+    assert.equal(anonymous.status, 401)
+
+    const authenticated = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie: server.cookie })
+    assert.equal(authenticated.status, 101)
+    assert.match(authenticated.head, /^HTTP\/1\.1 101 Switching Protocols/i)
+    assert.match(authenticated.head, /^upgrade: websocket$/im)
+    // strip prefixMode drops the /sidecars/:id prefix before proxying upstream.
+    assert.deepEqual(server.upgrades, ["/ws"])
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("opaque-origin frames cannot reach SideCar routes while same-origin frames can", async () => {
+  const server = await startServer()
+  try {
+    // A sandboxed iframe without allow-same-origin sends Origin: null and no cookies.
+    const opaque = await server.app.inject({ method: "GET", url: "/sidecars/fixture/token", headers: { origin: "null" } })
+    assert.equal(opaque.statusCode, 403)
+
+    // A same-origin frame sends the app's own origin plus the session cookie.
+    const sameOrigin = await server.app.inject({
+      method: "GET", url: "/sidecars/fixture/token",
+      headers: { origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(sameOrigin.statusCode, 200)
+    assert.equal(sameOrigin.body, "{\"ok\":true}")
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})

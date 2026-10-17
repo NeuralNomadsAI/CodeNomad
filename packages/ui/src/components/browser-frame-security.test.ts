@@ -22,6 +22,19 @@ describe("getBrowserFramePolicy", () => {
     })
   })
 
+  it("keeps app-proxied SideCar frames same-origin so their requests carry the session cookie", () => {
+    for (const host of ["web", "electron", "tauri"] as const) {
+      const policy = getBrowserFramePolicy({ host, windowContext: "local" }, { trustedSameOrigin: true })
+      const permissions = new Set(policy.sandbox?.split(" "))
+
+      assert.deepEqual(
+        permissions,
+        new Set(["allow-scripts", "allow-forms", "allow-modals", "allow-popups", "allow-downloads", "allow-same-origin"]),
+      )
+      assert.equal(policy.canInspectDom, false)
+    }
+  })
+
   it("uses a token-scoped localhost origin for native previews", () => {
     const preview = { token: "12345678-1234-1234-1234-123456789abc", targetUrl: "http://localhost:3000/app?q=1#hash", proxyUrl: "/previews/token/app" }
 
