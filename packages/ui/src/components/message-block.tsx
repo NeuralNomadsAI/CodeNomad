@@ -1586,9 +1586,10 @@ function reasoningDurationTitle(t: I18nContextValue["t"], durationMs?: number) {
   }
   const seconds = Math.max(1, Math.round(durationMs / 1000))
   if (seconds < 60) return t(`messageBlock.reasoning.thoughtFor.seconds.${seconds === 1 ? "one" : "other"}`, { count: String(seconds) })
-  const minutes = Math.max(1, Math.round(seconds / 60))
+  // Whole units elapsed, like the header duration ("1m 30s" → "1 minute").
+  const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return t(`messageBlock.reasoning.thoughtFor.minutes.${minutes === 1 ? "one" : "other"}`, { count: String(minutes) })
-  const hours = Math.max(1, Math.round(minutes / 60))
+  const hours = Math.floor(minutes / 60)
   return t(`messageBlock.reasoning.thoughtFor.hours.${hours === 1 ? "one" : "other"}`, { count: String(hours) })
 }
 
@@ -1822,7 +1823,7 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const thoughtDurationTitle = () => reasoningDurationTitle(t, props.durationMs)
 
-  // The visible clock already shows the duration; "Thought for…" stays in the tooltip.
+  // The visible header duration already shows it; "Thought for…" stays in the tooltip.
   const reasoningTitle = () => extractedTitle() || t("messageBlock.reasoning.thoughtsFallback")
 
   const reasoningMetaTooltip = () => {

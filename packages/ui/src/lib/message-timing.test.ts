@@ -14,6 +14,14 @@ describe("message timing helpers", () => {
     assert.equal(formatElapsedDuration(0, "en"), "")
   })
 
+  it("keeps a steady width while ticking", () => {
+    assert.equal(formatElapsedDuration(9_000, "en", true), "9s")
+    assert.equal(formatElapsedDuration(65_000, "en", true), "1m 05s")
+    assert.equal(formatElapsedDuration(120_000, "en", true), "2m 00s")
+    assert.equal(formatElapsedDuration(3_725_000, "en", true), "1h 02m")
+    assert.equal(formatElapsedDuration(3_600_000, "en", true), "1h 00m")
+  })
+
   it("localizes units and digits", () => {
     const unit = (locale: string, unit: string, value: number) =>
       new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "narrow", useGrouping: false }).format(value)

@@ -13,7 +13,7 @@ export const PartDuration: Component<{ startedAt?: number; endedAt?: number; run
     if (!props.startedAt) return ""
     const end = props.endedAt ?? (live() ? now() : undefined)
     // Server and client clocks may differ slightly: never show a negative time.
-    return end ? formatElapsedDuration(Math.max(0, end - props.startedAt), locale()) : ""
+    return end ? formatElapsedDuration(Math.max(0, end - props.startedAt), locale(), live()) : ""
   }
   return (
     <Show when={elapsed()}>
