@@ -163,18 +163,23 @@ the write).
 
 The header correction keeps the reader's rows where they were. A header that
 shrinks may first be clamped by the browser, which happens only for a reader that
-was closer to the bottom than the shrink. The correction therefore starts from the
-offset recorded before the resize exactly in that case, whatever the scroll offset
-shows by then: a clamp against the maximum of any intermediate layout (a roll
-appending rows in the same task), fractional heights and a viewport resize in the
-same task all start from the recorded offset. Everywhere else it starts from the
-current offset, so a write, wheel or PageUp in the resize's frame is kept. The
-recorded offset and maximum are refreshed on every scroll event and row resize,
-streaming growth included, while no header resize is pending. In the shrink's
-frame, an upward scroll by a reader that close to the bottom is undone, as is
-anything the browser clamped; outside the clamp zone nothing is. While a resize is
-pending, Virtua receives the header's laid-out height as its start margin as soon
-as a scroll event arrives. Otherwise the scroll's range is computed against the
+was closer to the bottom than the shrink (by the recorded maximum), or that can no
+longer scroll down (the viewport may have grown in the same task, unobserved). A
+clamp only lowers the offset, by at most the shrink, so in that zone the
+correction restores no more than that: it starts from the recorded offset, or from
+the current offset plus the shrink if that is lower. A clamp against the maximum
+of any intermediate layout (a roll appending rows in the same task), fractional
+heights and a viewport resize in the same task are thus undone, while a downward
+write that growth in the same task made possible, and the part of an upward move
+beyond the shrink, are kept. Everywhere else the correction starts from the
+current offset, so a write, wheel or PageUp in the resize's frame is kept whole.
+The recorded offset and maximum are refreshed on every scroll event and row
+resize, streaming growth included, while no header resize is pending. In the
+shrink's frame, a reader in that zone loses at most the shrink of an upward move
+(all of a move smaller than the shrink); outside it nothing is lost. Every scroll
+event hands Virtua the header's laid-out height as its start margin, also while a
+resize is pending or after one reverted before its observer ran. Otherwise the
+scroll's range is computed against the
 old margin, and a downward scroll, which keeps no overscan above, unmounts rows
 that are still visible, including the read row. After writing its correction the
 header dispatches one scroll event, so Virtua renders the rows that correction

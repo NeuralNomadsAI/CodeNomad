@@ -1169,20 +1169,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const live = element.getBoundingClientRect().height
       if (live === height) stabilize()
       // This listener precedes Virtua's, which computes the scroll's range
-      // from its start margin: hand it the header's laid-out height now.
-      // Otherwise a downward scroll, which keeps no overscan above, unmounts
-      // rows still visible (and the read row) until the correction lands.
-      else setBeforeItemsHeight(live)
+      // from its start margin: hand it the header's laid-out height now (also
+      // when a resize reverted before its observer ran). Otherwise a downward
+      // scroll, which keeps no overscan above, unmounts rows still visible
+      // (and the read row) until the correction lands.
+      setBeforeItemsHeight(live)
     }
     // The offset the correction of a resize not yet observed will write, if any.
     const correctionTarget = () => {
       const delta = element.getBoundingClientRect().height - height
       // The browser clamps a shrink only for a reader closer to the bottom
-      // than the shrink; whatever scrollTop shows then (clamped, perhaps at a
-      // maximum an appending roll has since raised), the reader's offset is
-      // the stable one. Elsewhere scrollTop is the reader's, moves included.
-      const mayClamp = delta < 0 && stableMax - stableOffset < -delta
-      const offset = mayClamp ? stableOffset : stream.scrollTop
+      // than the shrink (by the recorded maximum, or because the list can no
+      // longer scroll down: the viewport may have grown unobserved). A clamp
+      // only lowers scrollTop, by at most the shrink: restore no more than
+      // that, so other moves (a downward write that growth made possible, a
+      // larger upward one) stay the reader's.
+      const mayClamp = delta < 0 && (stableMax - stableOffset < -delta || !canScrollInDirection(stream, "down"))
+      const offset = mayClamp && stream.scrollTop < stableOffset ? Math.min(stableOffset, stream.scrollTop - delta) : stream.scrollTop
       // An escaped reader (following has its bottom pin) keeps its rows in
       // place. Header readers stay put, and a thumb drag owns the position.
       const keepReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring

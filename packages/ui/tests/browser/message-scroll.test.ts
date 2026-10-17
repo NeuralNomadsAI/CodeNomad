@@ -786,6 +786,65 @@ for (const [gap, label, action, rise] of [
   }, { name: "list" })
 })
 
+// Inside the clamp zone a clamp only lowers scrollTop, by at most the shrink:
+// a downward write that growth in the same task made possible is kept whole,
+// and an upward move larger than the shrink keeps all but the shrink (the
+// part a clamp could have taken). `range`: the row's accepted offsets.
+const write = (px: number) => `document.querySelector('.message-stream').scrollTop += ${px}`
+const grow = "window.fixture.resizeRow('row-199', 348)"
+for (const [gap, label, action, range] of [
+  [10, "growth, shrink, write +30", `${grow}; window.fixture.resizeBefore(520); ${write(30)}`, [-30, -30]],
+  [40, "growth, shrink, write +100", `${grow}; window.fixture.resizeBefore(520); ${write(100)}`, [-100, -100]],
+  [10, "growth, write +30, shrink", `${grow}; ${write(30)}; window.fixture.resizeBefore(520)`, [-30, -30]],
+  [10, "write -100, shrink", `${write(-100)}; window.fixture.resizeBefore(520)`, [20, 100]],
+  [40, "write -300, shrink", `${write(-300)}; window.fixture.resizeBefore(520)`, [220, 300]],
+] as const) test(`a move in a header shrink's task inside the clamp zone is kept (${label}, gap=${gap})`, async () => {
+  await open(async page => {
+    const before = await escapeNearBottomUnderHeader(page, gap)
+    const offsets = await paintedOffsets(page, before.key, action)
+    const [low, high] = range
+    assert.ok(offsets.every(offset => offset !== null && offset >= before.offset + low - 2 && offset <= before.offset + high + 2), `The move was undone: ${JSON.stringify({ before, range, offsets })}`)
+  }, { name: "list" })
+})
+
+test("an upward wheel larger than the clamp zone, landing as the header shrinks, is kept but for the shrink", async () => {
+  await open(async page => {
+    const before = await escapeNearBottomUnderHeader(page, 10)
+    // The wheel's scroll lands first; the header shrinks at its scroll event,
+    // captured before the list's listeners, in the same frame.
+    await page.evaluate(() => document.addEventListener("scroll", () => (window as any).fixture.resizeBefore(520), { capture: true, once: true }))
+    await page.mouse.wheel(0, -120)
+    await frames(page, 30)
+    const after = await rowOffset(page, before.key)
+    assert.ok(after !== null && after >= before.offset + 40 - 2 && after <= before.offset + 120 + 2, `The wheel was undone: ${JSON.stringify({ before, after })}`)
+  }, { name: "list" })
+})
+
+// A viewport growing in the shrink's task lowers the maximum further than the
+// recorded one shows: a reader just beyond the recorded clamp zone is clamped
+// too (it can no longer scroll down), and keeps its rows; the growth is then
+// bottom-anchored (the rows descend by the 40 px the viewport gained).
+for (const gap of [90, 110]) test(`a viewport growing in a header shrink's task leaves a reader just beyond the clamp zone in place (gap=${gap})`, async () => {
+  await open(async page => {
+    const before = await escapeNearBottomUnderHeader(page, gap)
+    const offsets = await paintedOffsets(page, before.key, "window.fixture.resizeBefore(520); document.getElementById('root').style.height = '740px'")
+    const settled = offsets.slice(2)
+    assert.ok(settled.every(offset => offset !== null && Math.abs(offset - (before.offset + 40)) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
+  }, { name: "list" })
+})
+
+// A header resize that reverts before its observer runs (a scroll event in
+// between handed Virtua the transient height) must not leave Virtua's start
+// margin stale: a later downward scroll still renders the read row.
+test("a header resize reverted before its observer leaves Virtua's start margin current", async () => {
+  await open(async page => {
+    const before = await escapeUnderHeader(page)
+    await paintedOffsets(page, before.key, `window.fixture.resizeBefore(200); ${write(1)}; requestAnimationFrame(() => window.fixture.resizeBefore(600))`, 10)
+    const offsets = await paintedOffsets(page, before.key, write(5))
+    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset - 6)) <= 2), `The read row was not rendered in place: ${JSON.stringify({ before, offsets })}`)
+  }, { name: "list" })
+})
+
 // The streaming case in SessionView: a reply grows below an escaped reader 10
 // px from the bottom (no scroll event), then an 80 px header block (where the
 // history controls live) disappears: the browser clamps, the rows stay.
