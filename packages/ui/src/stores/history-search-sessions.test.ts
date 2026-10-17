@@ -4,6 +4,7 @@ import { createRoot } from "solid-js"
 import { sdkManager } from "../lib/sdk-manager"
 import { addInstance } from "./instances"
 import { createHistorySessionLabels } from "./history-search-sessions"
+import { destroyOpenCodeData, getOpenCodeInstanceGeneration } from "./opencode-data"
 
 const instanceId = "history-labels"
 const reads: string[] = []
@@ -40,6 +41,30 @@ test("queued label reads follow the visible results and stop when they are hidde
     labels.cancel()
     await settle()
     assert.equal(reads.length, 9, "hidden results abort the reads they started")
+    dispose()
+  })
+})
+
+test("a reconnect while results are hidden discards labels from the old connection", async () => {
+  reads.length = 0
+  read = async () => ({ title: "Old connection" })
+  await createRoot(async dispose => {
+    const labels = createHistorySessionLabels(() => instanceId)
+    labels.request(["s-1"])
+    await settle()
+    assert.equal(labels.get("s-1")?.title, "Old connection")
+    labels.cancel()
+    const generation = getOpenCodeInstanceGeneration(instanceId)
+    destroyOpenCodeData(instanceId)
+    assert.notEqual(getOpenCodeInstanceGeneration(instanceId), generation)
+    // The hidden results effect re-runs on the new generation, then workspace scope returns.
+    labels.cancel()
+    assert.equal(labels.get("s-1"), undefined)
+    read = async () => ({ title: "New connection" })
+    labels.request(["s-1"])
+    await settle()
+    assert.deepEqual(reads, ["s-1", "s-1"])
+    assert.equal(labels.get("s-1")?.title, "New connection")
     dispose()
   })
 })

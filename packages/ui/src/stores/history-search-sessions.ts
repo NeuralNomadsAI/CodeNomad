@@ -51,7 +51,8 @@ export function createHistorySessionLabels(instanceId: () => string) {
   }
 
   /** Abandons pending reads; resolved labels are kept unless the connection changed. */
-  function restart(clearLabels: boolean) {
+  function restart() {
+    const clearLabels = owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())
     owner.controller.abort()
     owner = { instanceId: instanceId(), generation: getOpenCodeInstanceGeneration(instanceId()), controller: new AbortController() }
     queue.length = 0
@@ -69,7 +70,7 @@ export function createHistorySessionLabels(instanceId: () => string) {
   return {
     /** Queues reads for these sessions only; a reconnect discards older labels. */
     request(sessionIds: readonly string[]) {
-      if (owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())) restart(true)
+      if (owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())) restart()
       untrack(() => {
         const wanted = new Set(sessionIds)
         for (let index = queue.length - 1; index >= 0; index -= 1) {
@@ -88,7 +89,7 @@ export function createHistorySessionLabels(instanceId: () => string) {
     },
     /** Hidden results need no labels: stop reading them. */
     cancel() {
-      restart(false)
+      restart()
     },
     /** `undefined` while unresolved, `null` when the session is unavailable. */
     get(sessionId: string): HistorySessionLabel | null | undefined {
