@@ -760,6 +760,49 @@ for (const gap of [0, 10, 40]) test(`a beforeItems shrink near the bottom in a r
   }, { name: "list" })
 })
 
+/** Rests an escaped reader far from the bottom under a 600 px header; returns its first visible row. */
+async function escapeUnderHeader(page: Page) {
+  await page.evaluate(() => (window as any).fixture.resizeBefore(600))
+  await frames(page, 10)
+  const stream = page.locator(".message-stream")
+  await stream.evaluate(el => { el.scrollTop = 4000; el.dispatchEvent(new Event("scroll")) })
+  await frames(page, 10)
+  await stream.hover()
+  await page.mouse.wheel(0, -300)
+  await frames(page, 30)
+  return stream.evaluate(el => {
+    const bounds = el.getBoundingClientRect()
+    const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")].find(row => row.getBoundingClientRect().top >= bounds.top)!
+    return { key: row.dataset.virtualFollowKey!, offset: Math.round(row.getBoundingClientRect().top - bounds.top), mode: el.dataset.followMode }
+  })
+}
+
+// Only an offset exactly at the shrunk maximum is a browser clamp: far from
+// the bottom, an upward scroll no larger than a header shrink in the same
+// frame is the reader's own move and is kept (with or without a roll).
+for (const [roll, up] of [[false, 40], [true, 5], [true, 40]] as const) test(`an upward write in a header shrink's task far from the bottom is kept (${roll ? "roll, " : ""}-${up} px)`, async () => {
+  await open(async page => {
+    const before = await escapeUnderHeader(page)
+    assert.equal(before.mode, "escaped")
+    const offsets = await paintedOffsets(page, before.key,
+      `${roll ? "window.fixture.step(); " : ""}window.fixture.resizeBefore(520); document.querySelector('.message-stream').scrollTop -= ${up}`)
+    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset + up)) <= 2), `The upward write was undone: ${JSON.stringify({ before, offsets })}`)
+  }, { name: "list" })
+})
+
+test("an upward wheel landing in a header shrink's frame far from the bottom is kept", async () => {
+  await open(async page => {
+    const before = await escapeUnderHeader(page)
+    // The header shrinks as the wheel's scroll lands (its scroll event,
+    // captured before the list's own listeners), in that frame's scroll steps.
+    await page.evaluate(() => document.addEventListener("scroll", () => (window as any).fixture.resizeBefore(520), { capture: true, once: true }))
+    await page.mouse.wheel(0, -40)
+    await frames(page, 30)
+    const after = await rowOffset(page, before.key)
+    assert.ok(after !== null && Math.abs(after - (before.offset + 40)) <= 2, `The wheel was undone: ${JSON.stringify({ before, after })}`)
+  }, { name: "list" })
+})
+
 /** Escapes near the tail with a real wheel, so later rolls retire rows above the reader. */
 async function escapeNearTail(page: Page, wheel = -400) {
   await page.evaluate(() => (window as any).fixture.nearTail())

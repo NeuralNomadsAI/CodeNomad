@@ -160,9 +160,12 @@ resize not yet corrected by its own observer is discounted from the place, since
 that correction (before the measurement) restores the rows it displaces; only the
 move the correction will actually make is discounted (its target, clamped like
 the write). A header shrink near the bottom is clamped by the browser first; the
-correction recognises that clamp (the offset fell by at most the shrink) rather
-than requiring the reader to be at the bottom, which a roll appending rows in
-the same task would contradict. The place is kept from roll to roll while
+correction recognises that clamp only when the offset sits exactly (±0.5 px) at
+the shrunk maximum recorded with the stable offset, rather than requiring the
+reader to be at the bottom, which a roll appending rows in the same task would
+contradict. Any other upward scroll in the shrink's frame (a write, a wheel) is
+the reader's own move and is kept; only a clamp coinciding with an upward gesture
+is read as the clamp. The place is kept from roll to roll while
 nothing else moves the reader by more than 2 px, so Virtua's rounded compensations
 (a fraction of a pixel per roll, more at fractional zoom) never accumulate;
 returning to follow forgets it.

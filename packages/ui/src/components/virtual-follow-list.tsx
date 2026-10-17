@@ -1151,20 +1151,29 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const stream = scrollElement()
     if (!element || !stream) return
     let height = element.getBoundingClientRect().height
-    let stableOffset = stream.scrollTop
+    // The offset and maximum offset before a resize not yet observed.
+    let stableOffset = 0, stableMax = 0
+    const stabilize = () => {
+      stableOffset = stream.scrollTop
+      stableMax = getMaxOffset(stream)
+    }
+    stabilize()
     setBeforeItemsHeight(height)
     const captureOffset = () => {
       // A shrinking prefix can clamp scrollTop before ResizeObserver runs.
       // Retain the pre-layout offset until that resize has been accounted for.
-      if (element.getBoundingClientRect().height === height) stableOffset = stream.scrollTop
+      if (element.getBoundingClientRect().height === height) stabilize()
     }
     // The offset the correction of a resize not yet observed will write, if any.
     const correctionTarget = () => {
       const delta = element.getBoundingClientRect().height - height
-      // A shrink near the bottom is clamped by the browser, by at most the
-      // shrink, before this runs; that clamp is not a reader move. (Being at
-      // the bottom is no evidence: a roll in the same task may append rows.)
-      const clamped = delta < 0 && stream.scrollTop < stableOffset && stableOffset - stream.scrollTop <= -delta
+      // A shrink near the bottom is clamped by the browser to the shrunk
+      // maximum before this runs; that clamp is not a reader move. Only an
+      // offset exactly there is one: an upward scroll elsewhere in the same
+      // frame is kept. (Being at the bottom is no evidence: a roll in the same
+      // task may append rows.)
+      const clampTop = stableMax + delta
+      const clamped = delta < 0 && stableOffset > clampTop && Math.abs(stream.scrollTop - Math.max(0, clampTop)) <= 0.5
       const offset = clamped ? stableOffset : stream.scrollTop
       // An escaped reader (following has its bottom pin) keeps its rows in
       // place. Header readers stay put, and a thumb drag owns the position.
@@ -1180,7 +1189,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // reassert over the next wheel/thumb gesture.
       if (target !== null) writeScroll("before-items", { type: "dom", top: target, record: true })
       height = nextHeight
-      stableOffset = stream.scrollTop
+      stabilize()
       if (isActive() && !nativeScrollbarDragging) api.notifyContentRendered()
     }
     const observer = new ResizeObserver(measure)
@@ -1300,8 +1309,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         // A fresh observation of a rendered row reports in the next pass, the
         // one in which Virtua measures the wrapper at zero, after it. The first
         // live row is re-observed if it is already mounted (a head probe);
-        // otherwise (a roll of 8 rows or more) its mount, as a head probe right
-        // after this effect, provides that initial observation.
+        // otherwise (possible only for a roll of 8 rows or more) its mount, as
+        // a head probe right after this effect, provides that initial observation.
         const row = itemElements.get(plannedVirtualKeys[retiredNext])
         if (row) {
           rowResizeObserver.unobserve(row)
