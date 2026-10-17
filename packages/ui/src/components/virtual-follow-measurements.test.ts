@@ -85,8 +85,16 @@ test("Virtua keeps the carried default for unmeasured rows and never re-estimate
   const layout = createListLayout(3, 210, [[120, -1, 300], 210])
   assert.equal(layout.$getItemSize(1), 210)
   assert.equal(layout.$getTotalSize(), 630)
-  assert.equal(layout.$estimateDefaultSize, undefined)
   assert.deepEqual(layout.$snapshot(), [[120, -1, 300], 210])
+  // Measurements beyond the viewport re-estimate only an instance without itemSize.
+  const measure = (itemSize: number | undefined) => {
+    const layout = createListLayout(4, itemSize, [[120, -1, 300, -1], 210])
+    const estimating = layout.$isEstimating()
+    layout.$setItemSizes([[1, 500]], 100)
+    return { estimating, unmeasured: layout.$getItemSize(3) }
+  }
+  assert.deepEqual(measure(210), { estimating: false, unmeasured: 210 })
+  assert.deepEqual(measure(undefined), { estimating: true, unmeasured: 300 })
 })
 
 test("a carried fallback default is refreshed once every retained row is measured", () => {

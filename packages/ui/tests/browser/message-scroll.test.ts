@@ -733,9 +733,9 @@ for (const native of [false, true]) test(`sixty rolling windows leave an escaped
   }, native ? { name: "list", deviceScaleFactor: 1.1 } : { name: "list", zoom: 1.1 })
 })
 
-/** Rests an escaped reader `gap` px from the bottom under a 600 px header; returns its first visible row. */
-async function escapeNearBottomUnderHeader(page: Page, gap: number) {
-  await page.evaluate(() => (window as any).fixture.resizeBefore(600))
+/** Rests an escaped reader `gap` px from the bottom under a `header` px header; returns its first visible row. */
+async function escapeNearBottomUnderHeader(page: Page, gap: number, header = 600) {
+  await page.evaluate(header => (window as any).fixture.resizeBefore(header), header)
   await frames(page, 10)
   await page.evaluate(() => (window as any).fixture.bottom())
   await frames(page, 30)
@@ -783,6 +783,22 @@ for (const [gap, label, action, rise] of [
     // A viewport resize is bottom-anchored on its next frame.
     const settled = offsets.slice(rise ? 2 : 0)
     assert.ok(settled.every(offset => offset !== null && Math.abs(offset - (before.offset - rise)) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
+  }, { name: "list" })
+})
+
+// Virtua compensates an ordinary row shrinking wholly above the reader, but
+// near the bottom the browser has already clamped scrollTop to the shrunk
+// extent: the compensation must land on the remaining offset, not be
+// subtracted again from the clamped one (Virtua < 0.52.8 over-corrected a
+// reader above the bottom by the shrink minus the gap). Gap 0 guards the
+// at-bottom path.
+for (const [gap, shrink] of [[0, 80], [10, 80], [40, 200]] as const) test(`an ordinary row shrinking above a reader near the bottom leaves it in place (gap=${gap}, -${shrink})`, async () => {
+  await open(async page => {
+    await page.evaluate(height => (window as any).fixture.resizeRow("row-182", height), 48 + shrink)
+    await frames(page, 10)
+    const before = await escapeNearBottomUnderHeader(page, gap, 0)
+    const offsets = await paintedOffsets(page, before.key, "window.fixture.resizeRow('row-182', 48)")
+    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - before.offset) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
   }, { name: "list" })
 })
 

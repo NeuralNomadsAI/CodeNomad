@@ -115,7 +115,7 @@ also account for off-window messages, not just the local scroll offset.
 Reasons come from the closed `SCROLL_REASONS` list in `virtual-scroll-trace.ts`; the
 same call opens the programmatic window and records synchronous targets. Every write
 is a DOM write: the list never issues Virtua's imperative operations
-(`scrollTo`/`scrollBy`/`scrollToIndex`). In Virtua 0.51 such an operation reapplies
+(`scrollTo`/`scrollBy`/`scrollToIndex`). In Virtua (0.51 to 0.53) such an operation reapplies
 its fixed target on every item or viewport measurement until 150 ms after the last
 one; the rows a gesture mounts, or a streaming tail, keep re-arming it, and nothing
 public cancels it, so it would undo any gesture or later write made meanwhile. Key

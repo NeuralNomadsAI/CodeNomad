@@ -322,7 +322,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
    * The single transcript position write: a DOM write that opens the
    * programmatic window telling writes from gestures, its synchronous target
    * recorded. Positioning never uses Virtua's imperative operations
-   * (scrollTo/scrollBy/scrollToIndex): Virtua 0.51 reapplies one on every item
+   * (scrollTo/scrollBy/scrollToIndex): Virtua reapplies one on every item
    * or viewport measurement until 150 ms after the last, which the rows a
    * gesture mounts (or a streaming tail) keep re-arming, and nothing public
    * cancels it, so it would undo a gesture or a later write. Rows are placed
@@ -1445,9 +1445,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 setVirtuaHandle(handle)
                 // A new instance reads offset 0 until the next scroll event, so it
                 // would render and measure the head rows instead of the viewport.
-                // Its scroll listener attaches right after this ref: seed it. The
-                // remount has already recreated every row, so the scroll-driven
-                // closing of image previews and quote selections loses nothing.
+                // Virtua calls this ref while creating the instance; its scroll
+                // listener and ResizeObserver attach at its mount, before this
+                // microtask: seed it. The remount has already recreated every
+                // row, so the scroll-driven closing of image previews and quote
+                // selections loses nothing.
                 if (handle) queueMicrotask(() => {
                   if (virtuaHandle() !== handle) return
                   // Virtua's own ResizeObserver exists once its mount has run.
