@@ -221,10 +221,15 @@ function normalizeDirectory(directory: string): string {
   return normalizeSessionDirectory(directory)
 }
 
+/** Matches a native session location against the worktree inventory. */
+function getWorktreeForDirectory(instanceId: string, directory: string): WorktreeDescriptor | undefined {
+  const normalized = normalizeDirectory(directory)
+  return getWorktrees(instanceId).find((worktree) => normalizeDirectory(worktree.serviceDirectory ?? worktree.directory) === normalized)
+}
+
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
   const directory = sessions().get(instanceId)?.get(parentSessionId)?.location.directory
-  const locationSlug = directory && getWorktrees(instanceId)
-    .find((worktree) => normalizeDirectory(worktree.serviceDirectory ?? worktree.directory) === normalizeDirectory(directory))?.slug
+  const locationSlug = directory && getWorktreeForDirectory(instanceId, directory)?.slug
   if (locationSlug) return normalizeWorktreeSlug(instanceId, locationSlug)
 
   return "root"
@@ -317,6 +322,7 @@ export {
   getWorktrees,
   getDefaultWorktreeSlug,
   getParentSessionId,
+  getWorktreeForDirectory,
   getWorktreeSlugForParentSession,
   getWorktreeSlugForSession,
   setWorktreeSlugForParentSession,

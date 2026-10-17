@@ -52,6 +52,52 @@
   background: var(--surface-hover-overlay);
 }
 
+/* Workspace results: one header per consecutive session group. */
+.history-search-session,
+.history-message-preview-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.history-search-session {
+  padding: 0.5rem 0.5rem 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.history-search-session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-search-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0 var(--space-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--text-primary);
+  background-color: color-mix(in oklab, var(--text-secondary) 14%, transparent);
+}
+
+.history-search-worktree-label {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-message-preview-open {
+  margin-inline-start: auto;
+}
+
 .history-statistics {
   font-size: 0.75rem;
 }

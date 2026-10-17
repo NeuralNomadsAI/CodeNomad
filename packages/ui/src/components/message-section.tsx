@@ -27,6 +27,7 @@ import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryMessagePreview from "./history-message-preview"
+import HistorySearchResults from "./history-search-results"
 import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
@@ -1567,15 +1568,8 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </Show>
-                  <div class="history-search-results">
-                    <For each={currentSearchMatches()}>{(match, index) => (
-                      <button type="button" class="history-search-result" classList={{ "history-search-result-active": activeSearchIndex() === index() }}
-                        onClick={() => selectSearchMatch(index())}>
-                        <span class="text-xs text-muted">{match.sessionId} · {match.messageId} · {t(`history.${match.partType}`)}</span>
-                        <span>{match.preview}</span>
-                      </button>
-                    )}</For>
-                  </div>
+                  <HistorySearchResults instanceId={props.instanceId} matches={currentSearchMatches()} activeIndex={activeSearchIndex()}
+                    showSessions={searchWorkspace()} onSelect={selectSearchMatch} />
                   <Show when={skippedSearchMessages()}><div class="history-statistics" role="status">
                     {t("history.skipped", { count: skippedSearchMessages() })}
                   </div></Show>
