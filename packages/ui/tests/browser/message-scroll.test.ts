@@ -714,8 +714,9 @@ for (const order of ["resize, roll", "roll, resize, write"] as const) test(`a be
 
 // Repeated rolls under a still escaped reader leave it in place: Virtua's
 // compensations are rounded (fractional at a non-integer zoom) and must not
-// accumulate from roll to roll.
-test("sixty rolling windows leave an escaped reader in place at 110% zoom", async () => {
+// accumulate from roll to roll. CSS zoom (the page's `zoom`) and native zoom
+// (the device scale factor, as the desktop app zooms) round differently.
+for (const native of [false, true]) test(`sixty rolling windows leave an escaped reader in place at 110% ${native ? "native" : "CSS"} zoom`, async () => {
   await open(async page => {
     await escapeNearTail(page)
     const before = await page.locator(".message-stream").evaluate(el => {
@@ -729,35 +730,92 @@ test("sixty rolling windows leave an escaped reader in place at 110% zoom", asyn
     }
     const after = await rowOffset(page, before.key)
     assert.ok(after !== null && Math.abs(after - before.offset) <= 1, `The escaped reader drifted: ${JSON.stringify({ before, after })}`)
-  }, { name: "list", zoom: 1.1 })
+  }, native ? { name: "list", deviceScaleFactor: 1.1 } : { name: "list", zoom: 1.1 })
 })
 
-// Near the bottom the browser already clamps a header shrink, so the header's
-// correction moves less than the shrink: only that move may be discounted from
-// the roll's capture (exactly at the bottom, none).
-for (const gap of [0, 10, 40]) test(`a beforeItems shrink near the bottom in a roll's task leaves the reader in place (gap=${gap})`, async () => {
-  await open(async page => {
-    await page.evaluate(() => (window as any).fixture.resizeBefore(600))
+/** Rests an escaped reader `gap` px from the bottom under a 600 px header; returns its first visible row. */
+async function escapeNearBottomUnderHeader(page: Page, gap: number) {
+  await page.evaluate(() => (window as any).fixture.resizeBefore(600))
+  await frames(page, 10)
+  await page.evaluate(() => (window as any).fixture.bottom())
+  await frames(page, 30)
+  const stream = page.locator(".message-stream")
+  await stream.hover()
+  await page.mouse.wheel(0, -Math.max(gap, 1))
+  await frames(page, 30)
+  if (gap === 0) {
+    await stream.evaluate(el => { el.scrollTop = el.scrollHeight })
     await frames(page, 10)
-    await page.evaluate(() => (window as any).fixture.bottom())
-    await frames(page, 30)
-    const stream = page.locator(".message-stream")
-    await stream.hover()
-    await page.mouse.wheel(0, -Math.max(gap, 1))
-    await frames(page, 30)
-    if (gap === 0) {
-      await stream.evaluate(el => { el.scrollTop = el.scrollHeight })
+  }
+  const before = await stream.evaluate(el => {
+    const bounds = el.getBoundingClientRect()
+    const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")].find(row => row.getBoundingClientRect().top >= bounds.top)!
+    return { key: row.dataset.virtualFollowKey!, offset: Math.round(row.getBoundingClientRect().top - bounds.top), gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: el.dataset.followMode }
+  })
+  assert.ok(before.mode === "escaped" && Math.abs(before.gap - gap) <= 1, JSON.stringify(before))
+  return before
+}
+
+// Near the bottom the browser clamps a header shrink before its correction,
+// whatever the maximum is by then: the reader's rows stay in place with a roll
+// in the same task (the clamp may happen against the maximum before the roll's
+// append), after unobserved growth below the reader (streaming), with a
+// fractional shrink, and with a viewport resize in the same task (then
+// bottom-anchored on top: the rows rise by the 50 px the viewport lost).
+for (const [gap, label, action, rise] of [
+  [0, "roll", "window.fixture.resizeBefore(520); window.fixture.step()", 0],
+  [10, "roll", "window.fixture.resizeBefore(520); window.fixture.step()", 0],
+  [40, "roll", "window.fixture.resizeBefore(520); window.fixture.step()", 0],
+  [10, "growth below, then", "window.fixture.resizeBefore(520)", 0],
+  [10, "fractional", "window.fixture.resizeBefore(519.4)", 0],
+  [40, "fractional, roll", "window.fixture.resizeBefore(519.25); window.fixture.step()", 0],
+  [0, "viewport resize", "window.fixture.resizeBefore(520); document.getElementById('root').style.height = '650px'", 50],
+  [10, "viewport resize", "window.fixture.resizeBefore(520); document.getElementById('root').style.height = '650px'", 50],
+] as const) test(`a beforeItems shrink near the bottom leaves the reader in place (${label}, gap=${gap})`, async () => {
+  await open(async page => {
+    const before = await escapeNearBottomUnderHeader(page, gap)
+    if (label === "growth below, then") {
+      // The last row grows 30 px below the escaped reader: no scroll event.
+      await page.evaluate(() => (window as any).fixture.resizeRow("row-199", 78))
       await frames(page, 10)
     }
+    const offsets = await paintedOffsets(page, before.key, action)
+    // A viewport resize is bottom-anchored on its next frame.
+    const settled = offsets.slice(rise ? 2 : 0)
+    assert.ok(settled.every(offset => offset !== null && Math.abs(offset - (before.offset - rise)) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
+  }, { name: "list" })
+})
+
+// The streaming case in SessionView: a reply grows below an escaped reader 10
+// px from the bottom (no scroll event), then an 80 px header block (where the
+// history controls live) disappears: the browser clamps, the rows stay.
+test("a header shrink after unobserved streaming growth below an escaped reader leaves it in place", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => {
+      const block = document.createElement("div")
+      block.id = "header-block"
+      block.style.height = "80px"
+      document.querySelector(".message-stream .virtual-follow-list-before")!.append(block)
+    })
+    await bottom(page)
+    await page.evaluate(() => { (window as any).fixture.start(); (window as any).fixture.delta("Streamed paragraph below the reader.\n\n".repeat(4)) })
+    await frames(page, 30)
+    await stream.hover()
+    await page.mouse.wheel(0, -10)
+    await frames(page, 30)
+    await page.evaluate(() => (window as any).fixture.delta("A few more words.\n\n"))
+    await frames(page, 30)
     const before = await stream.evaluate(el => {
       const bounds = el.getBoundingClientRect()
       const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")].find(row => row.getBoundingClientRect().top >= bounds.top)!
       return { key: row.dataset.virtualFollowKey!, offset: Math.round(row.getBoundingClientRect().top - bounds.top), gap: el.scrollHeight - el.clientHeight - el.scrollTop, mode: el.dataset.followMode }
     })
-    assert.ok(before.mode === "escaped" && Math.abs(before.gap - gap) <= 1, JSON.stringify(before))
-    const offsets = await paintedOffsets(page, before.key, "window.fixture.resizeBefore(520); window.fixture.step()")
+    // Within the shrink of the bottom, so the browser clamps.
+    assert.ok(before.mode === "escaped" && before.gap > 15 && before.gap < 75, JSON.stringify(before))
+    const offsets = await paintedOffsets(page, before.key, "document.getElementById('header-block').remove()")
     assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - before.offset) <= 2), `The reader moved: ${JSON.stringify({ before, offsets })}`)
-  }, { name: "list" })
+  })
 })
 
 /** Rests an escaped reader far from the bottom under a 600 px header; returns its first visible row. */
@@ -777,16 +835,27 @@ async function escapeUnderHeader(page: Page) {
   })
 }
 
-// Only an offset exactly at the shrunk maximum is a browser clamp: far from
-// the bottom, an upward scroll no larger than a header shrink in the same
-// frame is the reader's own move and is kept (with or without a roll).
-for (const [roll, up] of [[false, 40], [true, 5], [true, 40]] as const) test(`an upward write in a header shrink's task far from the bottom is kept (${roll ? "roll, " : ""}-${up} px)`, async () => {
+// Far from the bottom no clamp is possible: a write in a header resize's task
+// is the reader's own move and is kept, with or without a roll, in either
+// order, on every painted frame (no frame without the read row).
+for (const [steps, write] of [
+  ["resizeBefore(520); write", -40],
+  ["step; resizeBefore(520); write", -5],
+  ["step; resizeBefore(520); write", -40],
+  ["step; resizeBefore(520); write", 5],
+  ["step; resizeBefore(520); write", 60],
+  ["step; resizeBefore(680); write", 20],
+  ["step; resizeBefore(680); write", 60],
+  ["step; write; resizeBefore(680)", 60],
+] as const) test(`a write in a header resize's task far from the bottom is kept (${steps}, ${write} px)`, async () => {
   await open(async page => {
     const before = await escapeUnderHeader(page)
     assert.equal(before.mode, "escaped")
-    const offsets = await paintedOffsets(page, before.key,
-      `${roll ? "window.fixture.step(); " : ""}window.fixture.resizeBefore(520); document.querySelector('.message-stream').scrollTop -= ${up}`)
-    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset + up)) <= 2), `The upward write was undone: ${JSON.stringify({ before, offsets })}`)
+    const action = steps.split("; ").map(part => part === "step" ? "window.fixture.step()"
+      : part === "write" ? `document.querySelector('.message-stream').scrollTop += ${write}`
+      : `window.fixture.${part}`).join("; ")
+    const offsets = await paintedOffsets(page, before.key, action)
+    assert.ok(offsets.every(offset => offset !== null && Math.abs(offset - (before.offset - write)) <= 2), `The write was undone: ${JSON.stringify({ before, offsets })}`)
   }, { name: "list" })
 })
 

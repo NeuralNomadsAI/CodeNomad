@@ -196,7 +196,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   // Observes the rendered rows; see `recreateRowObserver`.
   let rowResizeObserver: ResizeObserver | null = null
   // The `beforeItems` effect's pending correction; see `pendingBeforeItemsShift`.
-  let beforeItemsCorrectionTarget: (() => number | null) | undefined
+  let beforeItemsCorrection: { target: () => number | null; capture: () => void } | undefined
   let nativeScrollbarDragging = false
 
   function invalidateScrollRestore() {
@@ -668,7 +668,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
    * header shrink near the bottom, so this can be less than the resize.
    */
   function pendingBeforeItemsShift(element: HTMLElement) {
-    const target = beforeItemsCorrectionTarget?.()
+    const target = beforeItemsCorrection?.target()
     return target == null ? 0 : Math.min(target, getMaxOffset(element)) - element.scrollTop
   }
 
@@ -693,10 +693,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     rowResizeObserver = new ResizeObserver(() => {
       collapseRetiredRows()
       settleRollAnchor()
-      if (!isActive()) return
-      if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
-      pendingContentRenderedFrame = null
-      flushContentRendered()
+      if (isActive()) {
+        if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
+        pendingContentRenderedFrame = null
+        flushContentRendered()
+      }
+      // Row resizes (streaming) move the maximum offset without a scroll event.
+      beforeItemsCorrection?.capture()
     })
     for (const element of itemElements.values()) rowResizeObserver.observe(element)
   }
@@ -1159,28 +1162,34 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     stabilize()
     setBeforeItemsHeight(height)
+    // On scroll events and row resizes: a shrinking prefix can clamp scrollTop
+    // before ResizeObserver runs, so retain the values from before a resize
+    // until it has been accounted for.
     const captureOffset = () => {
-      // A shrinking prefix can clamp scrollTop before ResizeObserver runs.
-      // Retain the pre-layout offset until that resize has been accounted for.
-      if (element.getBoundingClientRect().height === height) stabilize()
+      const live = element.getBoundingClientRect().height
+      if (live === height) stabilize()
+      // This listener precedes Virtua's, which computes the scroll's range
+      // from its start margin: hand it the header's laid-out height now.
+      // Otherwise a downward scroll, which keeps no overscan above, unmounts
+      // rows still visible (and the read row) until the correction lands.
+      else setBeforeItemsHeight(live)
     }
     // The offset the correction of a resize not yet observed will write, if any.
     const correctionTarget = () => {
       const delta = element.getBoundingClientRect().height - height
-      // A shrink near the bottom is clamped by the browser to the shrunk
-      // maximum before this runs; that clamp is not a reader move. Only an
-      // offset exactly there is one: an upward scroll elsewhere in the same
-      // frame is kept. (Being at the bottom is no evidence: a roll in the same
-      // task may append rows.)
-      const clampTop = stableMax + delta
-      const clamped = delta < 0 && stableOffset > clampTop && Math.abs(stream.scrollTop - Math.max(0, clampTop)) <= 0.5
-      const offset = clamped ? stableOffset : stream.scrollTop
+      // The browser clamps a shrink only for a reader closer to the bottom
+      // than the shrink; whatever scrollTop shows then (clamped, perhaps at a
+      // maximum an appending roll has since raised), the reader's offset is
+      // the stable one. Elsewhere scrollTop is the reader's, moves included.
+      const mayClamp = delta < 0 && stableMax - stableOffset < -delta
+      const offset = mayClamp ? stableOffset : stream.scrollTop
       // An escaped reader (following has its bottom pin) keeps its rows in
       // place. Header readers stay put, and a thumb drag owns the position.
       const keepReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
       return keepReader && !nativeScrollbarDragging && offset >= height ? Math.max(0, offset + delta) : null
     }
-    beforeItemsCorrectionTarget = correctionTarget
+    const correction = { target: correctionTarget, capture: captureOffset }
+    beforeItemsCorrection = correction
     const measure = () => {
       const nextHeight = element.getBoundingClientRect().height
       const target = correctionTarget()
@@ -1190,13 +1199,17 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (target !== null) writeScroll("before-items", { type: "dom", top: target, record: true })
       height = nextHeight
       stabilize()
+      // Virtua renders a scroll's range at its event, a frame later; after a
+      // downward scroll (no overscan above) the rows the correction brings back
+      // into view would paint missing. Let it render them in this pass.
+      if (target !== null) stream.dispatchEvent(new Event("scroll"))
       if (isActive() && !nativeScrollbarDragging) api.notifyContentRendered()
     }
     const observer = new ResizeObserver(measure)
     observer.observe(element)
     stream.addEventListener("scroll", captureOffset, { passive: true })
     onCleanup(() => {
-      if (beforeItemsCorrectionTarget === correctionTarget) beforeItemsCorrectionTarget = undefined
+      if (beforeItemsCorrection === correction) beforeItemsCorrection = undefined
       observer.disconnect()
       stream.removeEventListener("scroll", captureOffset)
     })
