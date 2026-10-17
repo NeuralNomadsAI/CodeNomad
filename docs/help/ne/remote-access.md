@@ -21,7 +21,7 @@ binding ले firewall नियम, port forwarding, DNS वा VPN बना�
 3. **अन्य IP हरूबाट जडान अनुमति दिनुहोस्** लाई **लिस्निङ मोड (Listening mode)** अन्तर्गत चालू गर्नुहोस्। restart चेतावनी पढेर अस्थायी अवरोधका लागि तयार हुँदा मात्र **अहिले रिस्टार्ट गर्नुहोस्** रोज्नुहोस्।
 4. restart पछि **रिफ्रेस** गरी **पहुँचयोग्य ठेगानाहरू** जाँच्नुहोस्। अर्को device मा पहुँचयोग्य HTTPS ठेगाना खोल्नुहोस्, वा host मा **QR देखाउनुहोस्** रोजेर अर्को device बाट scan गरी sign in गर्नुहोस्।
 
-यसले host को direct listening mode बदल्छ, एउटै project वा Remote Control होइन। localhost बाहिर server सुन्दा पनि disclosure पूर्वनिर्धारित रूपमा बन्द हुन्छ। automatic restart उपलब्ध नभए CodeNomad हातैले restart गर्नुहोस्; standalone deployment ले launch-time `--host` मिलाउनुपर्छ। exposure हटाउन switch बन्द गरी restart, वा loopback binding मा CLI पुनःसुरु गर्नुहोस्। यसले paired Remote Control device revoke गर्दैन।
+यसले host को direct listening mode बदल्छ, एउटै project वा Remote Control होइन। localhost बाहिर server सुन्दा disclosure स्वतः खुल्छ। automatic restart उपलब्ध नभए CodeNomad हातैले restart गर्नुहोस्; standalone deployment ले launch-time `--host` मिलाउनुपर्छ। exposure हटाउन switch बन्द गरी restart, वा loopback binding मा CLI पुनःसुरु गर्नुहोस्। यसले paired Remote Control device revoke गर्दैन।
 
 ### Listener binding तालिका {#binding-matrix}
 

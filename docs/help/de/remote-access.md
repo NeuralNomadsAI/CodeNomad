@@ -21,7 +21,7 @@ Eine Bindung erzeugt keine Firewallregeln, Portweiterleitung, DNS oder VPN. Ver�
 3. Aktivieren Sie **Verbindungen von anderen IPs zulassen** unter **Abhörmodus (Listening mode)**. Lesen Sie die Neustartwarnung und wählen Sie **Jetzt neu starten** erst, wenn Sie für die vorübergehende Unterbrechung bereit sind.
 4. Verwenden Sie nach dem Neustart **Aktualisieren** und prüfen Sie **Erreichbare Adressen**. Öffnen Sie die erreichbare HTTPS-Adresse auf dem anderen Gerät oder wählen Sie **QR anzeigen** auf dem Host und scannen Sie mit dem anderen Gerät; melden Sie sich dann an.
 
-Dies ändert den direkten Abhörmodus des Hosts, nicht ein Projekt und nicht die Fernsteuerung. Der Abschnitt ist standardmäßig eingeklappt, auch wenn der Server über localhost hinaus lauscht. Ist automatischer Neustart nicht verfügbar, starten Sie CodeNomad manuell neu; eigenständige Bereitstellungen müssen ihr Start-`--host` konsistent setzen. Zum Entfernen der Freigabe deaktivieren Sie den Schalter und starten neu oder starten die CLI erneut mit Loopback-Bindung. Dies widerruft keine gekoppelten Fernsteuerungsgeräte.
+Dies ändert den direkten Abhörmodus des Hosts, nicht ein Projekt und nicht die Fernsteuerung. Der Abschnitt öffnet sich automatisch, solange der Server über localhost hinaus lauscht. Ist automatischer Neustart nicht verfügbar, starten Sie CodeNomad manuell neu; eigenständige Bereitstellungen müssen ihr Start-`--host` konsistent setzen. Zum Entfernen der Freigabe deaktivieren Sie den Schalter und starten neu oder starten die CLI erneut mit Loopback-Bindung. Dies widerruft keine gekoppelten Fernsteuerungsgeräte.
 
 ### Listener-Bindungsmatrix {#binding-matrix}
 
