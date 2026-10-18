@@ -555,6 +555,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     gitListItems,
     gitChangeWindow: gitWindows.window,
     revealGitChanges: gitWindows.reveal,
+    holdGitItemFocus: gitWindows.holdFocus,
     gitStatusLoading,
     gitStatusError,
     gitSelectedItemId,

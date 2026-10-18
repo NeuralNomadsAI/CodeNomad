@@ -295,7 +295,7 @@ test("whitespace-only worktree changes stay out of the list, counts and bulk sta
     const ids = () => buildGitChangeListItems(h.git.gitStatusEntries()).map(item => item.id)
     assert.deepEqual(fixture.statusOptions, [{ hideWhitespace: true }], "the option defaults on and is part of the read")
     assert.deepEqual(ids(), ["staged:s.ts", "unstaged:a.ts", "unstaged:c.ts"],
-      "staged rows stay visible so nothing is committed unseen")
+      "staged rows are never filtered out")
     assert.equal(h.git.gitStatusEntries()?.length, 3, "the file count excludes hidden files")
     h.click("unstaged:a.ts")
     h.click("unstaged:c.ts", { shiftKey: true })
@@ -386,6 +386,26 @@ test("sections render a bounded window that keeps previewed rows, survives refre
     await until(() => fixture.requests.length === 1)
     assert.deepEqual(fixture.requests[0].paths, [...Array.from({ length: 50 }, (_, index) => path(150 + index)), path(300)])
   } finally { h.close() }
+})
+
+test("staged rows are never filtered out: beyond the bound they stay counted, revealable and held while focused", async () => {
+  setHideWhitespace(true)
+  const path = (index: number) => `s${String(index).padStart(3, "0")}.ts`
+  // Staged files whose worktree side is whitespace-only: the option hides only that side.
+  const h = await setup(Array.from({ length: 250 }, (_, index) => ({ ...entry(path(index), true), unstagedStatus: "modified", unstagedWhitespaceOnly: true })))
+  const staged = () => h.git.gitChangeWindow("staged")
+  try {
+    assert.equal(h.git.gitChangeWindow("unstaged").total, 0)
+    assert.deepEqual([staged().total, staged().rows.length, staged().hidden], [250, 200, 50], "counted beyond the bound")
+    h.git.holdGitItemFocus(`staged:${path(240)}`, true)
+    assert.equal(staged().rows.at(-1)?.path, path(240), "a focused row beyond the bound stays rendered")
+    h.git.holdGitItemFocus(`staged:${path(10)}`, false)
+    assert.equal(staged().rows.length, 201, "releasing another row keeps the hold")
+    h.git.holdGitItemFocus(`staged:${path(240)}`, false)
+    assert.equal(staged().rows.length, 200)
+    h.git.revealGitChanges("staged")
+    assert.deepEqual([staged().rows.length, staged().hidden], [250, 0], "and revealable")
+  } finally { h.close(); setHideWhitespace(undefined) }
 })
 
 test("passive refresh and commits reconcile an eye-opened file without selecting it", async () => {

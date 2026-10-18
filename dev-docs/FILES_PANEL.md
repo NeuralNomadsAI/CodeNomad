@@ -57,6 +57,12 @@ that cost:
   current, previewed and bulk-selected rows always render: beyond the bound they
   follow the window in list order, so an auto-selected most-changed file or a
   preview moved by staging stays reachable without rendering every row before it.
+  The row holding keyboard focus is pinned too, until focus leaves it, so closing
+  its preview or deselecting it from inside keeps it in place. A focused row that
+  unmounts anyway (staged/unstaged into the other section, changed or removed by a
+  refresh) hands focus to its replacement, else to the row or Show more control now
+  in its place, the previous row or the section header
+  (`git-change-row-focus.ts`); focus never falls to the document.
   Shift ranges span the rendered rows only, so bulk actions never include files
   hidden beyond the bound (collapsed sections keep their existing behavior).
 - **Per-row selection state** uses `createSelector`, so a selection change only
@@ -127,11 +133,12 @@ Changes list focused on real edits; diffs follow it as a secondary effect.
   does a failed detection read. Untracked, added/deleted/renamed and binary (`-`)
   changes are never flagged. The server singleflight key and the UI read include
   the option.
-- **Staged files stay visible.** Detection never runs for index vs HEAD: a
-  commit (`git commit`, staged content only) therefore never includes a change
-  the list does not show. A file staged with real content and re-indented
-  afterwards shows only its staged row; a staged chmod (`git update-index
-  --chmod`) likewise stays visible in the staged section.
+- **Staged files are never filtered out.** Detection never runs for index vs
+  HEAD, so every staged file a commit (`git commit`, staged content only)
+  includes keeps its row; beyond the row bound such rows stay counted and
+  revealable (see Large inventories). A file staged with real content and
+  re-indented afterwards shows only its staged row; a staged chmod (`git
+  update-index --chmod`) likewise stays in the staged section.
 - **Bulk actions.** `useGitChanges` exposes only the visible inventory, so the
   file count, section counts, row selection, range/bulk "stage selected" and
   drag-and-drop can never target a hidden file; hidden files stay unstaged.
@@ -252,8 +259,9 @@ insertion into the composer remain available.
   rows per section plus the auto-selected row beyond the bound; an identical
   refresh mutates no node and a one-file change replaces only that row
   (MutationObserver); Show more focus, reveal persistence and worktree reset;
-  cross-section ranges, row staging, a staged preview beyond the bound and drag.
-  It logs DOM/time measurements for each refresh.
+  cross-section ranges, row staging, a staged preview beyond the bound and drag;
+  focus on a pinned row across preview close, unstage, refresh change/removal and
+  Ctrl-deselection. It logs DOM/time measurements for each refresh.
 - `git-change-window.test.ts`, plus identity reuse in `git-changes-model.test.ts`
   and unchanged-refresh/window behavior in `useGitChanges.test.ts`.
 - `useGitChanges.test.ts` / `git-changes-model.test.ts`: the option in the read,

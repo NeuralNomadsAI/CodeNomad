@@ -227,3 +227,86 @@ test("ranges, staging, previews and drag keep working around the bound", async (
     await page.waitForFunction(path => (window as any).fixture.calls.some((call: any) => call.kind === "stage" && call.path === path), dragged)
   } finally { await page.close() }
 })
+
+test("a pinned row keeps focus when it stops being pinned, and focus never falls to the document when it leaves", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const active = () => page.evaluate(() => {
+    const element = document.activeElement
+    return { tag: element?.tagName, name: element?.tagName !== "BUTTON" ? null : element.getAttribute("aria-label") ?? element.getAttribute("title") ?? element.textContent,
+      section: Array.from(document.querySelectorAll(".git-change-section")).findIndex(section => section.contains(element)) }
+  })
+  const eye = (index: 0 | 1, path: string) => section(page, index).getByRole("button", { name: `Aperçu du fichier · ${path}`, exact: true })
+  const stagedMore = { tag: "BUTTON", name: "Afficher 200 de plus", section: 0 }
+  // Preview an unstaged file and stage it: its staged row sorts beyond the bound, pinned by the preview.
+  const pinStaged = async (path: string) => {
+    await eye(1, path).click()
+    await page.getByRole("button", { name: `Indexer le fichier · ${path}`, exact: true }).click()
+    await page.waitForFunction(path => (window as any).fixture.target()?.scope === "staged" && (window as any).fixture.target()?.path === path, path)
+    await row(page, 0, path).waitFor()
+  }
+  try {
+    await openLargeInventory(page)
+    // The reported repro: the current row stays module-2500 while staged #701 is pinned only by its preview.
+    const previewed = pathAt(STAGED + 5)
+    await pinStaged(previewed)
+    assert.equal(await rows(page, 0).count(), BOUND + 1)
+    assert.equal(await row(page, 1, pathAt(MOST_CHANGED)).getAttribute("aria-current"), "true")
+    await eye(0, previewed).focus()
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => !(window as any).fixture.target())
+    assert.equal(await rows(page, 0).count(), BOUND + 1, "closing its preview keeps the focused row")
+    assert.deepEqual(await active(), { tag: "BUTTON", name: `Aperçu du fichier · ${previewed}`, section: 0 })
+    assert.equal(await eye(0, previewed).getAttribute("aria-pressed"), "false")
+    // Moving focus away releases the row.
+    await section(page, 0).locator(".git-change-hidden-rows-button").focus()
+    await row(page, 0, previewed).waitFor({ state: "detached" })
+    assert.equal(await rows(page, 0).count(), BOUND)
+    assert.deepEqual(await active(), stagedMore)
+
+    // Unstaging a focused pinned row moves it to the other section: focus goes to what replaces it, Show more.
+    const unstaged = pathAt(STAGED + 6)
+    await pinStaged(unstaged)
+    await section(page, 0).getByRole("button", { name: `Retirer de l'index · ${unstaged}`, exact: true }).focus()
+    await page.keyboard.press("Enter")
+    await row(page, 0, unstaged).waitFor({ state: "detached" })
+    assert.deepEqual(await active(), stagedMore)
+
+    // A refresh that changes the focused row keeps focus on its replacement; one that removes it hands focus on.
+    const changed = pathAt(STAGED + 7), removed = pathAt(STAGED + 8)
+    await pinStaged(changed)
+    await row(page, 0, changed).focus()
+    await page.evaluate(path => {
+      const scale = (window as any).gitScale
+      scale.entries = scale.entries.map((entry: any) => entry.path === path ? { ...entry, stagedAdditions: 9 } : entry)
+      ;(window as any).fixture.invalidate()
+    }, changed)
+    await section(page, 0).locator(`.git-panel-file-main[title="${changed}"] small`).filter({ hasText: "+9" }).waitFor()
+    assert.deepEqual(await active(), { tag: "BUTTON", name: changed, section: 0 })
+    await pinStaged(removed)
+    await row(page, 0, removed).focus()
+    await page.evaluate(path => {
+      const scale = (window as any).gitScale
+      scale.entries = scale.entries.filter((entry: any) => entry.path !== path)
+      ;(window as any).fixture.invalidate()
+    }, removed)
+    await row(page, 0, removed).waitFor({ state: "detached" })
+    assert.deepEqual(await active(), stagedMore)
+
+    // Ctrl-deselecting a row pinned only by the bulk selection keeps it while it holds focus.
+    const bulk = (await rows(page, 1).nth(BOUND - 1).locator(".git-panel-file-main").getAttribute("title"))!
+    await row(page, 1, bulk).click({ modifiers: ["Control"] })
+    await page.evaluate(() => {
+      const scale = (window as any).gitScale
+      scale.entries = [...Array.from({ length: 5 }, (_, index) => ({ path: "packages/app/aaa-" + index + ".ts", originalPath: null,
+        stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0, unstagedStatus: "modified", unstagedAdditions: 1, unstagedDeletions: 0 })), ...scale.entries]
+      ;(window as any).fixture.invalidate()
+    })
+    await row(page, 1, "packages/app/aaa-0.ts").waitFor()
+    assert.equal(await rows(page, 1).nth(BOUND).locator(".git-panel-file-main").getAttribute("title"), bulk, "now beyond the bound, pinned by the bulk selection")
+    await row(page, 1, bulk).click({ modifiers: ["Control"] })
+    assert.equal(await row(page, 1, bulk).getAttribute("aria-pressed"), "false")
+    assert.deepEqual(await active(), { tag: "BUTTON", name: bulk, section: 1 })
+    await showMore(page).focus()
+    await row(page, 1, bulk).waitFor({ state: "detached" })
+  } finally { await page.close() }
+})

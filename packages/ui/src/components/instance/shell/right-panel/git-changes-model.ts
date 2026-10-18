@@ -83,7 +83,7 @@ export function adaptSdkGitStatusEntries(
 
 /**
  * Omits worktree changes Git reports as whitespace/line-ending only. Staged rows
- * always stay visible so a commit never includes changes the list does not show.
+ * are never filtered out; beyond the row bound they stay counted and revealable.
  */
 export function hideWhitespaceOnlyChanges(entries: GitChangeEntry[] | null, hide: boolean): GitChangeEntry[] | null {
   if (!entries || !hide) return entries

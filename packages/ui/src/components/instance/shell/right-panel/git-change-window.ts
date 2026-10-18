@@ -46,14 +46,23 @@ const initialLimits = (): Record<GitChangeSection, number> => ({ staged: GIT_CHA
 /** Per-section bounded windows; reveals persist across refreshes until `reset`. */
 export function createGitChangeWindows(items: Accessor<GitChangeListItem[]>, pinned: Accessor<ReadonlySet<string>>) {
   const [limits, setLimits] = createSignal(initialLimits())
+  // The row holding keyboard focus stays rendered until focus leaves it, so
+  // closing its preview or deselecting it from inside never drops focus.
+  const [focused, setFocused] = createSignal<string | null>(null)
+  const pins = createMemo(() => {
+    const id = focused(), base = pinned()
+    return !id || base.has(id) ? base : new Set(base).add(id)
+  })
   const window = (section: GitChangeSection) => createMemo(() =>
-    buildGitChangeWindow(items().filter(item => item.section === section), limits()[section], pinned()), undefined, { equals: sameGitChangeWindow })
+    buildGitChangeWindow(items().filter(item => item.section === section), limits()[section], pins()), undefined, { equals: sameGitChangeWindow })
   const windows = { staged: window("staged"), unstaged: window("unstaged") }
   return {
     window: (section: GitChangeSection) => windows[section](),
     /** Rendered rows in document order: selection ranges never span rows the user cannot see. */
     rendered: () => [...windows.staged().rows, ...windows.unstaged().rows],
     reveal: (section: GitChangeSection) => setLimits(current => ({ ...current, [section]: windows[section]().nextLimit })),
-    reset: () => setLimits(initialLimits()),
+    /** Holds (`true`) or releases this row's focus pin; a release never clears another row's hold. */
+    holdFocus: (id: string, held: boolean) => setFocused(current => held ? id : current === id ? null : current),
+    reset: () => { setLimits(initialLimits()); setFocused(null) },
   }
 }

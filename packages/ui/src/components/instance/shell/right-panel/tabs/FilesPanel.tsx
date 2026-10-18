@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, createUniqueId, type Component, type JSX } from "solid-js"
+import { For, Show, createMemo, createSignal, createUniqueId, onCleanup, type Component, type JSX } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -14,6 +14,7 @@ import type { useGitHistory } from "../useGitHistory"
 import type { useGitInit } from "../useGitInit"
 import { closeFilePreview, getFilePreview, type FilePreviewTarget } from "../../../../../stores/files-preview"
 import FileRowActions from "../FileRowActions"
+import { keepFocusAfterRowRemoval, releaseWhenFocusLeaves } from "../git-change-row-focus"
 import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import type { GitChangeListItem, GitChangeSection } from "../types"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
@@ -266,7 +267,13 @@ const GitChangeRow: Component<{
       icon: <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show>, onSelect: toggleStage },
   ]
   const selected = () => rowProps.git.isGitItemSelected(rowProps.item.id)
-  return <div ref={draggable} class="git-panel-file-row" data-git-item-id={rowProps.item.id} classList={{ "git-panel-file-selected": selected() }} style={transformStyle(draggable.transform)}>
+  // A focused row stays rendered beyond the bound; one that unmounts anyway hands focus on.
+  let row!: HTMLDivElement
+  const hold = (held: boolean) => rowProps.git.holdGitItemFocus(rowProps.item.id, held)
+  onCleanup(() => keepFocusAfterRowRemoval(row, () => hold(false)))
+  return <div ref={element => { row = element; draggable(element) }} class="git-panel-file-row" data-git-item-id={rowProps.item.id}
+    classList={{ "git-panel-file-selected": selected() }} style={transformStyle(draggable.transform)}
+    onFocusIn={() => hold(true)} onFocusOut={() => releaseWhenFocusLeaves(row, () => hold(false))}>
     <button class="git-panel-file git-panel-file-main" aria-pressed={selected()} aria-current={rowProps.git.isGitItemCurrent(rowProps.item.id) ? "true" : undefined} title={rowProps.item.path} disabled={!rowProps.canOpenFile} onClick={event => {
        rowProps.git.handleGitRowClick(rowProps.item, event)
     }}><span class="git-file-status">{rowProps.item.status.slice(0, 1).toUpperCase()}</span><span>{rowProps.item.path}</span><small><b class="file-list-item-additions">+{rowProps.item.additions}</b> <b class="file-list-item-deletions">−{rowProps.item.deletions}</b></small></button>
