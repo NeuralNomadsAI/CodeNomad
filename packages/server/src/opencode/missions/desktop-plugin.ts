@@ -28,6 +28,9 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           prompt: (coordinatorID, input) => sendMissionInput(coordinatorID, "prompt", input),
           synthetic: (coordinatorID, input) => sendMissionInput(coordinatorID, "synthetic", input),
           lifecycle: (coordinatorID, input) => sendMissionInput(coordinatorID, "lifecycle", input),
+          prepare: (coordinatorID, input) => sendMissionInput(coordinatorID, "prepare", input),
+          observeTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "task-sessions", input),
+          interruptTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "interrupt", input),
           cleanup: async (coordinatorID, input) => {
             const result = await sendMissionInput(coordinatorID, "cleanup", input) as { outcome?: unknown; reason?: unknown }
             if (result?.outcome !== "removed" && result?.outcome !== "retained") throw new Error("Invalid mission cleanup acknowledgement")

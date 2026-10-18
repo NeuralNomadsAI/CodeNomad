@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
-import { parseMissionChildTaskKey, parseMissionTaskSessions } from "../lib/mission-task-sessions"
+import { parseMissionChildTaskKey, parseMissionTaskSessions } from "../../../server/src/missions/task-sessions"
 import type { OpenCodeClient } from "./opencode-client"
 import { listMessageWindow } from "./session-message-pages"
 

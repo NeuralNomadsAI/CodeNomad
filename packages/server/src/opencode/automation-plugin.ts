@@ -501,7 +501,8 @@ async function probeBrowserBridges(
   return found.slice(0, 2)
 }
 
-export async function sendMissionInput(sessionID: string, kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root", input: unknown): Promise<unknown> {
+export async function sendMissionInput(sessionID: string,
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
   const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS)
   if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)

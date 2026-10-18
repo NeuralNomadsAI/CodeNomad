@@ -9,6 +9,7 @@ import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { MISSION_MAX_MISSIONS } from "../../missions/model"
 import { prepareMissionCreation } from "./mission-creation-pipeline"
+import { missionRecoveryError } from "../../missions/recovery-error"
 
 const directory = "C:/private-fixture/worktree"
 const physical = "C:/private-fixture/physical"
@@ -87,8 +88,16 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     tool: { transform: async (callback: any) => { callback({ namespace() {}, add(tool: any) { tools.set(tool.name, tool) } }); return { dispose: async () => {} } } },
     rpc: { register: async (_definition: any, value: any) => { handlers = value; return { dispose: async () => {}, events: { emit: async () => {} } } } },
   }
+  // The plugin's bridge call, with sendMissionInput's fixed-error mapping.
+  const bridge = async (sessionID: string, kind: string, input: unknown) => {
+    const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, headers: { "x-codenomad-automation-token": "private-token" },
+      payload: { mode: "mission-input", sessionID, command: { kind, input } } })
+    if (response.statusCode !== 200) throw new Error(missionRecoveryError(response.json().code)?.message ?? response.json().error)
+    return response.json().result
+  }
   const transport = {
     prompt: async () => ({}), synthetic: async () => ({}),
+    prepare: (sessionID: string, input: unknown) => bridge(sessionID, "prepare", input),
   }
   const creationLifetime = new AbortController()
   const dispose = await setupMissionsPlugin(context, transport, undefined,
@@ -262,6 +271,31 @@ function delegate(f: Awaited<ReturnType<typeof fixture>>) {
     sessionID: "ses_coordinator", id: "delegate", progress: async () => {},
   }))
 }
+
+test("a coordinator prepares a paused hand-off through the bridge's fenced creation pipeline, never Play", async () => {
+  const f = await fixture()
+  try {
+    const { coordinator, mission: source } = await specialist(f)
+    const tool = (name: string, input: unknown) => f.tools.get(name).execute(input, { sessionID: coordinator.id, id: `call-${name}`, progress: async () => {} })
+    const prepare = (objective = "Pilot the chosen seam") => tool("prepare", { requestID: "pilot", objective, template: "custom" })
+    const prepared = JSON.parse((await prepare()).content)
+    assert.deepEqual([prepared.disposition, prepared.status, prepared.runState], ["prepared", "active", "prepared"])
+    const handoff = (await f.handlers.snapshot()).missions.find((mission: any) => mission.id === prepared.missionID)
+    assert.deepEqual(handoff.preparedBy, { missionId: source.id, coordinatorSessionId: coordinator.id })
+    assert.notEqual(handoff.coordinatorSessionId, coordinator.id)
+    assert.equal(f.rpcCreates, 1)
+    assert.equal(JSON.parse((await prepare()).content).missionID, prepared.missionID, "the same requestID replays the same mission")
+    await assert.rejects(prepare("A different objective"), /already prepared a different mission/)
+    const listed = JSON.parse((await tool("inspect", { list: true })).content).missions
+    assert.deepEqual(listed.map((entry: any) => [entry.missionID, entry.relation]), [[prepared.missionID, "prepared"], [source.id, "member"]])
+    assert.equal(JSON.parse((await tool("inspect", { missionID: prepared.missionID })).content).mission.id, prepared.missionID)
+    // The deletion fence still guards a coordinator's creation like the editor's.
+    const held = deferred(), deletion = f.fence.run(physical, [physical], () => held.promise)
+    try { await assert.rejects(tool("prepare", { requestID: "fenced", objective: "Blocked", template: "custom" }), /nothing was created/) }
+    finally { held.resolve(); await deletion }
+    assert.equal(f.rpcCreates, 3)
+  } finally { await f.close() }
+})
 
 test("human coordinator creation fails before native creation and publication under the physical deletion fence", async () => {
   const f = await fixture(), held = deferred()

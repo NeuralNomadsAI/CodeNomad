@@ -21,7 +21,8 @@ Historical experiment documents are dated evidence, not release approval.
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
-`mission.report` and `mission.briefing`. The coordinator is the topology writer.
+`mission.report`, `mission.briefing`, `mission.interrupt` and `mission.prepare`.
+The coordinator is the topology writer.
 Native task declaration returns the canonical assignment for ordinary OpenCode
 subagent calls; it does not create another execution queue. Native helpers return
 through their actual parent; the coordinator records the declared task's business
@@ -35,6 +36,38 @@ objective. Only `mission.inspect` returns the full map; `mission.inspect({ taskK
 rereads one task with its contract and exact current assignment prompt. A native
 Wayfinder `decision` declaration also states the human-answer requirement that
 `verifyHumanDecision` enforces, so a self-contained analysis goes to `research`.
+
+Coordinator actions that need native reads or effects outside the plugin's
+Promise API cross the authenticated desktop bridge (`sendMissionInput`), so they
+exist only with backend presence and refuse otherwise:
+
+- `mission.inspect({ taskKey })` adds the task's observed native conversations
+  (`server/routes/mission-task-native.ts`): the coordinator's direct children
+  whose first user message carries that task's canonical assignment header
+  (`missions/task-sessions.ts`, shared with the UI). This is advisory display
+  evidence, never settlement.
+- `mission.interrupt({ taskKey })` stops a retired native task's conversations:
+  each one's family deepest first through `interruptNativeMissionFamily`, then the
+  conversation itself, cancelling its queued inputs. The coordinator, other tasks
+  and the plan are untouched, under the worktree-deletion fence; `complete: false`
+  is reported honestly.
+- `mission.prepare` creates a paused one-time hand-off through the same
+  `prepareMissionCreation` pipeline, holds and fences as the editor, at the
+  coordinator's Location. It never starts. The trusted `preparedBy`
+  (`{ missionId, coordinatorSessionId }`) gives that coordinator read-only
+  visibility (`inspect({ missionID })`, `inspect({ list: true })`), never control.
+  The requestID is scoped to the coordinator and mission, so retries replay.
+
+A native Wayfinder decision readout may omit its artifact: the human-answer gate's
+`discover` finds fresh children of the expected parent whose `subagent` call
+carried the exact assignment prompt, reads their confirmed UI marks and keeps
+only answers its own `verify` accepts. Exactly one candidate is used; none or
+several refuse, and `inspect({ taskKey })` lists them as ready artifacts. Nothing
+is inferred from text, titles or timing. `mission.briefing` also accepts
+requestID `"auto"` without `basedOnRevision`: the server uses the current revision,
+or refuses a different summary when the latest automatic briefing is still the
+last event. One replacement task may merge several retired tasks; it names one
+of them in `replacesTaskKey`.
 
 ## Durability and recovery
 

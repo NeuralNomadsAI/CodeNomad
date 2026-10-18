@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { parseMissionChildTaskKey, parseMissionTaskSessions } from "./mission-task-sessions"
+import { parseMissionChildTaskKey, parseMissionTaskSessions } from "./task-sessions"
 
 const prompt = (mission: string, key: string, prefix = "") => `${prefix}# CodeNomad Mission Assignment
 

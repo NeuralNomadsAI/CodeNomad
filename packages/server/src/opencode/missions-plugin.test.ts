@@ -42,7 +42,7 @@ test("validates the compact mission tool contracts", () => {
   assert.throws(() => parseReviseInput({ expectedRevision: 1, requestID: "bad", reason: "Missing contract", addTasks: [{ taskKey: "bad" }] }), /title/)
 })
 
-test("registers five tools, typed snapshot RPC, and role context", async () => {
+test("registers seven tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
@@ -90,7 +90,7 @@ test("registers five tools, typed snapshot RPC, and role context", async () => {
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)
@@ -109,11 +109,17 @@ test("registers five tools, typed snapshot RPC, and role context", async () => {
   assert.equal("notes" in snapshot.missions[0], false)
   assert.equal(emitted.length, 1)
 
-  const event = { sessionID: "ses_coordinator", system: [] as Array<{ type: "text"; text: string }>, tools: { mission_delegate: {} } }
+  const event = { sessionID: "ses_coordinator", system: [] as Array<{ type: "text"; text: string }>,
+    tools: { mission_delegate: {}, mission_interrupt: {}, mission_prepare: {} } as Record<string, unknown> }
   await contextHook!(event)
   assert.equal(event.system[0]?.type, "text")
   assert.match(event.system[0]?.text ?? "", /Only this coordinator session/)
-  assert.ok(event.tools.mission_delegate)
+  assert.ok(event.tools.mission_delegate && event.tools.mission_interrupt && event.tools.mission_prepare)
+  // Without the backend the hand-off and stop actions refuse instead of acting natively.
+  await assert.rejects(tools.find(tool => tool.name === "prepare")!.execute({ requestID: "pilot", objective: "Pilot", template: "custom" }, {
+    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} }), /needs the CodeNomad backend/)
+  assert.deepEqual(JSON.parse((await inspect.execute({ list: true }, { sessionID: "ses_coordinator", messageID: "msg_l", id: "call_l",
+    progress: async () => {} })).content).missions.map((entry: { relation: string }) => entry.relation), ["member"])
   const call = (id: string) => ({ sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {} })
   const currentMap = async () => (await snapshotHandler!() as { missions: MissionMap[] }).missions[0]!
   const revise = tools.find((tool) => tool.name === "revise")!

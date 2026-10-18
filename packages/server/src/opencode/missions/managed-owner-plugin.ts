@@ -7,8 +7,8 @@ import { readNativeRecurrenceSnapshot } from "./native-recurrence-snapshot"
 import { readNativeRecurrenceControlStatus } from "./native-recurrence-control-status"
 import { controlNativeRecurrence } from "./native-recurrence-control"
 import { nativeRecurrenceHandlers } from "./native-recurrence-create"
-import { HUMAN_ANSWER_RPC, type NativeHumanAnswerGate } from "../../missions/human-answer"
-import { acquireNativeHumanAnswers } from "./native-human-answer"
+import { HUMAN_ANSWER_RPC } from "../../missions/human-answer"
+import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
 import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from "./native-recurrence-current"
 import { readNativeRecurrencePage } from "./native-recurrence-reader"
 import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
@@ -39,10 +39,10 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
-    const humanGate: NativeHumanAnswerGate = request => run(Effect.gen(function* () {
+    const humanGate = nativeHumanAnswerGate(use => run(Effect.gen(function* () {
       const answers = yield* acquireNativeHumanAnswers(ctx)
-      return yield* Effect.promise(() => answers.verify(request))
-    }).pipe(Effect.orDie))
+      return yield* Effect.promise(() => use(answers))
+    }).pipe(Effect.orDie)))
     // Keep schedule RPC available without desktop presence. One-shot handlers
     // remain dynamically bound to their existing presence-owned registration.
     type Handlers = Record<string, (...args: never[]) => Effect.Effect<unknown, unknown>>

@@ -7,6 +7,7 @@ import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
+import { tsImport } from "tsx/esm/api"
 
 const OBSERVE = 10_000 // > 3 s settlement debounce: a pending passage must stay pending.
 const id = prefix => `${prefix}_${randomUUID().replaceAll("-", "")}`
@@ -21,6 +22,9 @@ export async function runJourneys(c) {
   const calls = sessionID => c.evidence.providerCalls.filter(call => call.sessionID === sessionID)
   // Read-only view of this fixture's own isolated database.
   const db = query => { const d = new DatabaseSync(c.env.OPENCODE_DB, { readOnly: true }); try { return query(d) } finally { d.close() } }
+  // The product's own mark namespace, so a renamed prefix cannot make the mark checks vacuous.
+  const { HUMAN_MARK_STORAGE_PREFIX } = await tsImport("../../packages/server/src/missions/human-answer.ts", import.meta.url)
+  const markKeys = `%${HUMAN_MARK_STORAGE_PREFIX}/%`
   const document = scheduleID => db(d => d.prepare("SELECT value FROM kv").all().map(row => { try { return JSON.parse(row.value) } catch { return undefined } })
     .find(value => value?.id === scheduleID && Array.isArray(value.cursors)))
   const idles = sessionID => db(d => d.prepare("SELECT json_extract(data,'$.outcome') AS outcome FROM session_message WHERE session_id=? AND type='idle'").all(sessionID)).map(row => row.outcome)
@@ -246,8 +250,10 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
         q.provenance = { kind: "native-form-answer", contract: { missionID: contract.missionID, taskKey: contract.taskKey, generation: contract.generation },
           nativeCall: { generation: contract.generation, parentSessionID: turn.sessionID, parentMessageID: parent.id, toolCallID: q.subagentCall },
           sessionID: child, formID: q.formID, messageID: asked.id, toolCallID: question.id, fieldKey: "q0" }
+        // The UI run omits the artifact: the server discovers the exact answered question itself.
         return { calls: [{ name: "mission_report", id: q.decisionCall = id("call_qrep"), args: { taskKey: "decision", outcome: "completed",
-          summary: "The human chose Module", evidence: [], next: [], artifact: { kind: "decision", question: QUESTION.question, answer: "Module", provenance: q.provenance } } }] }
+          summary: "The human chose Module", evidence: [], next: [],
+          ...(q.mode === "ui" ? {} : { artifact: { kind: "decision", question: QUESTION.question, answer: "Module", provenance: q.provenance } }) } }] }
       }
       q.decisionResult ??= toolResult(turn, decision.id)
       if (!/"disposition"\s*:\s*"reported"/.test(q.decisionResult)) return { text: "Gate refused; no human decision recorded" }
@@ -257,7 +263,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
     const scheduleID = await c.create("Native Wayfinder decision", far(), { template: "wayfinder", instructions: "[JOURNEY-Q] Decide the seam with the human through a native Form." })
     const Q = c.evidence.journeys.Q = { id: scheduleID, runs: {} }
     for (const [n, mode] of [[0, "ui"], [1, "ordinary"]]) {
-      q = {}
+      q = { mode }
       const R = Q.runs[mode] = { passage: await manual(scheduleID, n) }
       let forms = []
       await c.until(async () => (forms = (await c.client.form.list({ location })).data).length === 1, 120_000)
@@ -276,7 +282,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
       await c.quiet(R.passage.sessionID)
       const { after } = await archived(scheduleID, n + 1)
       R.outcome = after.latestResult.outcome; R.decisionResult = q.decisionResult?.slice(0, 600); R.provenance = q.provenance
-      R.mark = db(d => d.prepare("SELECT key,value FROM kv WHERE key LIKE ?").all(`%/human-marks/%/${form.sessionID}/${form.id}`))
+      R.mark = db(d => d.prepare("SELECT key,value FROM kv WHERE key LIKE ?").all(`${markKeys}/${form.sessionID}/${form.id}`))
         .map(row => ({ state: JSON.parse(row.value).state, via: JSON.parse(row.value).via }))
       R.starts = (await c.passageStarts(R.passage.sessionID)).length
       assert.equal(R.starts, 1)
@@ -315,7 +321,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
     let forms = []
     await c.until(async () => (forms = (await c.client.form.list({ location })).data.filter(f => f.sessionID === session.id)).length === 1, 120_000)
     const form = N.form = { id: forms[0].id, sessionID: forms[0].sessionID }
-    const marksBefore = db(d => d.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE '%/human-marks/%'").get().count)
+    const marksBefore = db(d => d.prepare("SELECT count(*) AS count FROM kv WHERE key LIKE ?").get(markKeys).count)
     // Exactly what the InterruptionDock sends: authenticated cookie plus the human-answer hint.
     const reply = await c.bridge().inject({ method: "POST", url: `/workspaces/${c.workspace().id}/instance/api/session/${form.sessionID}/form/${form.id}/reply`,
       headers: { cookie: "session=isolated-human", "content-type": "application/json", "x-codenomad-human-answer": "1" },
@@ -328,7 +334,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
     assert.ok(N.modelSaw.includes("N-ANSWER-RECEIVED Blue"), "the native question received the dock answer")
     N.pendingForms = (await c.client.form.list({ location })).data.filter(f => f.sessionID === session.id).length
     assert.equal(N.pendingForms, 0)
-    N.marks = db(d => d.prepare("SELECT key FROM kv WHERE key LIKE '%/human-marks/%'").all()).map(row => row.key)
+    N.marks = db(d => d.prepare("SELECT key FROM kv WHERE key LIKE ?").all(markKeys)).map(row => row.key)
     assert.equal(N.marks.length, marksBefore, "no UI mark is written for a non-Mission Form")
     assert.equal(N.marks.some(key => key.includes(session.id)), false)
     N.result = "passed"

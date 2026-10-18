@@ -141,6 +141,8 @@ export interface MissionCreateInput extends MissionStartInput {
   requestID: string
   coordinatorSessionID?: string
   expectedCoordinatorLocation?: NativeMissionSession["location"]
+  /** Trusted backend hand-off identity, never HTTP input. */
+  preparedBy?: { missionID: string; coordinatorSessionID: string }
 }
 
 export interface MissionUpdateInput {
@@ -185,4 +187,19 @@ export interface MissionInputTransport {
   cleanup?(coordinatorID: string, input: { missionID: string; deletionID: string; sessionID: string }): Promise<{ outcome: "removed" | "retained"; reason?: import("./model").MissionCleanupReason }>
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
   synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>
+  /** Backend coordinator actions behind the authenticated bridge; absent without backend presence. */
+  prepare?(coordinatorID: string, input: MissionPrepareRequest & { missionID: string }): Promise<unknown>
+  observeTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
+  interruptTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
+}
+
+/** A coordinator's paused hand-off mission: what the Mission editor submits, never Play. */
+export interface MissionPrepareRequest {
+  requestID: string
+  objective: string
+  title?: string
+  notes?: string
+  template: MissionTemplateId
+  profiles?: MissionProfiles
+  taskMode?: MissionTaskMode
 }

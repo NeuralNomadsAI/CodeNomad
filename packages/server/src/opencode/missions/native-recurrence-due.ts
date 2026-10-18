@@ -15,7 +15,7 @@ import { acquireNativePassageObservation } from "./native-passage-observation"
 import type { AutonomousProfileSource } from "./autonomous-environment"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import { runMissionExclusive } from "../../missions/exclusive"
-import { acquireNativeHumanAnswers } from "./native-human-answer"
+import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
 
 export type NativePassagePlacement = Readonly<{ projectID: string; projectCanonical: string; directory: string;
   workspaceID?: string; scheduleID: string; profileID: string; executionHost: string;
@@ -56,9 +56,9 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
     const observation = yield* acquireNativePassageObservation()
     const graph = yield* Effect.context<never>()
     const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
-    const humanGate: NativeHumanAnswerGate = placement.humanGate ?? (request => run(Effect.gen(function* () {
+    const humanGate: NativeHumanAnswerGate = placement.humanGate ?? nativeHumanAnswerGate(use => run(Effect.gen(function* () {
       const answers = yield* acquireNativeHumanAnswers(exact)
-      return yield* Effect.tryPromise(() => answers.verify(request))
+      return yield* Effect.tryPromise(() => use(answers))
     })))
     const storage: MissionStorage = {
       get: key => run(storageContext.get(key)) as ReturnType<MissionStorage["get"]>,

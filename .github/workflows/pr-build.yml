@@ -391,7 +391,6 @@ jobs:
           packages/ui/src/lib/mission-mutation.test.ts
           packages/ui/src/lib/mission-preferences-document.test.ts
           packages/ui/src/lib/mission-recurrence-control.test.ts
-          packages/ui/src/lib/mission-task-sessions.test.ts
           packages/ui/src/lib/mission-view-fence.test.ts
           packages/ui/src/lib/native-mission-preferences.test.ts
           packages/ui/src/lib/storage-owner-read-fence.test.ts

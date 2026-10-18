@@ -42,6 +42,11 @@ export const missionBriefingSchema = { type: "object", properties: {
   basedOnRevision: { type: "integer", minimum: 1 }, summary: { type: "string", minLength: 1, maxLength: 1200 },
   achieved: itemsSchema, ongoing: itemsSchema, obstacles: itemsSchema, next: itemsSchema,
 }, required: ["requestID", "basedOnRevision", "summary", "achieved", "ongoing", "obstacles", "next"], additionalProperties: false }
+/** Model-facing schema: basedOnRevision may be omitted with requestID "auto". */
+export const missionBriefingToolSchema = { ...missionBriefingSchema, properties: { ...missionBriefingSchema.properties,
+  requestID: { ...missionBriefingSchema.properties.requestID, description: "\"auto:<revision>\" for an unrequested milestone briefing, or \"auto\" to let the server use the current revision; an explicit UI request's exact ID otherwise." },
+  basedOnRevision: { ...missionBriefingSchema.properties.basedOnRevision, description: "The current revision; omit only with requestID \"auto\"." } },
+  required: missionBriefingSchema.required.filter(key => key !== "basedOnRevision") }
 
 export const missionBriefingSnapshotSchema = { type: "object", properties: {
   id: { type: "string", minLength: 1, maxLength: 100 },
@@ -55,6 +60,17 @@ export const missionBriefingSnapshotSchema = { type: "object", properties: {
 export const missionBriefingResponsesSchema = { type: "array", maxItems: MISSION_BRIEFING_RESPONSES_MAX, items: {
   type: "object", properties: { requestID: missionBriefingSchema.properties.requestID, briefingID: missionBriefingSnapshotSchema.properties.id },
   required: ["requestID", "briefingID"], additionalProperties: false } }
+
+/** Tool input: requestID "auto" may omit basedOnRevision; the control resolves both before publishing. */
+export type MissionBriefingRequest = Omit<MissionBriefingInput, "basedOnRevision"> & { basedOnRevision?: number }
+export const AUTOMATIC_BRIEFING_REQUEST = "auto"
+
+export function parseMissionBriefingRequest(input: unknown): MissionBriefingRequest {
+  const value = record(input)
+  if (value.requestID !== AUTOMATIC_BRIEFING_REQUEST || value.basedOnRevision !== undefined) return parseMissionBriefingInput(value)
+  const { basedOnRevision: _revision, ...content } = parseMissionBriefingInput({ ...value, basedOnRevision: 1 })
+  return content
+}
 
 export function parseMissionBriefingInput(input: unknown): MissionBriefingInput {
   const value = record(input)

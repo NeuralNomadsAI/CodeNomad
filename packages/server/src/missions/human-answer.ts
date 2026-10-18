@@ -62,7 +62,20 @@ export interface HumanDecisionMark {
   formID: string; sessionID: string; answeredAt: number; via: "ui"
   form: Form.Info; answer: FormAnswer
 }
-export type NativeHumanAnswerGate = (request: import("./native-human-evidence").NativeDecisionEvidenceRequest) => Promise<HumanDecisionMark>
+/** `discover` lists qualifying answers for a decision task, each already verified by the gate. */
+export type NativeHumanAnswerGate = ((request: import("./native-human-evidence").NativeDecisionEvidenceRequest) => Promise<HumanDecisionMark>)
+  & { discover?(request: HumanDecisionDiscoveryRequest): Promise<HumanDecisionCandidate[]> }
+
+/** A decision task's own conversations: fresh children of `parentSessionID` born from this exact assignment. */
+export const humanDecisionDiscoverySchema = z.object({ contract: nativeDecisionProvenance.shape.contract, parentSessionID: id,
+  assignmentPrompt: z.string().min(1).max(128 * 1024), projectID: id, directory: z.string().min(1).max(4096) }).strict()
+export type HumanDecisionDiscoveryRequest = z.infer<typeof humanDecisionDiscoverySchema>
+/** One native question the human answered in the CodeNomad interface, shaped as the readout artifact. */
+export interface HumanDecisionCandidate {
+  question: string
+  answer: string | string[]
+  artifact: { kind: "decision"; question: string; answer: string | string[]; provenance: z.infer<typeof nativeDecisionProvenance> }
+}
 
 /** The Form and durable question INPUT must be the same exact native call.
  * Descriptions and free text are preserved, not projected or normalised. */

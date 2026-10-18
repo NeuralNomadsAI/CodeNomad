@@ -36,6 +36,8 @@ export async function prepareMissionCreation(input: {
   request: unknown; signal: AbortSignal; wait?<T>(operation: Promise<T>): Promise<T>
   /** Trusted expected project for protected composition, never HTTP input. */
   expectedProjectID?: string
+  /** Trusted coordinator hand-off from the authenticated plugin bridge, never HTTP input. */
+  preparedBy?: { missionID: string; coordinatorSessionID: string }
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
@@ -94,6 +96,7 @@ export async function prepareMissionCreation(input: {
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
     ...(request.coordinatorSessionId ? { coordinatorSessionID: request.coordinatorSessionId } : {}),
     expectedCoordinatorLocation: locations.at(-1)!,
+    ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
   }
   const admission = await admitMissionCreationLocations(manager, input.fence, workspaceID, connection, locations, signal, {
     key: `human:${projectID}:${missionID}`, workspaceID, projectID, missionID, sessionID, requestDigest: missionCreationDigest(nativeInput),
@@ -143,6 +146,8 @@ export async function prepareMissionCreation(input: {
         if (result.mission?.id !== missionID || result.mission.projectID !== projectID
           || result.mission.coordinatorSessionId !== sessionID || !coordinator || result.mission.title !== nativeInput.title
           || !sameLocation(coordinator.location, nativeInput.expectedCoordinatorLocation)
+          || result.mission.preparedBy?.missionId !== input.preparedBy?.missionID
+          || result.mission.preparedBy?.coordinatorSessionId !== input.preparedBy?.coordinatorSessionID
           || !sameMissionProfiles(result.mission.profiles, nativeInput.profiles)
           || (result.mission.taskMode ?? "native") !== nativeInput.taskMode) throw new MissionCreationHoldError("creation-uncertain")
         admission.settled()

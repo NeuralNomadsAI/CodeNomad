@@ -160,6 +160,21 @@ test("dependencies, dependents and replacements navigate reader identity without
   } finally { await f.page.close() }
 })
 
+test("a replacement merging several retired tasks lists each of them as before", async () => {
+  const value = mission()
+  value.tasks.splice(1, 0, { ...value.tasks[0], id: "before-two", key: "before-two", title: "Second earlier task" })
+  const f = await setup(value)
+  try {
+    await show(f.page)
+    await expand(f.page, "Technical details")
+    const before = f.page.locator(".mission-reader article div").filter({ has: f.page.getByRole("heading", { name: "Before", exact: true }) })
+    assert.deepEqual(await before.getByRole("button").allInnerTexts(), ["Earlier task", "Second earlier task"])
+    await before.getByRole("button", { name: "Second earlier task", exact: true }).click()
+    await f.page.locator(".mission-reader").getByRole("heading", { name: "Second earlier task", exact: true }).waitFor()
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.page.close() }
+})
+
 test("current task result does not promote a late return, but retains its native notification evidence in technical detail", async () => {
   const current = mission(), late: MissionReport = { ...current.reports[0], id: "late", createdAt: 3, late: true,
     delivery: "native-return", notificationStatus: "pending", summary: "Latest result" }

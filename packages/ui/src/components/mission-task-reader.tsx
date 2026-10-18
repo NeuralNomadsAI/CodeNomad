@@ -27,6 +27,9 @@ export function MissionTaskReader(props: {
   const history = createMemo(() => missionTaskHistory(props.mission, props.task))
   const readout = createMemo(() => missionReports(props.mission).find(report => report.taskKey === props.task.key && !report.late
     && report.delivery === "coordinator-readout"))
+  // A merging replacement names one predecessor; every retired task pointing to it is listed.
+  const predecessors = createMemo(() => [...new Set([...(props.task.replacesTaskKey ? [props.task.replacesTaskKey] : []),
+    ...props.mission.tasks.filter(task => task.replacedByTaskKey === props.task.key).map(task => task.key)])])
   // Once a task is done, the tasks it unblocked need no pointer.
   const unblocks = createMemo(() => props.task.status === "completed" ? []
     : props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key) && task.status !== "withdrawn" && !task.replacedByTaskKey))
@@ -107,8 +110,9 @@ export function MissionTaskReader(props: {
       <h3>{t("missions.control.task.details")}</h3>
       <div class="mission-route-meta"><code>{props.task.key}</code><span>{props.task.role}</span>
         <span>{t(props.task.status === "needs-input" ? "missions.progress.obstacle" : missionTaskStatusKey(props.task))}</span></div>
-      <Show when={props.task.replacesTaskKey}>{key => <div><h4>{t("missions.control.history.before")}</h4>
-        <button type="button" class="mission-task-link" disabled={!byKey(key())} onClick={() => navigate(key())}>{byKey(key())?.title ?? key()}</button></div>}</Show>
+      <Show when={predecessors().length}><div><h4>{t("missions.control.history.before")}</h4>
+        <For each={predecessors()}>{key => <button type="button" class="mission-task-link" disabled={!byKey(key)}
+          onClick={() => navigate(key)}>{byKey(key)?.title ?? key}</button>}</For></div></Show>
       <Show when={props.task.status === "withdrawn" && props.task.outstandingExecution}><p role="status">{t("missions.control.task.retiredRunning")}</p></Show>
     </article>
     <article aria-label={t("missions.control.execution.title")}>

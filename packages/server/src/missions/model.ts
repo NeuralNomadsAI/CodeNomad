@@ -161,6 +161,8 @@ export interface MissionMap {
   projectCanonical: string
   /** Short creation label; absent for historical missions (UI derives one). */
   title?: string
+  /** The coordinator that prepared this mission as a hand-off: read-only visibility, never control. */
+  preparedBy?: { missionId: string; coordinatorSessionId: string }
   objective: string
   notes?: string
   template: MissionTemplateId
@@ -253,6 +255,8 @@ export interface MissionCreatedEvent extends MissionEventBase {
   }
   requestID?: string
   prepared?: boolean
+  /** A coordinator's hand-off: that coordinator may read, never control, this mission. */
+  preparedBy?: { missionID: string; coordinatorSessionID: string }
 }
 
 export interface MissionUpdatedEvent extends MissionEventBase {
@@ -816,6 +820,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     projectID: created.projectID,
     projectCanonical: created.projectCanonical,
     ...(created.title === undefined ? {} : { title: created.title }),
+    ...(created.preparedBy === undefined ? {} : { preparedBy: {
+      missionId: created.preparedBy.missionID, coordinatorSessionId: created.preparedBy.coordinatorSessionID } }),
     objective,
     notes,
     ...(briefing ? { briefing } : {}),

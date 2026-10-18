@@ -244,6 +244,9 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT)) return undefined
       if (input.title !== undefined && parseMissionTitle(input.title) !== input.title) return undefined
       if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
+      const preparedBy = input.preparedBy
+      if (preparedBy !== undefined && (!record(preparedBy) || !onlyFields(preparedBy, ["missionID", "coordinatorSessionID"])
+        || !text(preparedBy.missionID, MAX_SHORT_TEXT) || !text(preparedBy.coordinatorSessionID, MAX_SHORT_TEXT))) return undefined
       if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
       let profiles
       try { profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(templateID, profiles) }
@@ -265,6 +268,8 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         },
         ...(input.requestID === undefined ? {} : { requestID: input.requestID as string }),
         ...(input.prepared === undefined ? {} : { prepared: input.prepared as boolean }),
+        ...(preparedBy === undefined ? {} : { preparedBy: { missionID: preparedBy.missionID as string,
+          coordinatorSessionID: preparedBy.coordinatorSessionID as string } }),
       }
     }
     case "mission.control-requested": {

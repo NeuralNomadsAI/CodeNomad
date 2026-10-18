@@ -9,6 +9,8 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
+import { prepareCoordinatorMission } from "./mission-prepare"
+import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
@@ -77,9 +79,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
-    // Lifecycle Pause/Stop walks and interrupts a whole native subagent family;
-    // it stays below the plugin's 95 s bridge timeout.
-    const lifecycle = body?.command && typeof body.command === "object" && "kind" in body.command && body.command.kind === "lifecycle"
+    // Lifecycle Pause/Stop and a retired task's interrupt walk and interrupt whole native
+    // subagent families; they stay below the plugin's 95 s bridge timeout.
+    const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
+    const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt"
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
@@ -105,10 +108,13 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       try {
         // Desktop-only, journal-keyed creation capability. Durable admission
         // does not use this bridge or gain a new native API fallback.
-        const creation = body.command && typeof body.command === "object" && "kind" in body.command && body.command.kind === "create-root"
-        const result = creation
-          ? await createManagedMissionRoot(deps.workspaceManager, deps.worktreeDeletionFence, body.sessionID, body.command, signal)
-          : await admitMissionInput(deps.workspaceManager, deps.worktreeDeletionFence, body.sessionID, body.command, signal)
+        const fence = deps.worktreeDeletionFence
+        const result = commandKind === "create-root"
+          ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
+          : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal)
         return reply.send({ result })
       } catch (error) {
         if (error instanceof MissionCreationHoldError) {

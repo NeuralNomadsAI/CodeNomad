@@ -14,6 +14,7 @@ import type {
   MissionInputTransport,
   MissionManagedRootCreation,
   MissionNativeReportAuthorization,
+  MissionPrepareRequest,
 } from "../missions/control-types"
 import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type MissionMap, type MissionTemplateId } from "../missions/model"
 import { parseMissionEvent } from "../missions/journal"
@@ -28,7 +29,7 @@ import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from 
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
 import { compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
-import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
+import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
@@ -126,7 +127,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
 // Opt-in native continuity seam. The desktop setup keeps its existing defaults.
 export interface MissionsPluginPolicy {
   configure(control: MissionControl): Promise<void>
-  beforeTool(name: "inspect" | "declare" | "delegate" | "revise" | "report" | "briefing", input: unknown, sessionID: string): Promise<void>
+  beforeTool(name: "inspect" | "declare" | "delegate" | "revise" | "report" | "briefing" | "interrupt" | "prepare", input: unknown, sessionID: string): Promise<void>
   beforeJournalWrite(event: MissionEvent): Promise<void | (() => void)>
   authorizeNativeReport?: MissionNativeReportAuthorization
 }
@@ -303,7 +304,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or product delivery mission. Pass taskKey to read only that task with its revision, frontier, contract and exact current assignmentPrompt instead of the full map.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or product delivery mission. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -312,8 +313,10 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
           const parsed = parseInspectInput(input)
+          if (parsed.list) return textResult({ missions: await selected.control.listMissions(selected.readSessionID) })
           const result = await selected.control.inspect(selected.readSessionID, parsed, tool.id)
-          const response = parsed.taskKey === undefined ? result : taskView(result.mission, parsed.taskKey)
+          const response = parsed.taskKey === undefined ? result
+            : await observedTaskView(selected.control, selected.readSessionID, result.mission, parsed.taskKey)
           if (object(input).catalog === true) {
             const session = await context.session.get({ sessionID: tool.sessionID })
             response.catalog = await readMissionCatalog(context, session.location.directory)
@@ -390,15 +393,43 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "briefing",
-        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Pass the current revision as basedOnRevision: every mission tool result returns it, or inspect the mission. Explain usable achievements, remaining work, obstacles and the next step in plain language in the user's language: 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; reference exact live task keys only in taskKeys. Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report, with requestID \"auto:<revision>\" matching basedOnRevision; for an explicit UI request use its exact requestID. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. On a revision conflict reread before publishing, never replay work. Returns the new revision and frontier.",
-        input: missionBriefingSchema,
+        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Pass the current revision as basedOnRevision: every mission tool result returns it, or inspect the mission. Explain usable achievements, remaining work, obstacles and the next step in plain language in the user's language: 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; reference exact live task keys only in taskKeys. Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report, with requestID \"auto:<revision>\" matching basedOnRevision; for an explicit UI request use its exact requestID. requestID \"auto\" without basedOnRevision lets the server pick the current revision and refuses a duplicate when nothing changed. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. On a revision conflict reread before publishing, never replay work. Returns the new revision and frontier.",
+        input: missionBriefingToolSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
           const selected = await route(tool.sessionID, "briefing", input)
           await tool.progress({ status: "Recording project briefing" })
           selected.current()
-          return textResult(compactMission((await selected.control.briefing(tool.sessionID, parseMissionBriefingInput(input))).mission))
+          return textResult(compactMission((await selected.control.briefing(tool.sessionID, parseMissionBriefingRequest(input))).mission))
+        },
+      })
+      add({
+        name: "interrupt",
+        description: "Coordinator only: stop the native conversations still running for a retired native task. Retire it with mission.revise first. Each task conversation's whole native family is interrupted deepest first and its queued inputs are cancelled; the coordinator and the plan stay unchanged. complete false means some work may still be running.",
+        input: interruptSchema,
+        options: { namespace: "mission", codemode: false },
+        execute: async (input, tool) => {
+          assertActive()
+          const selected = await route(tool.sessionID, "interrupt", input)
+          await tool.progress({ status: "Stopping retired task work" })
+          selected.current()
+          return textResult(await selected.control.interruptTask(tool.sessionID, parseInterruptInput(input)))
+        },
+      })
+      add({
+        name: "prepare",
+        description: "Coordinator only: prepare a separate paused one-time mission, such as a pilot hand-off, from an objective, optional title and notes, a template, profiles and task mode: what the Mission editor creates. It never starts; the user presses Play. Reuse the same requestID to retry. Find it later with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }); you cannot control it.",
+        input: prepareSchema,
+        options: { namespace: "mission", codemode: false },
+        execute: async (input, tool) => {
+          assertActive()
+          const selected = await route(tool.sessionID, "prepare", input)
+          await tool.progress({ status: "Preparing a paused mission" })
+          selected.current()
+          const { mission } = await selected.control.prepare(tool.sessionID, parsePrepareInput(input))
+          return textResult({ disposition: "prepared", missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
+            status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }), revision: mission.revision })
         },
       })
     })
@@ -410,7 +441,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
         try {
           const selected = await select(event.sessionID)
           if (!selected) {
-            for (const name of ["inspect", "delegate", "revise", "report", "briefing"]) delete event.tools[`mission_${name}`]
+            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
             return
           }
           selected.current()
@@ -419,7 +450,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           if (selected.readSessionID !== event.sessionID) {
             event.system.push({ type: "text", text: `You are a native descendant of coordinator ${selected.readSessionID}. Return normal scoped results to your immediate parent; only the coordinator declares, revises, reports or finalizes the business plan. mission.inspect is read-only.` })
-            for (const name of ["delegate", "revise", "report", "briefing"]) delete event.tools[`mission_${name}`]
+            for (const name of [...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
             return
           }
           event.system.push({ type: "text", text: instruction })
@@ -428,9 +459,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const mission = snapshot.missions.find((candidate) => candidate.status === "active"
             && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
           if (mission && mission.coordinatorSessionId !== event.sessionID) {
-            delete event.tools.mission_delegate
-            delete event.tools.mission_revise
-            delete event.tools.mission_briefing
+            for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
           }
         } catch {
           // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
@@ -445,11 +474,60 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
   }
 }
 
+/** Topology and hand-off tools only the coordinator itself may see. */
+const COORDINATOR_TOOLS = ["delegate", "revise", "briefing", "interrupt", "prepare"] as const
+
+const interruptSchema = {
+  type: "object",
+  properties: {
+    missionID: { type: "string", maxLength: 100 },
+    taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "A retired native task launched by the coordinator." },
+  },
+  required: ["taskKey"],
+  additionalProperties: false,
+}
+
+const prepareSchema = {
+  type: "object",
+  properties: {
+    requestID: { type: "string", minLength: 1, maxLength: 64, description: "Stable ID for this hand-off; reuse it to retry without creating a second mission." },
+    objective: { type: "string", minLength: 1, maxLength: 20_000 },
+    title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
+    notes: { type: "string", maxLength: 20_000 },
+    template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery"] },
+    profiles: missionProfilesSchema,
+    taskMode: missionTaskModeSchema,
+  },
+  required: ["requestID", "objective", "template"],
+  additionalProperties: false,
+}
+
+export function parseInterruptInput(input: unknown): { missionID?: string; taskKey: string } {
+  const value = object(input)
+  return { missionID: optionalText(value.missionID, "missionID", 100), taskKey: identifier(value.taskKey, "taskKey") }
+}
+
+export function parsePrepareInput(input: unknown): MissionPrepareRequest {
+  const value = object(input)
+  const template = requiredText(value.template, "template", 40)
+  if (!isTemplate(template)) throw new Error("template is unsupported")
+  return {
+    requestID: requiredText(value.requestID, "requestID", 64),
+    objective: requiredText(value.objective, "objective", 20_000),
+    ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),
+    ...(value.notes === undefined ? {} : { notes: optionalBodyText(value.notes, "notes", 20_000) }),
+    template,
+    taskMode: parseMissionTaskMode(value.taskMode),
+    ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
+  }
+}
+
 const inspectSchema = {
   type: "object",
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
-    taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract and exact current assignmentPrompt. Not with start." },
+    taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract, exact current assignmentPrompt, observed native conversations and, for a Wayfinder decision, the qualifying human answers with ready-to-pass artifacts. Not with start." },
+    list: { type: "boolean", const: true, description: "List the missions you belong to and the hand-offs you prepared, newest first. Use alone." },
     catalog: { type: "boolean", description: "Include the native agent, enabled model and variant catalog for this session's location." },
     start: {
       type: "object",
@@ -502,9 +580,15 @@ const reportSchema = {
   additionalProperties: false,
 }
 
-export function parseInspectInput(input: unknown): MissionInspectInput & { taskKey?: string } {
+export function parseInspectInput(input: unknown): MissionInspectInput & { taskKey?: string; list?: true } {
   const value = object(input)
   const missionID = optionalText(value.missionID, "missionID", 100)
+  if (value.list !== undefined) {
+    if (value.list !== true || value.taskKey !== undefined || value.start !== undefined || missionID !== undefined) {
+      throw new Error("list must be true and used alone")
+    }
+    return { list: true }
+  }
   if (value.taskKey !== undefined) {
     if (value.start !== undefined) throw new Error("taskKey reads an existing mission and cannot start one")
     return { missionID, taskKey: identifier(value.taskKey, "taskKey") }
@@ -585,6 +669,10 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
     coordinatorSessionID: optionalText(value.coordinatorSessionID, "coordinatorSessionID", 240),
     ...(value.expectedCoordinatorLocation === undefined ? {} : { expectedCoordinatorLocation: readLocationRef(value.expectedCoordinatorLocation) }),
+    ...(value.preparedBy === undefined ? {} : { preparedBy: (preparedBy => ({
+      missionID: requiredText(preparedBy.missionID, "preparedBy.missionID", 100),
+      coordinatorSessionID: requiredText(preparedBy.coordinatorSessionID, "preparedBy.coordinatorSessionID", 240),
+    }))(object(value.preparedBy)) }),
   }
 }
 
@@ -648,11 +736,16 @@ export function parseReportInput(input: unknown): MissionReportInput {
   }
 }
 
-/** One task of the selected mission, without the full map: the exact prompt survives saved tool output. */
-function taskView(mission: MissionMap | null, taskKey: string): Record<string, unknown> {
+/** One task of the selected mission, without the full map: the exact prompt survives saved tool
+ * output. Native conversations and qualifying human answers are advisory reads that may be unknown. */
+async function observedTaskView(control: MissionControl, sessionID: string, mission: MissionMap | null, taskKey: string): Promise<Record<string, unknown>> {
   const task = mission?.tasks.find(candidate => candidate.key === taskKey)
   if (!mission || !task) throw new MissionControlError(`Mission task not found: ${taskKey}`, "task-not-found")
-  return { ...compactMission(mission), task: compactMissionTask(task), ...nativeAssignment(mission, task) }
+  const [native, answers] = await Promise.allSettled([control.observeTask(sessionID, mission.id, taskKey),
+    control.decisionCandidates(sessionID, mission.id, taskKey)])
+  return { ...compactMission(mission), task: compactMissionTask(task), ...nativeAssignment(mission, task),
+    ...(native.status === "rejected" ? { native: { unknown: true } } : native.value ? { native: native.value } : {}),
+    ...(answers.status === "rejected" ? { humanAnswers: { unknown: true } } : answers.value ? { humanAnswers: answers.value } : {}) }
 }
 
 function textResult(value: unknown): { content: string } {
