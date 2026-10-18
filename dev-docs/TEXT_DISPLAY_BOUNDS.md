@@ -14,6 +14,11 @@ philosophy as the per-message part window (`MESSAGE_PART_DISPLAY_LIMIT`).
 | Prose Markdown: assistant/user text parts, compaction summaries, subagent prompts and reports, skill instructions | 50 000 characters | ≈35 ms to parse and lay out in Chromium |
 | Tool output: shell, read, write, edit/patch fallbacks, diffs, ANSI, execute, webfetch, tool input and errors | 10 000 characters | ≈70 ms with syntax highlighting |
 
+Structured tool values (an object input or output) larger than about 10 KB are
+not serialized for display at all: they keep the existing explicit "Structured
+output omitted from rendering" message, without a reveal; copy still returns them
+whole.
+
 Measured on Chromium (dev machine, dark theme, 800 px column; parse + layout):
 
 | Characters | Prose Markdown | Highlighted code | Unhighlighted code / plain text |
@@ -32,10 +37,24 @@ character, so:
   surrogate pair.
 - **Show all** reveals the whole remainder when it is at most
   `TEXT_REVEAL_CHARACTER_STEP` (250 000) characters. Larger remainders reveal in
-  steps labelled **Show 250,000 more**, so no single render jumps by more than about
-  ¼ MB; a 1 MB output needs four steps.
+  steps of about 250 000 characters (each window end moves back to a nearby line
+  break), labelled with the exact count the step adds (e.g. **Show 250,009 more**),
+  so no single render jumps by more than about ¼ MB; a 1 MB output needs four steps.
 - Markdown longer than `MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT` (100 000) renders code
   blocks without syntax highlighting. Default windows stay highlighted.
+- While a reply streams (`streaming` on text parts of a message still in
+  `streaming` status), a window over `STREAMING_INSTANT_RENDER_CHARACTER_LIMIT`
+  (10 000) keeps its last render and re-renders at most every
+  `STREAMING_RENDER_INTERVAL_MS` (200 ms), always with the latest text and without
+  syntax highlighting; completion renders immediately, highlighted. Shorter replies
+  render every chunk as before. Measured with 10 chunks of 80 characters, 50 ms
+  apart (main-thread task time per chunk, Chromium):
+
+  | Window | Before | After |
+  | --- | --- | --- |
+  | 9 000 prose / code | 5 renders, 8 / 25 ms | unchanged |
+  | 45 000 prose | 10 renders, 60 ms | 4 renders, 9 ms |
+  | 45 000 code | 10 renders, 112 ms | 4 renders, 2 ms |
 - Diffs keep their existing decision: over 10 000 characters they render as plain
   text (`shouldRenderDiffPayloadAsPlainText`), and the window applies to either form.
   `apply_patch` still shares one 10 000-character budget across its files: each
@@ -55,7 +74,12 @@ character, so:
 - Markdown computes the window inside its own memo (a reveal re-renders in place),
   gives bounded windows a distinct cache version, keeps the rendered prefix until
   the longer render lands, and shows the reveal line only once its real render is
-  displayed.
+  displayed. Its cache entries keep only HTML: a window is a slice that would retain
+  the whole part after eviction while the cache accounts only for the slice.
+- Windows read sources through `slice` (`TextSource`; strings qualify). Text joined
+  from parts, like a shell call's `$ command` and output, uses `joinedTextSource`,
+  so a window copies only its prefix and never keeps a whole join alive between tool
+  updates. Tool speech likewise bounds each section before joining.
 - A reveal at transcript level (text parts, errors) holds the former reveal point
   through the transcript list's `alignElement` (`TranscriptAlignmentContext`): an
   absolutely positioned marker in the row is held before the text grows, so neither
@@ -72,10 +96,13 @@ Reasoning text is still extracted with a separate 10 000-character bound
 
 ## Validation
 
-- Unit: `lib/render-text-window.test.ts`, `components/tool-call/render-memory.test.ts`,
-  `stores/message-v2/instance-store.test.ts`.
+- Unit: `lib/render-text-window.test.ts` (windows, exact step counts, joined-source
+  retention against a full-join control), `components/tool-call/render-memory.test.ts`
+  (speech retention), `stores/message-v2/instance-store.test.ts`.
 - Browser: `tests/browser/reveal-truncated-text.test.ts` (text and tool reveals,
   reveal point while following the bottom, virtualization and session switch, copy),
-  `markdown-latest-request.test.ts`, `full-source-copy.test.ts`,
-  `mission-primitives.test.ts`. Set `CODENOMAD_REVEAL_SCREENSHOTS=<dir>` to capture
-  dark-theme before/after screenshots.
+  `markdown-latest-request.test.ts` (reveal, cache entries, streaming renders and
+  main-thread time; `CODENOMAD_MARKDOWN_BASELINE=<markdown.tsx>` measures an earlier
+  component), `render-cost.test.ts` (megabyte-scale reveal steps),
+  `full-source-copy.test.ts`, `mission-primitives.test.ts`. Set
+  `CODENOMAD_REVEAL_SCREENSHOTS=<dir>` to capture dark-theme before/after screenshots.

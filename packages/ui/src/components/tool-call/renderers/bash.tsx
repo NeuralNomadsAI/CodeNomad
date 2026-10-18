@@ -8,6 +8,7 @@ import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
 import { getBashToolSearchText } from "../search-text"
 import type { RecordTextRevealTarget } from "../../../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "../../hidden-text"
+import { joinedTextSource } from "../../../lib/render-text-window"
 
 type TextWindowHandle = ReturnType<typeof createTextWindow>
 
@@ -96,39 +97,43 @@ function BashToolBody(props: {
 }) {
   const state = createMemo(() => props.toolState())
 
-  const joinedContent = createMemo(() => {
+  // "$ command\noutput" as parts of the native strings: windows copy only their
+  // bounded prefix, so no full join of a large output stays alive between updates.
+  const parts = createMemo((): string[] => {
     const current = state()
-    if (!current || current.status === "pending") return ""
+    if (!current || current.status === "pending") return []
 
     const { input, metadata } = readToolStatePayload(current)
-    const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-    const outputResult = formatUnknownForRender(
+    const command = typeof input.command === "string" ? input.command : ""
+    const output = formatUnknownForRender(
       isToolStateCompleted(current)
         ? current.output
         : (isToolStateRunning(current) || isToolStateError(current)) && metadata.output
           ? metadata.output
           : undefined,
-    )
-    return [command, outputResult?.text].filter(Boolean).join("\n")
+    )?.text ?? ""
+    if (!command) return output ? [output] : []
+    return output ? ["$ ", command, "\n", output] : ["$ ", command]
   })
+  const source = createMemo(() => joinedTextSource(parts()))
   // The Markdown path bounds the same text with the same reveal state ("output").
-  const output = createTextWindow({ source: joinedContent, limit: () => TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, target: () => props.revealTarget })
+  const output = createTextWindow({ source, limit: () => TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, target: () => props.revealTarget })
   const renderedContent = createMemo(() => output.window().text)
 
   const isFinal = createMemo(() => {
     const current = state()
-    return Boolean(current && current.status !== "pending" && current.status !== "running" && joinedContent().length > 0)
+    return Boolean(current && current.status !== "pending" && current.status !== "running" && source().length > 0)
   })
   // Detect ANSI across the whole output, so a reveal never switches renderers.
-  const finalHasAnsi = createMemo(() => isFinal() && hasAnsi(joinedContent()))
+  const finalHasAnsi = createMemo(() => isFinal() && parts().some((part) => hasAnsi(part)))
   const finalAnsiHtml = createMemo(() => (finalHasAnsi() ? ansiToHtml(renderedContent()) : null))
 
   return (
-    <Show when={state() && joinedContent().length > 0}>
+    <Show when={state() && source().length > 0}>
       <Show
         when={state()?.status === "running"}
         fallback={
-          <Show when={finalAnsiHtml()} fallback={isFinal() && !finalHasAnsi() ? props.renderMarkdown({ content: joinedContent(), codeLanguage: "bash" }) : null}>
+          <Show when={finalAnsiHtml()} fallback={isFinal() && !finalHasAnsi() ? props.renderMarkdown({ content: source(), codeLanguage: "bash" }) : null}>
             {(html) => (
               <FinalAnsiOutput html={html()} output={output} scrollHelpers={props.scrollHelpers} />
             )}

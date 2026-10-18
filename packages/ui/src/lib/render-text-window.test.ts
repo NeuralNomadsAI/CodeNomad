@@ -3,16 +3,18 @@ import { describe, it } from "node:test"
 
 import {
   getRenderTextWindow,
+  joinedTextSource,
   MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
   TEXT_REVEAL_CHARACTER_STEP,
   TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
 } from "./render-text-window.ts"
+import { largeOutput, measureRetainedBytes } from "./heap-retention.test-fixture.ts"
 
 describe("getRenderTextWindow", () => {
   it("renders text within the bound whole", () => {
     const text = "x".repeat(TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)
-    assert.deepEqual(getRenderTextWindow(text, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT), { text, hidden: 0, revealsAll: true })
-    assert.deepEqual(getRenderTextWindow("", TOOL_OUTPUT_RENDER_CHARACTER_LIMIT), { text: "", hidden: 0, revealsAll: true })
+    assert.deepEqual(getRenderTextWindow(text, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT), { text, hidden: 0, revealsAll: true, nextReveal: 0 })
+    assert.deepEqual(getRenderTextWindow("", TOOL_OUTPUT_RENDER_CHARACTER_LIMIT), { text: "", hidden: 0, revealsAll: true, nextReveal: 0 })
   })
 
   it("keeps prose much longer than tool output", () => {
@@ -50,6 +52,47 @@ describe("getRenderTextWindow", () => {
     const second = getRenderTextWindow(text, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, 2)
     assert.equal(second.hidden, 5)
     assert.equal(second.revealsAll, true)
+    assert.equal(second.nextReveal, 5)
     assert.equal(getRenderTextWindow(text, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, 3).text, text)
+  })
+
+  it("announces exactly what the next step reveals, including its line-break cut", () => {
+    const lines = Array.from({ length: 70_000 }, (_, index) => `step line ${String(index).padStart(6, "0")}`).join("\n")
+    for (let steps = 0; steps < 3; steps++) {
+      const current = getRenderTextWindow(lines, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, steps)
+      const next = getRenderTextWindow(lines, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, steps + 1)
+      assert.equal(current.revealsAll, false)
+      assert.equal(current.nextReveal, next.text.length - current.text.length)
+      assert.notEqual(current.nextReveal, TEXT_REVEAL_CHARACTER_STEP, "line-break cuts make the step uneven")
+    }
+  })
+})
+
+describe("joinedTextSource", () => {
+  const parts = ["$ ", "npm test", "\n", largeOutput("joined", 300_000)]
+
+  it("windows exactly like the joined string", () => {
+    const joined = parts.join("")
+    for (const steps of [0, 1, 2]) {
+      assert.deepEqual(getRenderTextWindow(joinedTextSource(parts), TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, steps),
+        getRenderTextWindow(joined, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, steps))
+    }
+    const short = ["$ ", "ls", "\n", "a\nb"]
+    assert.deepEqual(getRenderTextWindow(joinedTextSource(short), TOOL_OUTPUT_RENDER_CHARACTER_LIMIT),
+      getRenderTextWindow(short.join(""), TOOL_OUTPUT_RENDER_CHARACTER_LIMIT))
+    assert.equal(joinedTextSource(parts).slice(0, 5), "$ npm")
+    assert.equal(joinedTextSource(parts).slice(8, 14), joined.slice(8, 14), "a slice may span parts")
+  })
+
+  it("keeps no joined copy of large outputs alive through a window", () => {
+    // The outputs stay alive (like native tool state); only copies made for display count.
+    const outputs = Array.from({ length: 10 }, (_, index) => largeOutput(`retained-${index}`, 1_400_000))
+    const command = (index: number) => ["$ ", `cat log-${index}`, "\n", outputs[index]]
+    const joinedWindows = measureRetainedBytes(() => outputs.map((_, index) => getRenderTextWindow(command(index).join(""), TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)))
+    const sourceWindows = measureRetainedBytes(() => outputs.map((_, index) => getRenderTextWindow(joinedTextSource(command(index)), TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)))
+    console.info("joined-window-retention", { joinedWindows: joinedWindows.bytes, sourceWindows: sourceWindows.bytes })
+    assert.ok(joinedWindows.bytes > 10_000_000, `control: a window sliced from a full join retains it (${joinedWindows.bytes} bytes)`)
+    assert.ok(sourceWindows.bytes < 1_000_000, `windows of a joined source retain only their prefix (${sourceWindows.bytes} bytes)`)
+    assert.deepEqual(sourceWindows.value.map((window) => window.hidden), joinedWindows.value.map((window) => window.hidden))
   })
 })

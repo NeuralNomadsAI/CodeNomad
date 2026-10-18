@@ -2,6 +2,7 @@ import type { Accessor, JSXElement } from "solid-js"
 import type { ClientPart } from "../../types/message"
 import type { ToolState } from "../../types/tool-state"
 import type { RecordTextRevealTarget } from "../../stores/message-v2/record-display-cache"
+import type { TextSource } from "../../lib/render-text-window"
 
 export type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -14,9 +15,10 @@ export interface DiffPayload {
 export interface MarkdownRenderOptions {
   /**
    * Markdown source, or raw text when `codeLanguage` is set. The full text is
-   * passed: rendering shows a bounded prefix with an in-place reveal of the rest.
+   * passed (as a `TextSource` when it is joined from parts): rendering shows a
+   * bounded prefix with an in-place reveal of the rest.
    */
-  content: string
+  content: string | TextSource
   /** Render the bounded content as a fenced code block in this language ("" for none). */
   codeLanguage?: string
   /** Characters rendered before the reveal; defaults to TOOL_OUTPUT_RENDER_CHARACTER_LIMIT. */

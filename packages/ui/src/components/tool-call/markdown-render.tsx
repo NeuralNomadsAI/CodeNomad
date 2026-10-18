@@ -29,7 +29,8 @@ export function createMarkdownContentRenderer(params: {
   }
 
   function renderMarkdownContent(options: MarkdownRenderOptions): JSXElement | null {
-    if (!options.content) {
+    const content = options.content
+    if (content.length === 0) {
       return null
     }
 
@@ -51,7 +52,7 @@ export function createMarkdownContentRenderer(params: {
           ref={registerRef}
           onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
         >
-          <BoundedText source={options.content} limit={renderLimit} revealTarget={revealTarget}>
+          <BoundedText source={content} limit={renderLimit} revealTarget={revealTarget}>
             {(text) => <pre class="whitespace-pre-wrap break-words text-sm font-mono" dir="auto">{text()}</pre>}
           </BoundedText>
           {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
@@ -66,7 +67,7 @@ export function createMarkdownContentRenderer(params: {
     const markdownPart = (): TextPart => ({
       id: cacheKey ? `${params.partId()}:${cacheKey}` : params.partId(),
       type: "text",
-      text: options.content,
+      text: typeof content === "string" ? content : "",
       version: params.partVersion?.(),
     })
 
@@ -90,6 +91,7 @@ export function createMarkdownContentRenderer(params: {
           defaultCodeBlockWrap={wrapEnabled}
           renderLimit={renderLimit}
           formatText={formatText}
+          source={typeof content === "string" ? undefined : content}
           revealTarget={revealTarget}
           onRendered={handleMarkdownRendered}
         />

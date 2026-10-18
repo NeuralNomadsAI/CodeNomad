@@ -4,7 +4,13 @@ import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
-import { MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../lib/render-text-window"
+import {
+  MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT,
+  MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+  STREAMING_INSTANT_RENDER_CHARACTER_LIMIT,
+  STREAMING_RENDER_INTERVAL_MS,
+  type TextSource,
+} from "../lib/render-text-window"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 
@@ -24,6 +30,8 @@ interface ResolvedMarkdownSnapshot {
   cacheId: string
   version: string
   revealSteps: number
+  /** A long window of a streaming reply: rendered at most every interval, unhighlighted. */
+  deferred: boolean
 }
 
 let markdownModulePromise: Promise<MarkdownModule> | null = null
@@ -108,8 +116,12 @@ interface MarkdownProps {
   renderLimit?: number
   /** Turns the bounded text into Markdown, e.g. a fenced code block for raw tool output. */
   formatText?: (text: string) => string
+  /** The whole text as bounded prefixes, instead of `part.text` (e.g. joined tool output). */
+  source?: TextSource
   /** Persists the reveal across remounts; without it a reveal lasts for this mount. */
   revealTarget?: RecordTextRevealTarget
+  /** The text is still streaming: long windows coalesce re-renders until it completes. */
+  streaming?: boolean
   onRendered?: () => void
 }
 
@@ -120,19 +132,28 @@ export function Markdown(props: MarkdownProps) {
   // reveal line waits for it, so a reveal's anchor never sits on a prefix that re-lays out.
   const [rendered, setRendered] = createSignal(false)
   const bounded = createTextWindow({
-    source: () => (typeof props.part.text === "string" ? props.part.text : ""),
+    source: () => props.source ?? (typeof props.part.text === "string" ? props.part.text : ""),
     limit: () => props.renderLimit ?? MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
     target: () => props.revealTarget,
   })
   let previousSnapshot: ResolvedMarkdownSnapshot | undefined
   let containerRef: HTMLDivElement | undefined
   let latestRenderRequest = 0
+  let lastRenderStartedAt = 0
+  let deferredRender: ReturnType<typeof setTimeout> | undefined
   let disposed = false
   let cleanupLanguageListener: (() => void) | undefined
   const codeBlockWrapOverrides = new Map<string, boolean>()
 
+  const cancelDeferredRender = () => {
+    if (deferredRender === undefined) return
+    clearTimeout(deferredRender)
+    deferredRender = undefined
+  }
+
   onCleanup(() => {
     disposed = true
+    cancelDeferredRender()
   })
 
   const isCurrentRender = (request: number) => !disposed && request === latestRenderRequest
@@ -192,7 +213,10 @@ export function Markdown(props: MarkdownProps) {
     const boundedText = props.formatText ? props.formatText(window.text) : window.text
     const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
-    const highlightEnabled = !props.disableHighlight && text.length <= MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT
+    // Re-parsing a long window for every streamed chunk costs 25-115 ms per chunk at
+    // 45 000 characters; short replies keep rendering every chunk, highlighted.
+    const deferred = Boolean(props.streaming) && text.length > STREAMING_INSTANT_RENDER_CHARACTER_LIMIT
+    const highlightEnabled = !props.disableHighlight && !deferred && text.length <= MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT
     const escapeRawHtml = Boolean(props.escapeRawHtml)
     const defaultCodeBlockWrap = props.defaultCodeBlockWrap ?? true
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
@@ -203,6 +227,7 @@ export function Markdown(props: MarkdownProps) {
       : resolvePartVersion(part, text)
     return {
       revealSteps: bounded.steps(),
+      deferred,
       part,
       text,
       themeKey,
@@ -232,8 +257,9 @@ export function Markdown(props: MarkdownProps) {
     renderedHtml: string,
     options?: { cache?: boolean },
   ) => {
+    // No `text`: a window is a slice that would retain the whole part beyond its
+    // eviction while the cache accounts only for the slice.
     const cacheEntry: RenderCache = {
-      text: snapshot.text,
       html: renderedHtml,
       theme: snapshot.themeKey,
       mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
@@ -266,6 +292,25 @@ export function Markdown(props: MarkdownProps) {
     }
   }
 
+  const startRender = (snapshot: ResolvedMarkdownSnapshot, request: number) => {
+    lastRenderStartedAt = performance.now()
+    void renderSnapshot(snapshot, request).catch((error) => {
+      log.error("Failed to render markdown:", error)
+      if (isCurrentRender(request)) {
+        commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
+      }
+    })
+  }
+
+  // At most one render per interval, always of the latest snapshot.
+  const scheduleDeferredRender = () => {
+    if (deferredRender !== undefined) return
+    deferredRender = setTimeout(() => {
+      deferredRender = undefined
+      if (!disposed) startRender(untrack(resolved), ++latestRenderRequest)
+    }, Math.max(0, lastRenderStartedAt + STREAMING_RENDER_INTERVAL_MS - performance.now()))
+  }
+
   createEffect(() => {
     const snapshot = resolved()
     const previous = previousSnapshot
@@ -281,6 +326,7 @@ export function Markdown(props: MarkdownProps) {
 
     const localCache = snapshot.part.renderCache
     if (localCache && cacheMatches(localCache)) {
+      cancelDeferredRender()
       setHtml(localCache.html)
       setRendered(true)
       notifyRendered()
@@ -289,27 +335,29 @@ export function Markdown(props: MarkdownProps) {
 
     const globalCache = cacheHandle.get<RenderCache>()
     if (globalCache && cacheMatches(globalCache)) {
+      cancelDeferredRender()
       setHtml(globalCache.html)
       setRendered(true)
       notifyRendered()
       return
     }
 
-    // A reveal keeps the rendered prefix in place until the longer render commits,
-    // rather than flashing the whole block as plain text.
-    const revealing = previous?.cacheId === snapshot.cacheId && previous.revealSteps !== snapshot.revealSteps && untrack(rendered)
-    if (!revealing) {
+    // A reveal, a long streaming window and the render completing such a stream keep
+    // the rendered block in place until the next render commits, rather than
+    // flashing it as plain text.
+    const samePart = previous?.cacheId === snapshot.cacheId && untrack(rendered)
+    const revealing = samePart && previous.revealSteps !== snapshot.revealSteps
+    if (samePart && snapshot.deferred && !revealing) {
+      scheduleDeferredRender()
+      return
+    }
+    cancelDeferredRender()
+    if (!(samePart && (revealing || previous.deferred))) {
       setHtml(renderFallbackHtml(snapshot.text))
       setRendered(false)
       notifyRendered()
     }
-
-    void renderSnapshot(snapshot, request).catch((error) => {
-      log.error("Failed to render markdown:", error)
-      if (isCurrentRender(request)) {
-        commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
-      }
-    })
+    startRender(snapshot, request)
   })
 
   createEffect(() => {

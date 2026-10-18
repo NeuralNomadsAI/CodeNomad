@@ -190,5 +190,82 @@ test("latest bounded render reveals the rest in place, keeping the rendered pref
   await page.waitForFunction(() => document.querySelector(".markdown-body")?.textContent?.includes("END-SOURCE"))
   assert.equal((await calls(page)).at(-1).text, source)
   assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("markdown-body")), true, "focus moves to the revealed text")
-  assert.equal((await page.evaluate(() => (window as any).fixture.cached()))?.html, await page.locator(".markdown-body").innerHTML())
+  const cached = await page.evaluate(() => (window as any).fixture.cached())
+  assert.equal(cached?.html, await page.locator(".markdown-body").innerHTML())
+  assert.equal(cached?.text, undefined, "cache entries hold no slice of the source text")
 }))
+
+// CODENOMAD_MARKDOWN_BASELINE=<markdown.tsx> measures an earlier component; assertions then only log.
+const baseline = Boolean(process.env.CODENOMAD_MARKDOWN_BASELINE)
+const streamingProse = (length: number) => Array.from({ length: Math.ceil(length / 120) }, (_, index) =>
+  `Paragraph ${index}: the **reply** keeps \`streaming\` with a [link](https://example.com) and detail.\n\n- item ${index}\n\n`).join("").slice(0, length)
+const streamingCode = (length: number) => `Intro\n\n\`\`\`typescript\n${Array.from({ length: Math.ceil(length / 70) }, (_, index) =>
+  `export const value${index} = compute(${index}, "text") // comment ${index}\n`).join("")}`.slice(0, length)
+
+/** Streams `count` chunks of 80 characters 50 ms apart onto `base`; returns renders and main-thread time. */
+async function streamChunks(page: Page, base: string, count = 10) {
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send("Performance.enable")
+  const taskSeconds = async () => (await cdp.send("Performance.getMetrics")).metrics.find(metric => metric.name === "TaskDuration")!.value
+  const rendersBefore = (await calls(page)).length
+  const before = await taskSeconds()
+  const final = await page.evaluate(async ({ base, count }) => {
+    let text = base
+    for (let index = 0; index < count; index++) {
+      text += `CHUNK${String(index).padStart(2, "0")} `.padEnd(80, "z")
+      ;(window as any).fixture.update(text, 1000 + index)
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    await new Promise(resolve => setTimeout(resolve, 400))
+    return text
+  }, { base, count })
+  const taskMs = (await taskSeconds() - before) * 1000
+  const observed = await calls(page)
+  return { final, renders: observed.length - rendersBefore, lastRendered: observed.at(-1)?.text as string, taskMs, perChunkMs: taskMs / count }
+}
+
+async function startStream(page: Page, base: string) {
+  await page.evaluate(() => (window as any).fixture.releaseModule())
+  await page.locator(".markdown-body strong").waitFor()
+  // A first highlighted render loads the languages, as a completed reply above would.
+  await page.evaluate(base => { const f = (window as any).fixture; f.setDisableHighlight(false); f.update(base, 999) }, base)
+  await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-highlight") === "true")
+  await page.waitForTimeout(500)
+  await page.evaluate(() => (window as any).fixture.setStreaming(true))
+  await page.waitForTimeout(400)
+}
+
+for (const [kind, length] of [["prose", 9_000], ["code", 9_000]] as const) {
+  test(`a short streaming ${kind} reply still renders every chunk, highlighted`, async () => open(async page => {
+    const base = kind === "prose" ? streamingProse(length) : streamingCode(length)
+    await startStream(page, base)
+    const result = await streamChunks(page, base, 5)
+    console.log("markdown-streaming", { kind, length, baseline, renders: result.renders, taskMs: Math.round(result.taskMs), perChunkMs: Math.round(result.perChunkMs) })
+    assert.equal(result.lastRendered, result.final)
+    if (baseline) return
+    assert.equal(result.renders, 5, "every chunk renders at once")
+    assert.equal(await page.locator(".markdown-body").getAttribute("data-markdown-highlight"), "true")
+  }))
+}
+
+for (const kind of ["prose", "code"] as const) {
+  test(`a long streaming ${kind} reply coalesces unhighlighted re-renders and renders the final text at once`, async () => open(async page => {
+    const base = kind === "prose" ? streamingProse(45_000) : streamingCode(45_000)
+    await startStream(page, base)
+    const result = await streamChunks(page, base)
+    console.log("markdown-streaming", { kind, length: 45_000, baseline, renders: result.renders, taskMs: Math.round(result.taskMs), perChunkMs: Math.round(result.perChunkMs) })
+    assert.equal(result.lastRendered, result.final, "the latest text renders after the last chunk")
+    await page.waitForFunction(() => document.querySelector(".markdown-body")?.textContent?.includes("CHUNK09"))
+    if (baseline) return
+    // 10 chunks over ~0.5 s: a leading render, then at most one per 200 ms (4, with slack for timer jitter).
+    assert.ok(result.renders <= 5, `10 chunks 50 ms apart render at most once per 200 ms: ${result.renders}`)
+    assert.equal(await page.locator(".markdown-body").getAttribute("data-markdown-highlight"), "false", "no highlighting while a long reply streams")
+    const rendersBefore = (await calls(page)).length
+    const completion = await page.evaluate(() => { const start = performance.now(); (window as any).fixture.setStreaming(false); return start })
+    await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-highlight") === "true")
+    const completedIn = await page.evaluate(start => performance.now() - start, completion)
+    assert.equal((await calls(page)).length, rendersBefore + 1)
+    assert.equal((await calls(page)).at(-1).text, result.final)
+    assert.ok(completedIn < 150, `completion renders immediately, not after the coalescing interval: ${Math.round(completedIn)} ms`)
+  }))
+}

@@ -734,6 +734,7 @@ export default function MessageItem(props: MessageItemProps) {
                   instanceId={props.instanceId}
                   sessionId={props.sessionId}
                   messageId={props.record.id}
+                  streaming={props.record.status === "streaming"}
                   primaryUserTextPartId={primaryUserTextPartId()}
                   displayMetadataOverride={part.id === primaryUserTextPartId() ? primaryUserPromptDisplayMetadata() : undefined}
                   onRendered={props.onContentRendered}

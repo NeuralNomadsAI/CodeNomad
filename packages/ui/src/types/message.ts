@@ -42,7 +42,8 @@ export type NormalizedMessagePart =
   | StepFinishMessagePart
 
 export interface RenderCache {
-  text: string
+  /** Source the HTML was rendered from, for caches that compare it (Markdown keys on its version instead). */
+  text?: string
   html: string
   theme?: string
   mode?: string

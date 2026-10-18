@@ -11,6 +11,7 @@ import {
   TOOL_TITLE_RENDER_CHARACTER_LIMIT,
 } from "./utils.ts"
 import { getRenderTextWindow } from "../../lib/render-text-window.ts"
+import { largeOutput, measureRetainedBytes } from "../../lib/heap-retention.test-fixture.ts"
 import { collectChildTaskSteps } from "./renderers/task-summary.ts"
 import { getApplyPatchRenderData } from "./renderers/apply-patch-data.ts"
 
@@ -33,6 +34,21 @@ test("tool speech keeps its own bound without the retired copy-only suffix", () 
   const speech = buildToolSpeechText({ title: "Read", state: { status: "completed", input: {}, output: "y".repeat(30_000), metadata: {}, title: "", time: { start: 0, end: 1 } } as any, t: key => key })
   assert.equal(speech.length, TOOL_SPEECH_CHARACTER_LIMIT)
   assert.doesNotMatch(speech, /truncated|copy/i)
+  const short = buildToolSpeechText({ title: "Shell", state: { status: "error", input: { command: "ls" }, error: "  boom  ", metadata: {}, time: { start: 0, end: 1 } } as any, t: key => key })
+  assert.equal(short, 'Shell\n\ntoolCall.io.input:\n{\n  "command": "ls"\n}\n\ntoolCall.error.label boom')
+})
+
+test("tool speech of large outputs retains no copy of them", () => {
+  const state = (index: number) => ({ status: "completed", input: { filePath: `/log-${index}` }, output: largeOutput(`speech-${index}`, 1_400_000),
+    metadata: {}, title: "", time: { start: 0, end: 1 } }) as any
+  // Control: the former join-then-slice keeps each whole join alive through its slice.
+  const joined = measureRetainedBytes(() => Array.from({ length: 10 }, (_, index) =>
+    ["Read", `Output:\n${state(index).output}`].join("\n\n").slice(0, TOOL_SPEECH_CHARACTER_LIMIT)))
+  const speech = measureRetainedBytes(() => Array.from({ length: 10 }, (_, index) => buildToolSpeechText({ title: "Read", state: state(index), t: key => key })))
+  console.info("tool-speech-retention", { joinThenSlice: joined.bytes, speech: speech.bytes })
+  assert.ok(joined.bytes > 10_000_000, `control: a slice of a whole join retains it (${joined.bytes} bytes)`)
+  assert.ok(speech.bytes < 1_000_000, `speech texts retain only their bounded sections (${speech.bytes} bytes)`)
+  assert.ok(speech.value.every(text => text.length <= TOOL_SPEECH_CHARACTER_LIMIT))
 })
 
 test("apply_patch renders whole per-file diffs within the shared budget and reports only omitted files", () => {

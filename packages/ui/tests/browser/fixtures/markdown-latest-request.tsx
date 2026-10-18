@@ -21,10 +21,11 @@ const audit = {
 const [part, setPart] = createSignal<TextPart>({ id: "markdown-part", type: "text", text: "**Initial**", version: 0 })
 const [isDark, setDark] = createSignal(false)
 const [disableHighlight, setDisableHighlight] = createSignal(true)
+const [streaming, setStreaming] = createSignal(false)
 let notifications = 0
 const dispose = render(() => <ConfigProvider><I18nProvider>
   <Markdown part={part()} instanceId="markdown-instance" sessionId="markdown-session" isDark={isDark()}
-    disableHighlight={disableHighlight()} onRendered={() => { notifications++ }} />
+    disableHighlight={disableHighlight()} streaming={streaming()} onRendered={() => { notifications++ }} />
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 
 ;(window as any).fixture = {
@@ -35,7 +36,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
       setPart({ ...part(), text: sameKey ? part().text : `**Burst ${index}**`, version: sameKey ? part().version : index })
     }
   },
-  setDark, setDisableHighlight,
+  setDark, setDisableHighlight, setStreaming,
   cacheLocal() {
     setPart({ ...part(), renderCache: { text: part().text, html: "<strong>Local cache</strong>", theme: isDark() ? "dark" : "light",
       mode: `${part().version}:raw:wrap` } })

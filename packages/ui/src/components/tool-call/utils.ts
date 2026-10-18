@@ -18,10 +18,6 @@ export const TOOL_TITLE_RENDER_CHARACTER_LIMIT = 384
 /** Speech reads at most this much of a tool call; rendering bounds are separate (see render-text-window). */
 export const TOOL_SPEECH_CHARACTER_LIMIT = 10_000
 
-function limitTextForSpeech(text: string): string {
-  return text.length <= TOOL_SPEECH_CHARACTER_LIMIT ? text : text.slice(0, TOOL_SPEECH_CHARACTER_LIMIT)
-}
-
 export function hasVisibleText(value: string | null | undefined): value is string {
   return typeof value === "string" && /\S/.test(value)
 }
@@ -301,33 +297,28 @@ export function buildToolSpeechText(options: {
   state?: ToolState
   t: (key: string, params?: Record<string, unknown>) => string
 }): string {
+  // Computed for every mounted tool call: bound each section by the remaining budget
+  // before joining, so a large output is never copied whole and the result (a fresh
+  // join) never retains a large parent string.
   const sections: string[] = []
-
-  const title = limitTextForSpeech(options.title).trim()
-  if (title) {
-    sections.push(title)
+  let remaining = TOOL_SPEECH_CHARACTER_LIMIT
+  const add = (label: string, text: string | undefined) => {
+    if (!text || remaining <= label.length) return
+    const body = text.trimStart().slice(0, remaining - label.length).trimEnd()
+    if (!body) return
+    sections.push(label + body)
+    remaining -= label.length + body.length + 2
   }
 
+  add("", options.title)
   const { input, output } = readToolStatePayload(options.state)
-  const formattedInput = formatUnknownForRender(input)
-  const formattedOutput = formatUnknownForRender(output)
-
-  if (formattedInput?.text?.trim()) {
-    sections.push(`${options.t("toolCall.io.input")}:\n${formattedInput.text.trim()}`)
-  }
-
-  if (formattedOutput?.text?.trim()) {
-    sections.push(`${options.t("toolCall.io.output")}:\n${formattedOutput.text.trim()}`)
-  }
-
-  const error = options.state?.status === "error" ? limitTextForSpeech(options.state.error ?? "").trim() : ""
-  if (error) {
-    sections.push(`${options.t("toolCall.error.label")} ${error}`)
-  }
+  add(`${options.t("toolCall.io.input")}:\n`, formatUnknownForRender(input)?.text)
+  add(`${options.t("toolCall.io.output")}:\n`, formatUnknownForRender(output)?.text)
+  if (options.state?.status === "error") add(`${options.t("toolCall.error.label")} `, options.state.error)
 
   if (sections.length === 1 && options.state?.status === "pending") {
     sections.push(options.t("toolCall.pending.waitingToRun"))
   }
 
-  return limitTextForSpeech(sections.join("\n\n").trim())
+  return sections.join("\n\n")
 }

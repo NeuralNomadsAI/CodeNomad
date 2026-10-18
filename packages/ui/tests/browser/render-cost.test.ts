@@ -373,12 +373,17 @@ test("large tool output bounds rendered text but preserves full clipboard source
   // A megabyte-scale output reveals in bounded steps rather than all at once.
   const notice = tool.locator(".message-hidden-text")
   assert.match((await notice.textContent())!, /more characters hidden to keep this message responsive/)
+  const stepButton = notice.getByRole("button", { name: /^Show [\d,]+ more$/ })
+  const announced = Number((await stepButton.textContent())!.replace(/\D/g, ""))
+  // About 250 000: each window's end moves back to a nearby line break.
+  assert.ok(announced > 225_000 && announced < 275_000, `the label counts the step: ${announced}`)
   const revealStart = await page.evaluate(() => performance.now())
-  await notice.getByRole("button", { name: "Show 250,000 more", exact: true }).click()
+  await stepButton.click()
   await page.waitForFunction(() => (document.querySelector('.tool-call[data-part-id^="step-"] pre code')?.textContent?.length ?? 0) > 200_000)
   const revealed = (await tool.locator("pre code").textContent())!.length
-  assert.ok(revealed > 230_000 && revealed <= 260_000, `one step reveals about 250,000 more characters: ${revealed}`)
-  assert.equal(await notice.getByRole("button", { name: "Show 250,000 more", exact: true }).count(), 1, "the remainder still reveals in steps")
+  // The code block drops the window's trailing newline.
+  assert.ok(Math.abs(revealed - content!.length - announced) <= 2, `one step reveals what it announced: ${JSON.stringify({ before: content!.length, revealed, announced })}`)
+  assert.equal(await notice.getByRole("button", { name: /^Show [\d,]+ more$/ }).count(), 1, "the remainder still reveals in steps")
   assert.equal(await tool.locator(".markdown-body").getAttribute("data-markdown-highlight"), "false", "revealed code beyond the highlight bound renders unhighlighted")
   console.log("large-output-reveal-step", { renderedCharacters: revealed, msToObservedRender: await page.evaluate(start => performance.now() - start, revealStart) })
 }))

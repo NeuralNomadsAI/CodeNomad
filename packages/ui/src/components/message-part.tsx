@@ -20,6 +20,8 @@ interface MessagePartProps {
   sessionId: string
   /** Owning message; keys the display reveal of long text so it survives remounts. */
   messageId?: string
+  /** The owning message is still streaming. */
+  streaming?: boolean
   // For user messages, keep the primary prompt text visible even when synthetic (optimistic).
   // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
   primaryUserTextPartId?: string | null
@@ -211,6 +213,7 @@ export default function MessagePart(props: MessagePartProps) {
                     escapeRawHtml
                     literalRawHtml={props.messageType === "user"}
                     revealTarget={revealTarget("text")}
+                    streaming={props.streaming}
                     onRendered={props.onRendered}
                   />
                 </Show>

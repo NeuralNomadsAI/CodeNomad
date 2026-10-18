@@ -3,9 +3,9 @@ import { useI18n } from "../lib/i18n"
 import { scrollAxes } from "../lib/scroll-gesture-routing"
 import {
   getRenderTextWindow,
-  TEXT_REVEAL_CHARACTER_STEP,
   TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
   type RenderTextWindow,
+  type TextSource,
 } from "../lib/render-text-window"
 import {
   getRevealedRecordText,
@@ -22,14 +22,14 @@ const REVEAL_LANDING_TIMEOUT_MS = 10_000
 const REVEAL_ANCHOR_LINGER_MS = 1_500
 
 const sameWindow = (a: RenderTextWindow, b: RenderTextWindow) =>
-  a.text === b.text && a.hidden === b.hidden && a.revealsAll === b.revealsAll
+  a.text === b.text && a.hidden === b.hidden && a.revealsAll === b.revealsAll && a.nextReveal === b.nextReveal
 
 /**
  * Reactive display window of `source`. With a `target` the reveal lives in the
  * record display cache (surviving remounts); without one it lasts for this owner.
  */
 export function createTextWindow(options: {
-  source: Accessor<string>
+  source: Accessor<string | TextSource>
   limit: Accessor<number>
   target: Accessor<RecordTextRevealTarget | undefined>
 }) {
@@ -144,7 +144,7 @@ export function HiddenTextNotice(props: { window: RenderTextWindow; onReveal: ()
       >
         {props.window.revealsAll
           ? t("messageBlock.hiddenText.showAll")
-          : t("messageBlock.hiddenText.showMore", { count: format(TEXT_REVEAL_CHARACTER_STEP) })}
+          : t("messageBlock.hiddenText.showMore", { count: format(props.window.nextReveal) })}
       </button>
     </div>
   )
@@ -152,7 +152,7 @@ export function HiddenTextNotice(props: { window: RenderTextWindow; onReveal: ()
 
 /** Renders the display window of `source` through `children`, followed by its reveal line. */
 export function BoundedText(props: {
-  source: string
+  source: string | TextSource
   limit?: number
   revealTarget?: RecordTextRevealTarget
   children: (text: Accessor<string>) => JSX.Element
