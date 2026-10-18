@@ -94,6 +94,25 @@ test("a query keeps matches with their contents and only the ancestors leading t
   assert.equal(renderSnapshot(form, ref, { query: "missing" }).text, "No element matches \"missing\"")
 })
 
+test("numeric values show, text survives a region's title, and queries ignore field labels", () => {
+  const page = tree(["RootWebArea", "", {}, [
+    ["slider", "Volume", { value: { value: 55 } as never }],
+    ["region", "Mission editor", {}, [["paragraph", "", {}, [["StaticText", "Mission"]]]]],
+    ["button", "Agent : Aucun", {}, [["StaticText", "Agent :"], ["StaticText", "Aucun"]]],
+    ["link", "Docs", { props: { url: "https://example.test/docs" } }],
+  ]])
+  const { ref } = refs()
+  assert.equal(renderSnapshot(page, ref).text, [
+    "- slider \"Volume\" [e2] value=\"55\"",
+    "- region \"Mission editor\" [e3]",
+    "  - text \"Mission\" [e5]",
+    "- button \"Agent : Aucun\" [e6]",
+    "- link \"Docs\" [e9] url=\"https://example.test/docs\"",
+  ].join("\n"))
+  assert.equal(renderSnapshot(page, ref, { query: "url" }).text, "No element matches \"url\"")
+  assert.equal(renderSnapshot(page, ref, { query: "55" }).text, "- slider \"Volume\" [e2] value=\"55\"", "values are searchable")
+})
+
 test("a scoped snapshot renders one element's subtree or reports that it left the page", () => {
   const { ref } = refs()
   assert.equal(renderSnapshot(form, ref, { rootBackendNodeId: 30 }).text,

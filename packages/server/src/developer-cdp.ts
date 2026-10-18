@@ -147,11 +147,10 @@ export class DeveloperCdp {
       const state = await this.ensure(identity)
       const generation = this.generation(state)
       const root = options.ref === undefined ? undefined : this.refs.resolve(options.ref, generation)
-      const scoped = root !== undefined || Boolean(options.query?.trim())
       let snapshot
       try {
         snapshot = await snapshotPage(this.session(state, state.navigationEpoch, "Page changed during inspection; inspect again"),
-          () => this.refs.issuer(generation, !scoped), { rootBackendNodeId: root, query: options.query })
+          () => this.refs.issuer(generation), { rootBackendNodeId: root, query: options.query })
       } catch (error) {
         if (error instanceof SnapshotScopeError) throw new Error(`${options.ref} is no longer in the page; inspect again`)
         throw error

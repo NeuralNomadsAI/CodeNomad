@@ -471,7 +471,7 @@ export function formatInspection(result: InspectionResult): string {
     result.snapshot,
   ]
   if (result.collapsed > 0) {
-    lines.push("", "Lines ending in (+N hidden) or (+N more) hide part of the page: inspect with a shown ref to expand it, or with query to find elements.")
+    lines.push("", "A line ending in (+N hidden) collapses that element: inspect its ref to expand it. (+N more) stands for omitted siblings: inspect their parent's ref, or use query to find them.")
   }
   if (result.diagnostics.length) lines.push("", "Runtime diagnostics:", ...result.diagnostics.map(item => `- ${item.level}: ${item.text}`))
   return lines.join("\n")

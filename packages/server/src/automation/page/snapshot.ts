@@ -49,12 +49,17 @@ const DECORATIVE_ROLES = new Set(["image", "img", "graphics-symbol", "graphics-d
 /** Date/time inputs expose their internal day/month/year spinbuttons as children. */
 const FIELD_ROLES = new Set(["textbox", "searchbox", "spinbutton", "Date", "DateTime", "InputTime"])
 const CHECKABLE_ROLES = new Set(["checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"])
+/** Roles whose accessible name is usually computed from their descendants' text. */
+const NAME_FROM_CONTENTS = new Set(["button", "link", "tab", "option", "menuitem", "menuitemcheckbox", "menuitemradio", "treeitem",
+  "heading", "cell", "gridcell", "columnheader", "rowheader", "checkbox", "radio", "switch", "tooltip", "LabelText", "DisclosureTriangle"])
 const TRUE_STATES = ["disabled", "focused", "required", "readonly", "multiselectable", "modal", "busy"]
 
 interface View {
   head: string
   tail: string
   name: string
+  /** Role, name, value and description that `query` matches, never the field labels around them. */
+  searchable: string
   backend?: number
   children: View[]
   /** Views in this subtree, including itself. */
@@ -89,10 +94,11 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
     if (node.ignored) return kids(context)
     const name = clip(text(node.name)), value = clip(text(node.value))
     if (role === "StaticText") {
-      // Text repeating its printed parent's name (a button label) adds nothing.
+      // Text repeating its printed parent's name adds nothing: the whole name, or a part of a
+      // name computed from contents (a button's label pieces); a region's title keeps its text.
       const normalized = normalize(name)
-      if (!normalized || (context.name && context.name.includes(normalized))) return []
-      return [view(`text ${quote(name)}`, "", name, node)]
+      if (!normalized || (context.name && (context.name === normalized || (context.fromContents && context.name.includes(normalized))))) return []
+      return [view(`text ${quote(name)}`, "", name, node, name)]
     }
     const properties = new Map((node.properties ?? []).map(property => [property.name ?? "", property.value?.value]))
     const editable = typeof properties.get("editable") === "string" && properties.get("editable") !== ""
@@ -100,7 +106,7 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
     if (DECORATIVE_ROLES.has(role) && !name) return []
     // A field shows its content as its value; its inner text nodes would repeat it.
     const field = FIELD_ROLES.has(role) || editable
-    const children = field ? [] : kids({ name: normalize(name) })
+    const children = field ? [] : kids({ name: normalize(name), fromContents: NAME_FROM_CONTENTS.has(role) })
     if (!name && !value && !children.length && !interactive(role, properties)) return []
     const description = clip(text(node.description))
     const tail = [
@@ -108,7 +114,7 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
       description && normalize(description) !== normalize(name) ? ` description=${quote(description)}` : "",
       ...states(role, properties, editable && !FIELD_ROLES.has(role)),
     ].join("")
-    const result = view(`${role}${name ? ` ${quote(name)}` : ""}`, tail, name, node)
+    const result = view(`${role}${name ? ` ${quote(name)}` : ""}`, tail, name, node, `${role} ${name} ${value} ${description}`)
     result.children = children
     return [result]
   }
@@ -148,12 +154,12 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
   return { text: lines.join("\n"), collapsed, total, shown }
 }
 
-/** The nearest printed ancestor's normalized name. */
-interface Context { name?: string }
+/** The nearest printed ancestor's normalized name, and whether it was computed from its contents. */
+interface Context { name?: string; fromContents?: boolean }
 
-function view(head: string, tail: string, name: string, node: AxNode): View {
-  return { head, tail, name: normalize(name), ...(Number.isInteger(node.backendDOMNodeId) ? { backend: node.backendDOMNodeId } : {}),
-    children: [], size: 1, full: 0 }
+function view(head: string, tail: string, name: string, node: AxNode, searchable: string): View {
+  return { head, tail, name: normalize(name), searchable: normalize(searchable),
+    ...(Number.isInteger(node.backendDOMNodeId) ? { backend: node.backendDOMNodeId } : {}), children: [], size: 1, full: 0 }
 }
 
 function interactive(role: string, properties: Map<string, unknown>): boolean {
@@ -185,7 +191,7 @@ function states(role: string, properties: Map<string, unknown>, editable: boolea
 
 /** A match keeps its whole subtree; other nodes survive only as ancestors of a match. */
 function filter(item: View, query: string): View[] {
-  if (item.name.includes(query) || normalize(item.head.split(" ", 1)[0]) === query || normalize(item.tail).includes(query)) return [item]
+  if (item.searchable.includes(query)) return [item]
   const children = item.children.flatMap(child => filter(child, query))
   return children.length ? [{ ...item, children }] : []
 }
@@ -250,8 +256,10 @@ function indent(depth: number): string {
   return "  ".repeat(depth)
 }
 
+/** Chromium reports slider, spinbutton and progress values as numbers. */
 function text(value: { value?: unknown } | undefined): string {
-  return typeof value?.value === "string" ? value.value.replace(/\s+/g, " ").trim() : ""
+  const raw = typeof value?.value === "number" && Number.isFinite(value.value) ? String(value.value) : value?.value
+  return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : ""
 }
 
 function clip(value: string): string {

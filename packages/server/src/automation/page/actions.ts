@@ -57,7 +57,7 @@ export async function performAction(session: PageSession, action: PageAction): P
     }
     const field = await call(session, action, element, FIELD, [], false) as string
     const mode = await call(session, action, field, PREPARE, [action.clear])
-    if (mode === "value") await call(session, action, field, SET_VALUE, [action.text])
+    if (mode === "value" || mode === "append") await call(session, action, field, SET_VALUE, [action.text, mode === "append"])
     else if (action.text) {
       await channel.send("Input.insertText", { text: action.text })
       await session.checkpoint()
@@ -123,6 +123,7 @@ function pageError(action: PageAction, description: string): Error {
     case "readonly": return new Error(`${action.ref} is read-only`)
     case "not-editable": return new Error(`${action.ref} is not a text field`)
     case "not-text": return new Error(`${action.ref} is not a text field; use click`)
+    case "unfocusable": return new Error(`${action.ref} cannot take focus (hidden, disabled or behind a dialog); reveal it, then inspect again`)
     case "invalid-value": return new Error(`${quoted} is not a valid value for ${action.ref}`)
     default: return new Error(`The page rejected the action on ${action.ref}: ${description.split("\n", 1)[0].slice(0, VALUE_LIMIT)}`)
   }
@@ -130,32 +131,38 @@ function pageError(action: PageAction, description: string): Error {
 
 const LABEL = `const label = option => (option.label || option.textContent || "").replace(/\\s+/g, " ").trim();`
 
-/** Picks options like a user would: by visible label, else by value; change fires only on a change. */
+/** Picks options like a user would: by visible label, else by value; change fires only on a change.
+ * `:disabled` also covers disabled fieldsets and optgroups. */
 const CHOOSE = `${LABEL}
-  const choose = (select, wanted) => {
-    if (select.disabled) throw new Error("codenomad:disabled");
-    const options = Array.from(select.options), picked = [];
-    for (const raw of wanted) {
-      const target = String(raw).replace(/\\s+/g, " ").trim();
-      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));
-      if (!option) throw new Error("codenomad:no-option:" + target);
-      if (option.disabled || (option.parentElement instanceof HTMLOptGroupElement && option.parentElement.disabled)) throw new Error("codenomad:option-disabled:" + target);
-      if (!picked.includes(option)) picked.push(option);
-    }
+  const apply = (select, picked) => {
+    if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+    for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
     if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
     select.focus();
+    const options = Array.from(select.options);
     if (options.some(option => option.selected !== picked.includes(option))) {
       for (const option of options) option.selected = picked.includes(option);
       select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
       select.dispatchEvent(new Event("change", { bubbles: true }));
     }
     return Array.from(select.selectedOptions).map(label);
+  };
+  const choose = (select, wanted) => {
+    if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+    const options = Array.from(select.options), picked = [];
+    for (const raw of wanted) {
+      const target = String(raw).replace(/\\s+/g, " ").trim();
+      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));
+      if (!option) throw new Error("codenomad:no-option:" + target);
+      if (!picked.includes(option)) picked.push(option);
+    }
+    return apply(select, picked);
   };`
 
-/** Clicking an option of a native select picks it, since its popup is not part of the page. */
+/** Clicking an option of a native select picks that exact option, since its popup is not part of the page. */
 const CLICK = `${CHOOSE}
   const option = element.closest("option"), select = option && option.closest("select");
-  if (option && select) return choose(select, [label(option)]);
+  if (option && select) return apply(select, [option]);
   if (element instanceof HTMLElement) element.click();
   else element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
   return null;`
@@ -168,6 +175,8 @@ const SELECT = `${CHOOSE}
 
 const NOT_TEXT = ["checkbox", "radio", "button", "submit", "reset", "file", "image", "hidden"]
 const VALUE_TYPES = ["date", "time", "datetime-local", "month", "week", "range", "color"]
+/** Types whose value sanitization empties an invalid value. */
+const PROBED_TYPES = ["date", "time", "datetime-local", "month", "week", "number"]
 const TEXT_FIELD = `const textField = item => item instanceof HTMLInputElement || item instanceof HTMLTextAreaElement
   || (item instanceof HTMLElement && item.isContentEditable);`
 
@@ -179,13 +188,20 @@ const FIELD = `${TEXT_FIELD}
   if (!field || !textField(field)) throw new Error("codenomad:not-editable");
   return field;`
 
+/** Native text insertion goes to the focused element, so a field that cannot take focus
+ * (hidden, disabled, behind a modal dialog) fails here instead of typing into another one. */
 const PREPARE = `const field = element, clear = args[0];
-  if (field.disabled) throw new Error("codenomad:disabled");
+  if (field.matches(":disabled")) throw new Error("codenomad:disabled");
   if (field.readOnly) throw new Error("codenomad:readonly");
   if (field instanceof HTMLInputElement && ${JSON.stringify(NOT_TEXT)}.includes(field.type)) throw new Error("codenomad:not-text");
   field.focus();
+  const active = field.getRootNode().activeElement;
+  const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
+  if (active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))) {
+    throw new Error("codenomad:unfocusable");
+  }
   if (field instanceof HTMLInputElement && ${JSON.stringify(VALUE_TYPES)}.includes(field.type)) return "value";
-  if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+  if (editable) {
     const range = document.createRange();
     range.selectNodeContents(field);
     if (!clear) range.collapse(false);
@@ -193,18 +209,27 @@ const PREPARE = `const field = element, clear = args[0];
     selection.removeAllRanges();
     selection.addRange(range);
   } else if (clear) field.select();
-  else { try { field.setSelectionRange(field.value.length, field.value.length); } catch {} }
+  // Email and number inputs have no caret API: their text is appended as a value.
+  else { try { field.setSelectionRange(field.value.length, field.value.length); } catch { return "append"; } }
   return "insert";`
 
-const SET_VALUE = `const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-  setter.call(element, args[0]);
-  if (element.value !== args[0] && args[0] !== "") throw new Error("codenomad:invalid-value:" + args[0]);
+/** Sets an input's value like a picker would. An invalid value is refused before anything changes;
+ * a valid one keeps the browser's normalization (lowercase colors, snapped ranges). */
+const SET_VALUE = `const [text, append] = args, next = append ? element.value + text : text;
+  if (next !== "") {
+    const valid = element.type === "color" ? /^#[0-9a-f]{6}$/i.test(next)
+      : element.type === "range" ? next.trim() !== "" && Number.isFinite(Number(next))
+      : ${JSON.stringify(PROBED_TYPES)}.includes(element.type) ? (() => { const probe = document.createElement("input"); probe.type = element.type; probe.value = next; return probe.value !== ""; })()
+      : true;
+    if (!valid) throw new Error("codenomad:invalid-value:" + next);
+  }
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, next);
   element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   return null;`
 
 const DELETE_SELECTION = `document.execCommand("delete"); return null;`
 
-const READ_VALUE = `const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.textContent || "";
+const READ_VALUE = `const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || "";
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > ${VALUE_LIMIT} ? value.slice(0, ${VALUE_LIMIT - 1}) + "…" : value;`

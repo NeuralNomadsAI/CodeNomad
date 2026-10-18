@@ -356,6 +356,16 @@ describe("DeveloperCdp", () => {
     await client.act({ ...identity, kind: "click", ref: save })
     assert.match((await client.inspect(identity, { query: "save" })).snapshot, new RegExp(`button "Save" \\[${save}\\]`))
     assert.equal(/button "Save" \[(e\d+)\]/.exec((await client.inspect(identity)).snapshot)![1], save)
+
+    // A later inspection of the same page never invalidates an earlier ref; a node that
+    // left the page is reported as such, not as a stale ref.
+    chrome.axNodes = chrome.axNodes.filter(node => !["dialog", "field"].includes(node.nodeId as string))
+    chrome.axNodes[0] = { ...chrome.axNodes[0], childIds: ["toolbar"] }
+    await client.inspect(identity)
+    await assert.rejects(client.inspect(identity, { ref: dialog }), /is no longer in the page/)
+    await client.act({ ...identity, kind: "click", ref: dialog })
+    chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "main" } })
+    await assert.rejects(client.act({ ...identity, kind: "click", ref: save }), /stale ref/)
   })
 
   it("closes active target connections", async () => {

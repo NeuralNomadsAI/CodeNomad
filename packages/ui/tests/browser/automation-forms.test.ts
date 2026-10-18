@@ -33,11 +33,31 @@ const FORM = `<!doctype html><html lang="en"><body><main>
   }
 </script></body></html>`
 
+// Fields an agent must not type into blindly, and inputs with browser-side normalization.
+const EDGES = `<!doctype html><html lang="en"><body><main>
+  <label>Outside <input id="outside" value="Kept"></label>
+  <details><summary>More</summary><label>Hidden <input id="hidden"></label></details>
+  <fieldset disabled><label>Locked <input id="locked"></label></fieldset>
+  <label>Mail <input id="mail" type="email" value="ab"></label>
+  <label>Count <input id="count" type="number" value="12"></label>
+  <label>Tint <input id="tint" type="color"></label>
+  <label>Volume <input id="volume" type="range" min="0" max="100" step="20" value="40"></label>
+  <label>Day <input id="day" type="date" value="2026-01-02"></label>
+  <label>Twins <select id="twins"><option value="s1">Same</option><option value="s2">Same</option></select></label>
+  <div id="story" contenteditable="true" role="textbox" aria-label="Story"><div>one</div><div>two</div></div>
+  <section aria-label="Mission editor"><p>Mission</p></section>
+  <dialog id="modal"><label>Modal field <input id="modal-field"></label></dialog>
+</main><script>
+  window.events = []
+  for (const element of document.querySelectorAll("input")) for (const type of ["input", "change"]) element.addEventListener(type, () => window.events.push(type + ":" + element.id))
+</script></body></html>`
+
 before(async () => {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
     plugins: [solid(), shutdown.plugin, { name: "automation-forms", configureServer(s) {
       s.middlewares.use("/automation-form", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(FORM) })
+      s.middlewares.use("/automation-edges", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(EDGES) })
       s.middlewares.use("/automation-editor", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/automation-editor", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script></body></html>'))
@@ -121,6 +141,49 @@ test("typing replaces a prefilled field by default, clear:false appends, and sel
     // An option ref is clickable: it picks that option, since the native popup is not in the page.
     assert.deepEqual(await act({ kind: "click", ref: await refFor(/option "Exploration"/, "Scenario") }), { selected: ["Exploration"] })
     assert.match((await run.cdp.inspect(run.identity, { query: "scenario" })).snapshot, /combobox "Scenario" \[e\d+\] value="Exploration"/)
+  } finally { await run.close() }
+})
+
+test("typing never lands in another field, and normalized inputs keep the browser's value or stay untouched", async () => {
+  const run = await open("/automation-edges")
+  try {
+    const { page, act, refFor } = run
+    const outline = (await run.cdp.inspect(run.identity)).snapshot
+    assert.match(outline, /slider "Volume" \[e\d+\] value="40"/, "numeric values appear")
+    assert.match(outline, /region "Mission editor" \[e\d+\]\n {4}- text "Mission"/, "a region's title does not swallow its text")
+    assert.equal((await run.cdp.inspect(run.identity, { query: "value" })).snapshot, "No element matches \"value\"", "query ignores field labels")
+
+    const outside = await refFor(/textbox "Outside"/)
+    await act({ kind: "click", ref: outside })
+    // The ref was seen while its disclosure was open; it closed before typing (#1015 review).
+    await page.evaluate(() => { document.querySelector("details")!.open = true })
+    const hidden = await refFor(/textbox "Hidden"/)
+    await page.evaluate(() => { document.querySelector("details")!.open = false })
+    await assert.rejects(act({ kind: "type", ref: hidden, text: "Lost" }), /cannot take focus/)
+    await assert.rejects(act({ kind: "type", ref: await refFor(/textbox "Locked"/), text: "Lost" }), /is disabled/)
+    assert.equal(await page.inputValue("#outside"), "Kept", "nothing was typed into the focused field instead")
+    const modalOutside = await refFor(/textbox "Outside"/)
+    await page.evaluate(() => (document.getElementById("modal") as HTMLDialogElement).showModal())
+    await assert.rejects(act({ kind: "type", ref: modalOutside, text: "Lost" }), /cannot take focus/)
+    assert.equal(await page.inputValue("#modal-field"), "", "the dialog's field received nothing")
+    await page.evaluate(() => (document.getElementById("modal") as HTMLDialogElement).close())
+
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/textbox "Mail"/), text: "c", clear: false }), { value: "abc" })
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/spinbutton "Count"/), text: "3", clear: false }), { value: "123" })
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/textbox "Mail"/), text: "x@y.z" }), { value: "x@y.z" }, "clearing works there too")
+    // Through its label's text, which designates the labelled control.
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/text "Tint"/), text: "#FF0000" }), { value: "#ff0000" })
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/slider "Volume"/), text: "55" }), { value: "60" }, "ranges snap to their step")
+    await page.evaluate(() => { (window as any).events.length = 0 })
+    await assert.rejects(act({ kind: "type", ref: await refFor(/Date "Day"/), text: "2026-13-45" }), /"2026-13-45" is not a valid value/)
+    assert.equal(await page.inputValue("#day"), "2026-01-02", "an invalid date changes nothing")
+    assert.deepEqual(await page.evaluate(() => (window as any).events), [])
+
+    const second = /option "Same" \[(e\d+)\][^\n]*\n\s*- option "Same" \[(e\d+)\]/.exec((await run.cdp.inspect(run.identity, { query: "Twins" })).snapshot)![2]
+    await act({ kind: "click", ref: second })
+    assert.equal(await page.inputValue("#twins"), "s2", "an option click picks that exact option, not the first with its label")
+
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/textbox "Story"/), text: " end", clear: false }), { value: "one\ntwo end" })
   } finally { await run.close() }
 })
 

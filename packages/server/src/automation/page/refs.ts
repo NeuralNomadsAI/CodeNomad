@@ -1,6 +1,6 @@
 /** Refs handed to an agent for one page. A ref names one DOM node within the page
- * generation it was issued for: a navigation or a replaced target makes it stale.
- * The same node keeps its ref across inspections of the same generation. */
+ * generation it was issued for: a navigation or a replaced target makes it stale. The
+ * same node keeps its ref, and every ref stays usable, for the life of that generation. */
 export class RefTable {
   private entries = new Map<string, { backendNodeId: number; generation: string }>()
   private byNode = new Map<string, string>()
@@ -8,18 +8,24 @@ export class RefTable {
 
   constructor(private readonly retry = "inspect again", private readonly prefix = "e", private readonly limit = 5_000) {}
 
-  /** A full inspection keeps only the refs it shows; a scoped one adds to the table. */
-  issuer(generation: string, replace: boolean): (backendNodeId: number) => string {
-    const previous = this.byNode
-    if (replace) {
-      this.entries = new Map()
-      this.byNode = new Map()
+  /** Issues refs for one inspection; refs of other generations can no longer resolve and are dropped. */
+  issuer(generation: string): (backendNodeId: number) => string {
+    for (const [ref, entry] of this.entries) {
+      if (entry.generation === generation) continue
+      this.entries.delete(ref)
+      this.byNode.delete(`${entry.generation}\0${entry.backendNodeId}`)
     }
     return (backendNodeId) => {
       const key = `${generation}\0${backendNodeId}`
       let ref = this.byNode.get(key)
-      if (ref) return ref
-      ref = previous.get(key) ?? `${this.prefix}${++this.next}`
+      if (ref) {
+        // Shown again: keep it away from eviction.
+        const entry = this.entries.get(ref)!
+        this.entries.delete(ref)
+        this.entries.set(ref, entry)
+        return ref
+      }
+      ref = `${this.prefix}${++this.next}`
       this.entries.set(ref, { backendNodeId, generation })
       this.byNode.set(key, ref)
       if (this.entries.size > this.limit) {
