@@ -1,33 +1,48 @@
+import { aim, clickAt, dragBetween, hoverAt, pressKeys, waitForText, wheelAt, type MouseButton } from "./input"
+import { callOn, OBJECT_GROUP, releaseObjects, resolveElement, VALUE_LIMIT, type PageSession } from "./protocol"
+import type { RefAction } from "./parse"
 import { renderSnapshot, type AxNode, type Snapshot, type SnapshotOptions } from "./snapshot"
 
-/** One page's protocol connection, whatever carries it (DevTools socket or a native pipe). */
-export interface PageChannel {
-  send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>
-}
+export type { PageChannel, PageSession } from "./protocol"
 
-export interface PageSession {
-  channel: PageChannel
-  /** Throws once the page changed since the operation began; runs between protocol steps. */
-  checkpoint(): Promise<void>
-  /** The trusted CodeNomad window: page-side automation is marked so it never counts as a
-   * human answer (`form-answer-interaction.ts`). Never set this in a user's web page. */
-  markAutomation: boolean
-}
+interface Target { ref: string; backendNodeId: number }
 
 export type PageAction =
-  | { kind: "click"; ref: string; backendNodeId: number }
-  | { kind: "type"; ref: string; backendNodeId: number; text: string; clear: boolean }
-  | { kind: "select"; ref: string; backendNodeId: number; values: string[] }
+  | Target & { kind: "click"; button?: MouseButton }
+  | Target & { kind: "type"; text: string; clear: boolean }
+  | Target & { kind: "select"; values: string[] }
+  | Target & { kind: "hover" }
+  | Target & { kind: "drag"; to: Target }
+  | { kind: "scroll"; target?: Target; direction: "up" | "down" | "left" | "right"; amount: number }
+  | { kind: "press"; key: string; target?: Target }
+  | { kind: "wait"; text: string; gone: boolean; timeoutMs: number }
 
 export interface PageActionResult {
   /** The field's value after typing; passwords are masked. */
   value?: string
   /** The select's chosen option labels. */
   selected?: string[]
+  /** The element focused after a key press. */
+  focused?: string
+  /** Whether wait found its text, and after how long. */
+  found?: boolean
+  waitedMs?: number
 }
 
-const OBJECT_GROUP = "codenomad-automation"
-const VALUE_LIMIT = 200
+/** Resolves a tool's refs to DOM nodes before any page access; a stale ref fails the whole action. */
+export function bindRefs(action: RefAction, resolve: (ref: string) => number): PageAction {
+  const target = (ref: string): Target => ({ ref, backendNodeId: resolve(ref) })
+  switch (action.action) {
+    case "click": return { kind: "click", ...target(action.ref), ...(action.button ? { button: action.button } : {}) }
+    case "type": return { kind: "type", ...target(action.ref), text: action.text, clear: action.clear }
+    case "select": return { kind: "select", ...target(action.ref), values: action.values }
+    case "hover": return { kind: "hover", ...target(action.ref) }
+    case "drag": return { kind: "drag", ...target(action.ref), to: target(action.to) }
+    case "scroll": return { kind: "scroll", direction: action.direction, amount: action.amount, ...(action.ref ? { target: target(action.ref) } : {}) }
+    case "press": return { kind: "press", key: action.key, ...(action.ref ? { target: target(action.ref) } : {}) }
+    case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout }
+  }
+}
 
 export async function readAccessibilityTree(session: PageSession): Promise<AxNode[]> {
   const result = await session.channel.send("Accessibility.getFullAXTree")
@@ -43,90 +58,85 @@ export async function snapshotPage(session: PageSession, issue: () => (backendNo
 }
 
 export async function performAction(session: PageSession, action: PageAction): Promise<PageActionResult> {
-  const { channel } = session
   try {
-    await channel.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: action.backendNodeId }).catch(() => undefined)
-    await session.checkpoint()
-    const element = await resolve(session, action)
-    if (action.kind === "click") {
-      const selected = await call(session, action, element, CLICK, [])
-      return Array.isArray(selected) ? { selected: selected.map(String) } : {}
+    switch (action.kind) {
+      case "click": return await click(session, action)
+      case "type": return await type(session, action)
+      case "select": {
+        const element = await resolveElement(session, action.ref, action.backendNodeId)
+        return { selected: (await callOn(session, action.ref, element, SELECT, [action.values]) as unknown[]).map(String) }
+      }
+      case "hover": {
+        const point = await aim(session, action.ref, action.backendNodeId)
+        if (!point) throw new Error(`${action.ref} has no visible box to hover`)
+        await hoverAt(session, point)
+        return {}
+      }
+      case "drag": {
+        const from = await aim(session, action.ref, action.backendNodeId)
+        // The drop target may lie under the dragged element; only its position matters.
+        const to = await aim(session, action.to.ref, action.to.backendNodeId, { hitTest: false })
+        if (!from || !to) throw new Error(`${!from ? action.ref : action.to.ref} has no visible box to drag ${!from ? "from" : "to"}`)
+        await dragBetween(session, from, to)
+        return {}
+      }
+      case "scroll": {
+        const point = action.target ? await aim(session, action.target.ref, action.target.backendNodeId) : undefined
+        if (action.target && !point) throw new Error(`${action.target.ref} has no visible box to scroll`)
+        const sign = action.direction === "up" || action.direction === "left" ? -1 : 1
+        const vertical = action.direction === "up" || action.direction === "down"
+        await wheelAt(session, point, { x: vertical ? 0 : sign * action.amount, y: vertical ? sign * action.amount : 0 })
+        return {}
+      }
+      case "press": {
+        if (action.target) {
+          const element = await resolveElement(session, action.target.ref, action.target.backendNodeId)
+          await callOn(session, action.target.ref, element, FOCUS, [])
+        }
+        await pressKeys(session, action.key)
+        return { focused: await focusedElement(session) }
+      }
+      case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs)
     }
-    if (action.kind === "select") {
-      return { selected: (await call(session, action, element, SELECT, [action.values]) as unknown[]).map(String) }
-    }
-    const field = await call(session, action, element, FIELD, [], false) as string
-    const mode = await call(session, action, field, PREPARE, [action.clear])
-    if (mode === "value" || mode === "append") await call(session, action, field, SET_VALUE, [action.text, mode === "append"])
-    else if (action.text) {
-      await channel.send("Input.insertText", { text: action.text })
-      await session.checkpoint()
-    } else if (action.clear) await call(session, action, field, DELETE_SELECTION, [])
-    return { value: String(await call(session, action, field, READ_VALUE, [])) }
   } finally {
-    await channel.send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP }).catch(() => undefined)
+    await releaseObjects(session)
   }
 }
 
-async function resolve(session: PageSession, action: PageAction): Promise<string> {
-  let result: Record<string, unknown>
-  try {
-    result = await session.channel.send("DOM.resolveNode", { backendNodeId: action.backendNodeId, objectGroup: OBJECT_GROUP })
-  } catch {
-    throw new Error(`${action.ref} is no longer in the page; inspect again`)
-  }
+async function click(session: PageSession, action: Target & { button?: MouseButton }): Promise<PageActionResult> {
+  const element = await resolveElement(session, action.ref, action.backendNodeId)
+  const selected = await callOn(session, action.ref, element, OPTION_CLICK, [])
+  if (Array.isArray(selected)) return { selected: selected.map(String) }
+  const point = await aim(session, action.ref, action.backendNodeId)
+  // An element without a visible box (zero-size or offscreen-only) is activated programmatically.
+  if (!point) {
+    if (action.button && action.button !== "left") throw new Error(`${action.ref} has no visible box to ${action.button}-click`)
+    await callOn(session, action.ref, element, PROGRAMMATIC_CLICK, [])
+  } else await clickAt(session, point, action.button)
+  return {}
+}
+
+async function type(session: PageSession, action: Target & { text: string; clear: boolean }): Promise<PageActionResult> {
+  const element = await resolveElement(session, action.ref, action.backendNodeId)
+  await session.channel.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: action.backendNodeId }).catch(() => undefined)
   await session.checkpoint()
-  const objectId = (result.object as { objectId?: unknown } | undefined)?.objectId
-  if (typeof objectId !== "string") throw new Error(`${action.ref} is no longer in the page; inspect again`)
-  return objectId
+  const field = await callOn(session, action.ref, element, FIELD, [], false) as string
+  const mode = await callOn(session, action.ref, field, PREPARE, [action.clear])
+  if (mode === "value" || mode === "append") await callOn(session, action.ref, field, SET_VALUE, [action.text, mode === "append"])
+  else if (action.text) {
+    await session.channel.send("Input.insertText", { text: action.text })
+    await session.checkpoint()
+  } else if (action.clear) await callOn(session, action.ref, field, DELETE_SELECTION, [])
+  return { value: String(await callOn(session, action.ref, field, READ_VALUE, [])) }
 }
 
-/** Runs a fixed page function on an element; `byValue: false` returns another element handle. */
-async function call(session: PageSession, action: PageAction, objectId: string, body: string, args: unknown[], byValue = true): Promise<unknown> {
-  const result = await session.channel.send("Runtime.callFunctionOn", {
-    objectId,
-    functionDeclaration: pageFunction(body, session.markAutomation),
-    arguments: args.map(value => ({ value })),
-    returnByValue: byValue,
-    objectGroup: OBJECT_GROUP,
-  })
+async function focusedElement(session: PageSession): Promise<string | undefined> {
+  const active = await session.channel.send("Runtime.evaluate", { expression: "document.activeElement", objectGroup: OBJECT_GROUP })
   await session.checkpoint()
-  const failure = result.exceptionDetails as { exception?: { description?: unknown }; text?: unknown } | undefined
-  if (failure) throw pageError(action, String(failure.exception?.description ?? failure.text ?? ""))
-  const value = result.result as { value?: unknown; objectId?: unknown } | undefined
-  if (!byValue) {
-    if (typeof value?.objectId !== "string") throw new Error(`${action.ref} is no longer in the page; inspect again`)
-    return value.objectId
-  }
-  return value?.value
-}
-
-function pageFunction(body: string, mark: boolean): string {
-  const element = `const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
-    if (!(element instanceof Element) || !element.isConnected) throw new Error("codenomad:gone");`
-  return mark
-    ? `function (...args) { ${element} globalThis.__codenomadAutomationDepth = (globalThis.__codenomadAutomationDepth || 0) + 1;
-      try { return (() => { ${body} })(); } finally { globalThis.__codenomadAutomationDepth--; } }`
-    : `function (...args) { ${element} ${body} }`
-}
-
-function pageError(action: PageAction, description: string): Error {
-  const [code, detail = ""] = /codenomad:([a-z-]+)(?::(.*))?/.exec(description.split("\n", 1)[0])?.slice(1) ?? []
-  const quoted = JSON.stringify(detail.slice(0, VALUE_LIMIT))
-  switch (code) {
-    case "gone": return new Error(`${action.ref} is no longer in the page; inspect again`)
-    case "not-select": return new Error(`${action.ref} is not a native select; click it to open its menu, then click the option`)
-    case "no-option": return new Error(`No option ${quoted} in ${action.ref}; inspect it to see its options`)
-    case "option-disabled": return new Error(`Option ${quoted} of ${action.ref} is disabled`)
-    case "single": return new Error(`${action.ref} takes exactly one value`)
-    case "disabled": return new Error(`${action.ref} is disabled`)
-    case "readonly": return new Error(`${action.ref} is read-only`)
-    case "not-editable": return new Error(`${action.ref} is not a text field`)
-    case "not-text": return new Error(`${action.ref} is not a text field; use click`)
-    case "unfocusable": return new Error(`${action.ref} cannot take focus (hidden, disabled or behind a dialog); reveal it, then inspect again`)
-    case "invalid-value": return new Error(`${quoted} is not a valid value for ${action.ref}`)
-    default: return new Error(`The page rejected the action on ${action.ref}: ${description.split("\n", 1)[0].slice(0, VALUE_LIMIT)}`)
-  }
+  const objectId = (active.result as { objectId?: unknown } | undefined)?.objectId
+  if (typeof objectId !== "string") return undefined
+  const described = await callOn(session, "the focused element", objectId, DESCRIBE, [])
+  return typeof described === "string" ? described : undefined
 }
 
 const LABEL = `const label = option => (option.label || option.textContent || "").replace(/\\s+/g, " ").trim();`
@@ -159,11 +169,15 @@ const CHOOSE = `${LABEL}
     return apply(select, picked);
   };`
 
-/** Clicking an option of a native select picks that exact option, since its popup is not part of the page. */
-const CLICK = `${CHOOSE}
+/** A native select's popup is not part of the page: clicking an option picks that exact option,
+ * and the select itself is changed with `select` rather than opened. */
+const OPTION_CLICK = `${CHOOSE}
   const option = element.closest("option"), select = option && option.closest("select");
   if (option && select) return apply(select, [option]);
-  if (element instanceof HTMLElement) element.click();
+  if (element instanceof HTMLSelectElement) throw new Error("codenomad:is-select");
+  return null;`
+
+const PROGRAMMATIC_CLICK = `if (element instanceof HTMLElement) element.click();
   else element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
   return null;`
 
@@ -172,6 +186,13 @@ const SELECT = `${CHOOSE}
   const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
   if (!select) throw new Error("codenomad:not-select");
   return choose(select, args[0]);`
+
+const FOCUS = `if (element instanceof HTMLElement || element instanceof SVGElement) element.focus(); return null;`
+
+const DESCRIBE = `const role = element.getAttribute("role") || element.tagName.toLowerCase();
+  const name = (element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("placeholder")
+    || (element.labels && element.labels[0] && element.labels[0].textContent) || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 80);
+  return role + (name ? " " + JSON.stringify(name) : "");`
 
 const NOT_TEXT = ["checkbox", "radio", "button", "submit", "reset", "file", "image", "hidden"]
 const VALUE_TYPES = ["date", "time", "datetime-local", "month", "week", "range", "color"]

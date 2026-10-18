@@ -7,6 +7,7 @@ import type { Plugin } from "@opencode/plugin"
 import { MissionControlError } from "../missions/control-error"
 import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryError } from "../missions/recovery-error"
+import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
@@ -26,13 +27,10 @@ let cachedWslWindowsLocalAppData: string | null | undefined
 
 export type DeveloperAction =
   | { action: "inspect"; ref?: string; query?: string }
-  | { action: "click"; ref: string }
-  | { action: "type"; ref: string; text: string; clear: boolean }
-  | { action: "select"; ref: string; values: string[] }
+  | RefAction
   | { action: "restart" }
   | { action: "screenshot" }
 
-const MAX_SELECT_VALUES = 64
 const MAX_QUERY_LENGTH = 200
 
 export type BrowserAction =
@@ -243,21 +241,11 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
     case "restart":
     case "screenshot":
       return { action: value.action }
-    case "click":
-      if (typeof value.ref !== "string") throw new Error("click requires ref from the latest inspection")
-      return { action: "click", ref: value.ref }
-    case "type":
-      if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
-      if (value.clear !== undefined && typeof value.clear !== "boolean") throw new Error("type clear must be true or false")
-      return { action: "type", ref: value.ref, text: value.text, clear: value.clear !== false }
-    case "select":
-      if (typeof value.ref !== "string" || !Array.isArray(value.values) || value.values.length > MAX_SELECT_VALUES
-        || !value.values.every(item => typeof item === "string")) {
-        throw new Error("select requires ref and values: the option labels or values to choose")
-      }
-      return { action: "select", ref: value.ref, values: value.values as string[] }
-    default:
-      throw new Error("Unsupported native automation action")
+    default: {
+      const page = parsePageAction(value, "inspection")
+      if (!page) throw new Error("Unsupported native automation action")
+      return page
+    }
   }
 }
 
@@ -657,15 +645,12 @@ export function createDeveloperToolTransform() {
     })
     draft.add({
       name: "act",
-      description: "Act on a ref from the latest codenomad.inspect: click it, type into a field (replacing its text unless clear is false), or select native <select> options by label or value. restart gracefully relaunches CodeNomad and waits for reconnection.",
+      description: "Act on refs from the latest codenomad.inspect like a user: click (real pointer at the element's visible centre, refused when covered), type into a field (replacing its text unless clear is false), select native <select> options by label or value, hover, drag onto another ref, scroll (a ref or the page), press a key or chord (optionally after focusing a ref), or wait for text to appear or disappear. restart gracefully relaunches CodeNomad and waits for reconnection.",
       input: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["click", "type", "select", "restart"] },
-          ref: { type: "string", description: "Element ref from the latest inspection" },
-          text: { type: "string", description: "Text for type" },
-          clear: { type: "boolean", description: "type only: replace the field's current text (default true); false appends" },
-          values: { type: "array", items: { type: "string" }, description: "select only: option labels or values to choose; one for an ordinary select" },
+          action: { type: "string", enum: [...PAGE_ACTIONS, "restart"] },
+          ...PAGE_ACTION_PROPERTIES,
         },
         required: ["action"],
         additionalProperties: false,

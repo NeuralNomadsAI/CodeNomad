@@ -1,5 +1,6 @@
 import { WebSocket } from "undici"
-import { performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
+import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
+import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
 
@@ -57,11 +58,6 @@ export interface DeveloperCdpInspectOptions {
   ref?: string
   query?: string
 }
-
-export type DeveloperCdpAction =
-  | (DeveloperCdpIdentity & { kind: "click"; ref: string })
-  | (DeveloperCdpIdentity & { kind: "type"; ref: string; text: string; clear: boolean })
-  | (DeveloperCdpIdentity & { kind: "select"; ref: string; values: string[] })
 
 export interface DeveloperCdpScreenshot {
   mediaType: "image/png"
@@ -165,15 +161,12 @@ export class DeveloperCdp {
     })
   }
 
-  async act(action: DeveloperCdpAction): Promise<PageActionResult> {
-    return this.exclusive(action.runId, async () => {
-      const state = await this.ensure(action)
-      const epoch = state.navigationEpoch
-      const backendNodeId = this.refs.resolve(action.ref, this.generation(state))
-      const session = this.session(state, epoch, "Page changed during action; inspect again")
-      return performAction(session, action.kind === "click" ? { kind: "click", ref: action.ref, backendNodeId }
-        : action.kind === "type" ? { kind: "type", ref: action.ref, backendNodeId, text: action.text, clear: action.clear }
-        : { kind: "select", ref: action.ref, backendNodeId, values: action.values })
+  async act(identity: DeveloperCdpIdentity, action: RefAction): Promise<PageActionResult> {
+    return this.exclusive(identity.runId, async () => {
+      const state = await this.ensure(identity)
+      const epoch = state.navigationEpoch, generation = this.generation(state)
+      const page = bindRefs(action, ref => this.refs.resolve(ref, generation))
+      return performAction(this.session(state, epoch, "Page changed during action; inspect again"), page)
     })
   }
 

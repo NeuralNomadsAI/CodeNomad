@@ -69,11 +69,11 @@ test("targets the inspected window independently of the visible conversation", a
         }
       },
       close: () => undefined,
-      act: async (identity: { sessionId?: string; instanceId?: string; kind: string; values?: string[] }) => {
+      act: async (identity: { sessionId?: string; instanceId?: string }, action: { action: string; values?: string[] }) => {
         assert.equal(identity.sessionId, undefined)
         assert.equal(identity.instanceId, undefined)
-        actions.push(identity)
-        return identity.kind === "select" ? { selected: identity.values } : {}
+        actions.push(action)
+        return action.action === "select" ? { selected: action.values } : {}
       },
     },
     workspaceManager: {
@@ -107,8 +107,10 @@ test("targets the inspected window independently of the visible conversation", a
   const selected = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "select", ref: "e2", values: ["Exploration"] } })
   assert.deepEqual(selected.json(), { result: { ok: true, selected: ["Exploration"] } })
   await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "type", ref: "e3", text: "x", clear: false } })
-  assert.deepEqual(actions.map(action => [action.kind, action.ref, action.clear ?? action.values]),
+  assert.deepEqual(actions.map(action => [action.action, action.ref, action.clear ?? action.values]),
     [["click", "ax1", undefined], ["select", "e2", ["Exploration"]], ["type", "e3", false]])
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "press", key: "Hyper+Q" } })).statusCode, 400,
+    "the backend validates the flat command again")
 
   const restart = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })
   assert.equal(restart.statusCode, 200)

@@ -77,11 +77,20 @@ class FakeChrome {
     queueMicrotask(() => socket.respond(command, this.result(command.method)))
   }
 
+  /** Visible box of every element, or none; and the element hit at its centre. */
+  quads: number[][] = []
+  hit = 42
+  functionResult: unknown
+
   result(method: string): Record<string, unknown> {
     if (method === "Accessibility.getFullAXTree") return {
       nodes: this.axNodes,
     }
+    if (method === "DOM.getContentQuads") return { quads: this.quads }
+    if (method === "DOM.getNodeForLocation") return { backendNodeId: this.hit }
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }
     if (method === "Runtime.evaluate") return { result: { value: this.context } }
+    if (method === "Runtime.callFunctionOn") return { result: { value: this.functionResult } }
     if (method === "Page.captureScreenshot") return { data: this.screenshotData }
     if (method === "DOM.resolveNode") return { object: { objectId: "node-1" } }
     return {}
@@ -115,7 +124,7 @@ describe("DeveloperCdp", () => {
     try {
       const first = await client.inspect(window)
       chrome.context = { ...chrome.context, sessionId: "another-session", instanceId: "another-project" }
-      await client.act({ ...window, kind: "click", ref: refOf(first) })
+      await client.act(window, { action: "click", ref: refOf(first) })
       assert.equal((await client.inspect(window)).context.sessionId, "another-session")
       chrome.context = { windowId: "window-1", sessionId: null, instanceId: null } as never
       assert.equal((await client.inspect(window)).context.sessionId, null)
@@ -175,7 +184,7 @@ describe("DeveloperCdp", () => {
     assert.equal(second.target.id, "two")
     assert.equal(oldSocket.closed, true)
     assert.equal(chrome.sockets.length, 4)
-    await assert.rejects(client.act({ ...identity, kind: "click", ref: oldRef }), /stale ref/)
+    await assert.rejects(client.act(identity, { action: "click", ref: oldRef }), /stale ref/)
   })
 
   it("refreshes target metadata without reconnecting", async () => {
@@ -191,15 +200,40 @@ describe("DeveloperCdp", () => {
     assert.equal(chrome.sockets.length, 2)
   })
 
-  it("activates clicks through the resolved accessibility node", async () => {
+  it("clicks a visible element with marked real pointer input at its visible centre", async () => {
     const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
     const client = chrome.client()
     const inspection = await client.inspect(identity)
+    chrome.commands.length = 0
 
-    await client.act({ ...identity, kind: "click", ref: refOf(inspection) })
+    await client.act(identity, { action: "click", ref: refOf(inspection) })
 
+    const sequence = chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent"
+      || (command.method === "Runtime.evaluate" && /__codenomadAutomationInputUntil/.test(String(command.params?.expression))))
+      .map(command => command.method === "Runtime.evaluate" ? (/= 0;/.test(String(command.params!.expression)) ? "unmark" : "mark")
+        : `${command.params!.type}@${command.params!.x},${command.params!.y}`)
+    assert.deepEqual(sequence, ["mark", "mouseMoved@200,60", "mark", "mousePressed@200,60", "mark", "mouseReleased@200,60", "unmark"],
+      "every trusted event in the CodeNomad window is marked, and the mark is cleared")
+  })
+
+  it("refuses a covered element and activates a box-less one programmatically", async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[0, 0, 10, 0, 10, 10, 0, 10]]
+    chrome.hit = 7
+    const client = chrome.client()
+    const inspection = await client.inspect(identity)
+    chrome.commands.length = 0
+    chrome.functionResult = "div \"Overlay\""
+    await assert.rejects(client.act(identity, { action: "click", ref: refOf(inspection) }), /is covered by div "Overlay"; close or move it first/)
+    assert.equal(chrome.commands.some(command => command.method === "Input.dispatchMouseEvent"), false)
+
+    chrome.functionResult = undefined
+    chrome.quads = []
+    chrome.commands.length = 0
+    await client.act(identity, { action: "click", ref: refOf(inspection) })
     assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
-    assert.equal(chrome.commands.find((command) => command.method === "Runtime.callFunctionOn")?.params?.objectId, "node-1")
+    assert.equal(chrome.commands.filter((command) => command.method === "Runtime.callFunctionOn").at(-1)?.params?.objectId, "node-1")
   })
 
   it("retries a failed WebSocket connection", async () => {
@@ -234,7 +268,7 @@ describe("DeveloperCdp", () => {
     chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "main" } })
 
     await assert.rejects(
-      client.act({ ...identity, kind: "type", ref: refOf(inspection), text: "hello", clear: true }),
+      client.act(identity, { action: "type", ref: refOf(inspection), text: "hello", clear: true }),
       /stale ref/,
     )
   })
@@ -246,7 +280,7 @@ describe("DeveloperCdp", () => {
     chrome.sockets.at(-1)!.close()
 
     await assert.rejects(
-      client.act({ ...identity, kind: "click", ref: refOf(inspection) }),
+      client.act(identity, { action: "click", ref: refOf(inspection) }),
       /stale ref/,
     )
     assert.equal(chrome.sockets.length, 3)
@@ -259,7 +293,7 @@ describe("DeveloperCdp", () => {
     chrome.context = { ...chrome.context, sessionId: "session-2" }
 
     await assert.rejects(
-      client.act({ ...identity, kind: "click", ref: refOf(inspection) }),
+      client.act(identity, { action: "click", ref: refOf(inspection) }),
       /active session changed/,
     )
     assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
@@ -273,7 +307,7 @@ describe("DeveloperCdp", () => {
     const socket = chrome.sockets.at(-1)!
     socket.onerror?.({})
 
-    await assert.rejects(client.act({ ...identity, kind: "click", ref: oldRef }), /stale ref/)
+    await assert.rejects(client.act(identity, { action: "click", ref: oldRef }), /stale ref/)
     assert.equal(socket.closed, true)
   })
 
@@ -289,7 +323,7 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     const inspection = await client.inspect(identity)
     chrome.deferred.set("DOM.resolveNode", undefined as never)
-    const action = client.act({ ...identity, kind: "click", ref: refOf(inspection) })
+    const action = client.act(identity, { action: "click", ref: refOf(inspection) })
     while (!chrome.deferred.get("DOM.resolveNode")) await new Promise<void>((resolve) => setImmediate(resolve))
     const deferred = chrome.deferred.get("DOM.resolveNode")!
     deferred.socket.emit("Page.frameNavigated", { frame: { id: "main" } })
@@ -305,7 +339,7 @@ describe("DeveloperCdp", () => {
     const inspection = await client.inspect(identity)
 
     chrome.deferred.set("DOM.resolveNode", undefined as never)
-    const action = client.act({ ...identity, kind: "click", ref: refOf(inspection) })
+    const action = client.act(identity, { action: "click", ref: refOf(inspection) })
     while (!chrome.deferred.get("DOM.resolveNode")) await new Promise<void>((resolve) => setImmediate(resolve))
     chrome.context = { ...chrome.context, instanceId: "workspace-2" }
     const deferred = chrome.deferred.get("DOM.resolveNode")!
@@ -353,7 +387,7 @@ describe("DeveloperCdp", () => {
     const save = /button "Save" \[(e\d+)\]/.exec(full.snapshot)![1]
     const scoped = await client.inspect(identity, { ref: dialog })
     assert.equal(scoped.snapshot, `- dialog "Rename" [${dialog}]\n  - textbox "Title" [${/textbox "Title" \[(e\d+)\]/.exec(full.snapshot)![1]}] value="Old"`)
-    await client.act({ ...identity, kind: "click", ref: save })
+    await client.act(identity, { action: "click", ref: save })
     assert.match((await client.inspect(identity, { query: "save" })).snapshot, new RegExp(`button "Save" \\[${save}\\]`))
     assert.equal(/button "Save" \[(e\d+)\]/.exec((await client.inspect(identity)).snapshot)![1], save)
 
@@ -363,9 +397,9 @@ describe("DeveloperCdp", () => {
     chrome.axNodes[0] = { ...chrome.axNodes[0], childIds: ["toolbar"] }
     await client.inspect(identity)
     await assert.rejects(client.inspect(identity, { ref: dialog }), /is no longer in the page/)
-    await client.act({ ...identity, kind: "click", ref: dialog })
+    await client.act(identity, { action: "click", ref: dialog })
     chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "main" } })
-    await assert.rejects(client.act({ ...identity, kind: "click", ref: save }), /stale ref/)
+    await assert.rejects(client.act(identity, { action: "click", ref: save }), /stale ref/)
   })
 
   it("closes active target connections", async () => {

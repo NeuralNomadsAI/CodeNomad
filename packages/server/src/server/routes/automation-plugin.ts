@@ -212,10 +212,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         const image = await deps.developerCdp.screenshot(identity)
         return reply.send({ result: { image: { data: image.data, mime: image.mediaType } } })
       }
-      const result = await deps.developerCdp.act(command.action === "type"
-        ? { ...identity, kind: "type", ref: command.ref, text: command.text, clear: command.clear }
-        : command.action === "select" ? { ...identity, kind: "select", ref: command.ref, values: command.values }
-        : { ...identity, kind: "click", ref: command.ref })
+      const result = await deps.developerCdp.act(identity, command)
       return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
