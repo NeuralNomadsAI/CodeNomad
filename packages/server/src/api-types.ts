@@ -199,7 +199,7 @@ export interface ProviderUsageResponse {
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
-  unavailableReason?: "native-credential-api-unavailable"
+  unavailableReason?: "native-credential-api-unavailable" | "openai-token-sharing-unsupported"
 }
 
 export type WorktreeKind = "root" | "worktree"

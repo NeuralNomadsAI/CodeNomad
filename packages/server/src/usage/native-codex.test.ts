@@ -158,6 +158,45 @@ test("a missing native credential API exposes only the feature-local upgrade rea
   } finally { await f.close() }
 })
 
+test("token-sharing diagnosis follows the selected account and revokes cached Codex quota", async () => {
+  const f = await fixture()
+  const previousFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = (input, init) => {
+    if (String(input).startsWith("http://127.0.0.1")) return previousFetch(input, init)
+    calls++
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer secret-access-selected")
+    return Promise.resolve(Response.json(quota()))
+  }
+  const sharing: CredentialEntry = { ...credential("sharing"), value: {
+    type: "oauth", methodID: "chatgpt-token-sharing", access: "secret-sharing", refresh: "secret-refresh",
+    expires: Date.now() + 3_600_000, metadata: { clientID: "private-client", scopes: ["chatgpt.tokens.use.direct"] },
+  } }
+  try {
+    const usage = createNativeCodexUsage()
+    assert.equal((await usage(f.connection, scope, AbortSignal.timeout(2000)))?.ok, true)
+    f.state.selected.id = "sharing"
+    f.state.entries = [{ ...credential(), active: false }, sharing]
+    const unavailable = await usage(f.connection, scope, AbortSignal.timeout(2000))
+    assert.equal(unavailable?.ok, false)
+    assert.equal(unavailable?.configured, true)
+    assert.equal(unavailable?.unavailableReason, "openai-token-sharing-unsupported")
+    assert.deepEqual(unavailable?.windows, {})
+    assert.equal(calls, 1, "no request with the sharing token or fallback to the other account")
+    assert.doesNotMatch(JSON.stringify(unavailable), /secret|private-client/)
+
+    f.state.entries = [{ ...sharing, active: false }]
+    assert.equal((await usage(f.connection, scope, AbortSignal.timeout(2000)))?.unavailableReason, undefined,
+      "an unselected credential cannot determine the displayed reason")
+    f.state.selected.id = "selected"
+    f.state.entries = [credential(), { ...sharing, active: false }]
+    const restored = await usage(f.connection, scope, AbortSignal.timeout(2000))
+    assert.equal(restored?.ok, true)
+    assert.equal(restored?.unavailableReason, undefined)
+    assert.equal(calls, 2, "the old snapshot was discarded")
+  } finally { globalThis.fetch = previousFetch; await f.close() }
+})
+
 test("quota failures are bounded and sanitized without credential refresh or fallback", async () => {
   const f = await fixture()
   const previousFetch = globalThis.fetch

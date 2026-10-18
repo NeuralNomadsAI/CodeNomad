@@ -57,6 +57,12 @@ export function createNativeCodexUsage() {
         throw error
       })
       const entry = entries.find(entry => entry.id === selected.id && entry.integrationID === integrationID && entry.active)
+      // OpenAI's direct ChatGPT grant cannot read Codex usage. Diagnose the
+      // selected method without sending its token to the incompatible endpoint.
+      // https://github.com/openai/sign-in-with-chatgpt-devkit/issues/3
+      if (entry?.value.type === "oauth" && entry.value.methodID === "chatgpt-token-sharing") {
+        unavailableReason = "openai-token-sharing-unsupported"
+      }
       const credential = entry && codexCredential(entry)
       if (!credential) throw new Error("Selected subscription credential unavailable")
       connection.assertCurrent()

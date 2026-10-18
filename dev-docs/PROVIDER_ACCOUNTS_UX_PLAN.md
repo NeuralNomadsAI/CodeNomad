@@ -53,7 +53,7 @@ exchanges tokens.
 
 | Integration | Credentials | Quota reader | Unknown candidate |
 | --- | --- | --- | --- |
-| `openai` (ChatGPT/Codex) | OAuth | `usage/native-codex.ts` strict selection parser | rejected |
+| `openai` (ChatGPT/Codex) | Codex browser/device OAuth | `usage/native-codex.ts` strict selection parser | rejected |
 | `opencode-go` | Go API key | `usage/opencode-go-quota.ts` | accepted unless marked |
 | `opencode` (Console, `opencode-go` provider only) | OAuth `device`, service-account key | same, with `x-org-id` | accepted unless marked |
 | `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only | Usage tab Claude reader | accepted unless marked |
@@ -61,6 +61,12 @@ exchanges tokens.
 | `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab token-limit reader (MCP tool allowance ignored) | rejected |
 | `kimi-for-coding` | plan key | Usage tab Kimi reader | rejected |
 | `minimax-coding-plan`, `minimax-cn-coding-plan` | plan key | Usage tab MiniMax reader | rejected |
+
+OpenAI's `chatgpt-token-sharing` grant cannot read Codex usage; [OpenAI confirmed
+the limitation](https://github.com/openai/sign-in-with-chatgpt-devkit/issues/3#issuecomment-5936080960).
+Usage reports `openai-token-sharing-unsupported` for that selected native login,
+with localized explanatory text. This diagnoses the missing quota display;
+it does not restore quota access or qualify that login for automatic selection.
 
 Pay-as-you-go integrations (`zai`, `minimax`, OpenRouter, DeepInfra, Kilo,
 ZenMux, DeepSeek, credit providers), the Console's Zen provider and readers that
