@@ -15,7 +15,8 @@ export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMa
   }
   if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
   if (mission.control?.pending.length) throw new MissionControlError("Native mission control is pending", "control-pending")
-  if (task.status === "withdrawn") throw new MissionControlError("Task was withdrawn", "task-withdrawn")
+  if (task.status === "withdrawn") throw new MissionControlError("Task was withdrawn: a retired native task takes no readout, and retiring it "
+    + "does not stop its native work. Record what it returned under its replacement task or in the final report.", "task-withdrawn")
   if (task.blockedBy.some(key => mission.tasks.find(dependency => dependency.key === key)?.status !== "completed")) {
     throw new MissionControlError("Readout requires completed prerequisite tasks", "invalid-blocker")
   }

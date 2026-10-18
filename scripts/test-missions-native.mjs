@@ -202,8 +202,13 @@ try {
     "HTTP and direct RPC use the same native project authority")
   await until(async () => (await client.plugin.list({ location })).data.some(plugin => plugin.id === "codenomad.missions" && plugin.state.status === "active"))
   const coordinator = await client.session.create({ location, title: "Coordinator" })
-  const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) =>
-    JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
+  // Mission tools return compact readouts; checks below read the resulting map from the native snapshot.
+  const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
+    const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
+    if (result.missionID === undefined) return result
+    const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+    return { ...result, mission: missions.find(mission => mission.id === result.missionID) }
+  }
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
   assert(inspected.catalog.agents.some(agent => agent.id === "reviewer"))
   assert(inspected.catalog.models.some(model => model.id === "selected" && model.variants.includes("careful")))
@@ -272,6 +277,10 @@ try {
   assert.equal(declaration.admissionId, undefined)
   assert.equal(declaration.status, "ready")
   assert.match(declared.assignmentPrompt, /ordinary native subagent result/)
+  assert.equal(declared.revision, declared.mission.revision, "The compact readout names the resulting revision")
+  assert.equal(declared.task.status, "ready")
+  assert.equal((await invoke("inspect", { taskKey: nativeTask.taskKey })).assignmentPrompt, declared.assignmentPrompt,
+    "The exact canonical prompt is rereadable without the declaration response")
   assert.equal((await invoke("delegate", nativeTask)).disposition, "existing")
   assert.deepEqual(await client.session.list({ location, limit: 32 }), sessionsBeforeDeclaration)
   assert.equal(requests.length, requestsBeforeDeclaration, "Declarations and replay never create a provider turn")
@@ -505,7 +514,7 @@ try {
   const reusedSession = await client.session.create({ location, title: "Pre-existing specialist", agent: "reviewer", model: task.execution.model })
   const reusedTask = await invoke("delegate", { ...task, missionID: cleanup.mission.id, taskKey: "reused-cleanup", targetSessionID: reusedSession.id }, cleanupCoordinator, "cleanup-reused")
   await client.session.wait({ sessionID: reusedSession.id }, { signal: AbortSignal.timeout(20_000) })
-  const cleanupRequest = { requestId: "native-cleanup-delete", expectedRevision: reusedTask.mission.revision, deleteManagedSessions: true }
+  const cleanupRequest = { requestId: "native-cleanup-delete", expectedRevision: reusedTask.revision, deleteManagedSessions: true }
   let cleanupReceipt
   for (let replay = 0; replay < 2; replay++) {
     const response = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })

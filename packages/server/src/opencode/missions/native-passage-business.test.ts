@@ -44,7 +44,8 @@ test("explicit independent task uses frozen native ENV/IDs and remains part of p
     const delegated = JSON.parse((await f.tools.get("delegate")!.execute({ taskKey: "independent", title: "Independent work",
       brief: "Bounded independent task", role: "specialist", blockedBy: [],
       executionMode: { kind: "independent", reason: "lifetime", explanation: "Needs its own bounded root lifetime" } }, tool)).content)
-    const actor = delegated.mission.tasks[0].actorSessionId as string
+    assert.equal(delegated.disposition, "dispatched")
+    const actor = delegated.task.actorSessionId as string
     assert.notEqual(actor, f.passage.coordinatorSessionID)
     assert.deepEqual(f.counts(), { creates: 2, sends: 2, environments: 2 })
     f.states.get(actor)!.active = true

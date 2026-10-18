@@ -15,7 +15,7 @@ import type {
   MissionManagedRootCreation,
   MissionNativeReportAuthorization,
 } from "../missions/control-types"
-import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type MissionTemplateId } from "../missions/model"
+import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type MissionMap, type MissionTemplateId } from "../missions/model"
 import { parseMissionEvent } from "../missions/journal"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { executionSchema, parseExecution } from "../missions/execution"
@@ -27,7 +27,7 @@ import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../mis
 import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
-import { buildAssignmentPrompt } from "../missions/recipes"
+import { compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
 import { missionBriefingSchema, parseMissionBriefingInput } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
@@ -303,7 +303,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or product delivery mission.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or product delivery mission. Pass taskKey to read only that task with its revision, frontier, contract and exact current assignmentPrompt instead of the full map.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -311,17 +311,19 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "inspect", input)
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
-          const result = await selected.control.inspect(selected.readSessionID, parseInspectInput(input), tool.id)
+          const parsed = parseInspectInput(input)
+          const result = await selected.control.inspect(selected.readSessionID, parsed, tool.id)
+          const response = parsed.taskKey === undefined ? result : taskView(result.mission, parsed.taskKey)
           if (object(input).catalog === true) {
             const session = await context.session.get({ sessionID: tool.sessionID })
-            result.catalog = await readMissionCatalog(context, session.location.directory)
+            response.catalog = await readMissionCatalog(context, session.location.directory)
           }
-          return textResult(result)
+          return textResult(response)
         },
       })
       add({
         name: "delegate",
-        description: "Declare one dependency-aware native task without creating or prompting a session. Pass the returned canonical assignmentPrompt to ordinary native subagent calls for ready tasks; run independent ready work in parallel when useful and let children own bounded recursive decomposition within native permissions and configured depth. The coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs.",
+        description: "Declare one dependency-aware native task without creating or prompting a session. Pass the returned canonical assignmentPrompt to ordinary native subagent calls for ready tasks; run independent ready work in parallel when useful and let children own bounded recursive decomposition within native permissions and configured depth. The coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs. Returns a compact result: disposition, revision, frontier, the task, its contract and assignmentPrompt, and any role requirement; mission.inspect with taskKey rereads the prompt.",
         input: delegateSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -335,18 +337,24 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, independent ? "delegate" : "declare", input)
           await tool.progress({ status: independent ? "Delegating independent mission task" : "Declaring native mission task" })
           selected.current()
-          if (independent) return textResult(await selected.control.delegate(tool.sessionID, parseDelegateInput(input)))
+          if (independent) {
+            const parsed = parseDelegateInput(input)
+            const result = await selected.control.delegate(tool.sessionID, parsed)
+            return textResult({ disposition: result.disposition, ...compactMission(result.mission),
+              task: compactMissionTasks(result.mission, [parsed.taskKey])[0] })
+          }
           const result = await selected.control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] }))
           const task = result.mission.tasks.find(candidate => candidate.key === result.contract.taskKey)
           if (!task || task.executionMode?.kind !== "native" || task.contractGeneration !== result.contract.generation) {
             throw new MissionControlError("Declared native task context unavailable", "invalid-journal")
           }
-          return textResult({ ...result, assignmentPrompt: buildAssignmentPrompt(result.mission, task) })
+          return textResult({ disposition: result.disposition, ...compactMission(result.mission), task: compactMissionTask(task),
+            ...nativeAssignment(result.mission, task) })
         },
       })
       add({
         name: "revise",
-        description: "Revise the current mission plan with a reason and expected revision. Coordinator only. Add newly discovered work, retire/replace tasks or rewrite dependencies atomically; this does not cancel already admitted native execution.",
+        description: "Revise the current mission plan with a reason and expected revision. Coordinator only. Add newly discovered work, retire/replace tasks or rewrite dependencies atomically; this does not cancel already admitted native execution. Returns the new revision, frontier and the added, retired or rewired tasks; mission.inspect returns the full map.",
         input: reviseSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -354,12 +362,15 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "revise", input)
           await tool.progress({ status: "Revising mission plan" })
           selected.current()
-          return textResult(await selected.control.revise(tool.sessionID, parseReviseInput(input)))
+          const revision = parseReviseInput(input)
+          const { mission } = await selected.control.revise(tool.sessionID, revision)
+          return textResult({ ...compactMission(mission), tasks: compactMissionTasks(mission, [...revision.addTasks,
+            ...revision.retireTasks, ...revision.dependencyUpdates].map(item => item.taskKey)) })
         },
       })
       add({
         name: "report",
-        description: "Coordinator: settle a declared native task with taskKey and actual returned evidence from ordinary native work, including any child-owned recursive helpers; do not ask descendants for duplicate mission reports. Finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize. The summary is shown to the human: plain language in the user's language, 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; put IDs, commands and test output only in evidence. A final summary states what was delivered, what remains and what needs a decision in at most 6 sentences.",
+        description: "Coordinator: settle a declared native task with taskKey and actual returned evidence from ordinary native work, including any child-owned recursive helpers; do not ask descendants for duplicate mission reports. Finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize. The summary is shown to the human: plain language in the user's language, 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; put IDs, commands and test output only in evidence. A final summary states what was delivered, what remains and what needs a decision in at most 6 sentences. Returns the disposition, new revision, frontier and reported task; mission.inspect returns the full map.",
         input: reportSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -369,14 +380,19 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           const report = parseReportInput(input)
           const reference = object(input).contract
-          return textResult(reference === undefined ? await selected.control.report(tool.sessionID, report)
-            : await selected.control.reportNative({ contract: taskContractReferenceSchema.parse(reference),
-              sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report))
+          const contract = reference === undefined ? undefined : taskContractReferenceSchema.parse(reference)
+          const result = contract === undefined ? await selected.control.report(tool.sessionID, report)
+            : await selected.control.reportNative({ contract, sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report)
+          // An independent actor may omit taskKey for its single open assignment: name the task it just reported.
+          const taskKey = report.final ? undefined : contract?.taskKey ?? report.taskKey
+            ?? [...result.mission.reports].reverse().find(saved => saved.sessionId === tool.sessionID)?.taskKey
+          return textResult({ disposition: result.disposition, ...compactMission(result.mission),
+            ...(taskKey === undefined ? {} : { task: compactMissionTasks(result.mission, [taskKey])[0] }) })
         },
       })
       add({
         name: "briefing",
-        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Inspect the current mission first and pass its revision as basedOnRevision. Explain usable achievements, remaining work, obstacles and the next step in plain language in the user's language: 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; reference exact live task keys only in taskKeys. Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report, with requestID \"auto:<revision>\" matching basedOnRevision; for an explicit UI request use its exact requestID. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. On a revision conflict reread before publishing, never replay work.",
+        description: "Coordinator only: publish a short user-facing project briefing, separate from task results and observed activity. Pass the current revision as basedOnRevision: every mission tool result returns it, or inspect the mission. Explain usable achievements, remaining work, obstacles and the next step in plain language in the user's language: 3-5 short sentences, outcome first, no session/message IDs, internal tool or fixture names; reference exact live task keys only in taskKeys. Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report, with requestID \"auto:<revision>\" matching basedOnRevision; for an explicit UI request use its exact requestID. A briefing does not settle tasks, grant human consent, change the plan or finish the mission. On a revision conflict reread before publishing, never replay work. Returns the new revision and frontier.",
         input: missionBriefingSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -384,7 +400,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "briefing", input)
           await tool.progress({ status: "Recording project briefing" })
           selected.current()
-          return textResult(await selected.control.briefing(tool.sessionID, parseMissionBriefingInput(input)))
+          return textResult(compactMission((await selected.control.briefing(tool.sessionID, parseMissionBriefingInput(input))).mission))
         },
       })
     })
@@ -435,6 +451,7 @@ const inspectSchema = {
   type: "object",
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
+    taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract and exact current assignmentPrompt. Not with start." },
     catalog: { type: "boolean", description: "Include the native agent, enabled model and variant catalog for this session's location." },
     start: {
       type: "object",
@@ -487,9 +504,13 @@ const reportSchema = {
   additionalProperties: false,
 }
 
-export function parseInspectInput(input: unknown): MissionInspectInput {
+export function parseInspectInput(input: unknown): MissionInspectInput & { taskKey?: string } {
   const value = object(input)
   const missionID = optionalText(value.missionID, "missionID", 100)
+  if (value.taskKey !== undefined) {
+    if (value.start !== undefined) throw new Error("taskKey reads an existing mission and cannot start one")
+    return { missionID, taskKey: identifier(value.taskKey, "taskKey") }
+  }
   if (value.start === undefined) return { missionID }
   const start = object(value.start)
   const template = requiredText(start.template, "start.template", 40)
@@ -627,6 +648,13 @@ export function parseReportInput(input: unknown): MissionReportInput {
     artifact: optionalJson(value.artifact),
     final: value.final === true,
   }
+}
+
+/** One task of the selected mission, without the full map: the exact prompt survives saved tool output. */
+function taskView(mission: MissionMap | null, taskKey: string): Record<string, unknown> {
+  const task = mission?.tasks.find(candidate => candidate.key === taskKey)
+  if (!mission || !task) throw new MissionControlError(`Mission task not found: ${taskKey}`, "task-not-found")
+  return { ...compactMission(mission), task: compactMissionTask(task), ...nativeAssignment(mission, task) }
 }
 
 function textResult(value: unknown): { content: string } {

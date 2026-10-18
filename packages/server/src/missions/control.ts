@@ -24,7 +24,7 @@ import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
-import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
+import { MissionControlError, MissionCreateNoEffectError, decisionInvocationUnavailable, humanDecisionRequired } from "./control-error"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
@@ -34,7 +34,7 @@ import { hasUnsettledNativeExecution } from "./native-call-observation"
 import { parseMissionTaskMode, sameExecutionMode, type MissionTaskMode } from "./task-execution-mode"
 import { coordinatorReadout } from "./coordinator-readout"
 import { missionCoordinatorTitle, parseMissionTitle } from "./mission-title"
-import { briefingSourcesExist, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
+import { invalidBriefingSources, parseMissionBriefingInput, type MissionBriefingInput } from "./briefing"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 export { MissionControlError } from "./control-error"
 import type {
@@ -93,8 +93,7 @@ export class MissionControl {
     artifact: import("./model").MissionJsonValue | undefined,
     exact?: { call: import("./model").MissionNativeBinding; sessionID: string }): Promise<import("./human-answer").HumanDecisionMark> {
     if (!this.options.humanGate) throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
-    const bound = exact?.call ?? task.nativeExecution?.binding, unavailable = () =>
-      new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
+    const bound = exact?.call ?? task.nativeExecution?.binding, unavailable = decisionInvocationUnavailable
     let call: import("./model").MissionNativeBinding, sessionID: string, assignmentPrompt: string | undefined
     if (exact) { call = exact.call; sessionID = exact.sessionID }
     else if (bound) {
@@ -160,7 +159,8 @@ export class MissionControl {
       if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
       if (mission.control?.pending.length) throw new MissionControlError("Mission control pending", "control-pending")
       if (mission.revision !== input.basedOnRevision) throw new MissionControlError("Read the current map before publishing a briefing", "revision-conflict")
-      if (!briefingSourcesExist(mission, input)) throw new MissionControlError("Briefing sources are missing or retired", "invalid-report-contract")
+      const invalidSources = invalidBriefingSources(mission, input)
+      if (invalidSources.length) throw new MissionControlError(`Briefing sources are missing or retired: ${invalidSources.join(", ")}`, "invalid-report-contract")
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
       this.assertActive()
@@ -846,14 +846,14 @@ export class MissionControl {
           if (report?.nativeCall) await this.verifyHumanDecision(mission, task, report.artifact, { call: report.nativeCall, sessionID: report.sessionId })
           // A readout re-verifies through its published binding or, without one, its exact assignment call.
           else if (report?.delivery === "coordinator-readout") await this.verifyHumanDecision(mission, task, report.artifact)
-          else throw new MissionControlError("Exact native decision invocation unavailable", "policy-unqualified")
+          else throw decisionInvocationUnavailable()
         }
       }
       if (mission.tasks.some(hasUnsettledNativeExecution)) {
         throw new MissionControlError("Native work needs an observed invocation end before the mission can finish", "outstanding-execution")
       }
       if (mission.tasks.some((task) => task.outstandingExecution)) {
-        throw new MissionControlError("Withdrawn work needs a terminal report before the mission can finish", "outstanding-execution")
+        throw new MissionControlError("Withdrawn admitted work needs its actor's terminal report or an observed native end before the mission can finish", "outstanding-execution")
       }
       if (input.outcome === "completed" && mission.tasks.some((task) => task.status !== "completed" && task.status !== "withdrawn")) {
         throw new MissionControlError("Every mission task must be complete before a green finish", "open-tasks")

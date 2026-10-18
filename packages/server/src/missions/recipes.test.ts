@@ -76,7 +76,7 @@ test("every coordinator writes plain-language summaries and publishes automatic 
       assert.match(context, /after each mission\.report that settles a task as completed, failed or blocked/)
       assert.match(context, /whenever you start waiting on a human/)
       assert.match(context, /right before the final mission\.report/)
-      assert.match(context, /requestID "auto:<revision>" with that same freshly inspected revision as basedOnRevision/)
+      assert.match(context, /requestID "auto:<revision>" with that same current revision as basedOnRevision: every mission tool result returns it/)
       assert.match(context, /exact requestID supplied by the UI/)
       assert.match(context, /what was delivered, what remains, and what needs a decision, in at most 6 short sentences/)
       assert.doesNotMatch(context, /never after every tool\/task/)

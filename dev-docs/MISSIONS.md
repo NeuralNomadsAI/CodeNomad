@@ -28,6 +28,14 @@ through their actual parent; the coordinator records the declared task's busines
 readout without requiring duplicate reports from every descendant. Explicit
 independent actors retain correlated report notifications and native queue delivery.
 
+Model-facing mutation results stay compact (`missions/tool-result.ts`): the
+disposition, current revision, run state, frontier and the affected tasks
+(status, generation, dependencies and lineage), never briefs, reports or the
+objective. Only `mission.inspect` returns the full map; `mission.inspect({ taskKey })`
+rereads one task with its contract and exact current assignment prompt. A
+Wayfinder `decision` declaration also states the human-answer requirement that
+`verifyHumanDecision` enforces, so a self-contained analysis goes to `research`.
+
 ## Durability and recovery
 
 ### Human instructions and actionable attention

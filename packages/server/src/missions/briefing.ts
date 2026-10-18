@@ -80,9 +80,15 @@ export function parseMissionBriefing(input: unknown): MissionBriefing | undefine
   } catch { return undefined }
 }
 
-export function briefingSourcesExist(mission: Pick<MissionMap, "tasks">, content: MissionBriefingContent): boolean {
+/** Cited task keys that are unknown, withdrawn or replaced, in citation order without duplicates. */
+export function invalidBriefingSources(mission: Pick<MissionMap, "tasks">, content: MissionBriefingContent): string[] {
   const keys = new Set(mission.tasks.filter(task => task.status !== "withdrawn" && !task.replacedByTaskKey).map(task => task.key))
-  return [content.achieved, content.ongoing, content.obstacles, content.next].flat().every(item => item.taskKeys.every(key => keys.has(key)))
+  return [...new Set([content.achieved, content.ongoing, content.obstacles, content.next].flat()
+    .flatMap(item => item.taskKeys).filter(key => !keys.has(key)))]
+}
+
+export function briefingSourcesExist(mission: Pick<MissionMap, "tasks">, content: MissionBriefingContent): boolean {
+  return invalidBriefingSources(mission, content).length === 0
 }
 
 function record(input: unknown): Record<string, unknown> {

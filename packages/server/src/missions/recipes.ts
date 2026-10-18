@@ -49,8 +49,11 @@ ${NATIVE_WORK}`
 /** Shared by the coordinator context and mission_* tool descriptions: the panel shows these fields to the human. */
 export const USER_FACING_TEXT = `User-facing text: every mission.report summary and every mission.briefing summary/item is read by the human in the Missions panel. Write in the user's language, in 3-5 short plain sentences, outcome first: what is now true or usable, what remains, what needs their decision. Never put session or message IDs, internal tool, fixture, environment-variable or command names, or raw counts that carry no meaning for the user in those fields. Technical evidence, IDs, commands and test output go only in evidence items.`
 
-export const AUTOMATIC_BRIEFINGS = `Project briefing: publish mission.briefing on your own, without waiting for a request, (1) once the initial plan is declared, (2) after each mission.report that settles a task as completed, failed or blocked, (3) whenever you start waiting on a human (a native Form, permission or user decision), and (4) right before the final mission.report. For these unrequested briefings, inspect the map and use requestID "auto:<revision>" with that same freshly inspected revision as basedOnRevision. Publishing advances the revision, so the next one gets a new ID; if auto:<revision> already exists, skip it (nothing changed). For an explicit UI request, instead use the exact requestID supplied by the UI with the freshly inspected basedOnRevision. A briefing is a readout, not permission to run, replay or restart work, change priorities, install software or finalize the mission. Cover every requested workstream, including blocked ones; reference exact live task keys in taskKeys, never infer task execution from an active conversation or task counts. On a revision conflict, reread and publish once; never replay work.
+export const AUTOMATIC_BRIEFINGS = `Project briefing: publish mission.briefing on your own, without waiting for a request, (1) once the initial plan is declared, (2) after each mission.report that settles a task as completed, failed or blocked, (3) whenever you start waiting on a human (a native Form, permission or user decision), and (4) right before the final mission.report. For these unrequested briefings, use requestID "auto:<revision>" with that same current revision as basedOnRevision: every mission tool result returns it, or inspect the map. Publishing advances the revision, so the next one gets a new ID; if auto:<revision> already exists, skip it (nothing changed). For an explicit UI request, instead use the exact requestID supplied by the UI with the freshly inspected basedOnRevision. A briefing is a readout, not permission to run, replay or restart work, change priorities, install software or finalize the mission. Cover every requested workstream, including blocked ones; reference exact live task keys in taskKeys, never infer task execution from an active conversation or task counts. On a revision conflict, reread and publish once; never replay work.
 Final report: the final mission.report summary is the user-facing result: what was delivered, what remains, and what needs a decision, in at most 6 short sentences, following the user-facing text rules above.`
+
+/** The Wayfinder human gate (`MissionControl.verifyHumanDecision`), stated wherever a coordinator picks the role. */
+export const WAYFINDER_DECISION_REQUIREMENT = `A Wayfinder decision task completes only with the human's own answer: the task's conversation, launched by your native subagent call with its exact assignmentPrompt, must ask the question through the native question tool, and the user must answer it in the CodeNomad interface. Neither you nor the child may answer for the human. Use research for a self-contained analysis or recommendation; without a human answer, report the decision task blocked.`
 
 const custom: MissionRecipe = {
   id: "custom",
@@ -140,7 +143,7 @@ const wayfinder: MissionRecipe = {
     "Delegate independent unblocked frontier decisions and research in parallel when useful; one durable decision per task does not restrict its native helper tree.",
     "Record the decision in its report, then add only newly visible frontier questions through an explicit revision; replacement is optional for genuinely additive work.",
   ],
-  coordinator: `Plan by default rather than implementing the destination. Refer to tasks by their readable title. Use native Forms for irreducible human decisions and never answer the human side yourself. A model-written human answer is not durable proof: retain real native Form/session references and authoritative settled results. Until a typed authority-owned Form proof is available, do not claim that a report artifact enforces human consent. ${DELEGATION}`,
+  coordinator: `Plan by default rather than implementing the destination. Refer to tasks by their readable title. Use native Forms for irreducible human decisions and never answer the human side yourself. A model-written human answer is not durable proof: retain real native Form/session references and authoritative settled results. Until a typed authority-owned Form proof is available, do not claim that a report artifact enforces human consent. ${WAYFINDER_DECISION_REQUIREMENT} ${DELEGATION}`,
   roles: [
     {
       id: "cartographer",
@@ -169,8 +172,8 @@ const wayfinder: MissionRecipe = {
     {
       id: "decision",
       title: "Decision worker",
-      purpose: "Resolve one sharp, self-contained decision from the frontier.",
-      instructions: "Work exactly one decision. Return the chosen answer, rationale, rejected alternatives, and any newly visible fog or follow-up decisions.",
+      purpose: "Put one sharp frontier decision to the human and record their answer.",
+      instructions: "Work exactly one decision. Gather the facts first, then ask the human from this conversation through the native question tool, with the options, evidence and consequences; never answer it yourself or hand the question to a helper. Return the question, the human's verbatim answer, its rationale, rejected alternatives, and any newly visible fog or follow-up decisions. Without a human answer, return the decision as blocked instead of choosing.",
     },
   ],
 }
