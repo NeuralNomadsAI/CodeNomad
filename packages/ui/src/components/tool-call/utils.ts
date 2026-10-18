@@ -5,19 +5,25 @@ import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
 import { tGlobal } from "../../lib/i18n"
 import { exceedsRetainedByteLimit } from "../../lib/retained-size"
+import { TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../../lib/render-text-window"
 import { getCanonicalToolName } from "./tool-presentation"
 const log = getLogger("session")
 
 
 export type { ToolStateCompleted, ToolStateError, ToolStateRunning }
+export { TOOL_OUTPUT_RENDER_CHARACTER_LIMIT }
 
 export const diffCapableTools = new Set(["edit", "patch"])
-export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
 export const TOOL_TITLE_RENDER_CHARACTER_LIMIT = 384
-export function limitToolOutputForRender(text: string): string {
-  if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
-  const suffix = `\n\n${tGlobal("toolCall.output.truncated")}`
-  return `${text.slice(0, Math.max(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT - suffix.length))}${suffix}`
+/** Speech reads at most this much of a tool call; rendering bounds are separate (see render-text-window). */
+export const TOOL_SPEECH_CHARACTER_LIMIT = 10_000
+
+function limitTextForSpeech(text: string): string {
+  return text.length <= TOOL_SPEECH_CHARACTER_LIMIT ? text : text.slice(0, TOOL_SPEECH_CHARACTER_LIMIT)
+}
+
+export function hasVisibleText(value: string | null | undefined): value is string {
+  return typeof value === "string" && /\S/.test(value)
 }
 
 export function shouldRenderDiffAsPlainText(text: string): boolean {
@@ -155,12 +161,12 @@ export function formatUnknown(value: unknown): { text: string; language?: string
   return null
 }
 
+/** Text to render for a tool value; rendering bounds it. Oversized structured values are not serialized. */
 export function formatUnknownForRender(value: unknown): { text: string; language?: string } | null {
   if (typeof value !== "string" && exceedsRetainedByteLimit(value, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
     return { text: tGlobal("toolCall.output.tooLarge") }
   }
-  const result = formatUnknown(value)
-  return result ? { ...result, text: limitToolOutputForRender(result.text) } : null
+  return formatUnknown(value)
 }
 
 export function formatToolInputForCopy(input: unknown): { text: string; language?: string } | null {
@@ -177,8 +183,7 @@ export function formatToolInputForRender(input: unknown): { text: string; langua
   if (typeof input !== "string" && exceedsRetainedByteLimit(input, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
     return { text: JSON.stringify(tGlobal("toolCall.output.tooLarge")), language: "json" }
   }
-  const formatted = formatToolInputForCopy(input)
-  return formatted ? { ...formatted, text: limitToolOutputForRender(formatted.text) } : null
+  return formatToolInputForCopy(input)
 }
 
 export function formatUnknownForCopy(value: unknown): { text: string; language?: string } | null {
@@ -298,7 +303,7 @@ export function buildToolSpeechText(options: {
 }): string {
   const sections: string[] = []
 
-  const title = limitToolOutputForRender(options.title).trim()
+  const title = limitTextForSpeech(options.title).trim()
   if (title) {
     sections.push(title)
   }
@@ -315,7 +320,7 @@ export function buildToolSpeechText(options: {
     sections.push(`${options.t("toolCall.io.output")}:\n${formattedOutput.text.trim()}`)
   }
 
-  const error = options.state?.status === "error" ? limitToolOutputForRender(options.state.error ?? "").trim() : ""
+  const error = options.state?.status === "error" ? limitTextForSpeech(options.state.error ?? "").trim() : ""
   if (error) {
     sections.push(`${options.t("toolCall.error.label")} ${error}`)
   }
@@ -324,5 +329,5 @@ export function buildToolSpeechText(options: {
     sections.push(options.t("toolCall.pending.waitingToRun"))
   }
 
-  return limitToolOutputForRender(sections.join("\n\n").trim())
+  return limitTextForSpeech(sections.join("\n\n").trim())
 }

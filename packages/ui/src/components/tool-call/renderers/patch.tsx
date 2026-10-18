@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, extractDiffPayload, getRelativePath, getToolName, isToolStateCompleted, limitToolOutputForRender, readToolStatePayload } from "../utils"
+import { extractDiffPayload, getRelativePath, getToolName, hasVisibleText, isToolStateCompleted, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { getDiffToolSearchText } from "../search-text"
 
@@ -44,9 +44,8 @@ export const patchRenderer: ToolRenderer = {
     const diffText = typeof metadata.diff === "string" ? metadata.diff : null
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
     const value = diffText || fallback
-    const content = ensureMarkdownContent(value ? limitToolOutputForRender(value) : value, "diff", true)
-    if (!content) return null
+    if (!hasVisibleText(value)) return null
 
-    return renderMarkdown({ content, size: "large", disableHighlight: state.status === "running" })
+    return renderMarkdown({ content: value, codeLanguage: "diff", size: "large", disableHighlight: state.status === "running" })
   },
 }

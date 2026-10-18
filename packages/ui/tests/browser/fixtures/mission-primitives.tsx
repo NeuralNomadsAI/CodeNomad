@@ -2,7 +2,8 @@ import { Show } from "solid-js"
 import { render } from "solid-js/web"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { MissionReader } from "../../../src/components/mission-reader"
-import { getMarkdownTextForRender } from "../../../src/components/markdown"
+import { Markdown } from "../../../src/components/markdown"
+import { getRenderTextWindow, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../src/lib/render-text-window"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -24,7 +25,7 @@ function Fixture() {
       updateMissionProjectView(instance.id, { reader: { missionId: "reader", kind, itemId } })
     },
     locale: (locale: "en" | "he" | "tr") => updatePreferences({ locale }),
-    bounded: getMarkdownTextForRender,
+    bounded: (text: string) => getRenderTextWindow(text, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT).text,
     refresh: () => missionStore.refresh(instance.id),
   }
   return <div style={{ display: "flex", height: "700px", gap: "16px" }}>
@@ -38,7 +39,7 @@ function Fixture() {
       activeSessionId={() => null} activeSession={() => null} isPhoneLayout={() => false}
       rightDrawerWidth={() => 390} rightDrawerWidthInitialized={() => true}
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} /></aside>
-    <output id="default-budget" style={{ position: "absolute", bottom: "0", width: "300px", height: "50px", overflow: "auto", "overflow-wrap": "anywhere" }}>{getMarkdownTextForRender("x".repeat(11000) + "TAIL_PROOF")}</output>
+    <output id="default-budget" style={{ position: "absolute", bottom: "0", width: "300px", height: "50px", overflow: "auto", "overflow-wrap": "anywhere" }}><Markdown part={{ type: "text", text: "x".repeat(60_000) + "TAIL_PROOF" }} /></output>
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

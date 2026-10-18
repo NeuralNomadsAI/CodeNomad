@@ -363,12 +363,24 @@ test("large tool output bounds rendered text but preserves full clipboard source
   await tool.locator("pre code").waitFor()
   const content = await tool.locator("pre code").textContent()
   assert.ok(content && content.length <= 10_000)
-  assert.ok((await tool.textContent())!.includes("Output truncated"))
+  assert.ok(!(await tool.textContent())!.includes("Output truncated"), "no copy-only suffix remains")
   console.log("large-output", { renderedCharacters: content!.length, ...await page.evaluate(start => ({ msToObservedRender: performance.now() - start, nodes: document.querySelectorAll("*").length }), start) })
   await tool.locator(":scope > .tool-call-header > .tool-call-header-copy").first().click()
   const state = await page.evaluate(() => (window as any).fixture.snapshot())
   assert.equal(state.clipboard[0], state.output)
   assert.equal(state.output.length, 2_000_000)
+
+  // A megabyte-scale output reveals in bounded steps rather than all at once.
+  const notice = tool.locator(".message-hidden-text")
+  assert.match((await notice.textContent())!, /more characters hidden to keep this message responsive/)
+  const revealStart = await page.evaluate(() => performance.now())
+  await notice.getByRole("button", { name: "Show 250,000 more", exact: true }).click()
+  await page.waitForFunction(() => (document.querySelector('.tool-call[data-part-id^="step-"] pre code')?.textContent?.length ?? 0) > 200_000)
+  const revealed = (await tool.locator("pre code").textContent())!.length
+  assert.ok(revealed > 230_000 && revealed <= 260_000, `one step reveals about 250,000 more characters: ${revealed}`)
+  assert.equal(await notice.getByRole("button", { name: "Show 250,000 more", exact: true }).count(), 1, "the remainder still reveals in steps")
+  assert.equal(await tool.locator(".markdown-body").getAttribute("data-markdown-highlight"), "false", "revealed code beyond the highlight bound renders unhighlighted")
+  console.log("large-output-reveal-step", { renderedCharacters: revealed, msToObservedRender: await page.evaluate(start => performance.now() - start, revealStart) })
 }))
 
 test("transcript loads one bounded history page and mounts only virtual rows", async () => open("mode=transcript&count=1000", async page => {

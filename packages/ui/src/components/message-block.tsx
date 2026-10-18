@@ -26,6 +26,8 @@ import { PartDuration } from "./part-duration"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { applySearchHighlights, clearSearchHighlights, type SearchRevealRequest } from "./search-highlights"
 import type { AlignInTranscript } from "./search-highlight-ranges"
+import { focusRevealedElement } from "./reveal-focus"
+import { TranscriptAlignmentContext } from "./transcript-alignment"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
@@ -916,24 +918,16 @@ export default function MessageBlock(props: MessageBlockProps) {
         target.focus({ preventScroll: true })
         return
       }
-      if (!target.hasAttribute("tabindex")) {
-        target.setAttribute("tabindex", "-1")
-        const release = () => {
-          // Switching windows also blurs; keep the target so focus can return to it.
-          if (!document.hasFocus()) return
-          target.removeAttribute("tabindex")
-          target.removeEventListener("blur", release)
-        }
-        target.addEventListener("blur", release)
-      }
-      target.focus({ preventScroll: true })
+      focusRevealedElement(target)
     })
   }
 
   const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
     .filter(isDisplayItemVisible)
     .map((item) => item.key)))
+  const alignInTranscript: AlignInTranscript = (target, viewportOffset) => props.alignInTranscript?.(target, viewportOffset)
   return (
+    <TranscriptAlignmentContext.Provider value={alignInTranscript}>
     <Show when={block()}>
       {(resolvedBlock) => (
         <Show when={resolvedBlock().truncated || resolvedBlock().items.some(isDisplayItemVisible)}>
@@ -1117,6 +1111,7 @@ export default function MessageBlock(props: MessageBlockProps) {
         </Show>
       )}
     </Show>
+    </TranscriptAlignmentContext.Provider>
   )
 }
 
@@ -1390,6 +1385,7 @@ function CompactionCard(props: CompactionCardProps) {
             isDark={isDark()}
             size="tight"
             escapeRawHtml
+            revealTarget={{ instanceId: props.instanceId, messageId: props.messageId, partId: String((props.part as any)?.id ?? "compaction"), section: "compaction" }}
             onRendered={props.onContentRendered}
           />
         </div>

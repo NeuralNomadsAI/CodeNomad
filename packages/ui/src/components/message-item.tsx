@@ -733,6 +733,7 @@ export default function MessageItem(props: MessageItemProps) {
                   messageType={props.record.role}
                   instanceId={props.instanceId}
                   sessionId={props.sessionId}
+                  messageId={props.record.id}
                   primaryUserTextPartId={primaryUserTextPartId()}
                   displayMetadataOverride={part.id === primaryUserTextPartId() ? primaryUserPromptDisplayMetadata() : undefined}
                   onRendered={props.onContentRendered}

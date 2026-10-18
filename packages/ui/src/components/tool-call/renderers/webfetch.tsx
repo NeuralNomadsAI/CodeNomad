@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, getToolName, readToolStatePayload } from "../utils"
+import { formatUnknownForCopy, formatUnknownForRender, getToolName, hasVisibleText, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { getWebfetchToolSearchText } from "../search-text"
 
@@ -43,11 +43,8 @@ export const webfetchRenderer: ToolRenderer = {
         ? state.output
         : metadata.output,
     )
-    if (!result) return null
+    if (!result || !hasVisibleText(result.text)) return null
 
-    const content = ensureMarkdownContent(result.text, result.language, true)
-    if (!content) return null
-
-    return renderMarkdown({ content, disableHighlight: state.status === "running" })
+    return renderMarkdown({ content: result.text, codeLanguage: result.language ?? "", disableHighlight: state.status === "running" })
   },
 }

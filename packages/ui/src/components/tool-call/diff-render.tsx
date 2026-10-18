@@ -5,9 +5,11 @@ import { AlignJustify, Copy, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
-import { getRelativePath, limitToolOutputForRender, shouldRenderDiffPayloadAsPlainText } from "./utils"
+import { getRelativePath, shouldRenderDiffPayloadAsPlainText, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
 import { copyToClipboard } from "../../lib/clipboard"
+import type { RecordTextRevealTarget } from "../../stores/message-v2/record-display-cache"
+import { HiddenTextNotice, createTextWindow } from "../hidden-text"
 
 const LazyToolCallDiffViewer = lazy(() =>
   import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
@@ -42,6 +44,7 @@ export function createDiffContentRenderer(params: {
   t: (key: string, params?: Record<string, unknown>) => string
   diffCache: CacheHandle
   permissionDiffCache: CacheHandle
+  textRevealTarget: (section: string) => RecordTextRevealTarget
   scrollHelpers: ToolScrollHelpers
   handleScrollRendered: () => void
   onContentRendered?: () => void
@@ -65,14 +68,21 @@ export function createDiffContentRenderer(params: {
   }
 
   function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null {
-    const renderedDiffText = limitToolOutputForRender(payload.diffText)
-    const diffWasTruncated = shouldRenderDiffPayloadAsPlainText(payload)
+    // Large diffs render as plain text; the bounded window and its reveal apply to either form.
+    const renderAsPlainText = shouldRenderDiffPayloadAsPlainText(payload)
     const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
     const toolbarLabel = options?.label || (relativePath
       ? params.t("toolCall.diff.label.withPath", { path: relativePath })
       : params.t("toolCall.diff.label"))
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
+    const revealSection = typeof options?.cacheKey === "string" && options.cacheKey.trim() ? options.cacheKey.trim() : selectedVariant
+    const bounded = createTextWindow({
+      source: () => payload.diffText,
+      limit: () => options?.renderLimit ?? TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
+      target: () => params.textRevealTarget(revealSection),
+    })
+    const renderedDiffText = () => bounded.window().text
     const preferredMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
     const effectiveMode = () => {
       if (!compactDiffQuery()) return preferredMode()
@@ -102,7 +112,7 @@ export function createDiffContentRenderer(params: {
       const cached = getCacheEntry<RenderCache>(cacheEntryParams)
       if (
         cached
-        && cached.text === renderedDiffText
+        && cached.text === renderedDiffText()
         && cached.theme === themeKey
         && cached.mode === currentMode()
         && cached.wrap === currentWrap()
@@ -158,7 +168,7 @@ export function createDiffContentRenderer(params: {
             >
               <Copy class="h-4 w-4" aria-hidden="true" />
             </button>
-            <Show when={!diffWasTruncated}>
+            <Show when={!renderAsPlainText}>
               <button
                 type="button"
                 class="file-viewer-toolbar-icon-button icon-toggle"
@@ -182,14 +192,14 @@ export function createDiffContentRenderer(params: {
             </Show>
           </div>
         </div>
-        {diffWasTruncated ? (
-          <pre class="tool-call-diff-fallback">{renderedDiffText}</pre>
+        {renderAsPlainText ? (
+          <pre class="tool-call-diff-fallback">{renderedDiffText()}</pre>
         ) : cachedHtml() ? (
           <CachedDiffMarkup html={cachedHtml()!} onRendered={handleDiffRendered} />
         ) : (
-          <Suspense fallback={<pre class="tool-call-diff-fallback">{renderedDiffText}</pre>}>
+          <Suspense fallback={<pre class="tool-call-diff-fallback">{renderedDiffText()}</pre>}>
             <LazyToolCallDiffViewer
-              diffText={renderedDiffText}
+              diffText={renderedDiffText()}
               filePath={payload.filePath}
               theme={themeKey}
               mode={currentMode()}
@@ -199,6 +209,9 @@ export function createDiffContentRenderer(params: {
             />
           </Suspense>
         )}
+        <Show when={bounded.window().hidden > 0}>
+          <HiddenTextNotice window={bounded.window()} onReveal={bounded.reveal} />
+        </Show>
         {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )

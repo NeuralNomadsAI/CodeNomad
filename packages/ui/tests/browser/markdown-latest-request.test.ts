@@ -59,7 +59,7 @@ after(async () => {
 })
 
 async function open(run: (page: Page) => Promise<void>) {
-  const context = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] })
+  const context = await browser.newContext({ locale: "en-US", permissions: ["clipboard-read", "clipboard-write"] })
   const page = await context.newPage(), errors: string[] = []
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -165,13 +165,30 @@ test("real language completion and theme retries retain highlighted code, wrap a
   assert.ok((await page.evaluate(() => (window as any).fixture.cached()))?.html.includes("github-dark"))
 }))
 
-test("latest bounded render still copies the complete original source", async () => open(async page => {
-  const source = `**Bounded latest** ${"original source ".repeat(1400)}END-SOURCE`
+test("latest bounded render reveals the rest in place, keeping the rendered prefix until the full render lands", async () => open(async page => {
+  const source = `**Bounded latest** ${"original source ".repeat(4000)}END-SOURCE`
   await page.evaluate(text => { const f = (window as any).fixture; f.burst(32); f.update(text, 70); f.releaseModule() }, source)
   await page.locator(".markdown-body strong").waitFor()
   assert.equal((await calls(page)).length, 1)
-  assert.equal((await calls(page))[0].text.length, 10_000)
+  assert.equal((await calls(page))[0].text.length, 50_000, "prose renders up to the Markdown bound")
   assert.ok(!(await page.locator(".markdown-body").textContent())!.includes("END-SOURCE"))
-  await page.locator(".markdown-source-copy").click()
-  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), source)
+  assert.equal(await page.locator(".markdown-source-copy").count(), 0, "the copy-only workaround is gone")
+  const notice = page.locator(".message-hidden-text")
+  assert.match((await notice.textContent())!, /14,029 more characters hidden to keep this message responsive/)
+  assert.equal(await page.evaluate(() => (window as any).fixture.cached()), undefined, "a bounded window never caches as the whole part version")
+
+  await page.evaluate(() => { (window as any).fixture.audit.holdResults = true })
+  const button = notice.getByRole("button", { name: "Show all", exact: true })
+  assert.equal(await button.getAttribute("aria-describedby"), await notice.locator(".message-hidden-text-label").getAttribute("id"))
+  await button.focus()
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(() => (window as any).fixture.audit.results.length === 1)
+  await notice.waitFor({ state: "detached" })
+  assert.equal(await page.locator(".markdown-body strong").count(), 1, "the rendered prefix stays instead of a plain-text fallback")
+  assert.ok(!(await page.locator(".markdown-body").textContent())!.includes("END-SOURCE"))
+  await page.evaluate(() => (window as any).fixture.releaseResult())
+  await page.waitForFunction(() => document.querySelector(".markdown-body")?.textContent?.includes("END-SOURCE"))
+  assert.equal((await calls(page)).at(-1).text, source)
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("markdown-body")), true, "focus moves to the revealed text")
+  assert.equal((await page.evaluate(() => (window as any).fixture.cached()))?.html, await page.locator(".markdown-body").innerHTML())
 }))

@@ -289,6 +289,7 @@ jobs:
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/tool-call/permission-block.test.ts
           packages/ui/src/components/tool-call/render-memory.test.ts
+          packages/ui/src/lib/render-text-window.test.ts
           packages/ui/src/components/settings/info-settings-diagnostics.test.ts
           packages/ui/src/components/settings/client-os.test.ts
           packages/ui/src/lib/native/menu-labels.test.ts

@@ -14,7 +14,6 @@ import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { getCanonicalToolName, resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
 import { extractDiagnosticsView, diagnosticFileName } from "./tool-call/diagnostics"
@@ -28,19 +27,20 @@ import type {
 } from "./tool-call/types"
 import {
   buildToolSpeechText,
-  ensureMarkdownContent,
   formatToolInputForCopy,
   formatToolInputForRender,
   getToolName,
   getToolTitleDetail,
+  hasVisibleText,
   isToolStateCompleted,
   isToolStateRunning,
-  limitToolOutputForRender,
   limitToolTitleForRender,
   TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
   getDefaultToolAction,
   readToolStatePayload,
 } from "./tool-call/utils"
+import { BoundedText } from "./hidden-text"
+import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -68,6 +68,10 @@ function makeRenderCacheKey(
   const messageComponent = messageId ?? "unknown-message"
   const toolCallComponent = partId ?? toolCallId ?? "unknown-tool-call"
   return `${messageComponent}:${toolCallComponent}:${variant}`
+}
+
+function makeTextRevealTarget(instanceId: string, messageId: string | undefined, partId: string, section: string): RecordTextRevealTarget {
+  return { instanceId, messageId: messageId ?? "", partId, section }
 }
 
 
@@ -168,24 +172,21 @@ function ToolCallDetails(props: {
     return "noversion"
   })
 
-  const createVariantCache = (variant: string | (() => string), version?: () => string) =>
+  const createVariantCache = (variant: string) =>
     useGlobalCache({
       instanceId: () => props.instanceId,
       sessionId: () => props.sessionId,
       scope: TOOL_CALL_CACHE_SCOPE,
       cacheId: () => {
         const context = cacheContext()
-        const resolvedVariant = typeof variant === "function" ? variant() : variant
-        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, resolvedVariant)
+        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, variant)
       },
-      version: () => (version ? version() : cacheVersion()),
+      version: cacheVersion,
     })
 
   const diffCache = createVariantCache("diff")
   const permissionDiffCache = createVariantCache("permission-diff")
-  const ansiRunningCache = createVariantCache("ansi-running", () => "running")
-  const ansiFinalCache = createVariantCache("ansi-final")
-
+  const textRevealTarget = (section: string) => makeTextRevealTarget(props.instanceId, props.messageId, props.toolCallIdentifier(), section)
 
 
   const followScroll = createFollowScroll({
@@ -215,20 +216,11 @@ function ToolCallDetails(props: {
     if (!input) return null
     if (!props.inputSectionExpanded()) return { content: "", language: "json" }
     const formatted = formatToolInputForRender(input)
-    if (!formatted) return null
-    const language = formatted.language ?? "text"
-    const content = ensureMarkdownContent(formatted.text, language, true)
-    return content ? { content, language } : null
+    if (!formatted || !hasVisibleText(formatted.text)) return null
+    return { content: formatted.text, language: formatted.language ?? "text" }
   })
 
   const renderer = createMemo(() => resolveToolRenderer(props.toolName()))
-
-  const { renderAnsiContent } = createAnsiContentRenderer({
-    ansiRunningCache,
-    ansiFinalCache,
-    scrollHelpers,
-    partVersion: partVersionAccessor,
-  })
 
   const { renderDiffContent } = createDiffContentRenderer({
     toolState: props.toolState,
@@ -238,6 +230,7 @@ function ToolCallDetails(props: {
     t: props.t,
     diffCache,
     permissionDiffCache,
+    textRevealTarget,
     scrollHelpers,
     handleScrollRendered,
     onContentRendered: props.onContentRendered,
@@ -249,6 +242,7 @@ function ToolCallDetails(props: {
     partVersion: partVersionAccessor,
     instanceId: props.instanceId,
     sessionId: props.sessionId,
+    textRevealTarget,
     isDark: props.isDark,
     scrollHelpers,
     handleScrollRendered,
@@ -256,7 +250,7 @@ function ToolCallDetails(props: {
   })
 
   const renderOutputMarkdownContent: ToolRendererContext["renderMarkdown"] = (options) =>
-    renderMarkdownContent({ ...options, content: limitToolOutputForRender(options.content), wrap: options.wrap ?? props.outputWrapEnabled() })
+    renderMarkdownContent({ ...options, wrap: options.wrap ?? props.outputWrapEnabled() })
 
   const rendererContext: ToolRendererContext = {
     toolCall: props.toolCallMemo,
@@ -268,8 +262,8 @@ function ToolCallDetails(props: {
     t: props.t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
+    textRevealTarget,
     renderMarkdown: renderOutputMarkdownContent,
-    renderAnsi: renderAnsiContent,
     renderDiff: renderDiffContent,
     renderToolCall: (options) => {
       if (!options?.toolCall) return null
@@ -332,12 +326,18 @@ function ToolCallDetails(props: {
       const truncated = state.error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
       return (
         <div class="tool-call-error-content">
-          <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
-          <Show when={truncated}>
-            <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
-              <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-          </Show>
+          <BoundedText source={state.error} revealTarget={textRevealTarget("error")}>
+            {(text) => (
+              <div>
+                <strong>{props.t("toolCall.error.label")}</strong> {text()}
+                <Show when={truncated}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
+              </div>
+            )}
+          </BoundedText>
         </div>
       )
     }
@@ -496,7 +496,7 @@ function ToolCallDetails(props: {
                   {(() => {
                     const input = toolInputDisplay()
                     if (!input) return null
-                    return renderMarkdownContent({ content: input.content, cacheKey: "input" })
+                    return renderMarkdownContent({ content: input.content, codeLanguage: input.language, cacheKey: "input" })
                   })()}
                 </div>
               </Show>
@@ -707,7 +707,6 @@ export default function ToolCall(props: ToolCallProps) {
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
   const renderMarkdownStub: ToolRendererContext["renderMarkdown"] = () => null
-  const renderAnsiStub: ToolRendererContext["renderAnsi"] = () => null
   const renderDiffStub: ToolRendererContext["renderDiff"] = () => null
   const renderToolCallStub: NonNullable<ToolRendererContext["renderToolCall"]> = () => null
   const headerRendererContext: ToolRendererContext = {
@@ -719,8 +718,8 @@ export default function ToolCall(props: ToolCallProps) {
     t,
     messageVersion: () => props.messageVersion,
     partVersion: () => props.partVersion,
+    textRevealTarget: (section) => makeTextRevealTarget(props.instanceId, props.messageId, toolCallIdentifier(), section),
     renderMarkdown: renderMarkdownStub,
-    renderAnsi: renderAnsiStub,
     renderDiff: renderDiffStub,
     renderToolCall: renderToolCallStub,
     outputWrapEnabled,

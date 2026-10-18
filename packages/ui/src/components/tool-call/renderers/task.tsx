@@ -3,7 +3,8 @@ import { Dynamic } from "solid-js/web"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
+import { getDefaultToolAction, getToolName, hasVisibleText, limitToolTitleForRender, readToolStatePayload } from "../utils"
+import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
@@ -311,19 +312,20 @@ export const taskRenderer: ToolRenderer = {
         fullRescanChildTools(id, store.getSessionMessageIds(id))
       })
     })
+    // Prompts and reports are prose: they use the Markdown bound, not the tool-output one.
     const promptContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
       const { input } = readToolStatePayload(state)
       const prompt = typeof input.prompt === "string" ? input.prompt : null
-      return ensureMarkdownContent(prompt ? limitToolOutputForRender(prompt) : prompt, undefined, false)
+      return hasVisibleText(prompt) ? prompt : null
     })
 
     const outputContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
       const output = typeof (state as { output?: unknown }).output === "string" ? ((state as { output?: string }).output as string) : null
-      return ensureMarkdownContent(output ? limitToolOutputForRender(output) : output, undefined, false)
+      return hasVisibleText(output) ? output : null
     })
 
     const agentLabel = createMemo(() => {
@@ -424,6 +426,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               {renderMarkdown({
                 content: promptContent()!,
+                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
                 cacheKey: "task:prompt",
                 disableScrollTracking: true,
                 // Always use the normal markdown render path for prompt (even while running)
@@ -565,6 +568,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               {renderMarkdown({
                 content: outputContent()!,
+                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
                 cacheKey: "task:output",
                 disableScrollTracking: true,
               })}

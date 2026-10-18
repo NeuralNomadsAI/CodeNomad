@@ -219,6 +219,14 @@ test("tool-error body copies the complete error beyond the 10000-character previ
   assert.equal(copied.replace(/\r\n/g, "\n"), original)
   assert.equal(await body.locator("*").count(), before)
   assert.ok(before < 20)
+
+  // The bounded preview reveals the rest of the error in place.
+  const notice = body.locator(".message-hidden-text")
+  assert.match((await notice.textContent())!, /more characters hidden to keep this message responsive/)
+  await notice.getByRole("button", { name: "Show all", exact: true }).click()
+  await body.getByText(/END-ERROR/).waitFor()
+  assert.equal(await notice.count(), 0)
+  assert.equal((await body.textContent())!.includes(original), true)
 }))
 
 test("todo overflow footer copies every original todo while rendering at most 200 rows", { timeout: 45_000 }, async () => withFixture("todo", async page => {

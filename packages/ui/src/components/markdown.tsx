@@ -1,10 +1,12 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
-import { limitToolOutputForRender, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "./tool-call/utils"
+import { MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../lib/render-text-window"
+import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
+import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 
 const log = getLogger("session")
 
@@ -21,6 +23,7 @@ interface ResolvedMarkdownSnapshot {
   partId: string | undefined
   cacheId: string
   version: string
+  revealSteps: number
 }
 
 let markdownModulePromise: Promise<MarkdownModule> | null = null
@@ -90,10 +93,6 @@ function renderFallbackHtml(content: string): string {
   return escapeHtml(content).replace(/\n/g, "<br />")
 }
 
-export function getMarkdownTextForRender(content: string): string {
-  return limitToolOutputForRender(content)
-}
-
 interface MarkdownProps {
   part: TextPart
   instanceId?: string
@@ -105,12 +104,27 @@ interface MarkdownProps {
   /** Display user-authored HTML as source text, rather than sanitized elements. */
   literalRawHtml?: boolean
   defaultCodeBlockWrap?: boolean
+  /** Characters of `part.text` rendered before the in-place reveal; defaults to the prose bound. */
+  renderLimit?: number
+  /** Turns the bounded text into Markdown, e.g. a fenced code block for raw tool output. */
+  formatText?: (text: string) => string
+  /** Persists the reveal across remounts; without it a reveal lasts for this mount. */
+  revealTarget?: RecordTextRevealTarget
   onRendered?: () => void
 }
 
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
   const [html, setHtml] = createSignal("")
+  // Whether `html` is the Markdown render rather than its plain-text fallback. The
+  // reveal line waits for it, so a reveal's anchor never sits on a prefix that re-lays out.
+  const [rendered, setRendered] = createSignal(false)
+  const bounded = createTextWindow({
+    source: () => (typeof props.part.text === "string" ? props.part.text : ""),
+    limit: () => props.renderLimit ?? MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+    target: () => props.revealTarget,
+  })
+  let previousSnapshot: ResolvedMarkdownSnapshot | undefined
   let containerRef: HTMLDivElement | undefined
   let latestRenderRequest = 0
   let disposed = false
@@ -173,18 +187,22 @@ export function Markdown(props: MarkdownProps) {
 
   const resolved = createMemo(() => {
     const part = props.part
-    const rawText = typeof part.text === "string" ? part.text : ""
+    const window = bounded.window()
     const literalRawHtml = Boolean(props.literalRawHtml)
-    const boundedText = getMarkdownTextForRender(rawText)
+    const boundedText = props.formatText ? props.formatText(window.text) : window.text
     const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
-    const highlightEnabled = !props.disableHighlight
+    const highlightEnabled = !props.disableHighlight && text.length <= MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT
     const escapeRawHtml = Boolean(props.escapeRawHtml)
     const defaultCodeBlockWrap = props.defaultCodeBlockWrap ?? true
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
-    const version = resolvePartVersion(part, text)
+    // A part version describes its whole text; a bounded window is a distinct render.
+    const version = window.hidden > 0
+      ? `${resolvePartVersion(part, text)}@${window.text.length}`
+      : resolvePartVersion(part, text)
     return {
+      revealSteps: bounded.steps(),
       part,
       text,
       themeKey,
@@ -221,6 +239,7 @@ export function Markdown(props: MarkdownProps) {
       mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
     }
     setHtml(renderedHtml)
+    setRendered(true)
     if (options?.cache ?? true) {
       cacheHandle.set(cacheEntry)
     }
@@ -249,6 +268,8 @@ export function Markdown(props: MarkdownProps) {
 
   createEffect(() => {
     const snapshot = resolved()
+    const previous = previousSnapshot
+    previousSnapshot = snapshot
     // Cache hits must also invalidate any older render waiting to publish.
     const request = ++latestRenderRequest
     const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
@@ -261,6 +282,7 @@ export function Markdown(props: MarkdownProps) {
     const localCache = snapshot.part.renderCache
     if (localCache && cacheMatches(localCache)) {
       setHtml(localCache.html)
+      setRendered(true)
       notifyRendered()
       return
     }
@@ -268,12 +290,19 @@ export function Markdown(props: MarkdownProps) {
     const globalCache = cacheHandle.get<RenderCache>()
     if (globalCache && cacheMatches(globalCache)) {
       setHtml(globalCache.html)
+      setRendered(true)
       notifyRendered()
       return
     }
 
-    setHtml(renderFallbackHtml(snapshot.text))
-    notifyRendered()
+    // A reveal keeps the rendered prefix in place until the longer render commits,
+    // rather than flashing the whole block as plain text.
+    const revealing = previous?.cacheId === snapshot.cacheId && previous.revealSteps !== snapshot.revealSteps && untrack(rendered)
+    if (!revealing) {
+      setHtml(renderFallbackHtml(snapshot.text))
+      setRendered(false)
+      notifyRendered()
+    }
 
     void renderSnapshot(snapshot, request).catch((error) => {
       log.error("Failed to render markdown:", error)
@@ -378,19 +407,8 @@ export function Markdown(props: MarkdownProps) {
         data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
         innerHTML={html()}
       />
-      <Show when={(typeof props.part.text === "string" ? props.part.text.length : 0) > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT}>
-        <button
-          type="button"
-          class="message-action-button markdown-source-copy"
-          onClick={() => void copyToClipboard(typeof props.part.text === "string" ? props.part.text : "")}
-          aria-label={t("messageItem.actions.copyTitle")}
-          title={t("messageItem.actions.copyTitle")}
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <rect x="9" y="9" width="13" height="13" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </svg>
-        </button>
+      <Show when={bounded.window().hidden > 0 && rendered()}>
+        <HiddenTextNotice window={bounded.window()} onReveal={bounded.reveal} />
       </Show>
     </>
   )

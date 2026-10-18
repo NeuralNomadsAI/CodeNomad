@@ -1,6 +1,7 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, getToolName } from "../utils"
+import { formatUnknownForCopy, formatUnknownForRender, getToolName, hasVisibleText } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
+import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
 
 export const skillRenderer: ToolRenderer = {
   tools: ["skill"],
@@ -20,8 +21,8 @@ export const skillRenderer: ToolRenderer = {
     if (!state || state.status !== "completed") return null
 
     const output = formatUnknownForRender(state.output)?.text ?? null
-    const content = ensureMarkdownContent(output, undefined, false)
-    if (!content) return null
-    return <div class="tool-call-skill-body">{renderMarkdown({ content })}</div>
+    if (!hasVisibleText(output)) return null
+    // Skill instructions are prose Markdown.
+    return <div class="tool-call-skill-body">{renderMarkdown({ content: output, renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT })}</div>
   },
 }

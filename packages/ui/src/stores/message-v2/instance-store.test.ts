@@ -6,10 +6,13 @@ import { createInstanceMessageStore } from "./instance-store.ts"
 import {
   buildRecordDisplayData,
   clearRecordDisplayCacheForInstance,
+  clearRecordDisplayCacheForMessages,
   getRecordDisplayPartIds,
+  getRevealedRecordText,
   MESSAGE_PART_DISPLAY_LIMIT,
   MESSAGE_PART_REVEAL_STEP,
   revealHiddenRecordParts,
+  revealHiddenRecordText,
 } from "./record-display-cache.ts"
 import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
 import type { MessageInfo } from "../../types/message"
@@ -68,6 +71,29 @@ it("reveals omitted parts in place and resets with the instance", () => {
 
   clearRecordDisplayCacheForInstance("revealed-parts")
   assert.equal(buildRecordDisplayData("revealed-parts", record).hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
+})
+
+it("keys text reveals by instance, message, part and section, and resets them with the instance", () => {
+  const output = { instanceId: "revealed-text", messageId: "message", partId: "tool", section: "output" }
+  const prompt = { ...output, section: "task:prompt" }
+  const otherInstance = { ...output, instanceId: "other-instance" }
+  assert.equal(getRevealedRecordText(output), 0)
+
+  revealHiddenRecordText(output)
+  revealHiddenRecordText(output)
+  revealHiddenRecordText(otherInstance)
+  assert.equal(getRevealedRecordText(output), 2)
+  assert.equal(getRevealedRecordText({ ...output }), 2, "a structurally equal target reads the same reveal after a remount")
+  assert.equal(getRevealedRecordText(prompt), 0, "sections of one tool part reveal independently")
+  assert.equal(getRevealedRecordText({ ...output, messageId: "other-message" }), 0)
+
+  clearRecordDisplayCacheForMessages("revealed-text", ["message"])
+  assert.equal(getRevealedRecordText(output), 2, "evicting derived caches keeps what the user revealed")
+
+  clearRecordDisplayCacheForInstance("revealed-text")
+  assert.equal(getRevealedRecordText(output), 0)
+  assert.equal(getRevealedRecordText(otherInstance), 1, "another instance keeps its reveals")
+  clearRecordDisplayCacheForInstance("other-instance")
 })
 
 describe("message window replacement authority", () => {

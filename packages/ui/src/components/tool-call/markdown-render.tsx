@@ -1,7 +1,11 @@
 import type { Accessor, JSXElement } from "solid-js"
 import type { ToolState } from "../../types/tool-state"
 import type { TextPart } from "../../types/message"
+import type { RecordTextRevealTarget } from "../../stores/message-v2/record-display-cache"
+import { TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../../lib/render-text-window"
 import { Markdown } from "../markdown"
+import { BoundedText } from "../hidden-text"
+import { ensureMarkdownContent } from "./utils"
 import type { MarkdownRenderOptions, ToolScrollHelpers } from "./types"
 
 export function createMarkdownContentRenderer(params: {
@@ -10,6 +14,7 @@ export function createMarkdownContentRenderer(params: {
   partVersion?: Accessor<number | undefined>
   instanceId: string
   sessionId: string
+  textRevealTarget: (section: string) => RecordTextRevealTarget
   isDark: Accessor<boolean>
   scrollHelpers: ToolScrollHelpers
   handleScrollRendered: () => void
@@ -36,6 +41,9 @@ export function createMarkdownContentRenderer(params: {
     const disableScrollTracking = options.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending")
     const registerRef = disableScrollTracking ? registerUntracked : registerTracked
     const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
+    const cacheKey = typeof options.cacheKey === "string" && options.cacheKey.length > 0 ? options.cacheKey : undefined
+    const renderLimit = options.renderLimit ?? TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+    const revealTarget = params.textRevealTarget(cacheKey ?? "output")
     if (shouldDeferMarkdown) {
       return (
         <div
@@ -43,13 +51,18 @@ export function createMarkdownContentRenderer(params: {
           ref={registerRef}
           onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
         >
-          <pre class="whitespace-pre-wrap break-words text-sm font-mono" dir="auto">{options.content}</pre>
+          <BoundedText source={options.content} limit={renderLimit} revealTarget={revealTarget}>
+            {(text) => <pre class="whitespace-pre-wrap break-words text-sm font-mono" dir="auto">{text()}</pre>}
+          </BoundedText>
           {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
         </div>
       )
     }
 
-    const cacheKey = typeof options.cacheKey === "string" && options.cacheKey.length > 0 ? options.cacheKey : undefined
+    const codeLanguage = options.codeLanguage
+    const formatText = codeLanguage === undefined
+      ? undefined
+      : (text: string) => ensureMarkdownContent(text, codeLanguage || undefined, true) ?? ""
     const markdownPart = (): TextPart => ({
       id: cacheKey ? `${params.partId()}:${cacheKey}` : params.partId(),
       type: "text",
@@ -75,6 +88,9 @@ export function createMarkdownContentRenderer(params: {
           isDark={params.isDark()}
           disableHighlight={disableHighlight}
           defaultCodeBlockWrap={wrapEnabled}
+          renderLimit={renderLimit}
+          formatText={formatText}
+          revealTarget={revealTarget}
           onRendered={handleMarkdownRendered}
         />
         {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}

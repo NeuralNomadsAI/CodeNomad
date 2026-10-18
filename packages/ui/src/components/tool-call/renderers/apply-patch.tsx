@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js"
 import type { ToolRenderer } from "../types"
-import { getToolName, isToolStateCompleted, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
+import { getToolName, isToolStateCompleted, limitToolTitleForRender, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
 import { buildDiagnosticView, hasDiagnosticMessages, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
 import { DiagnosticsPayloadAccess } from "../diagnostics-section"
 import { getApplyPatchToolSearchText } from "../search-text"
@@ -126,7 +126,7 @@ export const applyPatchRenderer: ToolRenderer = {
     return (
       <div class="tool-call-apply-patch">
         <Show when={fallback()}>
-          {(content) => renderMarkdown({ content: limitToolOutputForRender(content()), size: "large", disableHighlight: state.status === "running" })}
+          {(content) => renderMarkdown({ content: content(), size: "large", disableHighlight: state.status === "running" })}
         </Show>
         <For each={files()}>
           {(renderedFile, index) => {
@@ -146,6 +146,7 @@ export const applyPatchRenderer: ToolRenderer = {
                     {
                       label: limitToolTitleForRender(t("toolCall.diff.label.withPath", { path: label })),
                       cacheKey: `apply_patch:${index()}`,
+                      renderLimit: renderedFile.renderLimit,
                     },
                   )}
                 </Show>

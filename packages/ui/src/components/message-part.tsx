@@ -7,6 +7,7 @@ import { useI18n } from "../lib/i18n"
 import { splitPromptDisplaySections, type PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 import { copyToClipboard } from "../lib/clipboard"
 import { getPastedTextLineCount } from "../lib/pasted-text-display"
+import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -17,6 +18,8 @@ interface MessagePartProps {
   messageType?: "user" | "assistant"
   instanceId: string
   sessionId: string
+  /** Owning message; keys the display reveal of long text so it survives remounts. */
+  messageId?: string
   // For user messages, keep the primary prompt text visible even when synthetic (optimistic).
   // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
   primaryUserTextPartId?: string | null
@@ -98,6 +101,12 @@ export default function MessagePart(props: MessagePartProps) {
     }
   }
 
+  const revealTarget = (section: string): RecordTextRevealTarget | undefined => {
+    const partId = (props.part as { id?: unknown }).id
+    if (!props.messageId || typeof partId !== "string" || !partId) return undefined
+    return { instanceId: props.instanceId, messageId: props.messageId, partId, section }
+  }
+
   function createSegmentTextPart(text: string, index: number): TextPart {
     return {
       id: `${String((props.part as { id?: string }).id ?? "text")}:display:${index}`,
@@ -166,6 +175,7 @@ export default function MessagePart(props: MessagePartProps) {
               size="base"
               escapeRawHtml
               literalRawHtml={props.messageType === "user"}
+              revealTarget={revealTarget(`pasted:${disclosureProps.index}`)}
               onRendered={props.onRendered}
             />
           </div>
@@ -200,6 +210,7 @@ export default function MessagePart(props: MessagePartProps) {
                     size={isAssistantMessage() ? "tight" : "base"}
                     escapeRawHtml
                     literalRawHtml={props.messageType === "user"}
+                    revealTarget={revealTarget("text")}
                     onRendered={props.onRendered}
                   />
                 </Show>
@@ -220,6 +231,7 @@ export default function MessagePart(props: MessagePartProps) {
                           size="base"
                           escapeRawHtml
                           literalRawHtml
+                          revealTarget={revealTarget(`display:${index()}`)}
                           onRendered={props.onRendered}
                         />
                       )
@@ -237,6 +249,7 @@ export default function MessagePart(props: MessagePartProps) {
           <LazyToolCall
             toolCall={props.part as ToolCallPart}
             toolCallId={props.part?.id}
+            messageId={props.messageId}
             instanceId={props.instanceId}
             sessionId={props.sessionId}
             onContentRendered={props.onRendered}

@@ -32,8 +32,33 @@ const MESSAGE_PART_TAIL_COUNT = MESSAGE_PART_DISPLAY_LIMIT - Math.floor(MESSAGE_
 // projection of the same record (blocks, grouping, timeline) agrees.
 const [revealedParts, setRevealedParts] = createStore<Record<string, number>>({})
 
+/** One display-bounded text block of a message part, e.g. a text part, a tool's output or a task's prompt. */
+export interface RecordTextRevealTarget {
+  instanceId: string
+  messageId: string
+  partId: string
+  section: string
+}
+
+// User-revealed text steps (see `getRenderTextWindow`) keyed by instance/message/part/section,
+// so a block remounted by virtualization, a re-render or a session switch keeps its reveal.
+const [revealedText, setRevealedText] = createStore<Record<string, number>>({})
+
 function makeCacheKey(instanceId: string, messageId: string) {
   return `${instanceId}:${messageId}`
+}
+
+function makeTextRevealKey(target: RecordTextRevealTarget) {
+  return `${makeCacheKey(target.instanceId, target.messageId)}:${target.partId}:${target.section}`
+}
+
+/** Tracked read of how many reveal steps the user applied to a text block. */
+export function getRevealedRecordText(target: RecordTextRevealTarget): number {
+  return revealedText[makeTextRevealKey(target)] ?? 0
+}
+
+export function revealHiddenRecordText(target: RecordTextRevealTarget) {
+  setRevealedText(makeTextRevealKey(target), (current) => (current ?? 0) + 1)
 }
 
 /** Tracked read; caches derived from the display window must key on it. */
@@ -113,11 +138,13 @@ export function clearRecordDisplayCacheForInstance(instanceId: string) {
       recordDisplayCache.delete(key)
     }
   }
-  setRevealedParts(produce((state) => {
+  const forget = produce((state: Record<string, number>) => {
     for (const key of Object.keys(state)) {
       if (key.startsWith(prefix)) delete state[key]
     }
-  }))
+  })
+  setRevealedParts(forget)
+  setRevealedText(forget)
 }
 
 export function clearRecordDisplayCacheForMessages(instanceId: string, messageIds: Iterable<string>) {

@@ -67,11 +67,11 @@ async function readPages(article: Locator) {
   return texts.join("\n")
 }
 
-test("mission reader exposes every character of valid 11010/20000-character fields while shared Markdown stays capped", async () => {
+test("mission reader exposes every character of valid 11010/20000-character fields while shared Markdown stays bounded", async () => {
   const current = mission(), f = await setup(current)
   try {
-    const functionProof = await f.page.evaluate(() => { const text = (window as any).track3.bounded("a".repeat(11000) + "TAIL_PROOF"); return { length: text.length, tail: text.includes("TAIL_PROOF") } })
-    assert.deepEqual(functionProof, { length: 10000, tail: false })
+    const functionProof = await f.page.evaluate(() => { const text = (window as any).track3.bounded("a".repeat(60000) + "TAIL_PROOF"); return { length: text.length, tail: text.includes("TAIL_PROOF") } })
+    assert.deepEqual(functionProof, { length: 50000, tail: false })
     console.info("Actual shared-function proof", JSON.stringify(functionProof))
     for (const objective of ["a".repeat(11000) + "TAIL_PROOF", longText("OBJECTIVE")]) {
       current.objective = objective; f.replace({ ...current }); await show(f.page)
@@ -185,13 +185,17 @@ for (const locale of ["en", "he"] as const) test(`real RightPanel ${locale} arro
   } finally { await f.page.close() }
 })
 
-test("Turkish shared truncation guidance renders from the actual selected dictionary, not English fallback", async () => {
+test("Turkish shared reveal line renders from the actual selected dictionary, not English fallback", async () => {
   const f = await setup()
   try {
     await f.page.evaluate(() => (window as any).track3.locale("tr"))
     await f.page.waitForFunction(() => document.documentElement.lang === "tr")
-    await f.page.waitForFunction(() => document.getElementById("default-budget")?.textContent?.includes("tam çıktıya"), undefined, { timeout: 3000 })
-    assert(!(await f.page.locator("#default-budget").innerText()).includes("Output truncated"))
+    await f.page.waitForFunction(() => document.getElementById("default-budget")?.textContent?.includes("karakter daha gizlendi"), undefined, { timeout: 3000 })
+    const notice = f.page.locator("#default-budget .message-hidden-text")
+    assert(!(await notice.innerText()).includes("more characters hidden"))
+    assert.match(await notice.innerText(), /10\.010 karakter daha gizlendi/, "the count uses the selected locale's digit grouping")
+    await notice.getByRole("button", { name: "Tümünü göster", exact: true }).click()
+    await f.page.waitForFunction(() => document.querySelector("#default-budget .markdown-body")?.textContent?.includes("TAIL_PROOF"))
     assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })
