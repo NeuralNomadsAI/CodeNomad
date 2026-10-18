@@ -195,7 +195,10 @@ for (const scenario of [
         assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).loaded, "B", JSON.stringify({ backend: h.snapshot(), browser: await page.evaluate(() => (window as any).fixture.snapshot()) }))
         const info = await page.evaluate(() => (window as any).fixture.info())
         const witness = await page.evaluate(() => (window as any).fixture.witness())
-        assert.deepEqual(info.system, { platform: process.platform, arch: process.arch })
+        // `name` is the readable OS release; it is absent when the server cannot determine it.
+        const { name: systemName, ...system } = info.system
+        assert.deepEqual(system, { platform: process.platform, arch: process.arch })
+        assert.ok(systemName === undefined || (typeof systemName === "string" && systemName.length > 0))
         assert.deepEqual(witness, { witness: true })
         const state = await page.evaluate(() => (window as any).fixture.snapshot())
         assert.equal(state.draft, "draft while A is held")
