@@ -140,6 +140,30 @@ describe("SSE backpressure", () => {
     }
   })
 
+  it("delivers a single oversized payload without disconnecting", async () => {
+    const test = harness({ limit: 256, timeout: 1_000 })
+    try {
+      const response = test.app.inject({ method: "GET", url: "/api/events?clientId=client&connectionId=connection" })
+      await waitFor(test.ready)
+      const marker = "x".repeat(512)
+      test.emit({ type: "workspace.stopped", workspaceId: marker, reason: "deleted" })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // A single large frame (native message parts can embed base64 images) is
+      // paced by drain, not a reason to abandon the stream.
+      assert.deepEqual(test.counts(), { unsubscribed: 0, unregistered: 0 })
+      test.drain()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      test.emit({ type: "workspace.stopped", workspaceId: "second", reason: "deleted" })
+      test.close()
+      const result = await response
+      assert.ok(result.body.includes(marker))
+      assert.match(result.body, /"workspaceId":"second"/)
+      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 0 })
+    } finally {
+      await test.app.close()
+    }
+  })
+
   it("disconnects when the bounded pending buffer is exceeded", async () => {
     const test = harness({ limit: 256, timeout: 1_000 })
     try {

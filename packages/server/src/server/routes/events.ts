@@ -91,28 +91,26 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       while (pending.length) {
         const payload = pending.shift()!
         bufferedBytes -= Buffer.byteLength(payload)
-        if (!reply.raw.write(payload)) {
-          bufferedBytes += Buffer.byteLength(payload)
-          waitForDrain()
-          return
-        }
+        if (!reply.raw.write(payload)) waitForDrain()
+        if (backpressured) return
       }
       bufferedBytes = 0
     }
     const write = (payload: string) => {
       if (closed) return
-      const bytes = Buffer.byteLength(payload)
-      if (bytes > backpressureLimitBytes || bufferedBytes + bytes > backpressureLimitBytes) {
-        handleClose(true)
-        return
-      }
+      // A single oversized frame (a native message part can embed a base64
+      // image) is always written through: the socket paces it by drain and the
+      // drain timeout disconnects a client that never consumes it. Only a
+      // sustained queued backlog abandons the stream here.
       if (backpressured) {
         pending.push(payload)
-        bufferedBytes += bytes
+        bufferedBytes += Buffer.byteLength(payload)
+        if (bufferedBytes > backpressureLimitBytes) handleClose(true)
         return
       }
       if (!reply.raw.write(payload)) {
-        bufferedBytes = bytes
+        // The frame above was handed to the socket; only queued frames count.
+        bufferedBytes = 0
         waitForDrain()
       }
     }
