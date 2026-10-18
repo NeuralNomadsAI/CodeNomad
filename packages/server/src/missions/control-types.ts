@@ -104,6 +104,13 @@ export interface MissionReportInput {
   final: boolean
 }
 
+/** taskKey names the task this call actually resolved; finalization has none. */
+export interface MissionReportResult {
+  disposition: "reported" | "finished" | "existing"
+  mission: MissionMap
+  taskKey?: string
+}
+
 /** Actual tool identities are supplied by the trusted adapter, never model JSON. */
 export interface MissionNativeReportRequest {
   contract: TaskContractReference

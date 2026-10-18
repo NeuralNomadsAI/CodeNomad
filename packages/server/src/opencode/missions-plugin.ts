@@ -383,11 +383,9 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const contract = reference === undefined ? undefined : taskContractReferenceSchema.parse(reference)
           const result = contract === undefined ? await selected.control.report(tool.sessionID, report)
             : await selected.control.reportNative({ contract, sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report)
-          // An independent actor may omit taskKey for its single open assignment: name the task it just reported.
-          const taskKey = report.final ? undefined : contract?.taskKey ?? report.taskKey
-            ?? [...result.mission.reports].reverse().find(saved => saved.sessionId === tool.sessionID)?.taskKey
+          // The control names the task it resolved, including an independent actor's omitted taskKey.
           return textResult({ disposition: result.disposition, ...compactMission(result.mission),
-            ...(taskKey === undefined ? {} : { task: compactMissionTasks(result.mission, [taskKey])[0] }) })
+            ...(result.taskKey === undefined ? {} : { task: compactMissionTasks(result.mission, [result.taskKey])[0] }) })
         },
       })
       add({

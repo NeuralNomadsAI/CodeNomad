@@ -48,6 +48,7 @@ import type {
   MissionInspection,
   MissionProject,
   MissionReportInput,
+  MissionReportResult,
   MissionSessionAdapter,
   MissionInputTransport,
   NativeMissionSession,
@@ -752,13 +753,11 @@ export class MissionControl {
     return { disposition: "dispatched", mission }
   }
 
-  report(sessionID: string, input: MissionReportInput): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
+  report(sessionID: string, input: MissionReportInput): Promise<MissionReportResult> {
     return this.mutate(() => this.reportCurrent(sessionID, input))
   }
 
-  async reportNative(request: MissionNativeReportRequest, input: MissionReportInput): Promise<{
-    disposition: "reported" | "finished" | "existing"; mission: MissionMap
-  }> {
+  async reportNative(request: MissionNativeReportRequest, input: MissionReportInput): Promise<MissionReportResult> {
     if (!this.options.authorizeNativeReport) throw new MissionControlError("Native report authority unavailable", "policy-unqualified")
     request = structuredClone(request)
     input = structuredClone(input)
@@ -819,7 +818,7 @@ export class MissionControl {
   }
 
   private async reportCurrent(sessionID: string, input: MissionReportInput,
-    native?: { call: import("./model").MissionNativeBinding; current(): void }): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
+    native?: { call: import("./model").MissionNativeBinding; current(): void }): Promise<MissionReportResult> {
     native?.current()
     const caller = native ? await this.ownedSession(sessionID) : await this.ownedRootSession(sessionID)
     let snapshot = await this.snapshot()
@@ -885,7 +884,7 @@ export class MissionControl {
       if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed")
         humanReceipt = await this.verifyHumanDecision(mission, declared, input.artifact)
       const readout = coordinatorReadout(snapshot, mission, declared, input, this.timestamp(snapshot), humanReceipt)
-      if (readout.existing) return { disposition: "existing", mission }
+      if (readout.existing) return { disposition: "existing", mission, taskKey: declared.key }
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved during readout", "foreign-session")
       this.assertActive()
@@ -896,7 +895,7 @@ export class MissionControl {
       mission = this.requireMission(snapshot, mission.id)
       if (!mission.reports.some(report => report.id === readout.report.id)) throw new MissionControlError("Coordinator readout was not accepted", "invalid-journal")
       await this.emitChanged(mission.id, snapshot)
-      return { disposition: "reported", mission }
+      return { disposition: "reported", mission, taskKey: declared.key }
     }
     const task = this.reportTask(mission, sessionID, input.taskKey)
     if (native) {
@@ -939,7 +938,7 @@ export class MissionControl {
           throw new MissionControlError("Native report invocation already has different immutable evidence", "request-conflict")
         }
         native.current()
-        return { disposition: "existing", mission }
+        return { disposition: "existing", mission, taskKey: task.key }
       }
       if (task.report && !historical) throw new MissionControlError("Task already has a business report; use a new task contract for new work", "request-conflict")
       native.current()
@@ -947,11 +946,11 @@ export class MissionControl {
     const lateReport = task.lateReports?.at(-1)
     if (lateReport && !native) {
       await this.notifySavedReport(mission, lateReport)
-      return { disposition: "existing", mission: this.requireMission(await this.snapshot(), mission.id) }
+      return { disposition: "existing", mission: this.requireMission(await this.snapshot(), mission.id), taskKey: task.key }
     }
     if (task.report && !native) {
       await this.notifySavedReport(mission, task.report)
-      return { disposition: "existing", mission: this.requireMission(await this.snapshot(), mission.id) }
+      return { disposition: "existing", mission: this.requireMission(await this.snapshot(), mission.id), taskKey: task.key }
     }
     const late = task.status === "withdrawn" || mission.status === "stopped"
     if (late && !task.admissionId && !native) throw new MissionControlError("The assigned task has not been dispatched", "task-not-dispatched")
@@ -1008,7 +1007,7 @@ export class MissionControl {
     }
     await this.emitChanged(mission.id, snapshot)
     await this.notifySavedReport(mission, report)
-    return { disposition: "reported", mission: this.requireMission(await this.snapshot(), mission.id) }
+    return { disposition: "reported", mission: this.requireMission(await this.snapshot(), mission.id), taskKey: task.key }
   }
 
   async contextFor(sessionID: string): Promise<string | undefined> {

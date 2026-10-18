@@ -52,6 +52,10 @@ test("the Wayfinder decision role and coordinator state the native human-answer 
   assert.match(decision.instructions, /ask the human from this conversation through the native question tool/)
   assert.match(decision.instructions, /never answer it yourself or hand the question to a helper/)
   assert.ok(recipe.coordinator.includes(WAYFINDER_DECISION_REQUIREMENT))
+  const independent = getMissionRecipe("wayfinder", "independent").coordinator
+  assert.ok(!independent.includes(WAYFINDER_DECISION_REQUIREMENT), "the gate checks native decision tasks only")
+  assert.match(independent, /persisted user-selected taskMode is independent/)
+  assert.match(independent, /never answer the human side yourself/)
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /Use research for a self-contained analysis/)
   assert.ok(buildActorContext({ ...mission, actors: [{ sessionId: "ses_coordinator", kind: "coordinator", managed: false,
     title: "Coordinator", roles: [], location: { directory: "/repo" }, joinedAt: 1 }] }, "ses_coordinator").includes(WAYFINDER_DECISION_REQUIREMENT))

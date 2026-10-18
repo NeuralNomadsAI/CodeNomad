@@ -240,7 +240,9 @@ const recipes: Record<MissionTemplateId, MissionRecipe> = { custom, debug, wayfi
 
 export function getMissionRecipe(id: MissionTemplateId, taskMode: MissionTaskMode = "native"): MissionRecipe {
   const recipe = recipes[id]
-  return taskMode === "independent" ? { ...recipe, coordinator: recipe.coordinator.replace(DELEGATION, INDEPENDENT_DELEGATION) } : recipe
+  // The human-answer gate checks native decision tasks only; independent decisions report through their root.
+  return taskMode === "independent" ? { ...recipe, coordinator: recipe.coordinator
+    .replace(` ${WAYFINDER_DECISION_REQUIREMENT}`, "").replace(DELEGATION, INDEPENDENT_DELEGATION) } : recipe
 }
 
 export function missionRecipeCatalog(): Array<Pick<MissionRecipe, "id" | "title" | "summary" | "sequence"> & { roles: string[] }> {
