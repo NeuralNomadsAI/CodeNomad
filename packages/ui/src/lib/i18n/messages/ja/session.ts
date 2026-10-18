@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} 件のサブセッションが実行中",
   "sessionList.childActivity.compacting.one": "{count} 件のサブセッションを圧縮中",
   "sessionList.childActivity.compacting.other": "{count} 件のサブセッションを圧縮中",
+  "sessionList.childActivity.idle.one": "{count} 件のサブセッションが待機中",
+  "sessionList.childActivity.idle.other": "{count} 件のサブセッションが待機中",
   "sessionList.status.interrupted": "中断",
   "sessionList.status.retrying": "再試行中",
   "sessionList.status.retryingIn": "{seconds}秒後に再試行",

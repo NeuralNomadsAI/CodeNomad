@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "session-child-activity-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -20,9 +23,9 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { try { await browser?.close() } finally { await server?.close(); await cache?.dispose() } })
 
-test("a collapsed parent's chevron carries its busy subsessions without reshaping the list", async () => {
+test("a collapsed parent's chevron carries visible subsession statuses without reshaping the list", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -76,6 +79,61 @@ test("a collapsed parent's chevron carries its busy subsessions without reshapin
     assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
     assert.equal(await chevron("other").getAttribute("aria-label"), "Collapse session")
     assert.equal(await chevron("other-child").getAttribute("data-child-activity"), "working")
+
+    // Completing the nested helper turns its collapsed ancestors green, just like its Idle tag.
+    await page.evaluate(() => {
+      ;(window as any).fixture.permission("other-child", false)
+      ;(window as any).fixture.status("other-grandchild", "idle")
+    })
+    await settlesOn("other-child", "--session-status-idle-fg")
+    assert.equal(await chevron("other-child").getAttribute("aria-label"), "Expand session — 1 subsession idle")
+    await chevron("other-child").click()
+    await page.locator('[data-session-id="other-grandchild"] .session-idle').waitFor()
+    assert.equal(await chevron("other-child").getAttribute("data-child-activity"), null)
+    await chevron("other").click()
+    await settlesOn("other", "--session-status-idle-fg")
+    assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "none")
+    if (process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE })
+
+    // Work and input still outrank idle. Clearing the last unseen idle removes the green hint.
+    await page.evaluate(() => (window as any).fixture.status("other-child", "compacting"))
+    await settlesOn("other", "--session-status-compacting-fg")
+    await page.evaluate(() => (window as any).fixture.permission("other-child", true))
+    await settlesOn("other", "--session-status-permission-fg")
+    await page.evaluate(() => {
+      ;(window as any).fixture.permission("other-child", false)
+      ;(window as any).fixture.status("other-child", "idle")
+    })
+    await settlesOn("other", "--session-status-idle-fg")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Expand session — 2 subsessions idle")
+    await page.evaluate(() => {
+      ;(window as any).fixture.seen("other-child")
+      ;(window as any).fixture.seen("other-grandchild")
+    })
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+
+    // Follow the existing idle visibility preference, including the seen-badge fade.
+    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", 1))
+    await settlesOn("other", "--session-status-idle-fg")
+    await page.evaluate(() => (window as any).fixture.keepIdle(false))
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", Date.now()))
+    await settlesOn("other", "--session-status-idle-fg")
+    await page.waitForFunction(() => !document.querySelector('[data-session-id="other"] .session-item-expander')?.hasAttribute("data-child-activity"), undefined, { timeout: 8000 })
+    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", 1))
+    await page.evaluate(() => (window as any).fixture.fade("other-grandchild"))
+    await settlesOn("other", "--session-status-idle-fg")
+    await page.evaluate(() => {
+      ;(window as any).fixture.seen("other-grandchild")
+      ;(window as any).fixture.endFade("other-grandchild", 1)
+    })
+    assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+
+    // Neither interrupted nor retrying badges may be misrepresented as green idle.
+    for (const extra of [{ generationRecovery: "interrupted" }, { retry: { attempt: 1, message: "Retry", next: 0 } }]) {
+      await page.evaluate(extra => (window as any).fixture.idle("other-grandchild", Date.now(), extra), extra)
+      assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+    }
 
     // A subsession of the viewed conversation is revealed below it.
     await page.evaluate(() => (window as any).fixture.status("work-child", "working"))

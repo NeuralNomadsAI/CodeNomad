@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} उप-सत्रहरू काम गर्दैछन्",
   "sessionList.childActivity.compacting.one": "{count} उप-सत्र संकुचन हुँदैछ",
   "sessionList.childActivity.compacting.other": "{count} उप-सत्रहरू संकुचन हुँदैछन्",
+  "sessionList.childActivity.idle.one": "{count} उप-सत्र निष्क्रिय छ",
+  "sessionList.childActivity.idle.other": "{count} उप-सत्रहरू निष्क्रिय छन्",
   "sessionList.status.interrupted": "अवरुद्ध",
   "sessionList.status.retrying": "पुन: प्रयास गर्दै",
   "sessionList.status.retryingIn": "{seconds} सेकेन्डमा पुन: प्रयास गर्दै",

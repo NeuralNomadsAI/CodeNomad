@@ -131,7 +131,11 @@ const SessionList: Component<SessionListProps> = (props) => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
-  const descendantActivity = createMemo(() => collectDescendantActivity(sessionStateSessions().get(props.instanceId)))
+  const descendantActivity = createMemo(() => collectDescendantActivity(
+    sessionStateSessions().get(props.instanceId),
+    session => !session.retry && session.generationRecovery !== "interrupted"
+      && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
+  ))
 
   createEffect(() => {
     const sort = sortBy()
@@ -582,7 +586,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     const isActive = () => props.activeSessionId === sessionId()
-    // A collapsed parent's chevron carries its busy subsessions' state.
+    // A collapsed parent's chevron carries its subsessions' visible status.
     const childActivity = () => rowProps.hasChildren && !rowProps.expanded ? descendantActivity().get(sessionId()) : undefined
     const expanderLabel = (key: string) => {
       const label = t(`sessionList.expand.${key}`)

@@ -28,6 +28,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} alt oturum çalışıyor",
   "sessionList.childActivity.compacting.one": "{count} alt oturum sıkıştırılıyor",
   "sessionList.childActivity.compacting.other": "{count} alt oturum sıkıştırılıyor",
+  "sessionList.childActivity.idle.one": "{count} alt oturum boşta",
+  "sessionList.childActivity.idle.other": "{count} alt oturum boşta",
   "sessionList.status.interrupted": "Kesildi",
   "sessionList.status.retrying": "Yeniden deneniyor",
   "sessionList.status.retryingIn": "{seconds} sn içinde yeniden denenecek",

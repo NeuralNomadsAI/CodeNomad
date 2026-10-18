@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} sous-sessions en cours",
   "sessionList.childActivity.compacting.one": "{count} sous-session en compaction",
   "sessionList.childActivity.compacting.other": "{count} sous-sessions en compaction",
+  "sessionList.childActivity.idle.one": "{count} sous-session inactive",
+  "sessionList.childActivity.idle.other": "{count} sous-sessions inactives",
   "sessionList.status.interrupted": "Interrompu",
   "sessionList.status.retrying": "Nouvelle tentative",
   "sessionList.status.retryingIn": "Nouvelle tentative dans {seconds}s",

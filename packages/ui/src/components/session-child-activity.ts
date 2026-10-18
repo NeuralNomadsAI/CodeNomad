@@ -2,16 +2,16 @@ import type { DescendantActivity } from "../stores/session-tree"
 
 type Translate = (key: string, params?: Record<string, string>) => string
 
-export type ChildActivityKind = "permission" | "working" | "compacting"
+export type ChildActivityKind = "permission" | "working" | "compacting" | "idle"
 
-/** The most urgent state among busy subsessions colours a collapsed parent's chevron. */
+/** The most urgent visible state among subsessions colours a collapsed parent's chevron. */
 export function childActivityKind(activity: DescendantActivity): ChildActivityKind {
-  return activity.permission ? "permission" : activity.working ? "working" : "compacting"
+  return activity.permission ? "permission" : activity.working ? "working" : activity.compacting ? "compacting" : "idle"
 }
 
 /** Counted states, e.g. "1 subsession needs input, 2 subsessions working". */
 export function childActivityLabel(t: Translate, activity: DescendantActivity): string {
-  return (["permission", "working", "compacting"] as const)
+  return (["permission", "working", "compacting", "idle"] as const)
     .filter((state) => activity[state] > 0)
     .map((state) => {
       const count = activity[state]

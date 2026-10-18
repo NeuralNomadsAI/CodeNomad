@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} Untersitzungen arbeiten",
   "sessionList.childActivity.compacting.one": "{count} Untersitzung wird komprimiert",
   "sessionList.childActivity.compacting.other": "{count} Untersitzungen werden komprimiert",
+  "sessionList.childActivity.idle.one": "{count} Untersitzung inaktiv",
+  "sessionList.childActivity.idle.other": "{count} Untersitzungen inaktiv",
   "sessionList.status.interrupted": "Unterbrochen",
   "sessionList.status.retrying": "Wiederholung",
   "sessionList.status.retryingIn": "Wiederholung in {seconds}s",

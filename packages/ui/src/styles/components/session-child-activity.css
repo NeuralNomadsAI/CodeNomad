@@ -1,5 +1,5 @@
-/* A collapsed parent's chevron takes the most urgent state of its busy
-   subsessions (`session-child-activity.ts`). Input requests stay steady;
+/* A collapsed parent's chevron takes the most urgent visible state of its
+   subsessions (`session-child-activity.ts`). Input requests and idle stay steady;
    work and compaction pulse like the session status dot. */
 .session-item-expander[data-child-activity] {
   opacity: 1;
@@ -16,6 +16,10 @@
 
 .session-item-expander[data-child-activity="compacting"] {
   --session-child-activity-color: var(--session-status-compacting-fg);
+}
+
+.session-item-expander[data-child-activity="idle"] {
+  --session-child-activity-color: var(--session-status-idle-fg);
 }
 
 .session-item-expander[data-child-activity="working"] .disclosure-chevron,

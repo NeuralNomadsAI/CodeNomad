@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "Подсессий работает: {count}",
   "sessionList.childActivity.compacting.one": "{count} подсессия сжимается",
   "sessionList.childActivity.compacting.other": "Подсессий сжимается: {count}",
+  "sessionList.childActivity.idle.one": "{count} подсессия неактивна",
+  "sessionList.childActivity.idle.other": "Неактивных подсессий: {count}",
   "sessionList.status.interrupted": "Прервано",
   "sessionList.status.retrying": "Повтор",
   "sessionList.status.retryingIn": "Повтор через {seconds}с",

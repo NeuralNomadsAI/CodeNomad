@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} 个子会话运行中",
   "sessionList.childActivity.compacting.one": "{count} 个子会话压缩中",
   "sessionList.childActivity.compacting.other": "{count} 个子会话压缩中",
+  "sessionList.childActivity.idle.one": "{count} 个子会话空闲",
+  "sessionList.childActivity.idle.other": "{count} 个子会话空闲",
   "sessionList.status.interrupted": "已中断",
   "sessionList.status.retrying": "重试中",
   "sessionList.status.retryingIn": "{seconds} 秒后重试",

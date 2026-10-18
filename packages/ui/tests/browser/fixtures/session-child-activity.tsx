@@ -7,7 +7,9 @@ import { serverApi } from "../../../src/lib/api-client"
 import { addInstance } from "../../../src/stores/instances"
 import {
   sessions, setActiveSession, setSessionPage, setSessionPendingPermission, setSessionStatus, setSessions,
+  markSessionIdleSeen, withSession,
 } from "../../../src/stores/session-state"
+import { clearSessionIdleFade, markSessionIdleFadeStarted } from "../../../src/stores/session-status"
 import { buildSessionThreadsFromMap } from "../../../src/stores/session-tree"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
@@ -25,9 +27,12 @@ const items = [
   make("other-child", "Other helper", 2, "other"),
   make("other-grandchild", "Other nested helper", 2, "other-child"),
 ]
-const uiConfig = { settings: { locale: "en" } }
+let uiConfig = { settings: { locale: "en" } }
 serverApi.fetchConfigOwner = async () => uiConfig as any
-serverApi.patchConfigOwner = async (_owner, patch) => Object.assign(uiConfig, patch) as any
+serverApi.patchConfigOwner = async (_owner, patch: any) => {
+  uiConfig = { ...uiConfig, ...patch, settings: { ...uiConfig.settings, ...patch.settings } }
+  return uiConfig as any
+}
 serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.fetchWorktrees = async () => ({ isGitRepo: false, worktrees: [] })
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client: {} as any })
@@ -43,8 +48,15 @@ function Fixture() {
   </div></I18nProvider></ConfigProvider>
 }
 render(() => <Fixture />, document.getElementById("root")!)
-await updatePreferences({ locale: "en" })
+await updatePreferences({ locale: "en", keepUnseenSubagentIdleStatus: true })
 ;(window as any).fixture = {
-  status: (sessionId: string, status: Session["status"]) => setSessionStatus(id, sessionId, status),
+  status: (sessionId: string, status: Session["status"]) => setSessionStatus(id, sessionId, status, { force: true }),
   permission: (sessionId: string, pending: boolean) => setSessionPendingPermission(id, sessionId, pending),
+  seen: (sessionId: string) => markSessionIdleSeen(id, sessionId),
+  idle: (sessionId: string, idleSince: number, extra = {}) => withSession(id, sessionId, session => {
+    Object.assign(session, { status: "idle", idleSince, retry: null, generationRecovery: null }, extra)
+  }),
+  keepIdle: (keepUnseenSubagentIdleStatus: boolean) => updatePreferences({ keepUnseenSubagentIdleStatus }),
+  fade: (sessionId: string) => markSessionIdleFadeStarted(id, sessionId),
+  endFade: (sessionId: string, idleSince: number) => clearSessionIdleFade(id, sessionId, idleSince),
 }

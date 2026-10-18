@@ -103,21 +103,25 @@ export function getSessionAncestorIdsFromMap(instanceSessions: Map<string, Sessi
   return ancestors
 }
 
-export type DescendantActivity = { permission: number; working: number; compacting: number }
+export type DescendantActivity = { permission: number; working: number; compacting: number; idle: number }
 
-/** Per-ancestor counts of active descendants, so a collapsed parent can show that its subtree is busy. */
-export function collectDescendantActivity(instanceSessions: Map<string, Session> | undefined): Map<string, DescendantActivity> {
+/** Per-ancestor counts; idle participates only while its status badge is visible. */
+export function collectDescendantActivity(
+  instanceSessions: Map<string, Session> | undefined,
+  showIdleStatus: (session: Session) => boolean = () => false,
+): Map<string, DescendantActivity> {
   const activity = new Map<string, DescendantActivity>()
   for (const session of instanceSessions?.values() ?? []) {
     const kind = session.pendingPermission || session.pendingForm
       ? "permission"
-      : session.status === "working" || session.status === "compacting" ? session.status : null
+      : session.status === "working" || session.status === "compacting" ? session.status
+        : session.status === "idle" && showIdleStatus(session) ? "idle" : null
     if (!kind) continue
     const seen = new Set([session.id])
     let parentId = session.parentId
     while (parentId && !seen.has(parentId) && instanceSessions!.has(parentId)) {
       seen.add(parentId)
-      const counts = activity.get(parentId) ?? { permission: 0, working: 0, compacting: 0 }
+      const counts = activity.get(parentId) ?? { permission: 0, working: 0, compacting: 0, idle: 0 }
       counts[kind] += 1
       activity.set(parentId, counts)
       parentId = instanceSessions!.get(parentId)!.parentId

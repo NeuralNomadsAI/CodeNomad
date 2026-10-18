@@ -31,6 +31,8 @@ export const sessionMessages = {
   "sessionList.childActivity.working.other": "{count} תת-שיחות פועלות",
   "sessionList.childActivity.compacting.one": "{count} תת-שיחה בדחיסה",
   "sessionList.childActivity.compacting.other": "{count} תת-שיחות בדחיסה",
+  "sessionList.childActivity.idle.one": "{count} תת-שיחה לא פעילה",
+  "sessionList.childActivity.idle.other": "{count} תת-שיחות לא פעילות",
   "sessionList.status.interrupted": "הופסק",
   "sessionList.status.retrying": "מנסה שוב",
   "sessionList.status.retryingIn": "מנסה שוב בעוד {seconds}ש׳",

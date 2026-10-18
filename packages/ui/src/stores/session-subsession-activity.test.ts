@@ -108,8 +108,8 @@ describe("subsession activity", () => {
       ["child", { ...session("child", "parent"), pendingPermission: true }],
       ["grandchild", session("grandchild", "child", "working")],
     ]))
-    assert.deepEqual(counts.get("root"), { permission: 1, working: 1, compacting: 0 })
-    assert.deepEqual(counts.get("child"), { permission: 0, working: 1, compacting: 0 })
+    assert.deepEqual(counts.get("root"), { permission: 1, working: 1, compacting: 0, idle: 0 })
+    assert.deepEqual(counts.get("child"), { permission: 0, working: 1, compacting: 0, idle: 0 })
     assert.equal(counts.has("grandchild"), false)
     // Only subsessions are active; the root and tab still report it.
     assert.equal(getInstanceSessionIndicatorStatus("tab-a"), "permission")
