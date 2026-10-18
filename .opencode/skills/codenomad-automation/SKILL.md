@@ -7,8 +7,8 @@ description: Inspect, modify, rebuild, relaunch, and verify CodeNomad desktop bu
 
 Use this workflow when changing CodeNomad itself:
 
-1. Call `codenomad.inspect` before editing. It identifies the visible local CodeNomad window, verifies that this OpenCode session is the active pane, and returns accessibility refs plus runtime diagnostics.
-2. Use only refs from the latest inspection with `codenomad.act`. Inspect again after navigation, reload, tab changes, or failed actions.
+1. Call `codenomad.inspect` before editing. It identifies the local CodeNomad window and returns an indented accessibility outline with refs, plus runtime diagnostics. Large parts collapse with `(+N hidden)`/`(+N more)`: pass `ref` to expand one, or `query` to find elements by text or role.
+2. Use refs from the latest inspections with `codenomad.act`: `click`, `type` (replaces the field's text; `clear: false` appends) and `select` (native `<select>` options by label or value). Each result returns the field value or chosen options to check. Inspect again after navigation, reload or failed actions.
 3. Make the smallest source change and run the relevant typecheck, native test, or build. Automation does not own OpenCode: the shared `opencode2` daemon and this session remain alive if CodeNomad closes.
 4. After updated artifacts are ready, call `codenomad.act` with `action: "restart"`. The call gracefully relaunches the host pinned by the latest inspection, waits for the same artifact identity to reconnect to the OpenCode session, and returns a fresh inspection. It never switches to another worktree's build.
 5. Call `codenomad.screenshot` for final visual evidence and report the checks that ran.

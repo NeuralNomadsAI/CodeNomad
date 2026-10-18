@@ -25,11 +25,15 @@ const WINDOWS_INTEROP = Symbol("windowsInterop")
 let cachedWslWindowsLocalAppData: string | null | undefined
 
 export type DeveloperAction =
-  | { action: "inspect" }
+  | { action: "inspect"; ref?: string; query?: string }
   | { action: "click"; ref: string }
-  | { action: "type"; ref: string; text: string }
+  | { action: "type"; ref: string; text: string; clear: boolean }
+  | { action: "select"; ref: string; values: string[] }
   | { action: "restart" }
   | { action: "screenshot" }
+
+const MAX_SELECT_VALUES = 64
+const MAX_QUERY_LENGTH = 200
 
 export type BrowserAction =
   | { action: "open"; url: string }
@@ -229,7 +233,13 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
   if (!input || typeof input !== "object") throw new Error("Native automation input must be an object")
   const value = input as Record<string, unknown>
   switch (value.action) {
-    case "inspect":
+    case "inspect": {
+      if (value.ref !== undefined && typeof value.ref !== "string") throw new Error("inspect ref must be a ref from the latest inspection")
+      if (value.query !== undefined && (typeof value.query !== "string" || value.query.length > MAX_QUERY_LENGTH)) {
+        throw new Error(`inspect query must be text of at most ${MAX_QUERY_LENGTH} characters`)
+      }
+      return { action: "inspect", ...(value.ref ? { ref: value.ref } : {}), ...(value.query?.trim() ? { query: value.query } : {}) }
+    }
     case "restart":
     case "screenshot":
       return { action: value.action }
@@ -238,7 +248,14 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
       return { action: "click", ref: value.ref }
     case "type":
       if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
-      return { action: "type", ref: value.ref, text: value.text }
+      if (value.clear !== undefined && typeof value.clear !== "boolean") throw new Error("type clear must be true or false")
+      return { action: "type", ref: value.ref, text: value.text, clear: value.clear !== false }
+    case "select":
+      if (typeof value.ref !== "string" || !Array.isArray(value.values) || value.values.length > MAX_SELECT_VALUES
+        || !value.values.every(item => typeof item === "string")) {
+        throw new Error("select requires ref and values: the option labels or values to choose")
+      }
+      return { action: "select", ref: value.ref, values: value.values as string[] }
     default:
       throw new Error("Unsupported native automation action")
   }
@@ -436,8 +453,35 @@ function callWindowsBridge(
   })
 }
 
+interface InspectionResult {
+  target: { title: string; url: string }
+  context: { windowId: string; instanceId: string | null; sessionId: string | null }
+  snapshot: string
+  collapsed: number
+  diagnostics: Array<{ level: string; text: string }>
+}
+
+/** Plain text: an indented outline reads far cheaper than the same tree as indented JSON. */
+export function formatInspection(result: InspectionResult): string {
+  const { target, context } = result
+  const lines = [
+    `CodeNomad window ${context.windowId} · workspace ${context.instanceId ?? "none"} · conversation ${context.sessionId ?? "none"}`,
+    `${target.title} — ${target.url}`,
+    "",
+    result.snapshot,
+  ]
+  if (result.collapsed > 0) {
+    lines.push("", "Lines ending in (+N hidden) or (+N more) hide part of the page: inspect with a shown ref to expand it, or with query to find elements.")
+  }
+  if (result.diagnostics.length) lines.push("", "Runtime diagnostics:", ...result.diagnostics.map(item => `- ${item.level}: ${item.text}`))
+  return lines.join("\n")
+}
+
 function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured the connected CodeNomad build.", name: "codenomad.png" }) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
+  if (typeof result?.snapshot === "string" && result.target && result.context && Array.isArray(result.diagnostics)) {
+    return { content: formatInspection(result as unknown as InspectionResult) }
+  }
   if (result?.image) {
     const content = [
       { type: "text", text: screenshot.text },
@@ -598,20 +642,30 @@ export function createDeveloperToolTransform() {
   return (draft: Pick<ToolDraft, "add">) => {
     draft.add({
       name: "inspect",
-      description: "Inspect the accessibility tree, runtime feedback, and visible session in the connected CodeNomad desktop build.",
-      input: { type: "object", properties: {}, additionalProperties: false },
-      options: { namespace: "codenomad", codemode: false },
-      execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "inspect" }),
-    })
-    draft.add({
-      name: "act",
-      description: "Click or type using a ref from the latest codenomad.inspect result, or gracefully relaunch CodeNomad and wait for reconnection.",
+      description: "Inspect the connected CodeNomad desktop build: an indented accessibility outline with element refs, runtime diagnostics and the visible conversation. Large parts are collapsed and say so; pass ref to expand one element's subtree, or query to keep only elements whose text or role matches, with their ancestors.",
       input: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["click", "type", "restart"] },
+          ref: { type: "string", description: "Expand only this element's subtree (a ref from the latest inspection)" },
+          query: { type: "string", description: "Keep only elements whose name, value, description or role contains this text" },
+        },
+        additionalProperties: false,
+      },
+      options: { namespace: "codenomad", codemode: false },
+      execute: (input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID,
+        parseDeveloperAction({ ...(input && typeof input === "object" ? input : {}), action: "inspect" })),
+    })
+    draft.add({
+      name: "act",
+      description: "Act on a ref from the latest codenomad.inspect: click it, type into a field (replacing its text unless clear is false), or select native <select> options by label or value. restart gracefully relaunches CodeNomad and waits for reconnection.",
+      input: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["click", "type", "select", "restart"] },
           ref: { type: "string", description: "Element ref from the latest inspection" },
           text: { type: "string", description: "Text for type" },
+          clear: { type: "boolean", description: "type only: replace the field's current text (default true); false appends" },
+          values: { type: "array", items: { type: "string" }, description: "select only: option labels or values to choose; one for an ordinary select" },
         },
         required: ["action"],
         additionalProperties: false,

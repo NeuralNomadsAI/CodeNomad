@@ -29,6 +29,7 @@ test("targets the inspected window independently of the visible conversation", a
   let runId = "run-1"
   let visibleSession = "session-1"
   let inspectedIdentity: unknown
+  const inspectOptions: unknown[] = [], actions: Array<Record<string, unknown>> = []
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
@@ -56,19 +57,23 @@ test("targets the inspected window independently of the visible conversation", a
         assert.equal(identity.sessionId, undefined)
         return { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession }
       },
-      inspect: async (identity: unknown) => {
+      inspect: async (identity: unknown, options: unknown) => {
         inspectedIdentity = identity
+        inspectOptions.push(options)
         return {
           target: { id: "page-1", title: "CodeNomad", url: "http://app.test/" },
           context: { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession },
-          nodes: [],
+          snapshot: "- button \"Save\" [e1]",
+          collapsed: 0,
           diagnostics: [],
         }
       },
       close: () => undefined,
-      act: async (identity: { sessionId?: string; instanceId?: string }) => {
+      act: async (identity: { sessionId?: string; instanceId?: string; kind: string; values?: string[] }) => {
         assert.equal(identity.sessionId, undefined)
         assert.equal(identity.instanceId, undefined)
+        actions.push(identity)
+        return identity.kind === "select" ? { selected: identity.values } : {}
       },
     },
     workspaceManager: {
@@ -97,6 +102,13 @@ test("targets the inspected window independently of the visible conversation", a
 
   visibleSession = "session-2"
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "click", ref: "ax1" } })).statusCode, 200)
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect", ref: "e1", query: "Save" } })).statusCode, 200)
+  assert.deepEqual(inspectOptions, [{ ref: undefined, query: undefined }, { ref: "e1", query: "Save" }])
+  const selected = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "select", ref: "e2", values: ["Exploration"] } })
+  assert.deepEqual(selected.json(), { result: { ok: true, selected: ["Exploration"] } })
+  await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "type", ref: "e3", text: "x", clear: false } })
+  assert.deepEqual(actions.map(action => [action.kind, action.ref, action.clear ?? action.values]),
+    [["click", "ax1", undefined], ["select", "e2", ["Exploration"]], ["type", "e3", false]])
 
   const restart = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })
   assert.equal(restart.statusCode, 200)

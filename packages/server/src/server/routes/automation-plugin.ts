@@ -204,7 +204,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         return reply.send({ result })
       }
       if (command.action === "inspect") {
-        const result = await deps.developerCdp.inspect(identity)
+        const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
         inspectedTargets.remember(body.sessionID, identity)
         return reply.send({ result })
       }
@@ -212,10 +212,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         const image = await deps.developerCdp.screenshot(identity)
         return reply.send({ result: { image: { data: image.data, mime: image.mediaType } } })
       }
-      await deps.developerCdp.act(command.action === "type"
-        ? { ...identity, kind: "type", ref: command.ref, text: command.text }
+      const result = await deps.developerCdp.act(command.action === "type"
+        ? { ...identity, kind: "type", ref: command.ref, text: command.text, clear: command.clear }
+        : command.action === "select" ? { ...identity, kind: "select", ref: command.ref, values: command.values }
         : { ...identity, kind: "click", ref: command.ref })
-      return reply.send({ result: { ok: true } })
+      return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }

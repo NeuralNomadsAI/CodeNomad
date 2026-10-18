@@ -18,6 +18,16 @@ Browser previews are an ordinary desktop feature. They must work in user project
 
 The bridge remains loopback-only, token-authenticated, bounded, and session-location gated. The removed V1 plugin runtime and browser-specific bridge routes are not part of this design.
 
+## Page engine
+
+`codenomad.inspect` and `codenomad.act` (the CodeNomad window) run on the shared page engine in `packages/server/src/automation/page/`, which only needs a DevTools protocol channel: `snapshot.ts` renders the accessibility tree, `actions.ts` acts through fixed page functions, and `refs.ts` names DOM nodes. Browser-preview tools still use their native controllers.
+
+- Inspection is an indented outline with refs, read as plain text. Wrappers, unnamed images and text repeating its parent's name are dropped; fields show their value instead of their inner nodes; native selects list their options with `selected`/`disabled`. A character budget (32 000 by default) is shared among siblings: small parts stay whole while large ones collapse in place with `(+N hidden)` or `(+N more)`, keeping their first and last items, so nothing is cut silently. `ref` expands one subtree and `query` keeps matching elements (name, value, description or role) with their contents and ancestors.
+- A ref names one node within one target, run and navigation epoch, and keeps its name across inspections of that page. A full inspection keeps only the refs it shows; scoped ones add to them.
+- `type` replaces a field's text by default (select, then native text insertion, so framework input handlers fire); `clear: false` appends. Date, time, range and color inputs are set and dispatch `input`/`change`. `select` picks native `<select>` options by label, else value, and dispatches `input`/`change` only when the choice changes; clicking an option ref picks it. Results return the field value (passwords masked) or the chosen labels.
+- Trust rule: in the CodeNomad window every page-side action runs under `__codenomadAutomationDepth` and clicks stay programmatic, so automation never produces the dock interaction a human Form answer requires (`packages/ui/src/lib/form-answer-interaction.ts`). Never add trusted CDP mouse or keyboard input to the application window without that mark, and never expose arbitrary script evaluation there.
+- `packages/ui/tests/browser/automation-forms.test.ts` drives a real Chromium page and the real Mission editor through `DeveloperCdp`.
+
 ## September 2026 architecture decision
 
 The original beta-era MCP limitation is obsolete: current [OpenCode V2 MCP documentation](https://opencode.ai/v2/docs/mcp-servers#context) specifies `_meta.sessionID` for session-backed calls, including Code Mode. This metadata is correlation, not authorization. MCP is now a viable integration choice.
