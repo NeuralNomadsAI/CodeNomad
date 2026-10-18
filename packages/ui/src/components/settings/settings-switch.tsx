@@ -22,7 +22,7 @@ export const SettingsSwitch: Component<SettingsSwitchProps> = (props) => (
       "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--accent-primary)" },
       "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--accent-primary)" },
     }}
-    inputProps={{ "aria-label": props.label, "aria-describedby": props.describedBy }}
+    inputProps={{ role: "switch", "aria-label": props.label, "aria-describedby": props.describedBy }}
     onChange={(_event, checked) => props.onChange(Boolean(checked))}
   />
 )

@@ -1,5 +1,5 @@
 import toast from "solid-toast"
-import { createSignal } from "solid-js"
+import { createSignal, untrack } from "solid-js"
 import { tGlobal } from "./i18n"
 import { isTauriHost } from "./runtime-env"
 import { notificationTargets, type NotificationCategory } from "./notification-routing"
@@ -302,7 +302,7 @@ async function openExternalUrl(url: string): Promise<void> {
     window.open(url, "_blank", "noopener,noreferrer")
   } catch (error) {
     console.warn("[notifications] unable to open external url", error)
-    toast.error(tGlobal("toastHistory.openLinkError"))
+    showToastNotification({ category: "settings", message: tGlobal("toastHistory.openLinkError"), variant: "error" })
   }
 }
 
@@ -364,7 +364,7 @@ const noToast: ToastHandle = { id: "", dismiss: () => {} }
 /** System delivery is skipped while this window is visible unless the user allowed it. */
 function sendSystemNotification(payload: ToastPayload): void {
   if (typeof document === "undefined") return
-  if (!preferences().osNotificationsAllowWhenVisible && document.visibilityState === "visible") return
+  if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && document.visibilityState === "visible") return
   void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message }).catch((error) => {
     console.warn("[notifications] failed to send system notification", error)
   })
@@ -378,9 +378,10 @@ function sendSystemNotification(payload: ToastPayload): void {
  * @returns Toast handle (a no-op when no bubble is shown)
  */
 export function showToastNotification(payload: ToastPayload): ToastHandle {
+  // Untracked: an effect that notifies must not re-run whenever a setting changes.
   const targets = payload.transient
     ? { screen: true, history: false, system: false }
-    : notificationTargets(preferences().notificationRouting, payload.category, payload.variant)
+    : notificationTargets(untrack(() => preferences().notificationRouting), payload.category, payload.variant)
   if (targets.history) {
     addToToastHistory({
       title: payload.title,

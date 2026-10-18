@@ -35,9 +35,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * Unknown categories/destinations are dropped and missing ones use defaults.
- * Until routing is first saved, the former system settings keep their meaning:
+ * Until routing is first saved, saved former system settings keep their meaning:
  * an explicitly disabled system switch leaves the whole system column off, and
- * the per-event toggles still apply to the two session events.
+ * the per-event toggles still apply to the two session events. A switch that was
+ * never saved takes the new defaults (a product decision: upgrades get the same
+ * System column as new installations, although the old switch defaulted to off).
  */
 export function normalizeNotificationRouting(
   value: unknown,

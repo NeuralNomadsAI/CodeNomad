@@ -211,32 +211,32 @@ test("each preference choice saves at once; edits made during a write keep focus
   } finally { release(); await page.close() }
 })
 
-test("a rejected choice is not resent: later edits built on it are dropped and the stored values show again", async () => {
+test("a rejected choice is not resent: an edit made from it is refused, an independent one still applies to the stored values", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   let release!: () => void
   const hold = new Promise<void>(resolve => { release = resolve })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
-    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
+    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true }), scope = page.locator(".mission-preferences-scope select")
     await page.route("**/api/storage/config/ui*", async route => { if (route.request().method() !== "GET") await hold; return route.fallback() })
     await mode.selectOption("independent")
-    await page.locator(".mission-preferences-scope select").selectOption("debug")
+    await mode.selectOption("native")
+    await scope.selectOption("debug")
     await mode.selectOption("native")
     // Another window changes the document before the held write reaches the server.
-    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionProfileDefaults: [{ template: "wayfinder", profiles: {}, taskMode: "independent" }] } })
+    const other = { template: "wayfinder", profiles: {}, taskMode: "independent" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionProfileDefaults: [other] } })
     release()
+    await waitForWrites(page, fixture, 1)
     await page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") }).waitFor()
-    await page.waitForFunction(() => window.missionDefaultsModels.loaded())
-    assert.equal(fixture.writes.length, 0, "the conflict is rejected and the queued edit is never sent")
-    assert.equal(await mode.inputValue(), "inherit", "the stored value replaces the dropped edit")
-    await page.locator(".mission-preferences-scope select").selectOption("wayfinder")
+    assert.deepEqual(fixture.writes.map(write => write.settings.missionProfileDefaults), [[other, { template: "debug", profiles: {}, taskMode: "native" }]],
+      "the rejected global choice and the one made from it are never sent; the Debugging choice applies on top of the other window's")
+    assert.equal(await mode.inputValue(), "native")
+    await scope.selectOption("all")
+    assert.equal(await mode.inputValue(), "native", "the global value is the stored one")
+    await scope.selectOption("wayfinder")
     assert.equal(await mode.inputValue(), "independent")
-    await page.locator(".mission-preferences-scope select").selectOption("delivery")
-    await mode.selectOption("native")
-    await page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") }).waitFor({ state: "hidden" })
-    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionProfileDefaults.some(item => item.template === "delivery"))
-    assert.equal(fixture.writes.length, 1)
     assert.deepEqual(fixture.errors, [])
   } finally { release(); await page.close() }
 })
@@ -455,6 +455,54 @@ test("a mission type's rows show the inherited global values, customize from the
     assert.equal(await agent.evaluate(element => element === document.activeElement), true, "focus stays in the row after its revert button leaves")
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
     assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("queued agent/model edits touch only their role and are refused when that stored role changed since they were made", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    await page.locator(".mission-preferences-scope select").selectOption("debug")
+    await openSettingsProfiles(page)
+    const implementer = page.getByLabel("Implementer · Agent", { exact: true }), validator = page.getByLabel("Fresh validator · Agent", { exact: true })
+    await implementer.locator('option[value="child"]').waitFor({ state: "attached" })
+    await page.route("**/api/storage/config/ui*", async route => { if (route.request().method() !== "GET") await hold; return route.fallback() })
+    await implementer.selectOption("child")
+    await implementer.selectOption("all")
+    await validator.selectOption("child")
+    // Another window customizes the validator before the held write reaches the server.
+    const other = { template: "debug", profiles: { roles: { validator: { agent: "all" } } } }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionProfileDefaults: [other] } })
+    release()
+    await page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") }).waitFor()
+    await page.waitForFunction(() => window.missionDefaultsModels.loaded()
+      && document.querySelector<HTMLSelectElement>('select[aria-label="Fresh validator · Agent"]')?.value === "all")
+    assert.equal(await implementer.inputValue(), "", "the rejected choice and the one made from it are gone")
+    assert.equal(fixture.writes.length, 0, "no queued edit overwrites the other window's change or resends the rejected one")
+    assert.deepEqual(fixture.bucket().settings.missionProfileDefaults, [other])
+    await implementer.selectOption("child")
+    await waitForWrites(page, fixture, 1)
+    assert.deepEqual(fixture.writes[0].settings.missionProfileDefaults,
+      [{ template: "debug", profiles: { roles: { validator: { agent: "all" }, implementer: { agent: "child" } } } }], "an edit of one role keeps the others")
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
+})
+
+test("Settings info tips open on tap for touch screens", async () => {
+  const page = await browser.newPage({ locale: "en-US", hasTouch: true })
+  try {
+    await setup(page)
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    const tip = page.locator(".mission-preferences-scope .settings-info-tip"), content = page.locator(".section-info-tooltip")
+    await tip.tap()
+    await content.filter({ hasText: await text(page, "missions.defaults.priority") }).waitFor()
+    assert.equal(await page.locator(".mission-preferences-scope select").evaluate(element => element === document.activeElement), false, "the tap never activates the row's control")
+    await tip.tap()
+    await content.waitFor({ state: "hidden" })
   } finally { await page.close() }
 })
 

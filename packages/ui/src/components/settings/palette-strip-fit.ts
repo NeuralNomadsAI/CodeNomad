@@ -25,8 +25,10 @@ export function observePaletteStripFit(workbench: HTMLElement, actions: HTMLElem
   const observer = new ResizeObserver(measure)
   observer.observe(workbench)
   observer.observe(actions)
-  // Buttons appear and disappear with edits without always resizing the row.
+  // Buttons appear and disappear with edits without always resizing the row, and the
+  // strip itself may mount after the first measurement (once settings have loaded).
   const mutations = new MutationObserver(measure)
   mutations.observe(actions, { childList: true })
+  mutations.observe(workbench, { childList: true, subtree: true })
   onCleanup(() => { observer.disconnect(); mutations.disconnect() })
 }

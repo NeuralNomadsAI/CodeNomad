@@ -254,9 +254,15 @@ unrelated fields. This prevents renderer lost updates, but is not a cross-proces
 filesystem lock against an OS writer between read and atomic replacement.
 Intervening UI events make save acknowledgement ordering ambiguous: reconcile through
 at most three fresh bounded owner reads, never another write. A successfully accepted
-but unreconciled save stays explicitly pending and creation remains fenced until
-an explicit reload succeeds. Earlier GETs/ACKs never substitute stale cached defaults
-as authoritative creation input.
+but unreconciled save leaves creation fenced until a reload succeeds: Settings issues
+one read-only reload by itself and offers an explicit Reload only if that read fails,
+while the creation form and the saved-brief library keep their explicit Reload.
+Earlier GETs/ACKs never substitute stale cached defaults as authoritative creation input.
+
+Settings saves each defaults choice at once. Edits made during a write queue behind it,
+each applied to the document stored at its turn and compared against it; a role or
+task-session edit is refused when that stored value is no longer the one it was made
+from, so it never overwrites another window's change or resends a rejected edit.
 
 ### Parallel workstreams and context reuse
 

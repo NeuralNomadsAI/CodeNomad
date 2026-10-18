@@ -92,7 +92,7 @@ async function openPreferences(host: "electron" | "tauri") {
   return { page, errors }
 }
 
-const restore = (page: Page) => page.getByRole("checkbox", { name: "Restore previous state" })
+const restore = (page: Page) => page.getByRole("switch", { name: "Restore previous state" })
 const hostState = (page: Page) => page.evaluate(() => JSON.parse(JSON.stringify((window as any).fixtureHost)))
 const refocus = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("focus")))
 

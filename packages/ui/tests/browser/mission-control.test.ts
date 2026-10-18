@@ -348,14 +348,54 @@ test("Delegation depth reads only on demand, saves zero/inherit on Enter without
     assert.equal(await input.evaluate(element => element === document.activeElement), true, "saving keeps keyboard focus in the field")
     assert.deepEqual(mutations[0].body, { location: { directory: "fixture" }, depth: 0, expectation: "original-file" })
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+    // Typing then pressing Inherit inherits; leaving the field for the button does not save the typed value first.
+    await input.fill("3")
     await controls.getByRole("button", { name: "Inherit", exact: true }).click()
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "")
     await until(() => mutations.length === 2)
+    await page.waitForTimeout(100)
+    assert.equal(mutations.length, 2, "the abandoned typed value is never written")
     assert.equal(mutations[1].body.depth, null)
     assert.equal(mutations[1].body.expectation, "saved-1")
     assert.ok(mutations.every(item => item.url.includes("/subagent-depth")))
     assert.deepEqual(errors, [])
   } finally { await page.close() }
+})
+
+test("a depth write acknowledged after leaving Settings is accepted and reread on return, and Escape discards an unsaved value", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let reads = 0, writes = 0, depth: number | null = 1, expectation = "e1", release!: () => void, reached!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", async route => {
+      if (route.request().method() === "GET") {
+        reads++
+        return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 }, effectiveDepth: depth,
+          project: { path: "fixture/opencode.jsonc", depth, expectation } } })
+      }
+      writes++; reached(); await hold
+      depth = route.request().postDataJSON().depth; expectation = "e2"
+      return route.fulfill({ status: 204, body: "" })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await openMissionSettings(page)
+    const input = page.locator(".mission-depth input")
+    await page.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
+    await input.fill("4"); await input.press("Escape")
+    assert.equal(await input.inputValue(), "1", "Escape restores the saved value")
+    assert.equal(await page.locator(".settings-screen-shell").count(), 1, "and keeps Settings open")
+    await input.fill("2"); await input.press("Enter"); await started
+    await closeMissionSettings(page)
+    release()
+    await until(() => depth === 2)
+    await openMissionSettings(page)
+    await page.getByText("OpenCode effective depth: 2", { exact: true }).waitFor()
+    assert.equal(await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).count(), 0)
+    assert.equal(await input.isEditable(), true)
+    assert.equal(writes, 1); assert.equal(reads, 2, "the acknowledged write is reread once the section is visible again")
+  } finally { release(); await page.close() }
 })
 
 test("visible clean depth revalidates after config and connection changes while hidden, dirty and uncertain states stay fenced", async () => {

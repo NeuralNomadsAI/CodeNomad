@@ -145,7 +145,7 @@ test("server-supported subscription integrations beyond OpenAI offer automatic s
   })
   try {
     await page.goto(`${url}?integration=opencode-go`)
-    const toggle = page.getByRole("checkbox", { name: "Auto-select account" })
+    const toggle = page.getByRole("switch", { name: "Auto-select account" })
     await toggle.waitFor()
     assert.match(await page.locator(".provider-account-auto").getAttribute("title") ?? "", /subscription account's quota/)
     assert.doesNotMatch(await page.locator(".provider-account-auto").getAttribute("title") ?? "", /Codex|OAuth/)
@@ -202,7 +202,7 @@ test("dropdown design simulates opt-in rotation and hides the option for one acc
     assert.equal(await page.evaluate(() => (window as any).accountsPreview.used().personal), 100)
     assert.equal(await select.inputValue(), "credential:personal")
     await page.goto(`${design}?auto`)
-    await page.getByRole("checkbox", { name: "Sélection automatique du compte" }).waitFor()
+    await page.getByRole("switch", { name: "Sélection automatique du compte" }).waitFor()
     for (const id of ["work", "spare", "spare"]) {
       await page.getByRole("button", { name: "Simuler 100 %" }).click()
       await page.waitForFunction(expected => (window as any).accountsPreview.rows()[0].id === expected, id)
@@ -211,7 +211,7 @@ test("dropdown design simulates opt-in rotation and hides the option for one acc
     await page.goto(`${design}?single`)
     await select.waitFor()
     assert.equal(await select.locator("option").count(), 1)
-    assert.equal(await page.getByRole("checkbox", { name: "Sélection automatique du compte" }).count(), 0)
+    assert.equal(await page.getByRole("switch", { name: "Sélection automatique du compte" }).count(), 0)
     await page.setViewportSize({ width: 390, height: 800 })
     assert.equal(await page.locator(".providers-accounts-list").evaluate(el => el.scrollWidth <= el.clientWidth), true)
     assert.deepEqual(errors, [])
@@ -223,7 +223,7 @@ test("production auto-selection control persists opt-in and never replays a fail
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url.replace("/fixture", "/design"))
-    const toggle = page.getByRole("checkbox", { name: "Sélection automatique du compte" })
+    const toggle = page.getByRole("switch", { name: "Sélection automatique du compte" })
     await toggle.waitFor()
     assert.equal(await toggle.isChecked(), false)
     await toggle.check()

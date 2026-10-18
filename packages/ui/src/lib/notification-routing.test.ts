@@ -30,6 +30,10 @@ describe("notification routing", () => {
     assert.equal(perEvent.needsInput.system, false)
     assert.equal(perEvent.sessionDone.system, true)
     assert.equal(perEvent.updates.system, true)
+    // Product decision: a former switch that was never saved (its old default was off)
+    // takes the new defaults, so upgrades get the System column like new installations.
+    const neverSaved = normalizeNotificationRouting(undefined, {})
+    assert.deepEqual(neverSaved, defaultNotificationRouting)
     // Once routing exists, the former switch no longer applies.
     const saved = normalizeNotificationRouting({ updates: { system: true } }, { osNotificationsEnabled: false })
     assert.equal(saved.updates.system, true)

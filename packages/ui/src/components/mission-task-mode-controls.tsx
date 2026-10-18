@@ -1,9 +1,9 @@
-import { Show, createUniqueId, type JSX } from "solid-js"
+import { Show, createUniqueId } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import type { MissionTaskMode } from "../lib/mission-defaults"
 
 /** A requested policy for new Mission tasks, not a global subagent setting. */
-export function MissionTaskModeControls(props: { value?: MissionTaskMode; disabled: boolean; onChange: (value: MissionTaskMode) => void; onInherit?: () => void; inheritLabel?: string; children?: JSX.Element }) {
+export function MissionTaskModeControls(props: { value?: MissionTaskMode; disabled: boolean; onChange: (value: MissionTaskMode) => void; onInherit?: () => void; inheritLabel?: string }) {
   const { t } = useI18n(), description = createUniqueId()
   return <fieldset class="mission-delegation">
     <legend>{t("missions.taskMode.title")}</legend>
@@ -14,6 +14,5 @@ export function MissionTaskModeControls(props: { value?: MissionTaskMode; disabl
       <option value="independent" selected={props.value === "independent"}>{t("missions.taskMode.independent")}</option>
     </select></label>
     <span id={description} class="sr-only">{t("missions.taskMode.hint")}</span>
-    {props.children}
   </fieldset>
 }

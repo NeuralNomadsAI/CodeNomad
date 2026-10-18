@@ -1,6 +1,5 @@
 /* Shared Mission editor controls (creation form and Settings). */
 .mission-profiles { margin-block: var(--space-sm); }
-.mission-profiles h4 { margin: 0; font-size: var(--font-size-sm); font-weight: 600; }
 .mission-profile-summary { color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .mission-profile-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-xs); border: 0; padding: 0; margin: var(--space-sm) 0; min-width: 0; }
 .mission-profile-row legend { padding: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
@@ -23,21 +22,23 @@
 /* Settings > Missions (MissionPreferences only renders there): the rubric's
    row anatomy without card chrome. Three groups: defaults, Location depth and
    saved briefs; each row puts its label left and its control in one column. */
-.mission-preferences { --mission-row-divider: var(--border-row); min-width: 0; font-size: var(--font-size-sm); }
+.mission-preferences { min-width: 0; font-size: var(--font-size-sm); }
 .mission-preferences p { margin: var(--space-xs) 0 0; overflow-wrap: anywhere; }
 .mission-preferences :is(.mission-depth, .mission-model-library) { margin-block-start: var(--space-lg); padding-block-start: var(--space-lg); border-block-start: 1px solid var(--border-base); }
 .mission-preferences > header, .mission-preferences :is(.mission-depth, .mission-model-library) > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs) var(--space-md); margin-block-end: var(--space-sm); }
 .mission-preferences > header h4, .mission-preferences :is(.mission-depth, .mission-model-library) > header h4 { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }
+/* The depth title keeps its info tip beside it, outside the heading's accessible name. */
+.mission-preferences .mission-depth > header { justify-content: flex-start; gap: var(--space-xs); }
 .mission-preferences .mission-model-library > header select { flex: 0 1 20rem; min-width: 12rem; }
 .mission-preferences :is(.mission-preferences-scope, .mission-delegation > label, .mission-depth > label) {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 20rem); align-items: center; gap: var(--space-md);
-  min-width: 0; margin: 0; padding-block: var(--space-sm); border-block-start: 1px solid var(--mission-row-divider);
+  min-width: 0; margin: 0; padding-block: var(--space-sm); border-block-start: 1px solid var(--border-row);
   color: var(--text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
 }
 .mission-preferences > header + .mission-preferences-scope { border-block-start: 0; padding-block-start: 0; }
 .mission-preferences :is(.mission-profile-summary, .mission-depth-effective, .mission-depth-path) { color: var(--text-muted); font-size: var(--font-size-xs); }
 /* One fold for every agent/model choice; its summary keeps the current request visible. */
-.mission-preferences .mission-profiles-disclosure { margin-block-start: var(--space-sm); padding-top: var(--space-sm); border-top-color: var(--mission-row-divider); }
+.mission-preferences .mission-profiles-disclosure { margin-block-start: var(--space-sm); padding-top: var(--space-sm); border-top-color: var(--border-row); }
 .mission-preferences .mission-profiles-disclosure > summary .mission-profile-summary { margin-inline-start: var(--space-sm); font-weight: var(--font-weight-regular); }
 .mission-preferences .mission-profiles-disclosure .mission-profiles { margin: 0; padding-block-start: 0; border-block-start: 0; }
 .mission-preferences .mission-depth-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-block: 0 var(--space-xs); }
@@ -48,13 +49,13 @@
   color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-base); border-radius: 0;
   font: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); text-overflow: ellipsis;
 }
+/* What users type into takes the field surface; selects keep the control surface. */
+.mission-preferences input { background: var(--surface-field); }
 .mission-preferences :is(select, input):focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .mission-preferences :is(select, input):disabled { opacity: 0.5; cursor: not-allowed; }
 /* The delegation row names itself; its fieldset legend stays for assistive technology. */
 .mission-preferences .mission-delegation { margin: 0; padding: 0; border: 0; }
 .mission-preferences .mission-delegation > legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.mission-preferences .mission-profiles { margin: var(--space-sm) 0 0; padding-block-start: var(--space-sm); border-block-start: 1px solid var(--mission-row-divider); }
-.mission-preferences .mission-profiles > h4 { margin-block-end: var(--space-xs); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .mission-preferences .mission-profile-row { gap: var(--space-sm); margin: 0; padding-block: var(--space-sm); }
 .mission-preferences .mission-profile-row > legend { display: flex; align-items: center; gap: var(--space-sm); min-height: var(--touch-target-size-compact); margin-block-end: var(--space-xs); font-weight: var(--font-weight-medium); }
 /* A mission type's role either inherits the global values (muted mark) or is customized (revert icon). */
@@ -68,15 +69,12 @@
 .mission-preferences .mission-profile-revert:disabled { opacity: 0.5; cursor: not-allowed; }
 .mission-preferences .mission-profile-revert > svg { width: 0.875rem; height: 0.875rem; }
 .mission-preferences .mission-profile-row > label { display: grid; gap: var(--space-xs); margin: 0; color: var(--text-muted); font-weight: var(--font-weight-regular); }
-.mission-preferences .mission-profile-optional { margin: var(--space-xs) 0 0; padding-block-start: var(--space-sm); border-block-start: 1px solid var(--mission-row-divider); }
 .mission-preferences :is(.mission-preferences-actions, .mission-depth .window-actions, .mission-model-library .window-actions) { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-block: var(--space-md) 0; }
 .mission-preferences .mission-profiles-disclosure > .mission-preferences-actions { margin-block: var(--space-sm) 0; }
-/* Settings has two button styles: accent for the group's main action, control grey for the rest. */
 .mission-preferences .window-action { flex: 0 1 auto; min-width: 0; min-height: var(--control-height); padding-inline: var(--space-md); background: var(--surface-control); color: var(--text-primary); font-size: var(--font-size-sm); }
-.mission-preferences .window-action:hover:not(:disabled) { background: var(--surface-interactive-hover); }
-.mission-preferences .window-action.button-primary { background: var(--accent-primary); border-color: var(--accent-primary); color: var(--text-on-accent); }
-.mission-preferences .window-action.button-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-.mission-preferences .window-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.mission-preferences .window-action:hover:not(:disabled, [aria-disabled="true"]) { background: var(--surface-interactive-hover); }
+/* aria-disabled keeps a temporarily inert button focusable while a read or write runs. */
+.mission-preferences .window-action:is(:disabled, [aria-disabled="true"]) { opacity: 0.5; cursor: not-allowed; }
 .mission-preferences .window-action.mission-icon-action { display: inline-flex; align-items: center; justify-content: center; padding-inline: var(--space-sm); }
 .mission-preferences .mission-icon-action > svg { width: 1rem; height: 1rem; }
 @media (max-width: 640px) {

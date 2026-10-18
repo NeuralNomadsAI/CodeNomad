@@ -46,10 +46,8 @@ async function sendWebNotification(payload: OsNotificationPayload): Promise<void
     throw new Error("Web notifications not supported")
   }
 
-  // Browsers generally require permission prior to sending.
-  if (getWebPermission() !== "granted") {
-    throw new Error("Web notification permission not granted")
-  }
+  // Routed notifications wait for permission: until it is granted nothing is sent, silently.
+  if (getWebPermission() !== "granted") return
 
   // eslint-disable-next-line no-new
   new (window as any).Notification(payload.title, { body: payload.body })

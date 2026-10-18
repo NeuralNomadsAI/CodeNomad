@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { changeMissionProfile, changeProfileModel, legalProfileAgents, modelSelectionKey, profilesForTemplate } from "./mission-profile-controls-data"
+import { changeMissionProfile, changeProfileModel, legalProfileAgents, modelSelectionKey, profilesForTemplate, setMissionProfileRole } from "./mission-profile-controls-data"
 import { missionMessages as en } from "../lib/i18n/messages/en/missions"
 import { missionMessages as de } from "../lib/i18n/messages/de/missions"
 import { missionMessages as es } from "../lib/i18n/messages/es/missions"
@@ -41,9 +41,19 @@ test("profile edits preserve other roles and explicit template switch preserves 
   assert.deepEqual(changeMissionProfile(b, "review-standards", {}), a)
 })
 
-test("all ten locale bundles own all twenty-five profile labels without English fallback", () => {
+test("a mission type's role choice keeps explicit native distinct from inherit and leaves other roles alone", () => {
+  const base = { coordinator: { agent: "root" }, roles: { validator: { agent: "child" } } }
+  assert.deepEqual(setMissionProfileRole(base, "implementer", {}), { ...base, roles: { validator: { agent: "child" }, implementer: {} } }, "all-native stays an override")
+  assert.deepEqual(setMissionProfileRole(base, "coordinator", {}), { coordinator: {}, roles: base.roles })
+  assert.deepEqual(setMissionProfileRole(base, "validator", undefined), { coordinator: { agent: "root" } }, "undefined inherits again")
+  assert.equal(setMissionProfileRole({ coordinator: {} }, "coordinator", undefined), undefined)
+  // Empty fields left by a select are not stored.
+  assert.deepEqual(setMissionProfileRole(undefined, "validator", { agent: undefined, model: { providerID: "p", id: "m" } }), { roles: { validator: { model: { providerID: "p", id: "m" } } } })
+})
+
+test("all ten locale bundles own all twenty-four profile labels without English fallback", () => {
   const keys = Object.keys(en).filter(key => key.startsWith("missions.control.profiles."))
-  assert.equal(keys.length, 25)
+  assert.equal(keys.length, 24)
   const locales = { en, de, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
   for (const [locale, bundle] of Object.entries(locales)) for (const key of keys) {
     assert.ok(Object.prototype.hasOwnProperty.call(bundle, key), `${locale} owns ${key}`)

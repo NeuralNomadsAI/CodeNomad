@@ -75,7 +75,8 @@ function createMissionModelActions(props: LibraryProps) {
     <Show when={pending()}><p role="status">{t("missions.control.mutation.pending")}</p></Show>
     <Show when={failed()}><p role="alert">{t("missions.models.error")}</p></Show>
     <Show when={reconciliationPending()}><p role="alert">{t("missions.defaults.reconciliationPending")}</p></Show>
-    <Show when={failed() || reconciliationPending()}>
+    {/* An unreadable library already offers its own Reload beside the repair. */}
+    <Show when={(failed() || reconciliationPending()) && !(config.isUiConfigLoaded() && !config.missionModelsValid())}>
       <button type="button" class="window-text-button" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
         disabled={pending() || !active()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
     </Show>

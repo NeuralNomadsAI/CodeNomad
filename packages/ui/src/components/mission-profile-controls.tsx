@@ -21,7 +21,10 @@ export function MissionProfileControls(props: {
   taskMode?: MissionTaskMode
   /** Settings, mission type scope: the global choices each role inherits until it is customized. */
   inherited?: MissionProfiles
-  onChange: (profiles: MissionProfiles | undefined) => void
+  /** Creation: the whole edited request. */
+  onChange?: (profiles: MissionProfiles | undefined) => void
+  /** Settings: one role's new choice (`undefined` inherits again), so each saved edit touches only that role. */
+  onRoleChange?: (role: string, execution: MissionExecution | undefined) => void
 }) {
   const { t } = useI18n()
   const [catalog, setCatalog] = createSignal<{ key: string; agents: ProfileAgent[]; models: ProfileModel[] }>()
@@ -81,7 +84,8 @@ export function MissionProfileControls(props: {
   /** Without an inherited layer an empty choice is simply omitted (native default). */
   const update = (role: string, execution: MissionExecution | undefined) => {
     if (props.disabled || !props.active()) return
-    props.onChange(props.inherited ? setMissionProfileRole(props.profiles, role, execution) : changeMissionProfile(props.profiles, role, execution ?? {}))
+    if (props.onRoleChange) return props.onRoleChange(role, execution)
+    props.onChange?.(props.inherited ? setMissionProfileRole(props.profiles, role, execution) : changeMissionProfile(props.profiles, role, execution ?? {}))
   }
   const row = (role: string) => {
     let fieldset: HTMLFieldSetElement | undefined
@@ -97,7 +101,8 @@ export function MissionProfileControls(props: {
       // The revert button disappears with the customization; keep keyboard focus in the row.
       queueMicrotask(() => fieldset?.querySelector("select")?.focus())
     }
-    return <fieldset ref={fieldset} class="mission-profile-row" disabled={props.disabled}>
+    return <fieldset ref={fieldset} class="mission-profile-row" disabled={props.disabled}
+      aria-description={props.inherited && !customized() ? t("missions.defaults.fromGlobalHint", { all: t("missions.defaults.allPlaybooks") }) : undefined}>
       <legend>{label()}
         <Show when={props.inherited}>
           <Show when={customized()} fallback={<span class="mission-profile-origin"

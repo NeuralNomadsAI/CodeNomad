@@ -94,7 +94,7 @@ export const missionMessages = {
   "missions.taskMode.native": "Sous-agents natifs",
   "missions.taskMode.independent": "Sessions indépendantes",
   "missions.taskMode.hint": "Pour les tâches des nouvelles missions uniquement. Les tâches natives utilisent les agents subagent/all ; les tâches indépendantes, primary/all. Les aides internes restent soumises aux permissions et à la profondeur OpenCode.",
-  "missions.depth.title": "Profondeur d'imbrication des sous-sessions",
+  "missions.depth.title": "Profondeur d’imbrication des sous-sessions",
   "missions.depth.hint": "S’applique à toutes les conversations OpenCode du projet, pas seulement aux missions. Une valeur vide hérite. Chaque modification écrit seulement le fichier de configuration du projet, sans recharger OpenCode ni modifier les conversations en cours.",
   "missions.depth.unknown": "Profondeur OpenCode effective inconnue",
   "missions.depth.effective": "Profondeur OpenCode effective : {depth}",
