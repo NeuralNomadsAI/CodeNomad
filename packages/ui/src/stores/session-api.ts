@@ -1406,7 +1406,8 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
         log.warn("Failed to fetch built-in agent", { instanceId, agentId: id, error })
       }
     }))
-    const agentList = Array.from(agentsById.values()).sort((a, b) => a.id.localeCompare(b.id)).map((agent) => ({
+    // Native agent.list puts the resolved default first; creation uses that order.
+    const agentList = Array.from(agentsById.values()).map((agent) => ({
       id: agent.id,
       name: agent.name,
       description: agent.description || "",
