@@ -24,6 +24,20 @@ export function deriveMessageStatus(info: {
   return typeof completed === "number" && completed > 0 ? "complete" : "streaming"
 }
 
+/**
+ * Whether an assistant's text can still grow. OpenCode marks the model stream
+ * finished (`time.streamed`) before the step's tools exit and `time.completed`
+ * is set, so text is final as soon as it is streamed.
+ */
+export function isMessageTextStreaming(
+  status: MessageStatus,
+  time?: { streamed?: number } | null,
+): boolean {
+  if (status !== "streaming") return false
+  const streamed = time?.streamed
+  return !(typeof streamed === "number" && streamed > 0)
+}
+
 export function shouldShowGeneratingPlaceholder(
   hasContent: boolean,
   role: "user" | "assistant",

@@ -1,7 +1,18 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { deriveMessageStatus, getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "./message-status.ts"
+import { deriveMessageStatus, getUserMessageMenuState, isMessageTextStreaming, shouldShowGeneratingPlaceholder } from "./message-status.ts"
+
+describe("isMessageTextStreaming", () => {
+  it("treats text as final once the model stream ended, even while the step's tools still run", () => {
+    assert.equal(isMessageTextStreaming("streaming", {}), true)
+    assert.equal(isMessageTextStreaming("streaming", undefined), true)
+    assert.equal(isMessageTextStreaming("streaming", { streamed: 0 }), true)
+    assert.equal(isMessageTextStreaming("streaming", { streamed: 1720000000000 }), false)
+    assert.equal(isMessageTextStreaming("complete", {}), false)
+    assert.equal(isMessageTextStreaming("error", {}), false)
+  })
+})
 
 // This derivation is the single source of truth shared by the live SSE path
 // (session-events) and the REST snapshot path (session-api). It follows the

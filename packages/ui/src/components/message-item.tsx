@@ -14,7 +14,7 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 import { observeActionOverflow } from "./measured-action-overflow"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
-import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
+import { getUserMessageMenuState, isMessageTextStreaming, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 import { deleteMessageTechnicalParts } from "../stores/session-actions"
 import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
 import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
@@ -734,7 +734,7 @@ export default function MessageItem(props: MessageItemProps) {
                   instanceId={props.instanceId}
                   sessionId={props.sessionId}
                   messageId={props.record.id}
-                  streaming={props.record.status === "streaming"}
+                  streaming={isMessageTextStreaming(props.record.status, props.messageInfo?.time as { streamed?: number } | undefined)}
                   primaryUserTextPartId={primaryUserTextPartId()}
                   displayMetadataOverride={part.id === primaryUserTextPartId() ? primaryUserPromptDisplayMetadata() : undefined}
                   onRendered={props.onContentRendered}
