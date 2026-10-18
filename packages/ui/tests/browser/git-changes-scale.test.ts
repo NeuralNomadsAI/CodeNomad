@@ -21,7 +21,7 @@ const pathAt = (index: number) => `packages/app/src/module-${String(index).padSt
 const MOST_CHANGED = 2500
 
 // Timings run from the status response to the end of its synchronous work and of the following frame.
-type Measure = { added: number; removed: number; attributes: number; longTaskMs: number; scriptMs?: number; frameMs?: number; nodes: number; rows: number }
+type Measure = { added: number; removed: number; attributes: number; rowAttributes: number; longTaskMs: number; scriptMs?: number; frameMs?: number; nodes: number; rows: number }
 
 // Plain page script: tsx would wrap named page functions in an undefined `__name`.
 const inventoryScript = String.raw`(async () => {
@@ -56,10 +56,13 @@ const inventoryScript = String.raw`(async () => {
   // DOM nodes added/removed and attribute changes in the Changes body, plus main-thread long tasks.
   scale.measure = async (action, waitForStatus = true) => {
     const body = document.querySelector(".git-drop-zone").closest(".git-panel-body")
-    const counts = { added: 0, removed: 0, attributes: 0, longTaskMs: 0 }
+    const counts = { added: 0, removed: 0, attributes: 0, rowAttributes: 0, longTaskMs: 0 }
     const size = node => node instanceof Element ? 1 + node.getElementsByTagName("*").length : 1
     const observer = new MutationObserver(records => records.forEach(record => {
-      if (record.type === "attributes") counts.attributes++
+      if (record.type === "attributes") {
+        counts.attributes++
+        if (record.target.closest(".git-panel-file-row")) counts.rowAttributes++
+      }
       record.addedNodes.forEach(node => { counts.added += size(node) })
       record.removedNodes.forEach(node => { counts.removed += size(node) })
     }))
@@ -143,8 +146,8 @@ test("large inventories render bounded sections and refreshes only touch changed
       "an identical refresh publishes nothing")
     assert.deepEqual({ added: changed.added, removed: changed.removed }, { added: rowNodes, removed: rowNodes }, "only the changed row is replaced")
     assert.equal(await row(page, 1, pathAt(STAGED + 5)).locator("small").textContent(), `+${((STAGED + 5) % 50) + 1} −${(STAGED + 5) % 7}`)
-    assert.equal(click.added + click.removed, rowNodes, "selecting another row only drops the auto-selected row rendered beyond the bound")
-    assert.ok(click.attributes <= 6, `selection updates only the two affected rows (${click.attributes} attribute changes)`)
+    assert.equal(click.added + click.removed, 0, "selecting another row adds or removes no row: the auto-selected row beyond the bound is sticky")
+    assert.equal(click.rowAttributes, 6, "selection updates class, aria-pressed and aria-current of the two affected rows only")
     assert.equal(await row(page, 1, pathAt(STAGED + 6)).getAttribute("aria-current"), "true")
   } finally { await page.close() }
 })
@@ -228,85 +231,128 @@ test("ranges, staging, previews and drag keep working around the bound", async (
   } finally { await page.close() }
 })
 
-test("a pinned row keeps focus when it stops being pinned, and focus never falls to the document when it leaves", async () => {
+// Focus-sensitive checks use real keyboard and mouse input: scripted focus skips
+// the focusout/focusin sequence a real move goes through.
+const active = (page: Page) => page.evaluate(() => {
+  const element = document.activeElement
+  return { tag: element?.tagName, name: element?.tagName !== "BUTTON" ? null
+    : element.classList.contains("git-change-section-header") ? "header" : element.getAttribute("aria-label") ?? element.getAttribute("title") ?? element.textContent,
+  section: Array.from(document.querySelectorAll(".git-change-section")).findIndex(section => section.contains(element)) }
+})
+const stagedMore = { tag: "BUTTON", name: "Afficher 200 de plus", section: 0 }
+const eye = (page: Page, index: 0 | 1, path: string) => section(page, index).getByRole("button", { name: `Aperçu du fichier · ${path}`, exact: true })
+const updateEntries = (page: Page, script: string) => page.evaluate(script => (window as any).gitScale.measure(() => {
+  const scale = (window as any).gitScale
+  scale.entries = new Function("entries", script)(scale.entries)
+  ;(window as any).fixture.invalidate()
+}), script)
+// Preview an unstaged file and stage it: its staged row sorts beyond the bound, pinned by the preview.
+async function pinStaged(page: Page, path: string) {
+  await eye(page, 1, path).click()
+  await page.getByRole("button", { name: `Indexer le fichier · ${path}`, exact: true }).click()
+  await page.waitForFunction(path => (window as any).fixture.target()?.scope === "staged" && (window as any).fixture.target()?.path === path, path)
+  await row(page, 0, path).waitFor()
+}
+
+test("a row shown beyond the bound stays for real keyboard, mouse and menu use after its preview closes", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
-  const active = () => page.evaluate(() => {
-    const element = document.activeElement
-    return { tag: element?.tagName, name: element?.tagName !== "BUTTON" ? null : element.getAttribute("aria-label") ?? element.getAttribute("title") ?? element.textContent,
-      section: Array.from(document.querySelectorAll(".git-change-section")).findIndex(section => section.contains(element)) }
-  })
-  const eye = (index: 0 | 1, path: string) => section(page, index).getByRole("button", { name: `Aperçu du fichier · ${path}`, exact: true })
-  const stagedMore = { tag: "BUTTON", name: "Afficher 200 de plus", section: 0 }
-  // Preview an unstaged file and stage it: its staged row sorts beyond the bound, pinned by the preview.
-  const pinStaged = async (path: string) => {
-    await eye(1, path).click()
-    await page.getByRole("button", { name: `Indexer le fichier · ${path}`, exact: true }).click()
-    await page.waitForFunction(path => (window as any).fixture.target()?.scope === "staged" && (window as any).fixture.target()?.path === path, path)
-    await row(page, 0, path).waitFor()
-  }
   try {
     await openLargeInventory(page)
-    // The reported repro: the current row stays module-2500 while staged #701 is pinned only by its preview.
+    // The reported repro: staged #701 is pinned only by its preview; the current row stays module-2500.
     const previewed = pathAt(STAGED + 5)
-    await pinStaged(previewed)
+    await pinStaged(page, previewed)
     assert.equal(await rows(page, 0).count(), BOUND + 1)
     assert.equal(await row(page, 1, pathAt(MOST_CHANGED)).getAttribute("aria-current"), "true")
-    await eye(0, previewed).focus()
+    await eye(page, 0, previewed).focus() // setup only: reach the eye without selecting the row
     await page.keyboard.press("Enter")
     await page.waitForFunction(() => !(window as any).fixture.target())
-    assert.equal(await rows(page, 0).count(), BOUND + 1, "closing its preview keeps the focused row")
-    assert.deepEqual(await active(), { tag: "BUTTON", name: `Aperçu du fichier · ${previewed}`, section: 0 })
-    assert.equal(await eye(0, previewed).getAttribute("aria-pressed"), "false")
-    // Moving focus away releases the row.
-    await section(page, 0).locator(".git-change-hidden-rows-button").focus()
+    assert.equal(await eye(page, 0, previewed).getAttribute("aria-pressed"), "false")
+    assert.equal(await rows(page, 0).count(), BOUND + 1, "closing its preview keeps the row")
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: `Aperçu du fichier · ${previewed}`, section: 0 })
+    await page.keyboard.press("Tab")
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: `Retirer de l'index · ${previewed}`, section: 0 })
+    await page.keyboard.press("Shift+Tab")
+    await page.keyboard.press("Shift+Tab")
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: previewed, section: 0 })
+    for (let step = 0; step < 3; step++) await page.keyboard.press("Tab")
+    assert.deepEqual(await active(page), stagedMore, "Tab leaves the row for Show more")
+    assert.equal(await rows(page, 0).count(), BOUND + 1, "focus leaving never removes it")
+
+    // A real click selects it; the previous current row stays rendered as well.
+    await row(page, 0, previewed).click()
+    assert.equal(await row(page, 0, previewed).getAttribute("aria-current"), "true")
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: previewed, section: 0 })
+    assert.equal(await row(page, 1, pathAt(MOST_CHANGED)).count(), 1)
+
+    // Compact layout: the row's … menu opens and its stage action works; focus then moves to Show more.
+    await page.locator("aside").evaluate(element => { element.style.width = "160px"; element.style.minWidth = "0"; element.style.maxWidth = "none" })
+    const actions = section(page, 0).locator(`.git-panel-file-row[data-git-item-id="staged:${previewed}"] .file-row-actions`)
+    await row(page, 0, previewed).hover()
+    await page.waitForFunction(path => document.querySelector(`[data-git-item-id="staged:${path}"] .file-row-actions`)?.getAttribute("data-compact") === "true", previewed)
+    await actions.locator(".action-overflow-trigger").click()
+    await page.getByRole("menuitem", { name: `Retirer de l'index · ${previewed}` }).click()
+    await page.waitForFunction(path => (window as any).fixture.calls.some((call: any) => call.kind === "unstage" && call.path === path), previewed)
     await row(page, 0, previewed).waitFor({ state: "detached" })
-    assert.equal(await rows(page, 0).count(), BOUND)
-    assert.deepEqual(await active(), stagedMore)
+    assert.deepEqual(await active(page), stagedMore)
+  } finally { await page.close() }
+})
 
-    // Unstaging a focused pinned row moves it to the other section: focus goes to what replaces it, Show more.
-    const unstaged = pathAt(STAGED + 6)
-    await pinStaged(unstaged)
-    await section(page, 0).getByRole("button", { name: `Retirer de l'index · ${unstaged}`, exact: true }).focus()
+test("a focused row that leaves the list hands focus to a neighbour row or the section, never the commit box", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await openLargeInventory(page)
+    // A refresh changing the clicked row keeps focus on its replacement; removing it moves focus to the next row.
+    await row(page, 0, pathAt(3)).click()
+    await updateEntries(page, `return entries.map(entry => entry.path === "${pathAt(3)}" ? { ...entry, stagedAdditions: 9 } : entry)`)
+    assert.equal(await row(page, 0, pathAt(3)).locator("small").textContent(), "+9 −1")
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: pathAt(3), section: 0 })
+    await updateEntries(page, `return entries.filter(entry => entry.path !== "${pathAt(3)}")`)
+    assert.equal(await row(page, 0, pathAt(3)).count(), 0)
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: pathAt(4), section: 0 })
+
+    // One staged file and an unrelated unstaged row selected: the commit box offers "Stage · b.ts".
+    await updateEntries(page, `return ["a", "b", "c"].map(name => ({ path: "packages/app/" + name + ".ts", originalPath: null,
+      stagedStatus: name === "a" ? "modified" : null, stagedAdditions: 1, stagedDeletions: 0,
+      unstagedStatus: name === "a" ? null : "modified", unstagedAdditions: 1, unstagedDeletions: 0 }))`)
+    await row(page, 1, "packages/app/b.ts").click()
+    await page.locator(".git-change-commit-box").getByRole("button", { name: "Indexer le fichier · packages/app/b.ts", exact: true }).waitFor()
+    await section(page, 0).getByRole("button", { name: "Retirer de l'index · packages/app/a.ts", exact: true }).click()
+    await row(page, 1, "packages/app/a.ts").waitFor()
+    assert.equal(await row(page, 0, "packages/app/a.ts").count(), 0)
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: "header", section: 0 }, "never the commit box's action on another file")
     await page.keyboard.press("Enter")
-    await row(page, 0, unstaged).waitFor({ state: "detached" })
-    assert.deepEqual(await active(), stagedMore)
+    assert.deepEqual(await calls(page, "stage"), [], "the next Enter stages nothing")
+  } finally { await page.close() }
+})
 
-    // A refresh that changes the focused row keeps focus on its replacement; one that removes it hands focus on.
-    const changed = pathAt(STAGED + 7), removed = pathAt(STAGED + 8)
-    await pinStaged(changed)
-    await row(page, 0, changed).focus()
-    await page.evaluate(path => {
-      const scale = (window as any).gitScale
-      scale.entries = scale.entries.map((entry: any) => entry.path === path ? { ...entry, stagedAdditions: 9 } : entry)
-      ;(window as any).fixture.invalidate()
-    }, changed)
-    await section(page, 0).locator(`.git-panel-file-main[title="${changed}"] small`).filter({ hasText: "+9" }).waitFor()
-    assert.deepEqual(await active(), { tag: "BUTTON", name: changed, section: 0 })
-    await pinStaged(removed)
-    await row(page, 0, removed).focus()
-    await page.evaluate(path => {
-      const scale = (window as any).gitScale
-      scale.entries = scale.entries.filter((entry: any) => entry.path !== path)
-      ;(window as any).fixture.invalidate()
-    }, removed)
-    await row(page, 0, removed).waitFor({ state: "detached" })
-    assert.deepEqual(await active(), stagedMore)
+test("sticky rows stay after the selection moves, leave with their file and clear on a worktree change", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await openLargeInventory(page)
+    await row(page, 1, pathAt(STAGED + 1)).click()
+    assert.equal(await row(page, 1, pathAt(MOST_CHANGED)).getAttribute("aria-current"), null)
+    assert.equal(await rows(page, 1).count(), BOUND + 1, "the formerly current row beyond the bound stays")
+    const most = pathAt(MOST_CHANGED)
+    await updateEntries(page, `globalThis.removedEntry = entries.find(entry => entry.path === "${most}"); return entries.filter(entry => entry !== globalThis.removedEntry)`)
+    assert.equal(await row(page, 1, most).count(), 0)
+    await updateEntries(page, `return [...entries, globalThis.removedEntry]`)
+    assert.equal(await section(page, 1).locator(".git-change-section-count").textContent(), String(UNSTAGED))
+    assert.equal(await row(page, 1, most).count(), 0, "a returning file is not pinned again")
+    assert.equal(await rows(page, 1).count(), BOUND)
 
-    // Ctrl-deselecting a row pinned only by the bulk selection keeps it while it holds focus.
-    const bulk = (await rows(page, 1).nth(BOUND - 1).locator(".git-panel-file-main").getAttribute("title"))!
-    await row(page, 1, bulk).click({ modifiers: ["Control"] })
-    await page.evaluate(() => {
-      const scale = (window as any).gitScale
-      scale.entries = [...Array.from({ length: 5 }, (_, index) => ({ path: "packages/app/aaa-" + index + ".ts", originalPath: null,
-        stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0, unstagedStatus: "modified", unstagedAdditions: 1, unstagedDeletions: 0 })), ...scale.entries]
-      ;(window as any).fixture.invalidate()
-    })
-    await row(page, 1, "packages/app/aaa-0.ts").waitFor()
-    assert.equal(await rows(page, 1).nth(BOUND).locator(".git-panel-file-main").getAttribute("title"), bulk, "now beyond the bound, pinned by the bulk selection")
-    await row(page, 1, bulk).click({ modifiers: ["Control"] })
-    assert.equal(await row(page, 1, bulk).getAttribute("aria-pressed"), "false")
-    assert.deepEqual(await active(), { tag: "BUTTON", name: bulk, section: 1 })
-    await showMore(page).focus()
-    await row(page, 1, bulk).waitFor({ state: "detached" })
+    // A row selected after a reveal stays sticky until the worktree changes.
+    await showMore(page).click()
+    const far = pathAt(STAGED + 300)
+    await row(page, 1, far).click()
+    await row(page, 1, pathAt(STAGED + 2)).click()
+    const reads = await page.evaluate(() => (window as any).gitScale.calls)
+    const selector = page.getByRole("combobox", { name: "Worktree à consulter" })
+    await selector.selectOption("review")
+    await page.waitForFunction(reads => (window as any).gitScale.calls > reads, reads)
+    await selector.selectOption("root")
+    await page.waitForFunction(reads => (window as any).gitScale.calls > reads + 1, reads)
+    await row(page, 1, most).waitFor()
+    assert.equal(await row(page, 1, far).count(), 0, "a worktree change clears sticky rows")
+    assert.equal(await rows(page, 1).count(), BOUND + 1, "only the newly auto-selected row joins the bound")
   } finally { await page.close() }
 })

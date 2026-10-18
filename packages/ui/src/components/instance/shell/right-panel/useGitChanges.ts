@@ -71,7 +71,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     return target && target.kind !== "workspace" && !target.commit && target.slug === options.worktreeSlug()
       ? buildGitChangeListItemId(target.scope ?? "unstaged", target.path) : null
   })
-  // Sections render a bounded window; the current, previewed and bulk-selected rows always render.
+  // Sections render a bounded window; rows once current, previewed or bulk-selected stay rendered (sticky).
   const gitWindows = createGitChangeWindows(gitListItems, createMemo(() => {
     const pinned = new Set(gitBulkSelectedItemIds())
     for (const id of [gitSelectedItemId(), gitPreviewItemId()]) if (id) pinned.add(id)
@@ -555,7 +555,6 @@ export function useGitChanges(options: UseGitChangesOptions) {
     gitListItems,
     gitChangeWindow: gitWindows.window,
     revealGitChanges: gitWindows.reveal,
-    holdGitItemFocus: gitWindows.holdFocus,
     gitStatusLoading,
     gitStatusError,
     gitSelectedItemId,

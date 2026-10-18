@@ -1,7 +1,26 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { GIT_CHANGE_ROW_LIMIT, buildGitChangeWindow, sameGitChangeWindow } from "./git-change-window.ts"
+import { GIT_CHANGE_ROW_LIMIT, buildGitChangeWindow, sameGitChangeWindow, stickyPins } from "./git-change-window.ts"
+
+describe("stickyPins", () => {
+  const set = (...ids: string[]) => new Set(ids)
+  it("keeps every id pinned once while it stays in the inventory", () => {
+    const present = set("a", "b", "c", "d")
+    const first = stickyPins(set(), set("a"), present)
+    const second = stickyPins(first, set("b"), present)
+    assert.deepEqual([...second].sort(), ["a", "b"], "a preview closing or the selection moving keeps the row")
+    assert.equal(stickyPins(second, set("a"), present), second, "unchanged membership keeps the same set")
+    assert.equal(stickyPins(second, set(), present), second)
+  })
+
+  it("prunes ids that left the inventory and never adds absent ones", () => {
+    const pins = stickyPins(set("a", "b"), set("x"), set("b", "c"))
+    assert.deepEqual([...pins], ["b"])
+    assert.deepEqual([...stickyPins(pins, set(), set())], [], "an empty inventory (worktree change) clears them")
+    assert.deepEqual([...stickyPins(stickyPins(set("a"), set(), set("b")), set(), set("a"))], [], "a returning file is not pinned again")
+  })
+})
 import type { GitChangeListItem } from "./types.ts"
 
 const items = (count: number): GitChangeListItem[] => Array.from({ length: count }, (_, index) => {

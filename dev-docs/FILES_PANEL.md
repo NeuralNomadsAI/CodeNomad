@@ -53,16 +53,20 @@ that cost:
   `GIT_CHANGE_ROW_LIMIT` (200) rows and closes it with an in-place "Show 200
   more" line stating how many files are not shown; header and file counts stay the
   full totals. Revealing moves keyboard focus to the first revealed row. Reveals
-  survive refreshes and mode switches, and reset when the worktree changes. The
-  current, previewed and bulk-selected rows always render: beyond the bound they
-  follow the window in list order, so an auto-selected most-changed file or a
-  preview moved by staging stays reachable without rendering every row before it.
-  The row holding keyboard focus is pinned too, until focus leaves it, so closing
-  its preview or deselecting it from inside keeps it in place. A focused row that
-  unmounts anyway (staged/unstaged into the other section, changed or removed by a
-  refresh) hands focus to its replacement, else to the row or Show more control now
-  in its place, the previous row or the section header
-  (`git-change-row-focus.ts`); focus never falls to the document.
+  survive refreshes and mode switches, and reset when the worktree changes.
+  Current, previewed and bulk-selected rows always render, and the pins are
+  sticky (`stickyPins`): a row once pinned stays rendered until the worktree
+  changes or its file leaves the inventory (a returning file is not pinned
+  again). Beyond the bound they follow the window in list order, before Show
+  more, so an auto-selected most-changed file or a preview moved by staging stays
+  reachable without rendering every row before it, and nothing shown there
+  disappears because a preview closed, the selection moved or focus left. The
+  sticky set only grows through selection and previews. There is no focus
+  tracking. A focused row that unmounts anyway (staged/unstaged into the other
+  section, changed or removed by a refresh) hands focus to its replacement for
+  the same file, else to the row or Show more control now in its place, the
+  previous row or the section header (`git-change-row-focus.ts`): never the
+  commit box or an action on another file, never the document.
   Shift ranges span the rendered rows only, so bulk actions never include files
   hidden beyond the bound (collapsed sections keep their existing behavior).
 - **Per-row selection state** uses `createSelector`, so a selection change only
@@ -260,8 +264,10 @@ insertion into the composer remain available.
   refresh mutates no node and a one-file change replaces only that row
   (MutationObserver); Show more focus, reveal persistence and worktree reset;
   cross-section ranges, row staging, a staged preview beyond the bound and drag;
-  focus on a pinned row across preview close, unstage, refresh change/removal and
-  Ctrl-deselection. It logs DOM/time measurements for each refresh.
+  with real keyboard/mouse input, a sticky row across preview close, Tab/Shift+Tab,
+  a click and its compact … menu; focus after unstage/refresh removal and never on
+  the commit box; sticky rows pruned with their file and cleared on a worktree
+  change. It logs DOM/time measurements for each refresh.
 - `git-change-window.test.ts`, plus identity reuse in `git-changes-model.test.ts`
   and unchanged-refresh/window behavior in `useGitChanges.test.ts`.
 - `useGitChanges.test.ts` / `git-changes-model.test.ts`: the option in the read,
